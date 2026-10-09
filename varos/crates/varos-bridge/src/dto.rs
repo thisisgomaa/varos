@@ -21,6 +21,8 @@ pub enum Request {
     Save(FileEffect),
     SaveAs(FileEffect),
     ExportPdf(FileEffect),
+    ExportSvg(FileEffect),
+    ExportRaster(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -576,7 +578,7 @@ pub struct Status {
     #[serde(deserialize_with = "present_string")]
     pub cursor: Option<String>,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileEffect {
     #[serde(default = "api")]
@@ -588,7 +590,78 @@ pub struct FileEffect {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ppi: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transparent: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<u8>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportFileWire {
+    #[serde(default = "api")]
+    pub api: String,
+    pub request_id: String,
+    pub board: String,
+    pub expected_rev: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub format: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub scale: Option<Option<f32>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub ppi: Option<Option<f32>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub transparent: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub quality: Option<Option<u8>>,
+}
+// Preserve both null-field presence and Serde's duplicate-field rejection.
+fn present_export_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
+}
+impl<'de> Deserialize<'de> for FileEffect {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = ExportFileWire::deserialize(deserializer)?;
+        if wire.api != "1.2" {
+            for (key, present) in [
+                ("format", wire.format.is_some()),
+                ("scale", wire.scale.is_some()),
+                ("ppi", wire.ppi.is_some()),
+                ("transparent", wire.transparent.is_some()),
+                ("quality", wire.quality.is_some()),
+            ] {
+                if present {
+                    return Err(serde::de::Error::custom(format!("unknown field `{key}` for legacy file request")));
+                }
+            }
+        }
+        Ok(Self {
+            api: wire.api,
+            request_id: wire.request_id,
+            board: wire.board,
+            expected_rev: wire.expected_rev,
+            path: wire.path,
+            scope: wire.scope,
+            format: wire.format.flatten(),
+            scale: wire.scale.flatten(),
+            ppi: wire.ppi.flatten(),
+            transparent: wire.transparent.flatten(),
+            quality: wire.quality.flatten(),
+        })
+    }
+}
+
 impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
@@ -604,6 +677,8 @@ impl Request {
             Self::Save(_) => "save",
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
+            Self::ExportSvg(_) => "export_svg",
+            Self::ExportRaster(_) => "export_raster",
         }
     }
     pub fn api(&self) -> &str {
@@ -616,14 +691,16 @@ impl Request {
             Self::History(v) => &v.api,
             Self::RequestStatus(v) => &v.api,
             Self::Snapshot(v) => &v.api,
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => &v.api,
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some(&v.board),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => {
+                Some(&v.board)
+            }
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -635,7 +712,9 @@ impl Request {
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some((&v.request_id, v.expected_rev)),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => {
+                Some((&v.request_id, v.expected_rev))
+            }
             _ => None,
         }
     }
@@ -715,5 +794,39 @@ impl Reply {
     }
     pub fn failure(error: Error) -> Self {
         Self { ok: false, result: None, request_id: None, board: None, rev: None, undo_steps: 0, error: Some(error) }
+    }
+}
+
+#[cfg(test)]
+mod export_file_compat_tests {
+    use super::*;
+    #[test]
+    fn legacy_file_decode_still_rejects_duplicate_fields() {
+        let request = r#"{"tool":"save","arguments":{"api":"1.0","board":"b1","request_id":"r1","expected_rev":0,"path":"first","path":"second"}}"#;
+        assert!(serde_json::from_str::<Request>(request).is_err());
+    }
+    #[test]
+    fn legacy_file_requests_reject_every_raster_field_including_null() {
+        for tool in ["save", "save_as", "export_pdf"] {
+            for api in [None, Some("1.0"), Some("1.1")] {
+                for key in ["format", "scale", "ppi", "transparent", "quality"] {
+                    for value in [Value::Null, serde_json::json!(90)] {
+                        let mut args = serde_json::json!({"board":"b1","request_id":"r","expected_rev":0});
+                        if let Some(api) = api {
+                            args["api"] = api.into();
+                        }
+                        args[key] = value;
+                        assert!(crate::mcp::decode_tool(tool, args.clone()).is_err(), "{tool}: {args}");
+                        assert!(serde_json::from_value::<Request>(serde_json::json!({"tool":tool,"arguments":args}))
+                            .is_err());
+                    }
+                }
+            }
+        }
+        assert!(crate::mcp::decode_tool(
+            "export_raster",
+            serde_json::json!({"api":"1.2","board":"b1","request_id":"r","expected_rev":0,"quality":90,"format":"jpeg"})
+        )
+        .is_ok());
     }
 }

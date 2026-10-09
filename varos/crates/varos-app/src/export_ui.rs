@@ -1,38 +1,32 @@
-//! DFS S6-C: the Export PDF sheet — the minimal page-scope choice the work order requires before the
-//! save panel (`DFS_S4_S6_ASSOCIATION_EXPORT.md` §3.3: All visible artboards / Active artboard /
-//! Artwork bounds; a scope that cannot export is disabled and says why). File ▸ Export ▸ PDF… and the
-//! Windows burger's Export… row send `AppCommand::ShowExport` (4b removed the band's button), which opens
-//! this sheet; its Export… sends `AppCommand::ExportPdf(id, scope)` — the save panel and the job.
-//!
-//! Hand-painted from `shell::kit` (rows, notice, buttons) on kit tokens: no egui default widgets, no
-//! shadow, no animation. Azure appears only as the kit's keyboard-focus ring. The model is pure
-//! ([`ExportSheet::new`]); [`draw`] only paints it and reports what was chosen.
-//!
-//! Slice 0.6: a fourth scope, Selection (File ▸ Export Selection… opens the sheet on it), and the sheet
-//! now STAYS through the export: [`Phase::Running`] offers Cancel (it raises the job's cancel flag;
-//! until the file's final rename nothing is written), [`Phase::Cancelled`] says so, [`Phase::Done`]
-//! names the file and offers Show in Finder ([`reveal`]). Each Export… takes a fresh ticket; the
-//! lifecycle reports progress as `file_jobs::ExportEvent`s carrying it, and a sheet follows only its
-//! own ticket ([`ExportSheet::on_event`]). A sheet opened while this tab is still exporting refuses to
-//! start a second one ([`BUSY`]).
+//! Export sheet v2 Minimal: thumbnail checklist, folder, format/scale and format options.
+//! Hand-painted kit chrome on shared tokens; bytes run on the existing ticketed IO worker.
+//! Immutable card snapshots, per-document layout preferences, explicit reports and cancellation.
+//! Legacy PDF scope planning remains covered by headless compatibility tests.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use egui::{Id, Layout, Margin, RichText, Stroke, TextStyle};
-use varos_app::shell::kit::{self, Availability, Control};
+use varos_app::shell::kit::{self, Control};
 use varos_app::shell::tokens as t;
 use varos_core::model::Document;
 use varos_pdf::ExportScope;
 
 use crate::app_command::SessionId;
-use crate::file_jobs::{next_ticket, CancelFlag, ExportEvent};
+use crate::file_jobs::{CancelFlag, ExportEvent};
 
 /// Why Export… is disabled while this tab's previous export is still on the worker.
 pub const BUSY: &str = "An export of this document is still running.";
 
 /// The sheet's width (points).
-const SHEET_W: f32 = 320.0;
+const SHEET_W: f32 = t::EXPORT_SHEET_W;
+#[path = "ui/export/model.rs"]
+mod minimal;
+#[path = "ui/export/paint.rs"]
+mod paint;
+#[path = "ui/export/previews.rs"]
+mod previews;
+pub use minimal::{preferences, restore_preferences};
 
 /// One page-scope row.
 #[derive(Clone, Debug, PartialEq)]
@@ -63,6 +57,7 @@ pub enum Phase {
 /// computed once, not every frame).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportSheet {
+    pub minimal: minimal::Minimal,
     pub sid: SessionId,
     pub rows: Vec<ScopeRow>,
     pub selected: ExportScope,
@@ -70,9 +65,6 @@ pub struct ExportSheet {
     /// This tab already has an export on the worker: Export… is disabled ([`BUSY`]).
     pub busy: bool,
 }
-
-/// The sheet's copy.
-pub const NOTE: &str = "For sharing. Editable Varos data is not included.";
 
 impl ExportSheet {
     /// The rows for `doc` with `selection` (the tab's selected path ids — the Selection row). The
@@ -111,7 +103,14 @@ impl ExportSheet {
             .or_else(|| can(default).then_some(default))
             .or_else(|| rows.iter().find(|r| r.available).map(|r| r.scope))
             .unwrap_or(default);
-        ExportSheet { sid, rows, selected, phase: Phase::Choose, busy }
+        ExportSheet {
+            minimal: minimal::Minimal::new(doc, selection, selected == ExportScope::Selection),
+            sid,
+            rows,
+            selected,
+            phase: Phase::Choose,
+            busy,
+        }
     }
 
     /// The sheet for tab `s`: its document, its selection, and whether it is still exporting. It opens
@@ -123,15 +122,30 @@ impl ExportSheet {
     ) -> Self {
         let ed = &s.editor;
         let scope = if selection { Some(ExportScope::Selection) } else { scopes.get(&s.id).copied() };
-        ExportSheet::new(s.id, &ed.doc, &ed.selected_pids(), scope, !s.exports.is_empty())
+        {
+            let mut sheet = ExportSheet::new(s.id, &ed.doc, &ed.selected_pids(), scope, !s.exports.is_empty());
+            let key = s
+                .key
+                .as_ref()
+                .map(|k| k.path.to_string_lossy().into_owned())
+                .or_else(|| s.path.as_ref().map(|p| p.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| format!("untitled:{}", s.recovery.rid));
+            sheet.minimal.restore(key);
+            if selection && sheet.minimal.selection_reason().is_none() {
+                sheet.minimal.selection_tab = true;
+                sheet.minimal.preferences_dirty = true;
+            }
+            sheet
+        }
     }
 
     /// Export… pressed: a fresh ticket, the sheet running. `None` = it cannot export now.
+    #[cfg(test)]
     pub fn start(&mut self) -> Option<u64> {
         if !self.can_export() || !matches!(self.phase, Phase::Choose) {
             return None;
         }
-        let ticket = next_ticket();
+        let ticket = crate::file_jobs::next_ticket();
         self.phase = Phase::Running { ticket, cancel: None, cancelling: false };
         Some(ticket)
     }
@@ -146,6 +160,31 @@ impl ExportSheet {
         if event.sid() != self.sid || event.ticket() != ticket {
             return false;
         }
+        if let ExportEvent::Finished { dest, report, .. } = event {
+            if self.minimal.remaining > 0 {
+                self.minimal.destinations.push(dest.clone());
+                self.minimal.report.notes.extend(report.notes.clone());
+                self.minimal.remaining -= 1;
+                if self.minimal.remaining > 0 {
+                    return true;
+                }
+            }
+        }
+        if matches!(event, ExportEvent::Cancelled { .. } | ExportEvent::Ended { .. }) && self.minimal.remaining > 0 {
+            self.minimal.remaining -= 1;
+            self.minimal.report.notes.push(varos_core::ExportNote {
+                kind: "incomplete".into(),
+                object_id: None,
+                message: "A file was cancelled or failed; files already exported remain in the folder.".into(),
+            });
+            if self.minimal.remaining > 0 {
+                return true;
+            }
+            if let Some(dest) = self.minimal.destinations.last() {
+                self.phase = Phase::Done { dest: dest.clone(), report: self.minimal.report.clone() };
+                return true;
+            }
+        }
         self.phase = match event {
             ExportEvent::Started { cancel, .. } => {
                 if cancelling {
@@ -154,7 +193,10 @@ impl ExportSheet {
                 Phase::Running { ticket, cancel: Some(cancel.clone()), cancelling }
             }
             // the commit boundary: once the file is renamed into place the export is done
-            ExportEvent::Finished { dest, report, .. } => Phase::Done { dest: dest.clone(), report: report.clone() },
+            ExportEvent::Finished { dest, report, .. } => Phase::Done {
+                dest: dest.clone(),
+                report: if self.minimal.destinations.is_empty() { report.clone() } else { self.minimal.report.clone() },
+            },
             ExportEvent::Cancelled { .. } => Phase::Cancelled,
             // the save panel was cancelled, or the export failed (already told): back to the choice
             ExportEvent::Ended { .. } => Phase::Choose,
@@ -179,11 +221,13 @@ impl ExportSheet {
     }
 
     /// Export… is enabled: the selected scope can export and no export of this tab is running.
+    #[cfg(test)]
     pub fn can_export(&self) -> bool {
         !self.busy && self.rows.iter().any(|r| r.scope == self.selected && r.available)
     }
 
     /// Why Export… is disabled (an export still running, else the selected scope's reason).
+    #[cfg(test)]
     pub fn reason(&self) -> Option<&str> {
         if self.busy {
             return Some(BUSY);
@@ -192,6 +236,7 @@ impl ExportSheet {
     }
 
     /// Choose `scope` (a disabled row is never selected).
+    #[cfg(test)]
     pub fn select(&mut self, scope: ExportScope) {
         if self.rows.iter().any(|r| r.scope == scope && r.available) {
             self.selected = scope;
@@ -213,10 +258,10 @@ pub enum SheetAction {
     Stay,
     /// Cancel, Esc, or a press outside the sheet.
     Close,
-    /// Export…: the host runs `AppCommand::ExportPdf(id, scope, ticket)`; the sheet stays, running.
-    Export(SessionId, ExportScope, u64),
+
     /// Show in Finder (the done state): reveal the written PDF; the sheet closes.
     Reveal(PathBuf),
+    Screens(SessionId, Vec<crate::file_jobs::ScreenJob>),
 }
 
 /// The Done state's line for the export report: “1 note: …” / “N notes: a; b”. `None` = nothing to say.
@@ -281,6 +326,14 @@ pub fn sheet_pos(screen: egui::Rect, band_h: f32, panel_column: Option<egui::Ran
 
 /// Paint the sheet under the band (`sheet_pos`).
 pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<egui::Rangef>) -> SheetAction {
+    // Modal hit shield: canvas remains visible, while the sheet owns pointer input for this tab.
+    egui::Area::new(Id::new("export-sheet-modal"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(ctx.content_rect().min)
+        .show(ctx, |ui| {
+            ui.set_min_size(ctx.content_rect().size());
+            ui.interact(ctx.content_rect(), Id::new("export-sheet-modal-hit"), egui::Sense::click());
+        });
     let pos = sheet_pos(ctx.content_rect(), crate::chrome::TOPBAR.height, panel_column);
     let mut action = SheetAction::Stay;
     let pad = (t::KIT_PAD * 2.0) as i8;
@@ -293,12 +346,18 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<e
             .show(ui, |ui| {
                 ui.set_width(SHEET_W - t::KIT_PAD * 4.0);
                 ui.spacing_mut().item_spacing = egui::vec2(t::KIT_GAP, t::KIT_TEXT_GAP);
-                ui.label(RichText::new("Export PDF").text_style(TextStyle::Button).color(t::TEXT));
+                ui.label(RichText::new("Export for Screens").text_style(TextStyle::Button).color(t::TEXT));
                 ui.add_space(t::KIT_GAP);
                 if let Phase::Done { dest, report } = &sheet.phase {
                     let name =
                         dest.file_name().map_or_else(|| dest.display().to_string(), |n| n.to_string_lossy().into());
-                    kit::notice(ui, &format!("Exported {name}. Your document has not changed."));
+                    kit::notice(ui, &format!("Exported {name}"));
+                    for path in sheet.minimal.destinations.iter().filter(|p| *p != dest) {
+                        kit::notice(
+                            ui,
+                            &format!("Exported {}", path.file_name().unwrap_or_default().to_string_lossy()),
+                        );
+                    }
                     if let Some(notes) = report_text(report) {
                         kit::notice(ui, &notes); // muted kit text: what the export simplified or left out
                     }
@@ -323,48 +382,7 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<e
                     });
                     return;
                 }
-                let running = matches!(sheet.phase, Phase::Running { .. });
-                let cancelling = matches!(sheet.phase, Phase::Running { cancelling: true, .. });
-                let mut picked = None;
-                for row in &sheet.rows {
-                    let mut c = Control::new(Id::new(("export-scope", row.label)), row.label);
-                    c.selected = row.scope == sheet.selected;
-                    if !row.available {
-                        c.availability = Availability::Disabled(&row.detail);
-                    } else if running {
-                        c.availability = Availability::Disabled("Exporting\u{2026}");
-                    }
-                    if kit::list_row(ui, c, &row.detail).activated {
-                        picked = Some(row.scope);
-                    }
-                }
-                if let Some(scope) = picked.filter(|_| !running) {
-                    sheet.select(scope);
-                }
-                ui.add_space(t::KIT_GAP);
-                kit::notice(ui, NOTE);
-                ui.add_space(t::KIT_GAP);
-                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut export = Control::new(Id::new("export-pdf"), "Export\u{2026}");
-                    if cancelling {
-                        export.availability = Availability::Busy("Cancelling\u{2026}");
-                    } else if running {
-                        export.availability = Availability::Busy("Exporting\u{2026}");
-                    } else if let Some(reason) = sheet.reason() {
-                        export.availability = Availability::Disabled(reason);
-                    }
-                    if kit::action(ui, export, false).activated {
-                        if let Some(ticket) = sheet.start() {
-                            action = SheetAction::Export(sheet.sid, sheet.selected, ticket);
-                        }
-                    }
-                    // running: Cancel raises the job's flag and waits for its outcome; else it closes
-                    if kit::action(ui, Control::new(Id::new("export-cancel"), "Cancel"), false).activated
-                        && !sheet.cancel()
-                    {
-                        action = SheetAction::Close;
-                    }
-                });
+                paint::minimal(ui, sheet, &mut action);
             });
     });
     let rect = area.response.rect;
@@ -380,10 +398,81 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<e
         if !sheet.cancel() {
             action = SheetAction::Close; // Esc = Cancel: a running export is called off first
         }
-    } else if action == SheetAction::Stay && outside && !matches!(sheet.phase, Phase::Running { .. }) {
+    } else if action == SheetAction::Stay
+        && outside
+        && !kit::menu_open(ctx)
+        && !matches!(sheet.phase, Phase::Running { .. })
+    {
         action = SheetAction::Close; // a press elsewhere never drops a running export's Cancel
     }
     action
+}
+
+/// UI glue extracted from ui.rs so its ratchet only shrinks.
+pub fn dispatch(
+    ctx: &egui::Context,
+    sheet: &mut Option<ExportSheet>,
+    panel_column: Option<egui::Rangef>,
+    _scopes: &mut std::collections::HashMap<SessionId, ExportScope>,
+    commands: &mut Vec<crate::app_command::AppCommand>,
+) {
+    let Some(open) = sheet.as_mut() else { return };
+    match draw(ctx, open, panel_column) {
+        SheetAction::Stay => {}
+        SheetAction::Close => *sheet = None,
+        SheetAction::Screens(id, jobs) => commands.push(crate::app_command::AppCommand::ExportScreens(id, jobs)),
+        SheetAction::Reveal(path) => {
+            reveal(&path);
+            *sheet = None;
+        }
+    }
+}
+
+pub fn bridge_job(
+    sid: SessionId,
+    ticket: u64,
+    doc: &Document,
+    selection: &HashSet<u32>,
+    dest: PathBuf,
+    request: &varos_bridge::dto::FileEffect,
+    verb: &str,
+) -> Result<crate::file_jobs::ScreenJob, varos_bridge::Error> {
+    use varos_raster::export::{self, Format, Options, Scope};
+    let error = |e| varos_bridge::Error::new("invalid_argument", e);
+    let scope = match request.scope.as_deref() {
+        Some("all_visible_artboards") => Scope::AllArtboards,
+        Some("whole_board" | "artwork_bounds") => Scope::WholeBoard,
+        Some("selection") => Scope::Selection(selection.clone()),
+        Some(id) if id.starts_with("artboard:") => {
+            Scope::Artboard(id[9..].parse().map_err(|_| error("Invalid artboard id.".into()))?)
+        }
+        _ => return Err(error("Unknown export scope.".into())),
+    };
+    let mut assets = export::plan(doc, &scope).map_err(error)?;
+    if assets.is_empty() {
+        return Err(error("Nothing to export.".into()));
+    }
+    let format = if verb == "export_svg" {
+        Format::Svg
+    } else {
+        Format::parse(request.format.as_deref().unwrap_or("png")).map_err(error)?
+    };
+    if verb == "export_raster" && format.vector() {
+        return Err(error("export_raster requires a raster format.".into()));
+    }
+    if request.ppi.is_some() && request.scale.is_some() {
+        return Err(error("Choose scale or ppi, not both.".into()));
+    }
+    let options = Options {
+        format,
+        scale: request.ppi.map(|p| p / 72.0).or(request.scale).unwrap_or(1.0),
+        transparent: request.transparent.unwrap_or(true),
+        quality: request.quality.unwrap_or(90),
+    };
+    options.validate().map_err(error)?;
+    let mut job = minimal::screen_job(sid, ticket, assets.remove(0), options, dest, Default::default(), false);
+    job.additional = assets;
+    Ok(job)
 }
 
 #[cfg(test)]
@@ -593,5 +682,96 @@ mod tests {
         assert_eq!(c.get_program(), "/usr/bin/open");
         let args: Vec<&std::ffi::OsStr> = c.get_args().collect();
         assert_eq!(args, [std::ffi::OsStr::new("-R"), path.as_os_str()]);
+    }
+}
+
+#[cfg(test)]
+mod minimal_paint_tests {
+    use super::*;
+    #[test]
+    fn done_report_is_painted_and_batch_waits_for_every_file() {
+        let doc = varos_core::model::Document {
+            artboards: vec![varos_core::model::Artboard { id: 1, w: 40.0, h: 30.0, ..Default::default() }],
+            ..Default::default()
+        };
+        let mut sheet = ExportSheet::new(SessionId(1), &doc, &HashSet::new(), None, false);
+        let ticket = sheet.start().unwrap();
+        sheet.minimal.remaining = 2;
+        let report = varos_core::ExportReport {
+            notes: vec![varos_core::ExportNote {
+                kind: "fidelity".into(),
+                object_id: None,
+                message: "JPEG has no transparency".into(),
+            }],
+        };
+        assert!(sheet.on_event(&ExportEvent::Finished {
+            sid: sheet.sid,
+            ticket,
+            dest: "/tmp/one.jpg".into(),
+            report: report.clone()
+        }));
+        assert!(matches!(sheet.phase, Phase::Running { .. }));
+        assert!(sheet.on_event(&ExportEvent::Finished {
+            sid: sheet.sid,
+            ticket,
+            dest: "/tmp/two.jpg".into(),
+            report: Default::default()
+        }));
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {
+            let _ = draw(&ctx, &mut sheet, None);
+        });
+        let output = ctx.run_ui(egui::RawInput::default(), |_| {
+            let _ = draw(&ctx, &mut sheet, None);
+        });
+        fn text(shape: &egui::Shape) -> String {
+            match shape {
+                egui::Shape::Text(t) => t.galley.text().into(),
+                egui::Shape::Vec(shapes) => shapes.iter().map(text).collect::<Vec<_>>().join(" "),
+                _ => String::new(),
+            }
+        }
+        let copy = output.shapes.iter().map(|s| text(&s.shape)).collect::<Vec<_>>().join(" ");
+        assert!(copy.contains("JPEG has no transparency"), "{copy}");
+        assert!(copy.contains("Exported one.jpg"));
+        assert!(copy.contains("Exported two.jpg"));
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    #[test]
+    fn different_untitled_documents_never_share_preferences_when_session_counters_restart() {
+        let mut first = crate::workspace::Workspace::new();
+        let id = first.new_untitled();
+        let mut second = crate::workspace::Workspace::new();
+        let other = second.new_untitled();
+        assert_eq!(id, other);
+        let a = ExportSheet::of(first.get(id).unwrap(), false, &Default::default());
+        let b = ExportSheet::of(second.get(other).unwrap(), false, &Default::default());
+        assert_ne!(a.minimal.key, b.minimal.key);
+    }
+}
+
+#[cfg(test)]
+mod repaint_fix_tests {
+    use super::*;
+    #[test]
+    fn headless_sheet_repaints_do_not_replace_preferences() {
+        let mut sheet = ExportSheet::new(SessionId(1), &Document::default(), &HashSet::new(), None, false);
+        sheet.minimal.restore("paint-dirty-fix".into());
+        sheet.minimal.folder = "/tmp/remembered".into();
+        sheet.minimal.preferences_dirty = true;
+        sheet.minimal.remember();
+        sheet.minimal.folder = "/tmp/not-a-control-edit".into();
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |_| {
+                let _ = draw(&ctx, &mut sheet, None);
+            });
+        }
+        assert!(!sheet.minimal.preferences_dirty);
+        assert_eq!(preferences()["paint-dirty-fix"].folder, "/tmp/remembered");
     }
 }

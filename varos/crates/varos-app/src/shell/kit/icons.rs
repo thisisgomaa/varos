@@ -97,6 +97,8 @@ pub enum Icon {
     DistributeMiddle,
     DistributeBottom,
 
+    ExportGrid,
+    ExportCheck,
     // ── Start / Home / Recent ──
     Home,
     New,
@@ -200,7 +202,7 @@ pub enum Icon {
     HarmonyMono,
 }
 impl Icon {
-    pub const ALL: [Icon; 68] = [
+    pub const ALL: [Icon; 70] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -269,6 +271,8 @@ impl Icon {
         Self::DistributeBottom,
         Self::Hand,
         Self::ZoomIn,
+        Self::ExportGrid,
+        Self::ExportCheck,
     ];
 
     /// The icon's name and its embedded SVG: the upstream Lucide file, or — for [`Icon::is_original`] —
@@ -297,6 +301,8 @@ impl Icon {
             Self::DistributeTop => svg!("align-vertical-distribute-start"),
             Self::DistributeMiddle => svg!("align-vertical-distribute-center"),
             Self::DistributeBottom => svg!("align-vertical-distribute-end"),
+            Self::ExportGrid => svg!("grid-2x2"),
+            Self::ExportCheck => svg!("check"),
             Self::Home => svg!("house"),
             Self::New => svg!("file-plus"),
             Self::Open => svg!("folder-open"),

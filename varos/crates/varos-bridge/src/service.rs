@@ -336,13 +336,21 @@ impl Service {
             && !(req.api() == "1.2"
                 && matches!(
                     req,
-                    Request::ExportPdf(_) | Request::Select(_) | Request::Capabilities(_) | Request::Edit(_)
+                    Request::ExportPdf(_)
+                        | Request::ExportSvg(_)
+                        | Request::ExportRaster(_)
+                        | Request::Select(_)
+                        | Request::Capabilities(_)
+                        | Request::Edit(_)
                 ))
         {
             return Reply::failure(Error::new(
                 "unsupported",
-                "Bridge API must be 1.0 or 1.1 (capabilities, select, edit and export_pdf also support 1.2)",
+                "Bridge API must be 1.0 or 1.1 (capabilities, select, edit, export_pdf, export_svg and export_raster also support 1.2)",
             ));
+        }
+        if matches!(req, Request::ExportSvg(_) | Request::ExportRaster(_)) && req.api() != "1.2" {
+            return Reply::failure(Error::new("unsupported", "New export verbs require API 1.2 opt-in"));
         }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
@@ -424,7 +432,15 @@ impl Service {
                         if let Some(v) = r.result.as_mut() {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
-                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
+                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"other_tools":["1.0","1.1"]});
+                            if let Some(tools) = v["tools"].as_array_mut() {
+                                for name in ["export_svg", "export_raster"] {
+                                    let name = json!(name);
+                                    if !tools.contains(&name) {
+                                        tools.push(name);
+                                    }
+                                }
+                            }
                             if let Some(verbs) = v["edit_verbs"].as_array_mut() {
                                 for verb in [
                                     "repeat",
@@ -490,7 +506,11 @@ impl Service {
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
                 }
-                Request::Save(v) | Request::SaveAs(v) | Request::ExportPdf(v) => {
+                Request::Save(v)
+                | Request::SaveAs(v)
+                | Request::ExportPdf(v)
+                | Request::ExportSvg(v)
+                | Request::ExportRaster(v) => {
                     match req {
                         Request::Save(_) if v.path.is_some() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save uses CURRENT backing file only"))
@@ -498,7 +518,9 @@ impl Service {
                         Request::SaveAs(_) if v.path.is_none() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save_as requires path and no scope"))
                         }
-                        Request::ExportPdf(_) if v.path.is_none() || v.scope.is_none() => {
+                        Request::ExportPdf(_) | Request::ExportSvg(_) | Request::ExportRaster(_)
+                            if v.path.is_none() || v.scope.is_none() =>
+                        {
                             return Err(Error::new("invalid_argument", "export_pdf requires path and scope"))
                         }
                         _ => {}
@@ -755,7 +777,7 @@ impl Service {
                     hash: payload,
                     reply: reply.clone(),
                     ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
-                    export_report: matches!(req, Request::ExportPdf(v) if v.api == "1.2"),
+                    export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) if v.api == "1.2"),
                 });
                 while client.receipts.len() > 128 {
                     client.receipts.pop_front();

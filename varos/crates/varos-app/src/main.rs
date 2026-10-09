@@ -731,11 +731,16 @@ fn dispatch(
     match action {
         // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) opens the Export PDF sheet
         // slice 0.6: File ▸ Export Selection… opens the same sheet on its Selection scope
-        host::HostAction::App(AppCommand::ShowExport(id) | AppCommand::ShowExportSelection(id)) => {
+        host::HostAction::App(
+            AppCommand::ShowExport(id) | AppCommand::ShowExportPdfPreset(id) | AppCommand::ShowExportSelection(id),
+        ) => {
             let selection = matches!(action, host::HostAction::App(AppCommand::ShowExportSelection(_)));
             if !ws.on_home() {
                 if let Some(s) = ws.get(id) {
                     gui.show_export(s, selection);
+                    if matches!(action, host::HostAction::App(AppCommand::ShowExportPdfPreset(_))) {
+                        gui.export_pdf_preset();
+                    }
                 }
             }
             host::Ran::default()

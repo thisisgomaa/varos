@@ -640,6 +640,14 @@ pub const GUIDE_FIELD_PAD: i8 = 6;
 pub const GUIDE_FIELD_W: f32 = 160.0;
 pub const STATUS_ZOOM_W: f32 = 78.0;
 pub const KIT_COMMAND_MENU_W: f32 = 250.0;
+// Export sheet v2 Minimal — owner-approved 600 pt composition.
+pub const EXPORT_SHEET_W: f32 = 600.0;
+pub const EXPORT_LEFT_W: f32 = 300.0;
+pub const EXPORT_CARD_W: f32 = 72.0;
+pub const EXPORT_CARD_H: f32 = 90.0;
+pub const EXPORT_CHECK: f32 = 14.0;
+pub const EXPORT_GRID_H: f32 = 230.0;
+pub const EXPORT_FIELD_W: f32 = 210.0;
 
 #[cfg(test)]
 mod tests {

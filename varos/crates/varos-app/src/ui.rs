@@ -32,6 +32,7 @@ use varos_app::shell::kit::icons::{
     LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
 };
 use varos_app::shell::kit::{self, Icon};
+mod export;
 mod fields;
 mod guide_field;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
@@ -334,7 +335,7 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        wants_keyboard(&self.ctx)
+        export::wants_keyboard(self)
     }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.
@@ -616,23 +617,7 @@ impl Ui {
                 false,
                 cfg!(target_os = "macos"),
             );
-            if let Some(sheet) = export_sheet.as_mut() {
-                match crate::export_ui::draw(ctx, sheet, panel_column) {
-                    crate::export_ui::SheetAction::Stay => {}
-                    crate::export_ui::SheetAction::Close => export_sheet = None,
-                    crate::export_ui::SheetAction::Export(id, scope, ticket) => {
-                        if scope != varos_pdf::ExportScope::Selection {
-                            export_scopes.insert(id, scope); // Selection is asked for, never remembered
-                        }
-                        app_cmds.push(AppCommand::ExportPdf(id, scope, ticket));
-                        // the sheet stays: Cancel / done
-                    }
-                    crate::export_ui::SheetAction::Reveal(path) => {
-                        crate::export_ui::reveal(&path);
-                        export_sheet = None;
-                    }
-                }
-            }
+            crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             build_statusbar(root, (absnap.active, absnap.count), view.zoom, ic_fit, &mut fit_request, status, &mut ops);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
