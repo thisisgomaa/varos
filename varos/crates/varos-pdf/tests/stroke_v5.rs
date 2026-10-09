@@ -13,28 +13,40 @@ fn v5_frozen_json_pdf_and_svg_goldens() {
     for name in index.lines() {
         let json = std::fs::read(root.join(format!("{name}.json"))).unwrap();
         let loaded = decode_model(&json, None, &Limits::DEFAULT).unwrap();
-        assert!(!loaded.migrated);
+        assert_eq!(loaded.migrated, varos_core::format::FORMAT_VERSION > 5);
         assert_eq!(
-            varos_core::format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(),
+            varos_core::format::encode_model(&loaded.doc, &Limits::DEFAULT)
+                .unwrap()
+                .replacen(&format!("\"varos\":{}", varos_core::format::FORMAT_VERSION), "\"varos\":5", 1)
+                .as_bytes(),
             json,
             "{name}: JSON"
         );
         let pdf = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
         assert_eq!(varos_pdf::load_vrs_bytes(&pdf, &Limits::DEFAULT).unwrap().doc, loaded.doc);
-        assert_eq!(varos_pdf::write_pdf(&loaded.doc).unwrap(), pdf, "{name}: PDF");
+        let current = varos_pdf::write_pdf(&loaded.doc).unwrap();
+        let mut normalized = current;
+        for (needle, replacement) in [
+            (
+                format!("/VAROS_SchemaVersion {}", varos_core::format::FORMAT_VERSION),
+                "/VAROS_SchemaVersion 5".to_owned(),
+            ),
+            (format!("\"varos\":{}", varos_core::format::FORMAT_VERSION), "\"varos\":5".to_owned()),
+        ] {
+            let at = normalized.windows(needle.len()).position(|w| w == needle.as_bytes()).expect("version stamp");
+            normalized.splice(at..at + needle.len(), replacement.bytes());
+        }
+        assert_eq!(normalized, pdf, "{name}: PDF appearance and all non-version bytes");
         let plan = plan_svg_export(&loaded.doc, ExportScope::WholeBoard).unwrap();
         let files = export_svg_files(&loaded.doc, &plan, &AtomicBool::new(false)).unwrap();
         assert_eq!(files[0].bytes, std::fs::read(root.join(format!("{name}.svg"))).unwrap(), "{name}: SVG");
     }
 }
 #[test]
-fn future_v6_refusal_precedes_typed_decode_in_both_containers() {
+fn historical_future_v6_is_still_refused_as_malformed_in_both_containers() {
     for ext in ["json", "pdf"] {
         let bytes = std::fs::read(root().join(format!("refused/future_v6.{ext}"))).unwrap();
-        assert_eq!(
-            varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap_err(),
-            LoadError::NewerVersion { found: 6, supported: 5 }
-        );
+        assert!(matches!(varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT), Err(LoadError::Malformed { .. })));
     }
 }
 

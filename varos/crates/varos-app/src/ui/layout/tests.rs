@@ -11,6 +11,7 @@ impl raw_window_handle::HasDisplayHandle for NoDisplay {
 fn headless_ui() -> Ui {
     let ctx = egui::Context::default();
     Ui {
+        text_tool: Default::default(),
         ctx: ctx.clone(),
         state: egui_winit::State::new(ctx, egui::ViewportId::ROOT, &NoDisplay, None, None, None),
         repaint_at: None,

@@ -43,7 +43,9 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
             if envelope.api != "1.2"
                 && matches!(
                     command,
-                    EditCommand::SetWandOptions(_)
+                    EditCommand::AddText { .. }
+                        | EditCommand::SetText { .. }
+                        | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
                         | EditCommand::TransformBegin
@@ -66,6 +68,12 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
 /// Preconditions for the headless command path. Interactive callers retain `execute` unchanged.
 pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
+    // ---- Lane G ----
+    match command {
+        AddText { text, parent } => crate::text::check_change(ed, text, None, *parent)?,
+        SetText { id, text } => crate::text::check_change(ed, text, Some(*id), None)?,
+        _ => {}
+    }
     if matches!(
         command,
         InsertTracedPaths { .. }
@@ -149,6 +157,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        AddText { .. } | SetText { .. } => Ok(()),
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());
@@ -797,6 +806,16 @@ pub fn elements(doc: &crate::model::Document, detail: bool) -> BTreeMap<String, 
         let mut v = json!({"id":id,"kind":if n.kind==NodeKind::Layer {"layer"} else {"group"},
             "name":n.name,"bounds":bounds(doc,&doc.node_paths(n.id)),"fill":null,"stroke":null,
             "hidden":n.hidden,"locked":n.locked,"parent":n.parent.map(|id|format!("node:{id}"))});
+        // ---- Lane G: describe source, no engine-derived bounds in core ----
+        if let NodeKind::Text(id) = n.kind {
+            v["kind"] = json!("text");
+            if let Some(text) = doc.text_boxes.iter().find(|t| t.id == id) {
+                v["text"] = json!(text);
+                if let crate::text::TextBoxKind::Area(rect) = text.box_kind {
+                    v["bounds"] = json!([rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]]);
+                }
+            }
+        }
         if detail {
             v["geometry"] = json!(n);
         }

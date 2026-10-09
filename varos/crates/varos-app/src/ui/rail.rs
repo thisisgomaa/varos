@@ -29,6 +29,7 @@ pub(crate) fn tools(ctx: &egui::Context) -> Vec<ToolBtn> {
         tools.insert(at, ToolBtn { kind, tip, tex: icon.texture(ctx), group_end });
     }
     for (kind, icon, tip) in [
+        (ToolKind::Text, Icon::Type, "Type (T)"),
         (ToolKind::Hand, Icon::Hand, "Hand (H)"),
         (ToolKind::Zoom, Icon::ZoomIn, "Zoom (Z); Option-click zooms out; drag frames the area"),
     ] {

@@ -15,6 +15,7 @@ macro_rules! b {
     };
 }
 pub const BINDINGS: &[Binding] = &[
+    b!("KeyT", false, false, false, "Type"),
     b!("KeyN", true, false, false, "New"),
     b!("KeyO", true, false, false, "Open"),
     b!("KeyS", true, false, false, "Save"),

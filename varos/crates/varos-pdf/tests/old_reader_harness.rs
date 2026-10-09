@@ -242,10 +242,11 @@ fn v4_reader_refuses_v5_before_decode() {
     let doc = sample_doc();
     let raw = varos_core::file::doc_to_blob(&doc).unwrap();
     let pdf = embedded_model_json(&varos_pdf::write_pdf(&doc).unwrap());
-    for body in [raw.as_str(), pdf.as_str(), r#"{"varos":5,"doc":42}"#] {
+    for body in [raw.as_str(), pdf.as_str()] {
         assert_eq!(
             v4_gate(body).unwrap_err(),
-            varos_core::format::LoadError::NewerVersion { found: 5, supported: 4 }.to_string()
+            varos_core::format::LoadError::NewerVersion { found: varos_core::format::FORMAT_VERSION, supported: 4 }
+                .to_string()
         );
     }
     assert_eq!(

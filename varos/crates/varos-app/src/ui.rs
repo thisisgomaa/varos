@@ -84,6 +84,7 @@ struct ToolBtn {
     pub(crate) group_end: bool,
 }
 pub struct Ui {
+    pub text_tool: crate::text_product::TextProduct,
     ctx: egui::Context,
     state: egui_winit::State,
     /// When egui wants its next pass (`now` + its repaint delay; `None` = it wants none). The host
@@ -248,6 +249,7 @@ impl Ui {
         };
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None, None);
         Ui {
+            text_tool: Default::default(),
             ctx,
             state,
             repaint_at: None,
@@ -374,6 +376,7 @@ impl Ui {
     pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
         if self.doc_active != active {
             self.picker_board_colors = Default::default();
+            self.text_tool = Default::default();
         }
         self.doc_tabs = tabs;
         self.doc_active = active;
@@ -407,6 +410,10 @@ impl Ui {
     /// K3: commit the open field into `ed` now (before a canvas press, which may change the selection
     /// the field edits). `false` = its text does not parse — it keeps the keyboard; drop the press.
     pub fn commit_fields(&mut self, ed: &mut Editor) -> bool {
+        if let Err(error) = self.text_tool.commit(ed) {
+            self.text_tool.error = Some(error);
+            return false;
+        }
         crate::document_ui::settle(&mut self.document_sheet, ed);
         self.commit_picker_fields(ed)
     }
@@ -522,7 +529,12 @@ impl Ui {
         );
         select_transform::prepare(self, ed);
         self.prepare_picker(ed);
+        self.text_tool.input(&self.ctx, &input, ed, view, ppp, self.board_hole);
         let mut snap = Snap::read(ed);
+        snap.text = self.text_tool.selected_text(ed);
+        if let Some(error) = self.text_tool.error.take() {
+            self.file_status = error;
+        }
         snap.board_colors = self.picker_board_colors.read(
             ed,
             self.color_panel.is_some() && self.picker_layout.drawer_open && self.picker_layout.drawer_tab == 1,
@@ -593,6 +605,7 @@ impl Ui {
         let export_scopes = &mut self.export_scopes;
         let status = if self.file_status.is_empty() { &self.recovery.status } else { &self.file_status };
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
+        let text_tool = &mut self.text_tool;
         let out = self.ctx.run_ui(input, |root| {
             let ctx = root.ctx().clone();
             let ctx = &ctx;
@@ -721,6 +734,7 @@ impl Ui {
                 &mut ab_name_edit,
                 &mut fit_request,
             );
+            text_tool.paint(ctx, view, ppp);
             paint_agent_presence(ctx, view, ppp, hole, &presence);
             build_snap_hud(ctx, view, ppp, hole, &snap_hud);
             build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
@@ -770,6 +784,9 @@ impl Ui {
             }
             true
         });
+        if ops.iter().any(|op| matches!(op, Op::Tool(_))) && self.text_tool.commit(ed).is_err() {
+            ops.retain(|op| !matches!(op, Op::Tool(_)));
+        }
         apply_picker_frame(ed, snap_cfg, ops, &mut self.color_panel);
         layout::sync_picker_open(&mut self.picker_layout, self.color_panel.as_ref());
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output

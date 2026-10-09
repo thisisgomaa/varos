@@ -50,7 +50,11 @@ impl Raster {
 /// Render artwork once at the physical canvas size, without selection overlays.
 pub fn rasterize_canvas(snapshot: &Document, size: [u32; 2], pan: [f32; 2], ppu: f32) -> Raster {
     let mut editor = Editor::new();
-    editor.replace_doc(snapshot.clone());
+    let doc = match varos_text_layout::outline_document(snapshot) {
+        Ok(doc) => doc,
+        Err(e) => return failed_raster(vec![e]),
+    };
+    editor.replace_doc(doc);
     let scene = build_scene(&editor, ppu);
     if !scene.errors.is_empty() {
         return failed_raster(scene.errors);
@@ -90,7 +94,11 @@ fn sample_canvas(editor: &Editor, world: [f32; 2], ppu: f32) -> Rgba {
 pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
     let (w, h) = (size[0].max(1), size[1].max(1));
     let mut editor = Editor::new();
-    editor.replace_doc(Arc::try_unwrap(snapshot).unwrap_or_else(|snapshot| (*snapshot).clone()));
+    let doc = match varos_text_layout::outline_document(&snapshot) {
+        Ok(doc) => doc,
+        Err(e) => return failed_raster(vec![e]),
+    };
+    editor.replace_doc(doc);
     let scene = build_scene(&editor, 1.0);
     if !scene.errors.is_empty() {
         return failed_raster(scene.errors);
@@ -126,7 +134,7 @@ pub fn rasterize_artboard_checked(
     let Some((size, scale)) = page_fit([page.w, page.h], max_size) else {
         return Ok(None);
     };
-    let mut doc = Arc::try_unwrap(snapshot).unwrap_or_else(|snapshot| (*snapshot).clone());
+    let mut doc = varos_text_layout::outline_document(&snapshot)?;
     // a transparent page paints a faint ghost paper on canvas (`scene::AB_GHOST`) so it reads on the
     // dark board; a page image has no board behind it, so that canvas aid is dropped from this copy
     for ab in &mut doc.artboards {

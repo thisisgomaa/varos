@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) struct Snap {
+    pub(crate) text: Option<varos_core::text::TextBox>,
     pub(crate) tool: ToolKind,
     pub(crate) name: String,
     pub(crate) sel: bool,
@@ -114,6 +115,7 @@ impl Snap {
         };
         let inspection = ed.stroke_inspection.read(ed);
         Snap {
+            text: None,
             tool: ed.tool,
             name,
             sel,

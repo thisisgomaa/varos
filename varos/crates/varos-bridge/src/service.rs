@@ -1109,19 +1109,20 @@ impl Service {
                 "name",
                 "geometry",
                 "stroke_style",
+                "text",
             ]
             .contains(&f.as_str())
         }) {
             return Err(Error::new("invalid_argument", format!("unknown describe field {f}")));
         }
-        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style") {
+        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style" || f == "text") {
             return Err(Error::new("unsupported", "stroke_style requires API 1.2"));
         }
         // state alone or with object fields retains its API 1.0 object meaning.
         let board_fields = fields.iter().any(|f| ["metadata", "artboards", "selection"].contains(&f.as_str()));
         let object_fields = fields
             .iter()
-            .any(|f| ["bounds", "paint", "parent", "name", "geometry", "stroke_style"].contains(&f.as_str()));
+            .any(|f| ["bounds", "paint", "parent", "name", "geometry", "stroke_style", "text"].contains(&f.as_str()));
         // Preserve the existing dedicated board pages and object-only wire shapes.
         let legacy_board = v.ids.is_none()
             && ((!fields.is_empty() && fields.iter().all(|f| ["metadata", "artboards"].contains(&f.as_str())))

@@ -37,6 +37,8 @@ pub enum PaintTarget {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToolKind {
+    // ---- Lane G ----
+    Text,
     Object,
     Direct,
     Pen,

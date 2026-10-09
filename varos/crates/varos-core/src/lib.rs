@@ -38,3 +38,7 @@ pub mod document_setup;
 pub mod placement;
 pub mod select_transform;
 pub mod trace;
+
+// ---- Lane G ----
+pub mod text;
+pub mod text_format;
