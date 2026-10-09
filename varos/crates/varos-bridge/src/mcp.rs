@@ -411,3 +411,61 @@ pub fn serve<T: Transport>(
     }
     Ok(())
 }
+
+/// Explicit 1.2 schema projection; legacy tools() remains byte-frozen.
+pub fn tools_for(api: &str) -> Value {
+    let mut out = tools();
+    if api != "1.2" {
+        return out;
+    }
+    let style = stroke_style_schema();
+    if let Some(tools) = out["tools"].as_array_mut() {
+        for tool in tools {
+            let name = tool["name"].as_str().unwrap_or("").to_owned();
+            tool["inputSchema"]["properties"]["api"] = json!({"const":"1.2"});
+            if name == "describe" {
+                if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
+                    fields.push(json!("stroke_style"));
+                }
+            }
+            if name == "edit" {
+                let schema = &mut tool["inputSchema"];
+                schema["$defs"]["set_paint"]["properties"]["stroke_style"] = style.clone();
+                schema["$defs"]["set_stroke_style"] = object(
+                    json!({"verb":{"const":"set_stroke_style"},"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string","pattern":"^path:[1-9][0-9]*$"}},"stroke_style":style}),
+                    &["verb", "ids", "stroke_style"],
+                );
+                if let Some(ops) = schema["$defs"]["operation"]["anyOf"].as_array_mut() {
+                    ops.push(json!({"$ref":"#/$defs/set_stroke_style"}));
+                }
+                // API 1.2 accepts the contract's `op` spelling, or the retained `verb`, but never both.
+                if let Some(defs) = schema["$defs"].as_object_mut() {
+                    for definition in defs.values_mut() {
+                        if let Some(value) = definition["properties"]["verb"].get("const").cloned() {
+                            definition["properties"]["op"] = json!({"const":value});
+                            if let Some(required) = definition["required"].as_array_mut() {
+                                required.retain(|v| v != "verb");
+                            }
+                            if let Some(original) = definition.as_object_mut().and_then(|d| d.remove("oneOf")) {
+                                definition["allOf"] = json!([{"oneOf":original}]);
+                            }
+                            definition["oneOf"] = json!([{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+pub fn stroke_style_schema() -> Value {
+    let arrows = object(
+        json!({"start":{"anyOf":[{"enum":varos_core::stroke::ArrowHead::ALL},{"type":"null"}],"default":null},"end":{"anyOf":[{"enum":varos_core::stroke::ArrowHead::ALL},{"type":"null"}],"default":null},"scale_start":{"type":"number","minimum":0.01,"maximum":100,"default":1},"scale_end":{"type":"number","minimum":0.01,"maximum":100,"default":1},"align":{"enum":["Tip","Extend"],"default":"Tip"}}),
+        &[],
+    );
+    object(
+        json!({"cap":{"enum":["Butt","Round","Square"],"default":"Round"},"join":{"enum":["Miter","Round","Bevel"],"default":"Round"},"miter_limit":{"type":"number","minimum":1,"maximum":1000,"default":10},"dash":{"type":"array","items":{"anyOf":[{"const":0},{"type":"number","minimum":0.0001,"maximum":1000000}]},"anyOf":[{"minItems":0,"maxItems":0},{"minItems":2,"maxItems":2},{"minItems":4,"maxItems":4},{"minItems":6,"maxItems":6}],"default":[],"description":"0, 2, 4 or 6 entries; positive entries >= 0.0001; every dash/gap pair has positive sum"},"dash_phase":{"type":"number","minimum":-1000000,"maximum":1000000,"default":0},"align_dashes_to_corners":{"type":"boolean","default":false},"align":{"enum":["Center","Inside","Outside"],"default":"Center"},"arrows":arrows}),
+        &[],
+    )
+}

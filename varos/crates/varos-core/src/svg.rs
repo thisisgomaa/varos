@@ -2,6 +2,7 @@
 //! No disk I/O. Coordinates remain world-space; viewBox equals artboard bounds. WholeBoard is
 //! the headless `--all` equivalent. Paint order/transforms/nearest clips mirror PDF; opacity
 //! follows scene::Group (isolation before knockout). SVG knockout uses a luminance mask.
+mod stroke;
 use crate::flatten::{control_bbox, Rect};
 use crate::format::{check_structure, validate::authored, Limits};
 use crate::model::{Anchor, Document, NodeKind, Path, Xform};
@@ -45,11 +46,13 @@ pub enum ExportError {
     ActiveArtboardHidden,
     NothingToExport,
     InvalidDocument(String),
+    LimitExceeded,
     InvalidPage,
 }
 impl fmt::Display for ExportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::LimitExceeded => f.write_str("limit_exceeded: stroke geometry budget"),
             Self::Cancelled => f.write_str("The export was cancelled."),
             Self::NeedsArtboards => f.write_str("This board has no artboards. Export the whole board instead."),
             Self::NoVisibleArtboards => f.write_str("Every artboard is hidden."),
@@ -83,7 +86,7 @@ fn check_document(doc: &Document) -> Result<(), ExportError> {
             continue;
         }
         let b = control_bbox(doc, pi);
-        let pad = if p.stroke.solid().is_some() { p.stroke_width * 0.5 } else { 0.0 };
+        let pad = if p.stroke.solid().is_some() { crate::geom::painted_padding(p) } else { 0.0 };
         let extent = [b.0 - pad, b.1 - pad, b.2 + pad, b.3 + pad];
         if extent.iter().any(|v| !v.is_finite())
             || !(extent[2] - extent[0]).is_finite()
@@ -140,6 +143,25 @@ pub fn export_svg_files_with_report(
     if plan.pages.is_empty() {
         return Err(ExportError::NothingToExport);
     }
+    let mut report = crate::ExportReport::default();
+    let mut stroke_budget = crate::stroke::evaluate::StrokeBudget::default();
+    for p in &doc.paths {
+        if !p.stroke_style.is_default() {
+            let coverage =
+                crate::stroke::evaluate(p, 0.01, &|| cancel.load(Ordering::Relaxed)).map_err(stroke_error)?;
+            for _ in &plan.pages {
+                stroke_budget.charge(&coverage).map_err(stroke_error)?;
+            }
+            report.notes.extend(coverage.report.notes);
+            if !stroke::native(p) {
+                report.notes.push(crate::ExportNote {
+                    kind: "stroke_baked".into(),
+                    object_id: Some(p.id),
+                    message: "SVG: aligned, fitted, dotted, degenerate or arrowed coverage".into(),
+                });
+            }
+        }
+    }
     let mut files = Vec::with_capacity(plan.pages.len());
     for page in &plan.pages {
         cancelled(cancel)?;
@@ -155,8 +177,16 @@ pub fn export_svg_files_with_report(
         }
         files.push(SvgFile { page: page.clone(), bytes: write_page(doc, page, cancel)?.into_bytes() });
     }
-    Ok((files, crate::ExportReport::default()))
+    Ok((files, report))
 }
+fn stroke_error(e: crate::stroke::StrokeError) -> ExportError {
+    match e {
+        crate::stroke::StrokeError::LimitExceeded => ExportError::LimitExceeded,
+        crate::stroke::StrokeError::Cancelled => ExportError::Cancelled,
+        _ => ExportError::InvalidDocument(e.to_string()),
+    }
+}
+
 fn cancelled(c: &AtomicBool) -> Result<(), ExportError> {
     if c.load(Ordering::Relaxed) {
         Err(ExportError::Cancelled)
@@ -178,11 +208,13 @@ fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Drawn<'a>> {
         return None;
     }
     let fill = p.fill.solid().filter(|_| p.anchors.len() >= 3);
-    let stroke = p.stroke.solid().filter(|_| p.anchors.len() >= 2 && p.stroke_width > 0.0);
+    let stroke = p.stroke.solid().filter(|_| {
+        (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty())) && p.stroke_width > 0.0
+    });
     if fill.is_none() && stroke.is_none() {
         return None;
     }
-    let pad = if stroke.is_some() { p.stroke_width * 0.5 } else { 0.0 };
+    let pad = if stroke.is_some() { crate::geom::painted_padding(p) } else { 0.0 };
     let b = control_bbox(doc, pi);
     Some(Drawn {
         p,
@@ -317,7 +349,11 @@ fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<St
                 }
             }
             open = ancestors;
-            paint(&mut out, d);
+            if d.p.stroke_style.is_default() {
+                paint(&mut out, d);
+            } else {
+                stroke::paint(&mut out, d)?;
+            }
         }
         for _ in open {
             out.push_str("</g>\n");

@@ -45,7 +45,12 @@ fn walk(ty: &Type, defs: &HashMap<String, Vec<Type>>, seen: &mut HashSet<String>
 #[test]
 fn serde_document_node_path_have_no_byte_blobs() {
     let mut defs = HashMap::new();
-    for source in [include_str!("../src/model.rs"), include_str!("../src/geom.rs"), include_str!("../src/units.rs")] {
+    for source in [
+        include_str!("../src/model.rs"),
+        include_str!("../src/geom.rs"),
+        include_str!("../src/units.rs"),
+        include_str!("../src/stroke.rs"),
+    ] {
         for item in syn::parse_file(source).unwrap().items {
             match item {
                 Item::Struct(s) => {
@@ -56,6 +61,9 @@ fn serde_document_node_path_have_no_byte_blobs() {
                         e.ident.to_string(),
                         e.variants.iter().flat_map(|v| v.fields.iter().map(|f| f.ty.clone())).collect(),
                     );
+                }
+                Item::Macro(m) if m.mac.path.is_ident("wire_enum") => {
+                    defs.insert(m.mac.tokens.to_string().split(',').next().unwrap().trim().to_owned(), vec![]);
                 }
                 Item::Type(t) => {
                     defs.insert(t.ident.to_string(), vec![*t.ty]);

@@ -434,6 +434,9 @@ pub struct Editor {
     pub space: bool,
     pub cur_fill: Option<Rgba>,
     pub cur_stroke: Option<Rgba>,
+    /// Transient checked stroke-edit diagnostic; never persisted or part of undo.
+    pub stroke_error: Option<String>,
+    pub stroke_inspection: crate::stroke::inspection::InspectionCache,
     pub cur_sw: f32,
     pub paint: PaintTarget,
     pub recent_colors: Vec<Rgba>, // picker MRU — newest first, deduped, cap 12; ephemeral (not serialized)
@@ -493,6 +496,8 @@ impl Editor {
             space: false,
             cur_fill: Some(DEFAULT_FILL),
             cur_stroke: Some(DEFAULT_STROKE),
+            stroke_error: None,
+            stroke_inspection: Default::default(),
             cur_sw: 2.0,
             paint: PaintTarget::Fill,
             recent_colors: vec![],
@@ -586,6 +591,18 @@ impl Editor {
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
             // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
+            let p = &self.doc.paths[pi];
+            if !p.stroke_style.is_default() {
+                let in_fill = p.fill.solid().is_some() && self.doc.point_in_path(pi, lp);
+                let in_stroke = crate::stroke::evaluate(p, 0.25 / f64::from(self.ppu.max(0.0001)), &|| false)
+                    .is_ok_and(|c| crate::stroke::evaluate::contains(&c.rings, lp, edge_r));
+                if (in_fill || in_stroke)
+                    && self.stroke_mask_rings(id).iter().all(|rings| crate::stroke::evaluate::contains(rings, pos, 0.0))
+                {
+                    return Some(id);
+                }
+                continue;
+            }
             let reach = edge_r + painted_half_width(&self.doc.paths[pi]);
             if !ctrl_bbox_near(&self.doc.paths[pi], lp, reach) {
                 continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
@@ -771,6 +788,40 @@ impl Editor {
         }
         base
     }
+    fn stroke_mask_rings(&self, pid: u32) -> Vec<Vec<Vec<Pt>>> {
+        let mut masks = Vec::new();
+        let mut current = self.doc.node_of_path(pid);
+        while let Some(id) = current {
+            let Some(node) = self.doc.node(id) else {
+                break;
+            };
+            if node.role.is_mask_group() {
+                let rings = node
+                    .mask_child
+                    .map(|mask| {
+                        self.doc
+                            .node_paths(mask)
+                            .into_iter()
+                            .filter_map(|pid| self.doc.pidx(pid))
+                            .flat_map(|pi| {
+                                std::iter::once(self.doc.world_outline_px(pi, self.ppu))
+                                    .chain(
+                                        self.doc.paths[pi]
+                                            .holes
+                                            .iter()
+                                            .map(|h| self.doc.world_ring_px(h, pi, self.ppu)),
+                                    )
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                masks.push(rings);
+            }
+            current = node.parent;
+        }
+        masks
+    }
     /// Does a path touch / fall inside a marquee rect? Illustrator rule (QW1 / Astra F08): the marquee
     /// must touch the PAINTED geometry — (a) any piece of the outline or a hole rim, grown by the painted
     /// stroke half-width, crosses the rect (a segment test, so a thin marquee across a long edge counts
@@ -783,6 +834,41 @@ impl Editor {
         // chords ~4 screen px, so the polyline hugs the drawn curve at any zoom.
         let p = &self.doc.paths[pi];
         let xf = self.doc.unit_xform(p.id);
+        if !p.stroke_style.is_default() {
+            let r = (x0, y0, x1, y1);
+            let masks = self.stroke_mask_rings(p.id);
+            let touches = |mut rings: Vec<Vec<Pt>>| {
+                for mask in &masks {
+                    let Ok(clipped) = crate::stroke::evaluate::intersect(&rings, mask) else {
+                        return false;
+                    };
+                    rings = clipped;
+                }
+                rings.iter().any(|ring| {
+                    ring.iter()
+                        .zip(ring.iter().cycle().skip(1))
+                        .take(ring.len())
+                        .any(|(a, b)| seg_touches_rect(*a, *b, r))
+                }) || crate::stroke::evaluate::contains(&rings, [(x0 + x1) * 0.5, (y0 + y1) * 0.5], 0.0)
+            };
+            let stroke =
+                crate::stroke::evaluate(p, 0.25 / f64::from(self.ppu.max(0.0001)), &|| false).is_ok_and(|coverage| {
+                    touches(
+                        coverage
+                            .rings
+                            .into_iter()
+                            .map(|ring| ring.into_iter().map(|point| xf.apply(point)).collect())
+                            .collect(),
+                    )
+                });
+            let fill = p.fill.solid().is_some()
+                && touches(
+                    std::iter::once(self.doc.world_outline_px(pi, self.ppu))
+                        .chain(p.holes.iter().map(|h| self.doc.world_ring_px(h, pi, self.ppu)))
+                        .collect(),
+                );
+            return stroke || fill;
+        }
         let poly = self.doc.outline_px(pi, self.ppu);
         if poly.is_empty() {
             return false;
@@ -3509,6 +3595,7 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        self.stroke_error = None;
         self.doc = doc;
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
         self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
@@ -3530,6 +3617,9 @@ impl Editor {
     // ---------- shared mutating ops (used by tools) ----------
     pub fn reverse(&mut self, pi: usize) {
         self.doc.paths[pi].anchors.reverse();
+        let arrows = &mut self.doc.paths[pi].stroke_style.arrows;
+        std::mem::swap(&mut arrows.start, &mut arrows.end);
+        std::mem::swap(&mut arrows.scale_start, &mut arrows.scale_end);
         for a in &mut self.doc.paths[pi].anchors {
             std::mem::swap(&mut a.hin, &mut a.hout);
         }

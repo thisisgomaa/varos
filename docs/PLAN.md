@@ -168,3 +168,4 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
+| 2.1 v5 StrokeStyle + provisional 2.2 controls (Lane H) | implemented (provisional UI, owner design review pending) | uncommitted worktree `feat/p2-stroke` | First merged writer takes v5; original 29-head library; no GUI/install/commit/push. Moderator merges stroke_adapter with p2-geom. Gates and limitations: worktree REPORT.md. |
