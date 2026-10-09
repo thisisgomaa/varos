@@ -5,6 +5,7 @@
 use crate::editor::{Editor, ToolKind};
 use crate::geom::Pt;
 
+pub mod anchor_edit;
 pub mod convert;
 pub mod direct;
 pub mod eyedropper;
@@ -22,6 +23,10 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
         ToolKind::Pen => &pen::Pen,
         ToolKind::Direct => &direct::Direct,
         ToolKind::Object => &object::Object,
+        ToolKind::Hand | ToolKind::Zoom => &object::Object, // view gestures are owned by the app
+        ToolKind::Lasso => &anchor_edit::Lasso,
+        ToolKind::AddAnchor => &anchor_edit::Add,
+        ToolKind::DeleteAnchor => &anchor_edit::Delete,
         ToolKind::Convert => &convert::Convert,
         ToolKind::Eyedropper => &eyedropper::Eyedropper,
         ToolKind::Rotate | ToolKind::Scale => &rotate::Transform,

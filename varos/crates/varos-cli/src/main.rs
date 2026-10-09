@@ -1,4 +1,5 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
+mod document;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -13,7 +14,19 @@ use varos_core::{
 };
 
 // The only CLI verb table. No desktop binary names or UI routing are changed.
-const VERBS: &[&str] = &["describe", "snapshot", "export-pdf", "save-as", "apply", "new", "diff"];
+const VERBS: &[&str] = &[
+    "describe",
+    "snapshot",
+    "export-pdf",
+    "export-svg",
+    "export-raster",
+    "print",
+    "clipboard-out",
+    "save-as",
+    "apply",
+    "new",
+    "diff",
+];
 struct Failure {
     reason: String,
     index: Option<usize>,
@@ -97,6 +110,14 @@ struct Args {
     preset: Option<String>,
     artboard: Option<String>,
     in_place: bool,
+    format: Option<String>,
+    scale: Option<f32>,
+    ppi: Option<f32>,
+    quality: Option<u8>,
+    transparent: Option<bool>,
+    ids: Option<String>,
+    marks: Option<String>,
+    bleed: Option<f32>,
 }
 fn parse(args: Vec<OsString>, allowed: &[&str], count: usize) -> Result<Args, String> {
     let mut result = Args {
@@ -108,6 +129,14 @@ fn parse(args: Vec<OsString>, allowed: &[&str], count: usize) -> Result<Args, St
         preset: None,
         artboard: None,
         in_place: false,
+        format: None,
+        scale: None,
+        ppi: None,
+        quality: None,
+        transparent: None,
+        ids: None,
+        marks: None,
+        bleed: None,
     };
     let mut it = args.into_iter();
     let mut seen = std::collections::HashSet::new();
@@ -131,6 +160,25 @@ fn parse(args: Vec<OsString>, allowed: &[&str], count: usize) -> Result<Args, St
             }
             let value = it.next().ok_or_else(|| format!("missing value for {text}"))?;
             match text.as_ref() {
+                "--format" => result.format = Some(value.into_string().map_err(|_| "format must be UTF-8")?),
+                "--scale" => result.scale = Some(value.to_str().and_then(|v| v.parse().ok()).ok_or("invalid scale")?),
+                "--ppi" => result.ppi = Some(value.to_str().and_then(|v| v.parse().ok()).ok_or("invalid ppi")?),
+                "--quality" => {
+                    result.quality = Some(
+                        value
+                            .to_str()
+                            .and_then(|v| v.parse().ok())
+                            .filter(|v| *v <= 100)
+                            .ok_or("quality must be 0-100")?,
+                    )
+                }
+                "--transparent" => {
+                    result.transparent =
+                        Some(value.to_str().and_then(|v| v.parse().ok()).ok_or("transparent must be true or false")?)
+                }
+                "--ids" => result.ids = Some(value.into_string().map_err(|_| "ids must be UTF-8")?),
+                "--marks" => result.marks = Some(value.into_string().map_err(|_| "marks must be UTF-8")?),
+                "--bleed" => result.bleed = Some(value.to_str().and_then(|v| v.parse().ok()).ok_or("invalid bleed")?),
                 "--out" => result.out = Some(value.into()),
                 "--batch" => result.batch = Some(value.into()),
                 "--detail" => result.detail = Some(value.into_string().map_err(|_| "detail id must be UTF-8")?),
@@ -164,6 +212,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("expected a subcommand: {}", VERBS.join(", ")).into());
     }
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
+    if ["document-info", "document-setup", "save-template", "new-from-template"].contains(&verb.as_str()) {
+        return document::run(&verb, args).map_err(Into::into);
+    }
     if !VERBS.contains(&verb.as_str()) {
         return Err(format!("unknown subcommand {verb}; expected {}", VERBS.join(", ")).into());
     }
@@ -182,19 +233,125 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             write_output(&out, &png)?;
             Ok(json!({"out":out.to_string_lossy(),"width":size,"height":size,"bytes":png.len()}))
         }
-        "export-pdf" | "save-as" => {
-            let a = parse(args, if verb == "export-pdf" { &["--out", "--artboard"] } else { &["--out"] }, 1)?;
+        "export-svg" | "export-raster" => {
+            use varos_raster::export::{self, Format, Options, Scope};
+            let a = parse(
+                args,
+                if verb == "export-svg" {
+                    &["--out", "--artboard"]
+                } else {
+                    &["--out", "--artboard", "--format", "--scale", "--ppi", "--transparent", "--quality"]
+                },
+                1,
+            )?;
+            let out = required(a.out, "--out")?;
+            if same_file(&a.positional[0], &out)? {
+                return Err("Export cannot replace the editable input.".to_owned().into());
+            }
+            if a.scale.is_some() && a.ppi.is_some() {
+                return Err("Choose scale or ppi, not both.".to_owned().into());
+            }
+            let doc = varos_pdf::load_vrs(&a.positional[0])?;
+            let scope = match a.artboard.as_deref() {
+                Some("all") => Scope::AllArtboards,
+                Some("whole") => Scope::WholeBoard,
+                Some(id) => Scope::Artboard(
+                    id.strip_prefix("artboard:")
+                        .unwrap_or(id)
+                        .parse()
+                        .map_err(|_| "Invalid artboard id.".to_owned())?,
+                ),
+                None if doc.artboards.is_empty() => Scope::WholeBoard,
+                None => Scope::AllArtboards,
+            };
+            let format =
+                if verb == "export-svg" { Format::Svg } else { Format::parse(a.format.as_deref().unwrap_or("png"))? };
+            if verb == "export-raster" && format.vector() {
+                return Err("export-raster requires a raster format.".to_owned().into());
+            }
+            let options = Options {
+                format,
+                scale: a.ppi.map(|p| p / 72.0).or(a.scale).unwrap_or(1.0),
+                quality: a.quality.unwrap_or(90),
+                transparent: a.transparent.unwrap_or(true),
+            };
+            options.validate()?;
+            let assets = export::plan(&doc, &scope)?;
+            if assets.len() > 1 && !out.is_dir() {
+                return Err("Multiple artboards require --out to be an existing folder.".to_owned().into());
+            }
+            let mut files = vec![];
+            for asset in assets {
+                let output = export::encode(&asset, &options, &AtomicBool::new(false))?;
+                let path = if out.is_dir() { out.join(&output.name) } else { out.clone() };
+                // Deliverables never silently overwrite a prior export.
+                if path.exists() {
+                    return Err("Output exists; choose a fresh filename.".to_owned().into());
+                }
+                write_fresh_output(&path, &output.bytes)?;
+                for note in &output.report.notes {
+                    eprintln!("{}: {}", note.kind, note.message);
+                }
+                files.push(json!({"out":path.to_string_lossy(), "bytes":output.bytes.len(), "report":output.report}));
+            }
+            Ok(json!({"files":files}))
+        }
+        "clipboard-out" => {
+            let a = parse(args, &["--out", "--ids"], 1)?;
+            let out = required(a.out, "--out")?;
+            if out.exists() {
+                return Err("clipboard output directory already exists".to_owned().into());
+            }
+            let ids = required(a.ids, "--ids")?
+                .split(',')
+                .map(|v| {
+                    v.strip_prefix("path:")
+                        .unwrap_or(v)
+                        .parse::<u32>()
+                        .map_err(|_| "ids must be comma-separated path:N".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let doc = varos_pdf::load_vrs(&a.positional[0])?;
+            let clipboard = varos_core::clipboard::Clipboard::capture(&doc, &ids);
+            let vectors = varos_pdf::clipboard_vectors(&doc, &clipboard)?;
+            let png = varos_raster::clipboard_png(vectors.document, vectors.rect)?;
+            std::fs::create_dir(&out).map_err(|e| e.to_string())?;
+            for (name, bytes) in [
+                ("selection.varos.json", vectors.internal),
+                ("selection.pdf", vectors.pdf),
+                ("selection.svg", vectors.svg),
+                ("selection.png", png),
+            ] {
+                write_output(&out.join(name), &bytes)?;
+            }
+            Ok(
+                json!({"out":out.to_string_lossy(),"flavours":["org.varos.clipboard","com.adobe.pdf","public.svg-image","public.png"]}),
+            )
+        }
+        "export-pdf" | "print" | "save-as" => {
+            let a = parse(
+                args,
+                if verb != "save-as" {
+                    &["--out", "--artboard", "--preset", "--ppi", "--marks", "--bleed"]
+                } else {
+                    &["--out"]
+                },
+                1,
+            )?;
             let out = required(a.out, "--out")?;
             // An export is a model-free PDF: writing it over the input would destroy the editable
             // document. Refused outright (there is no `--in-place` for export), checked before loading.
-            if verb == "export-pdf" && same_file(&a.positional[0], &out)? {
+            if verb != "save-as" && same_file(&a.positional[0], &out)? {
                 return Err("--out resolves to the input; an export would replace the editable document with a \
                      model-free PDF. Choose another --out"
                     .to_owned()
                     .into());
             }
             let mut doc = varos_pdf::load_vrs(&a.positional[0])?;
-            let pdf = if verb == "export-pdf" {
+            let mut export_report = None;
+            let show_report =
+                verb == "print" || a.preset.is_some() || a.ppi.is_some() || a.marks.is_some() || a.bleed.is_some();
+            let pdf = if verb != "save-as" {
                 // `--artboard artboard:N` (or N): export that one page — the stable id (format 4) mapped
                 // to the ActiveArtboard scope on this in-memory copy; the file itself is not changed
                 let scope = match &a.artboard {
@@ -213,10 +370,40 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
                 };
                 let plan = varos_pdf::plan_pdf_export(&doc, scope).map_err(|e| e.to_string())?;
                 {
-                    let (bytes, report) = varos_pdf::export_pdf_bytes_with_report(&doc, &plan, &AtomicBool::new(false))
-                        .map_err(|e| e.to_string())?;
-                    for note in report.notes {
-                        eprintln!("{}: {}", note.kind, note.message);
+                    let preset = match a.preset.as_deref() {
+                        None | Some("custom") => varos_pdf::PdfPreset::Custom,
+                        Some("print") => varos_pdf::PdfPreset::Print,
+                        Some("press") => varos_pdf::PdfPreset::Press,
+                        Some("smallest") => varos_pdf::PdfPreset::Smallest,
+                        _ => return Err("preset must be print, press, smallest or custom".to_owned().into()),
+                    };
+                    let mut options = varos_pdf::PdfOptions::preset(preset);
+                    if let Some(ppi) = a.ppi {
+                        if !ppi.is_finite() || ppi < 1.0 || ppi.fract() != 0.0 || ppi > u32::MAX as f32 {
+                            return Err("PDF ppi must be a positive integer".to_owned().into());
+                        }
+                        options.image_ppi = ppi as u32;
+                    }
+                    if let Some(bleed) = a.bleed {
+                        options.boxes.bleed = true;
+                        options.boxes.bleed_override = Some(bleed);
+                    }
+                    if let Some(marks) = a.marks {
+                        for mark in marks.split(',') {
+                            match mark {
+                                "crop" => options.marks.crop = true,
+                                "registration" => options.marks.registration = true,
+                                "page_info" => options.marks.page_info = true,
+                                "none" => {}
+                                _ => return Err("unknown mark".to_owned().into()),
+                            }
+                        }
+                    }
+                    let (bytes, report) =
+                        varos_pdf::export_pdf_with_options(&doc, &plan, &options, &AtomicBool::new(false))
+                            .map_err(|e| e.to_string())?;
+                    if show_report {
+                        export_report = Some(report);
                     }
                     bytes
                 }
@@ -224,7 +411,11 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
                 varos_pdf::write_pdf_checked(&doc, &Limits::DEFAULT)?
             };
             write_output(&out, &pdf)?;
-            Ok(json!({"out":out.to_string_lossy(),"bytes":pdf.len()}))
+            let mut result = json!({"out":out.to_string_lossy(),"bytes":pdf.len()});
+            if let Some(report) = export_report {
+                result["report"] = json!(report);
+            }
+            Ok(result)
         }
         "apply" => {
             let a = parse(args, &["--batch", "--out", "--in-place"], 1)?;
@@ -337,6 +528,18 @@ fn write_output(path: &Path, bytes: &[u8]) -> Result<(), String> {
         return Ok(());
     }
     Err("could not reserve an output temp file".into())
+}
+
+/// Exclusive destination creation for new deliverables; a raced destination remains intact.
+fn write_fresh_output(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let temp = parent.join(format!(".varos-export-{}-{}.tmp", std::process::id(), bytes.len()));
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|e| e.to_string())?;
+    let result = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    let result = result.and_then(|()| std::fs::hard_link(&temp, path));
+    let _ = std::fs::remove_file(&temp);
+    result.map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

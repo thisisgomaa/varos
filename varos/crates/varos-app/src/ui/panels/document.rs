@@ -53,7 +53,9 @@ pub(crate) fn document_section(
         if IA_RULERS.show(ui, kit::IconState::Toggle(s.rulers_on)) {
             ops.push(Op::ToggleRulers);
         }
-        IA_GRID.show(ui, kit::IconState::DisabledReason("Grid dots — always shown (no switch yet)"));
+        if IA_GRID.show(ui, kit::IconState::Toggle(s.snap_config.show_grid)) {
+            ops.push(Op::View(varos_core::editor::view_commands::ViewAction::ToggleGrid));
+        }
         strip_divider(ui);
         if IA_GUIDES.show(ui, kit::IconState::Toggle(s.guides_on)) {
             ops.push(Op::ToggleGuides);
@@ -92,8 +94,43 @@ pub(crate) fn document_section(
             ui.label(RichText::new("Colour RGB").color(MUTED).font(t::small()));
         });
     });
+    fields::num(
+        ui,
+        w,
+        Lab::Letter("Grid"),
+        "Grid spacing",
+        s.snap_config.grid_spacing,
+        2,
+        1.0,
+        0.01..=1.0e6,
+        ops,
+        |spacing| {
+            Op::View(varos_core::editor::view_commands::ViewAction::Grid {
+                spacing,
+                subdivisions: s.snap_config.grid_subdivisions,
+            })
+        },
+    );
+    fields::num(
+        ui,
+        w,
+        Lab::Letter("Sub"),
+        "Grid subdivisions",
+        s.snap_config.grid_subdivisions as f32,
+        0,
+        1.0,
+        1.0..=100.0,
+        ops,
+        |v| {
+            Op::View(varos_core::editor::view_commands::ViewAction::Grid {
+                spacing: s.snap_config.grid_spacing,
+                subdivisions: v.round() as u32,
+            })
+        },
+    );
     hsep(ui, w);
     let (recovery, commands) = recovery;
+    super::autosave::settings(ui, w, recovery, commands);
     if toggle_row(ui, w, "Recovery (all documents)", recovery.enabled) {
         commands.push(AppCommand::SetRecoveryEnabled(!recovery.enabled));
     }

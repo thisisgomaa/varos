@@ -116,6 +116,11 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         nonnegative(b.w, &label, "width")?;
         nonnegative(b.h, &label, "height")?;
         nonnegative(b.bleed, &label, "bleed")?;
+        if let Some(edges) = b.bleed_edges {
+            for edge in edges {
+                nonnegative(edge, &label, "bleed edge")?;
+            }
+        }
         if let Some(c) = b.page_color {
             color(c, &label, "page color")?;
         }
@@ -126,6 +131,12 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
     point(doc.ruler_origin, "document", "ruler origin")?;
     finite(doc.snap.radius_px, "snapping", "radius")?;
     finite(doc.snap.grid_spacing, "snapping", "grid spacing")?;
+    if !(0.01..=1e6).contains(&doc.snap.grid_spacing) {
+        return Err(range(doc.snap.grid_spacing, "snapping", "grid spacing"));
+    }
+    if !(1..=100).contains(&doc.snap.grid_subdivisions) {
+        return Err(range(doc.snap.grid_subdivisions as f32, "snapping", "grid subdivisions"));
+    }
     crate::board::check_document(doc).map_err(Invalid::Board)?;
     finite(doc.units.ppi, "document", "ppi")?;
     if doc.units.ppi <= 0.0 {

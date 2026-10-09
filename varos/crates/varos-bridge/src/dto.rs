@@ -11,6 +11,7 @@ fn page() -> usize {
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Capabilities(Capabilities),
+    WindowMemory(Capabilities),
     ListBoards(ListBoards),
     Describe(Describe),
     Select(Select),
@@ -21,6 +22,13 @@ pub enum Request {
     Save(FileEffect),
     SaveAs(FileEffect),
     ExportPdf(FileEffect),
+    ExportSvg(FileEffect),
+    ExportRaster(FileEffect),
+    SaveTemplate(FileEffect),
+    NewFromTemplate(FileEffect),
+    Print(FileEffect),
+    Copy(FileEffect),
+    Cut(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -63,7 +71,26 @@ pub struct Describe {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct Lasso {
+    pub points: Vec<[f32; 2]>,
+    pub objects: bool,
+    pub additive: bool,
+}
+fn selection_mode<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<varos_core::editor::wave::Selection>, D::Error> {
+    varos_core::editor::wave::Selection::deserialize(d).map(Some)
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Select {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paste_remembers_layers: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lasso: Option<Lasso>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "selection_mode")]
+    pub mode: Option<varos_core::editor::wave::Selection>,
     pub api: String,
     pub request_id: String,
     pub board: String,
@@ -159,6 +186,46 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    View {
+        ids: Vec<String>,
+        action: varos_core::editor::view_commands::ViewAction,
+    },
+    AnchorType {
+        ids: Vec<String>,
+        anchor: u32,
+        smooth: bool,
+    },
+    InsertAnchor {
+        ids: Vec<String>,
+        segment: usize,
+        t: f32,
+    },
+    DeleteAnchor {
+        ids: Vec<String>,
+        anchor: u32,
+    },
+    DistributeMode {
+        ids: Vec<String>,
+        mode: Alignment,
+    },
+    Object {
+        ids: Vec<String>,
+        action: varos_core::editor::wave::ObjectAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchors: Option<Vec<u32>>,
+    },
+    DistributeSpacing {
+        ids: Vec<String>,
+        axis: Axis,
+        gap: f32,
+    },
+    /// API 1.2 only; one field per operation makes history intent explicit.
+    DocumentSetup {
+        field: String,
+        value: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artboard: Option<String>,
+    },
     AddShape {
         kind: ShapeKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -227,6 +294,12 @@ pub enum Operation {
         ids: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         local: Option<String>,
+    },
+    Clip {
+        ids: Vec<String>,
+    },
+    ReleaseClip {
+        ids: Vec<String>,
     },
     Ungroup {
         ids: Vec<String>,
@@ -361,7 +434,8 @@ pub enum Order {
 impl Operation {
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::AddShape { .. }
+            Self::DocumentSetup { .. }
+            | Self::AddShape { .. }
             | Self::AddPath { .. }
             | Self::AddArtboard { .. }
             | Self::ResizeArtboard { .. }
@@ -372,7 +446,14 @@ impl Operation {
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
-            Self::Move { ids, .. }
+            Self::View { ids, .. }
+            | Self::AnchorType { ids, .. }
+            | Self::InsertAnchor { ids, .. }
+            | Self::DeleteAnchor { ids, .. }
+            | Self::DistributeMode { ids, .. }
+            | Self::Object { ids, .. }
+            | Self::DistributeSpacing { ids, .. }
+            | Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
             | Self::Resize { ids, .. }
             | Self::Rotate { ids, .. }
@@ -381,6 +462,8 @@ impl Operation {
             | Self::Align { ids, .. }
             | Self::Distribute { ids, .. }
             | Self::Group { ids, .. }
+            | Self::Clip { ids }
+            | Self::ReleaseClip { ids }
             | Self::Ungroup { ids }
             | Self::Order { ids, .. } => ids,
         }
@@ -420,7 +503,24 @@ impl Operation {
             if target.starts_with('a') && target.contains('@') && !target.starts_with("artboard:"))
     }
     pub fn destructive(&self) -> bool {
-        matches!(self, Self::Delete { .. } | Self::Ungroup { .. } | Self::DeleteArtboard { .. })
+        matches!(
+            self,
+            Self::Delete { .. }
+                | Self::View {
+                    action: varos_core::editor::view_commands::ViewAction::ClearGuides
+                        | varos_core::editor::view_commands::ViewAction::ConvertArtboards,
+                    ..
+                }
+                | Self::Ungroup { .. }
+                | Self::DeleteArtboard { .. }
+                | Self::Object {
+                    action: varos_core::editor::wave::ObjectAction::Join
+                        | varos_core::editor::wave::ObjectAction::CleanUp
+                        | varos_core::editor::wave::ObjectAction::CompoundMake
+                        | varos_core::editor::wave::ObjectAction::CompoundRelease,
+                    ..
+                }
+        )
     }
 }
 fn snapshot_width() -> u32 {
@@ -492,9 +592,12 @@ pub struct Status {
     #[serde(deserialize_with = "present_string")]
     pub cursor: Option<String>,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileEffect {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_value")]
+    pub options: Option<serde_json::Value>,
     #[serde(default = "api")]
     pub api: String,
     pub request_id: String,
@@ -504,12 +607,88 @@ pub struct FileEffect {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ppi: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transparent: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<u8>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportFileWire {
+    #[serde(default, deserialize_with = "present_value")]
+    options: Option<serde_json::Value>,
+    #[serde(default = "api")]
+    pub api: String,
+    pub request_id: String,
+    pub board: String,
+    pub expected_rev: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub format: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub scale: Option<Option<f32>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub ppi: Option<Option<f32>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub transparent: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "present_export_option")]
+    pub quality: Option<Option<u8>>,
+}
+// Preserve both null-field presence and Serde's duplicate-field rejection.
+fn present_export_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    d: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
+}
+impl<'de> Deserialize<'de> for FileEffect {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = ExportFileWire::deserialize(deserializer)?;
+        if wire.api != "1.2" {
+            for (key, present) in [
+                ("options", wire.options.is_some()),
+                ("format", wire.format.is_some()),
+                ("scale", wire.scale.is_some()),
+                ("ppi", wire.ppi.is_some()),
+                ("transparent", wire.transparent.is_some()),
+                ("quality", wire.quality.is_some()),
+            ] {
+                if present {
+                    return Err(serde::de::Error::custom(format!("unknown field `{key}` for legacy file request")));
+                }
+            }
+        }
+        Ok(Self {
+            options: wire.options,
+            api: wire.api,
+            request_id: wire.request_id,
+            board: wire.board,
+            expected_rev: wire.expected_rev,
+            path: wire.path,
+            scope: wire.scope,
+            format: wire.format.flatten(),
+            scale: wire.scale.flatten(),
+            ppi: wire.ppi.flatten(),
+            transparent: wire.transparent.flatten(),
+            quality: wire.quality.flatten(),
+        })
+    }
+}
+
 impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
         match self {
             Self::Capabilities(_) => "capabilities",
+            Self::WindowMemory(_) => "window_memory",
             Self::ListBoards(_) => "list_boards",
             Self::Describe(_) => "describe",
             Self::Select(_) => "select",
@@ -520,11 +699,18 @@ impl Request {
             Self::Save(_) => "save",
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
+            Self::ExportSvg(_) => "export_svg",
+            Self::ExportRaster(_) => "export_raster",
+            Self::SaveTemplate(_) => "save_template",
+            Self::NewFromTemplate(_) => "new_from_template",
+            Self::Print(_) => "print",
+            Self::Copy(_) => "copy",
+            Self::Cut(_) => "cut",
         }
     }
     pub fn api(&self) -> &str {
         match self {
-            Self::Capabilities(v) => &v.api,
+            Self::Capabilities(v) | Self::WindowMemory(v) => &v.api,
             Self::ListBoards(v) => &v.api,
             Self::Describe(v) => &v.api,
             Self::Select(v) => &v.api,
@@ -532,14 +718,32 @@ impl Request {
             Self::History(v) => &v.api,
             Self::RequestStatus(v) => &v.api,
             Self::Snapshot(v) => &v.api,
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => &v.api,
+            Self::Save(v)
+            | Self::SaveAs(v)
+            | Self::ExportPdf(v)
+            | Self::ExportSvg(v)
+            | Self::ExportRaster(v)
+            | Self::SaveTemplate(v)
+            | Self::NewFromTemplate(v)
+            | Self::Print(v)
+            | Self::Copy(v)
+            | Self::Cut(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some(&v.board),
+            Self::Save(v)
+            | Self::SaveAs(v)
+            | Self::ExportPdf(v)
+            | Self::ExportSvg(v)
+            | Self::ExportRaster(v)
+            | Self::SaveTemplate(v)
+            | Self::NewFromTemplate(v)
+            | Self::Print(v)
+            | Self::Copy(v)
+            | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -551,7 +755,16 @@ impl Request {
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some((&v.request_id, v.expected_rev)),
+            Self::Save(v)
+            | Self::SaveAs(v)
+            | Self::ExportPdf(v)
+            | Self::ExportSvg(v)
+            | Self::ExportRaster(v)
+            | Self::SaveTemplate(v)
+            | Self::NewFromTemplate(v)
+            | Self::Print(v)
+            | Self::Copy(v)
+            | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,
         }
     }
@@ -631,5 +844,39 @@ impl Reply {
     }
     pub fn failure(error: Error) -> Self {
         Self { ok: false, result: None, request_id: None, board: None, rev: None, undo_steps: 0, error: Some(error) }
+    }
+}
+
+#[cfg(test)]
+mod export_file_compat_tests {
+    use super::*;
+    #[test]
+    fn legacy_file_decode_still_rejects_duplicate_fields() {
+        let request = r#"{"tool":"save","arguments":{"api":"1.0","board":"b1","request_id":"r1","expected_rev":0,"path":"first","path":"second"}}"#;
+        assert!(serde_json::from_str::<Request>(request).is_err());
+    }
+    #[test]
+    fn legacy_file_requests_reject_every_raster_field_including_null() {
+        for tool in ["save", "save_as", "export_pdf"] {
+            for api in [None, Some("1.0"), Some("1.1")] {
+                for key in ["format", "scale", "ppi", "transparent", "quality"] {
+                    for value in [Value::Null, serde_json::json!(90)] {
+                        let mut args = serde_json::json!({"board":"b1","request_id":"r","expected_rev":0});
+                        if let Some(api) = api {
+                            args["api"] = api.into();
+                        }
+                        args[key] = value;
+                        assert!(crate::mcp::decode_tool(tool, args.clone()).is_err(), "{tool}: {args}");
+                        assert!(serde_json::from_value::<Request>(serde_json::json!({"tool":tool,"arguments":args}))
+                            .is_err());
+                    }
+                }
+            }
+        }
+        assert!(crate::mcp::decode_tool(
+            "export_raster",
+            serde_json::json!({"api":"1.2","board":"b1","request_id":"r","expected_rev":0,"quality":90,"format":"jpeg"})
+        )
+        .is_ok());
     }
 }

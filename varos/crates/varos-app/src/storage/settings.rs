@@ -1,5 +1,4 @@
-//! App-wide settings store (work order `DFS_S2_S3_START_RECENTS_RECOVERY.md` §3.4): today just the
-//! Recovery on/off switch. Same atomic-JSON-with-a-version-field contract as [`super::recents`]
+//! App-wide recovery and file-autosave preferences (settings v2, migrates v1). Same atomic-JSON-with-a-version-field contract as [`super::recents`]
 //! (missing → default; corrupt → default + warning, bad bytes kept aside as `settings.json.bad`;
 //! unrecognised version → default + warning, file left untouched).
 use std::io;
@@ -10,26 +9,83 @@ use serde::{Deserialize, Serialize};
 use super::checksum::new_nonce;
 use super::durable::{self, FsPort, WriteError, WriteOutcome};
 
-const SETTINGS_VERSION: u32 = 1;
+const SETTINGS_VERSION: u32 = 2;
+
+pub const AUTOSAVE_DEFAULT_SECONDS: u64 = 120;
+pub fn valid_autosave_interval(seconds: u64) -> bool {
+    (30..=1800).contains(&seconds)
+}
+fn default_interval() -> u64 {
+    AUTOSAVE_DEFAULT_SECONDS
+}
+fn enabled() -> bool {
+    true
+}
 
 /// App-wide settings, persisted across launches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     /// Autosave/recovery snapshots (§3.5/§3.6). On by default.
     pub recovery_enabled: bool,
+    #[serde(default)]
+    pub paste_remembers_layers: bool,
+    #[serde(default = "enabled")]
+    pub autosave_enabled: bool,
+    #[serde(default = "default_interval")]
+    pub autosave_interval_seconds: u64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { recovery_enabled: true }
+        Settings {
+            recovery_enabled: true,
+            paste_remembers_layers: false,
+            autosave_enabled: true,
+            autosave_interval_seconds: AUTOSAVE_DEFAULT_SECONDS,
+        }
     }
 }
 
 impl Settings {
-    /// Save atomically as `{"version":1,"recovery_enabled":…}`.
+    /// Save v2 atomically, retaining additive keys owned by other settings lanes.
     pub fn save(&self, fs: &dyn FsPort, path: &Path) -> Result<WriteOutcome, WriteError> {
-        let doc = OnDisk { version: SETTINGS_VERSION, recovery_enabled: self.recovery_enabled };
-        let bytes = serde_json::to_vec_pretty(&doc).expect("Settings always serializes");
+        if !valid_autosave_interval(self.autosave_interval_seconds) {
+            return Err(WriteError::Create(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Autosave interval must be 30–1800 seconds",
+            )));
+        }
+        let doc = OnDisk {
+            version: SETTINGS_VERSION,
+            recovery_enabled: self.recovery_enabled,
+            paste_remembers_layers: self.paste_remembers_layers,
+            autosave_enabled: self.autosave_enabled,
+            autosave_interval_seconds: self.autosave_interval_seconds,
+        };
+        // Additive lane settings: preserve keys owned by sibling lanes at the FIFO writer.
+        let mut value = match fs.read(path) {
+            Ok(bytes) => {
+                let existing: OnDisk = serde_json::from_slice(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+                if existing.version != 1 && existing.version != SETTINGS_VERSION {
+                    return Err(WriteError::Write(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Settings version changed; existing settings were kept.",
+                    )));
+                }
+                serde_json::from_slice::<serde_json::Value>(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => return Err(WriteError::Write(e)),
+        };
+        let owned =
+            serde_json::to_value(doc).map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+        if let (Some(existing), Some(owned)) = (value.as_object_mut(), owned.as_object()) {
+            existing.extend(owned.clone());
+        }
+        let bytes = serde_json::to_vec_pretty(&value)
+            .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
         durable::write_replace(fs, path, &bytes, &new_nonce())
     }
 }
@@ -38,6 +94,12 @@ impl Settings {
 struct OnDisk {
     version: u32,
     recovery_enabled: bool,
+    #[serde(default)]
+    paste_remembers_layers: bool,
+    #[serde(default = "enabled")]
+    autosave_enabled: bool,
+    #[serde(default = "default_interval")]
+    autosave_interval_seconds: u64,
 }
 
 #[derive(Deserialize)]
@@ -63,18 +125,27 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
         Ok(p) => p,
         Err(_) => return corrupt(fs, path),
     };
-    if probe.version != SETTINGS_VERSION {
+    if probe.version != 1 && probe.version != SETTINGS_VERSION {
         return (Settings::default(), Some(version_mismatch_warning(probe.version)));
     }
     match serde_json::from_slice::<OnDisk>(&bytes) {
-        Ok(doc) => (Settings { recovery_enabled: doc.recovery_enabled }, None),
+        Ok(doc) if valid_autosave_interval(doc.autosave_interval_seconds) => (
+            Settings {
+                recovery_enabled: doc.recovery_enabled,
+                paste_remembers_layers: doc.paste_remembers_layers,
+                autosave_enabled: doc.autosave_enabled,
+                autosave_interval_seconds: doc.autosave_interval_seconds,
+            },
+            None,
+        ),
+        Ok(_) => corrupt(fs, path),
         Err(_) => corrupt(fs, path),
     }
 }
 
 /// See `recents::version_mismatch_warning` — same code review P2 fix: word the direction
 /// correctly instead of a bare `!=` that would call an older file "newer" once `SETTINGS_VERSION`
-/// is ever bumped past 1. Neither direction is migrated; only the wording changes.
+/// is ever bumped past 1. Version 1 is migrated; unsupported versions are left untouched.
 fn version_mismatch_warning(found: u32) -> String {
     let word = if found > SETTINGS_VERSION { "a newer" } else { "an older" };
     format!("Settings were saved by {word} version of Varos (format {found}); they were left unchanged.")
@@ -98,6 +169,23 @@ mod tests {
     use crate::storage::testdir::TestDir;
 
     #[test]
+    fn settings_writer_preserves_sibling_keys_and_refuses_changed_version() {
+        let d = TestDir::new("settings-siblings");
+        let path = d.join("settings.json");
+        std::fs::write(&path, br#"{"version":1,"recovery_enabled":true,"sibling":{"enabled":true}}"#).unwrap();
+        Settings { recovery_enabled: false, paste_remembers_layers: true, ..Settings::default() }
+            .save(&RealFs, &path)
+            .unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["sibling"], serde_json::json!({"enabled":true}));
+        assert_eq!(saved["paste_remembers_layers"], true);
+        let future = br#"{"version":3,"recovery_enabled":true,"sibling":42}"#;
+        std::fs::write(&path, future).unwrap();
+        assert!(Settings::default().save(&RealFs, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), future);
+    }
+
+    #[test]
     fn settings_default_recovery_on() {
         assert!(Settings::default().recovery_enabled);
         let d = TestDir::new("settings-missing");
@@ -110,11 +198,26 @@ mod tests {
     fn settings_round_trip() {
         let d = TestDir::new("settings-roundtrip");
         let path = d.join("settings.json");
-        let s = Settings { recovery_enabled: false };
+        let s = Settings {
+            recovery_enabled: false,
+            paste_remembers_layers: true,
+            autosave_enabled: false,
+            autosave_interval_seconds: 300,
+        };
         s.save(&RealFs, &path).unwrap();
         let (loaded, warning) = load(&RealFs, &path);
         assert!(warning.is_none());
         assert_eq!(loaded, s);
+    }
+
+    #[test]
+    fn old_v1_settings_default_paste_remembers_layers_off() {
+        let d = TestDir::new("settings-old-paste");
+        let path = d.join("settings.json");
+        std::fs::write(&path, br#"{"version":1,"recovery_enabled":false}"#).unwrap();
+        let (s, warning) = load(&RealFs, &path);
+        assert!(warning.is_none());
+        assert!(!s.recovery_enabled && !s.paste_remembers_layers);
     }
 
     #[test]
@@ -154,5 +257,39 @@ mod tests {
         assert!(warning.is_some());
         assert_eq!(std::fs::read(&bad).unwrap(), b"first corrupt bytes", "the first crash's evidence survives");
         assert_eq!(std::fs::read(&path).unwrap(), b"second corrupt bytes");
+    }
+}
+
+#[cfg(test)]
+mod autosave_tests {
+    use super::*;
+    use crate::storage::{durable::RealFs, testdir::TestDir};
+    #[test]
+    fn migration_bounds_and_future_preservation() {
+        let d = TestDir::new("autosave-settings");
+        let path = d.join("settings.json");
+        std::fs::write(
+            &path,
+            br#"{"version":1,"recovery_enabled":false,"paste_remembers_layers":true,"window_memory":{"x":12}}"#,
+        )
+        .unwrap();
+        let (s, w) = load(&RealFs, &path);
+        assert!(w.is_none());
+        assert!(!s.recovery_enabled);
+        assert!(s.paste_remembers_layers);
+        assert!(s.autosave_enabled);
+        assert_eq!(s.autosave_interval_seconds, 120);
+        s.save(&RealFs, &path).unwrap();
+        assert_eq!(load(&RealFs, &path).0, s);
+        let stored: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored["window_memory"]["x"], 12);
+        for n in [0, 29, 1801, u64::MAX] {
+            let invalid = Settings { autosave_interval_seconds: n, ..s };
+            assert!(invalid.save(&RealFs, &path).is_err());
+        }
+        let future = br#"{"version":99,"recovery_enabled":false,"future":42}"#;
+        std::fs::write(&path, future).unwrap();
+        assert!(s.save(&RealFs, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), future);
     }
 }

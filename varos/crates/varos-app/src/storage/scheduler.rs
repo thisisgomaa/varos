@@ -68,6 +68,7 @@ pub struct SessionRecovery {
     /// This rid may hold data on disk (set when a snapshot is issued, cleared by a successful
     /// retire), so a clean session must retire it.
     pub has_copies: bool,
+    pub retain_after_autosave: bool,
     pub in_flight: Option<InFlight>,
     /// When the pending change is due for a copy (first change + 30 s; not moved by later edits).
     pub next_deadline: Option<Instant>,
@@ -89,6 +90,7 @@ impl SessionRecovery {
             next_seq: 1,
             last_snapshot_rev: None,
             has_copies: false,
+            retain_after_autosave: false,
             in_flight: None,
             next_deadline: None,
             backoff_until: None,
@@ -219,7 +221,7 @@ impl Scheduler {
             if p.clean {
                 r.next_deadline = None;
                 r.waiting = false;
-                if r.has_copies {
+                if r.has_copies && !r.retain_after_autosave {
                     match ready_at {
                         Some(b) => self.wake_at(b),
                         None => out.push(r.issue(JobKind::Retire, p.sid, p.rev, now)),
@@ -707,5 +709,26 @@ mod tests {
             s.retire_for_close(1, &mut a.rec, t0 + 31 * S),
             Some(Action::Retire { sid: 1, rid: "rid1".into(), seq: 2 })
         );
+    }
+}
+
+#[cfg(test)]
+mod autosave_retention_tests {
+    use super::*;
+    #[test]
+    fn autosave_clean_keeps_generations_manual_save_can_retire() {
+        let mut r = SessionRecovery::new("retained".into());
+        r.has_copies = true;
+        r.retain_after_autosave = true;
+        let mut scheduler = Scheduler::default();
+        let now = Instant::now();
+        fn probe(r: &mut SessionRecovery) -> Probe<'_, u32> {
+            Probe { sid: 1, rev: 7, clean: true, transaction_open: false, recovery: r }
+        }
+        assert!(scheduler.observe(now, [probe(&mut r)]).is_empty());
+        assert!(r.has_copies);
+        assert!(scheduler.next_wake().is_none());
+        r.retain_after_autosave = false;
+        assert!(matches!(scheduler.observe(now, [probe(&mut r)]).as_slice(), [Action::Retire { .. }]));
     }
 }

@@ -272,7 +272,7 @@ fn atomic_batch_is_one_undo_step_with_redo_and_preserved_prior_history() {
         let mut ed = Editor::new();
         ed.replace_doc(varos_pdf::load_vrs(&fixture(f)).unwrap());
         let initial = ed.doc.clone();
-        ed.execute(EditCommand::SetBoardName("prior history".into()));
+        ed.execute_ui(EditCommand::SetBoardName("prior history".into()));
         let before = ed.doc.clone();
         let rev = ed.rev;
         ed.execute_batch(vec![
@@ -295,7 +295,7 @@ fn atomic_batch_is_one_undo_step_with_redo_and_preserved_prior_history() {
 fn failed_batch_preserves_editor_selection_revision_and_redo() {
     let mut ed = Editor::new();
     ed.replace_doc(varos_pdf::load_vrs(&fixture(FIXTURES[0])).unwrap());
-    ed.execute(EditCommand::SetBoardName("redo survives".into()));
+    ed.execute_ui(EditCommand::SetBoardName("redo survives".into()));
     let future = ed.doc.clone();
     ed.undo();
     let original = ed.doc.clone();
@@ -720,4 +720,131 @@ fn diff_keeps_sub_decimal_geometry_changes_despite_describe_rounding() {
         varos_core::bridge::describe(&changed, Some("path:10")).unwrap()["opacity"]
     );
     assert_eq!(varos_core::bridge::diff(&doc, &changed)["changed"][0]["id"], "path:10");
+}
+
+#[test]
+fn headless_apply_makes_and_releases_a_clipping_mask() {
+    let dir = Scratch::new();
+    let input = dir.path("source.vrs");
+    let masked = dir.path("masked.vrs");
+    let released = dir.path("released.vrs");
+    let batch = dir.path("clip.json");
+    let mut ed = Editor::new();
+    let mut ids = vec![];
+    for x in [0., 10.] {
+        ids.push(
+            ed.try_execute_created(EditCommand::AddShape {
+                kind: varos_core::model::ShapeKind::Rect,
+                bounds: [x, x, 40., 40.],
+                parent: None,
+                fill: Some([1.; 4]),
+                stroke: None,
+                stroke_width: 0.,
+                opacity: 1.,
+                name: None,
+            })
+            .unwrap(),
+        );
+    }
+    varos_pdf::save_vrs(&ed.doc, &input).unwrap();
+    std::fs::write(&batch, json!({"api":"0.1","commands":[{"SelectPaths":ids},"ClipMake"]}).to_string()).unwrap();
+    cli(
+        &[
+            "apply".as_ref(),
+            input.as_os_str(),
+            "--batch".as_ref(),
+            batch.as_os_str(),
+            "--out".as_ref(),
+            masked.as_os_str(),
+        ],
+        true,
+    );
+    let doc = varos_pdf::load_vrs(&masked).unwrap();
+    let group = doc.nodes.iter().find(|n| n.role == varos_core::model::GroupRole::Clip).unwrap().id;
+    std::fs::write(&batch, json!({"api":"0.1","commands":[{"SelectPaths":ids},"ClipRelease"]}).to_string()).unwrap();
+    cli(
+        &[
+            "apply".as_ref(),
+            masked.as_os_str(),
+            "--batch".as_ref(),
+            batch.as_os_str(),
+            "--out".as_ref(),
+            released.as_os_str(),
+        ],
+        true,
+    );
+    let doc = varos_pdf::load_vrs(&released).unwrap();
+    assert_eq!(doc.node(group).unwrap().role, varos_core::model::GroupRole::Normal);
+    assert_eq!(doc.paths[doc.pidx(ids[1]).unwrap()].fill, varos_core::model::Paint::None);
+}
+
+#[test]
+fn pdf_options_and_headless_print_match_the_writer() {
+    let scratch = Scratch::new();
+    let input = fixture("v3_board_meta.vrs");
+    let doc = varos_pdf::load_vrs(&input).unwrap();
+    let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::default_scope(&doc)).unwrap();
+    let mut options = varos_pdf::PdfOptions::preset(varos_pdf::PdfPreset::Press);
+    options.image_ppi = 150;
+    options.marks.crop = true;
+    options.boxes.bleed_override = Some(3.);
+    let expected =
+        varos_pdf::export_pdf_with_options(&doc, &plan, &options, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+    for verb in ["export-pdf", "print"] {
+        let out = scratch.path(&format!("{verb}.pdf"));
+        let result = cli(
+            &[
+                verb.as_ref(),
+                input.as_os_str(),
+                "--out".as_ref(),
+                out.as_os_str(),
+                "--preset".as_ref(),
+                "press".as_ref(),
+                "--ppi".as_ref(),
+                "150".as_ref(),
+                "--marks".as_ref(),
+                "crop".as_ref(),
+                "--bleed".as_ref(),
+                "3".as_ref(),
+            ],
+            true,
+        );
+        assert_eq!(std::fs::read(out).unwrap(), expected.0);
+        assert_eq!(result["report"], json!(expected.1));
+    }
+    let out = scratch.path("bad.pdf");
+    cli(
+        &["export-pdf".as_ref(), input.as_os_str(), "--out".as_ref(), out.as_os_str(), "--ppi".as_ref(), "0".as_ref()],
+        false,
+    );
+    assert!(!out.exists());
+}
+#[test]
+fn headless_clipboard_bundle_matches_the_shared_flavour_writers() {
+    let scratch = Scratch::new();
+    let input = fixture("v3_board_meta.vrs");
+    let doc = varos_pdf::load_vrs(&input).unwrap();
+    let id = doc.paths[0].id;
+    let out = scratch.path("clipboard");
+    cli(
+        &[
+            "clipboard-out".as_ref(),
+            input.as_os_str(),
+            "--ids".as_ref(),
+            format!("path:{id}").as_ref(),
+            "--out".as_ref(),
+            out.as_os_str(),
+        ],
+        true,
+    );
+    let clip = varos_core::clipboard::Clipboard::capture(&doc, &[id]);
+    let vectors = varos_pdf::clipboard_vectors(&doc, &clip).unwrap();
+    for (name, bytes) in [
+        ("selection.varos.json", vectors.internal),
+        ("selection.pdf", vectors.pdf),
+        ("selection.svg", vectors.svg),
+        ("selection.png", varos_raster::clipboard_png(vectors.document, vectors.rect).unwrap()),
+    ] {
+        assert_eq!(std::fs::read(out.join(name)).unwrap(), bytes);
+    }
 }

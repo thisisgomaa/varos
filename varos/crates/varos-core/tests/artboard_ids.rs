@@ -47,9 +47,9 @@ fn presets_and_editor_creation_sites_allocate_unique_ids_from_the_counter() {
     assert_eq!((d.artboards[0].w, d.artboards[0].h), (1080.0, 1920.0));
     let mut ed = Editor::new();
     ed.replace_doc(d);
-    ed.execute(EditCommand::AddArtboard);
-    ed.execute(EditCommand::DuplicateArtboard(0));
-    ed.execute(EditCommand::SetArtboardCount(5));
+    ed.execute_ui(EditCommand::AddArtboard);
+    ed.execute_ui(EditCommand::DuplicateArtboard(0));
+    ed.execute_ui(EditCommand::SetArtboardCount(5));
     let all = ids(&ed.doc);
     assert_eq!(all.len(), 5);
     let mut sorted = all.clone();
@@ -80,13 +80,13 @@ fn drawing_a_page_with_the_artboard_tool_gives_it_an_id_at_commit() {
 #[test]
 fn undo_never_lets_a_new_page_reuse_a_removed_pages_id() {
     let mut ed = Editor::new();
-    ed.execute(EditCommand::AddArtboard);
+    ed.execute_ui(EditCommand::AddArtboard);
     let first = ed.doc.artboards[0].id;
-    ed.execute(EditCommand::AddArtboard);
+    ed.execute_ui(EditCommand::AddArtboard);
     let second = ed.doc.artboards[1].id;
     ed.undo(); // the second page is gone, the counter rolls back with the snapshot
     assert_eq!(ids(&ed.doc), vec![first]);
-    ed.execute(EditCommand::AddArtboard);
+    ed.execute_ui(EditCommand::AddArtboard);
     let third = ed.doc.artboards[1].id;
     assert!(third > second, "high-water: {third} must not reuse {second}");
     ed.undo();

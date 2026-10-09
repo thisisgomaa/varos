@@ -2094,9 +2094,9 @@ mod dead_control_tests {
         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, crate::chrome::TOPBAR.height))
     }
     /// The FULL window `RawInput.screen_rect`: much taller than the bar, so `menu_below`'s
-    /// `Area::constrain(true)` has room to place a dropdown BELOW the bar (see `tab_strip_tests`).
+    /// `Area::constrain(true)` has room for the combined command and document rows BELOW the bar.
     fn screen_rect() -> egui::Rect {
-        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 900.0))
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 1200.0))
     }
     fn press(pos: Pos2, button: PointerButton) -> RawInput {
         RawInput {
@@ -2198,6 +2198,7 @@ mod dead_control_tests {
         fn burger_row(&mut self, k: usize, seps: usize) -> Pos2 {
             const SEP_H: f32 = 9.0; // menu_sep: add_space(4) + a 1px line + add_space(4)
             let top_left = self.open_burger();
+            let k = k + if k >= 10 { 2 } else { 0 }; // two clipping rows precede View
             let y = top_left.y + seps as f32 * SEP_H + k as f32 * MENU_ROW_H + MENU_ROW_H / 2.0;
             egui::pos2(top_left.x + 100.0, y)
         }
@@ -2322,17 +2323,17 @@ mod dead_control_tests {
         // New · Open · Save · Save As · Save a Copy · Revert · Close All | Export · Export Selection ·
         // Home | 3 guide rows | 2 snap rows | Tool rail · …
         let mut bar = Bar::new();
-        let at = bar.burger_row(15, 4);
+        let at = bar.burger_row(16, 4);
         let _ = bar.click(at);
         assert!(!bar.rail, "burger ▸ Tool rail flips the rail");
         let mut bar = Bar::new();
-        let at = bar.burger_row(16, 4);
+        let at = bar.burger_row(17, 4);
         let _ = bar.click(at);
         assert!(!bar.dock, "burger ▸ Control bar flips the control bar");
         let first = varos_app::shell::PanelId::DOCKABLE[0];
         let mut bar = Bar::new();
         let was = bar.shell.is_open(first);
-        let at = bar.burger_row(18, 4);
+        let at = bar.burger_row(19, 4);
         let _ = bar.click(at);
         assert_ne!(bar.shell.is_open(first), was, "burger ▸ {} toggles it", first.title());
     }
@@ -2340,7 +2341,7 @@ mod dead_control_tests {
     #[test]
     fn burger_colour_picker_uses_native_window_route() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(17, 4);
+        let at = bar.burger_row(18, 4);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::TogglePicker)]);
         assert_eq!(
@@ -2352,7 +2353,7 @@ mod dead_control_tests {
     #[test]
     fn burger_reset_layout_uses_the_same_command_as_the_native_window_menu() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(22, 5);
+        let at = bar.burger_row(23, 5);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::ResetLayout)]);
         assert_eq!(
@@ -2376,7 +2377,7 @@ mod dead_control_tests {
         for (k, seps, name, flag) in rows {
             let mut bar = Bar::new();
             let before = bar.snap;
-            let at = bar.burger_row(k, seps);
+            let at = bar.burger_row(k + 1, seps);
             let _ = bar.click(at);
             assert_ne!(flag(&bar.snap), flag(&before), "burger ▸ {name} flips its flag");
             let others = rows.iter().filter(|r| r.2 != name).all(|r| (r.3)(&bar.snap) == (r.3)(&before));
@@ -2394,7 +2395,7 @@ mod dead_control_tests {
         let (mut from_menu, mut from_key) = (Editor::new(), Editor::new());
         let mut bar = Bar::new();
         bar.snap = from_menu.doc.snap;
-        let at = bar.burger_row(10, 2);
+        let at = bar.burger_row(11, 2);
         let _ = bar.click(at);
         super::apply_frame(&mut from_menu, bar.snap, vec![]);
         // …and the key
@@ -2408,7 +2409,7 @@ mod dead_control_tests {
         let before = ed.doc.snap;
         let mut bar = Bar::new();
         bar.snap = before;
-        let at = bar.burger_row(10, 2);
+        let at = bar.burger_row(11, 2);
         let _ = bar.click(at);
         super::apply_frame(&mut ed, bar.snap, vec![super::Op::ToggleSnapping]);
         assert_eq!(ed.doc.snap.enabled, !before.enabled, "the panel's ToggleSnapping wins");
@@ -2460,7 +2461,7 @@ mod band_backdrop_tests {
                     false,
                     true,
                 );
-                build_statusbar(root, 0, 1, 1.0, &None, &mut fit, "");
+                build_statusbar(root, (0, 1), 1.0, &None, &mut fit, "", &mut vec![]);
                 let mid = root.available_rect_before_wrap();
                 paint_void_underlay(root.painter(), mid, None);
                 let mut host = |panel: varos_app::shell::PanelId, ui: &mut egui::Ui| {
@@ -3087,6 +3088,8 @@ pub(super) mod icon_action_tests {
     /// such as the picker's live preview are not button emissions and are skipped.
     fn describe(op: &Op) -> Option<String> {
         Some(match op {
+            Op::NewLayer(v) => format!("NewLayer({v})"),
+            Op::View(action) => format!("View({action:?})"),
             Op::LayerGroup => "LayerGroup".into(),
             Op::LayerDeleteSel => "LayerDeleteSel".into(),
             Op::AbAdd => "AbAdd".into(),
@@ -3149,7 +3152,7 @@ pub(super) mod icon_action_tests {
             ed.pointer_up();
             ed.set_tool(ToolKind::Object);
             ed.select_all();
-            ed.execute(varos_core::command::EditCommand::AddArtboard);
+            ed.execute_ui(varos_core::command::EditCommand::AddArtboard);
             ed.doc.artboards[0].clip = true;
             let modal = Some(ColorPanel::new(MTarget::Paint(PaintTarget::Fill), None, false));
             let ctx = egui::Context::default();
@@ -3195,7 +3198,7 @@ pub(super) mod icon_action_tests {
                     let s = AbSnap {
                         id: 1,
                         count,
-                        active: 0,
+                        active: usize::from(count == 3),
                         name: "Artboard 1".into(),
                         x: 0.0,
                         y: 0.0,
@@ -3280,6 +3283,20 @@ pub(super) mod icon_action_tests {
         use super::*;
         let two = Scene::Artboard { count: 2, portrait: true };
         vec![
+            (IA_LAYER_NEW, Scene::Layers, vec!["NewLayer(false)"]),
+            (
+                IA_AB_EARLIER,
+                Scene::Artboard { count: 3, portrait: true },
+                vec!["View(ReorderArtboard { id: 1, position: 0 })"],
+            ),
+            (
+                IA_AB_LATER,
+                Scene::Artboard { count: 3, portrait: true },
+                vec!["View(ReorderArtboard { id: 1, position: 2 })"],
+            ),
+            (IA_AB_FIT_ART, two, vec!["View(FitArtboard { id: 1, selected: false })"]),
+            (IA_AB_FIT_SELECTION, two, vec!["View(FitArtboard { id: 1, selected: true })"]),
+            (IA_AB_CONVERT, two, vec!["View(ConvertArtboards)"]),
             (IA_LAYER_GROUP, Scene::Layers, vec!["LayerGroup"]),
             (IA_LAYER_FILTER, Scene::Layers, vec![]),
             (IA_LAYER_DELETE, Scene::Layers, vec!["LayerDeleteSel"]),
@@ -3310,7 +3327,7 @@ pub(super) mod icon_action_tests {
             (IA_SNAP, Scene::Document, vec!["ToggleSnapping"]),
             (IA_GUIDES, Scene::Document, vec!["ToggleGuides"]),
             (IA_RULERS, Scene::Document, vec!["ToggleRulers"]),
-            (IA_GRID, Scene::Document, vec![]),
+            (IA_GRID, Scene::Document, vec!["View(ToggleGrid)"]),
             (IA_GUIDES_LOCK, Scene::Document, vec!["ToggleGuidesLock"]),
             (IA_SMART, Scene::Document, vec!["ToggleSmartGuides"]),
             (IA_POINT, Scene::Document, vec!["ToggleSnapPoint"]),
@@ -3664,8 +3681,8 @@ mod panel_icons_lane2_tests {
         assert_eq!(ed.doc.snap.smart, !initial.smart);
         crate::menu_snap_toggle(&mut ed, crate::chrome::SnapRow::Point);
         crate::menu_snap_toggle(&mut ed, crate::chrome::SnapRow::Grid);
-        ed.execute(EditCommand::ToggleGuidesLocked);
-        ed.execute(EditCommand::ToggleSmartGuides);
+        ed.execute_ui(EditCommand::ToggleGuidesLocked);
+        ed.execute_ui(EditCommand::ToggleSmartGuides);
         check(&ed);
         assert_eq!(ed.doc.snap.grid, initial.grid);
         assert_eq!(ed.doc.snap.key_points, initial.key_points);
@@ -3677,7 +3694,7 @@ mod panel_icons_lane2_tests {
         let mut ed = Editor::new();
         assert_eq!(adjacent_artboard(0, 0, true), None);
         for _ in 0..3 {
-            ed.execute(EditCommand::AddArtboard);
+            ed.execute_ui(EditCommand::AddArtboard);
         }
         apply_ops(&mut ed, vec![Op::AbActive(0)]);
         assert_eq!(adjacent_artboard(0, 3, false), None);
@@ -3713,7 +3730,7 @@ mod panel_icons_lane2_tests {
         varos_app::shell::fonts::install(&ctx);
         varos_app::shell::tokens::apply(&ctx);
         let mut ed = Editor::new();
-        ed.execute(EditCommand::AddArtboard);
+        ed.execute_ui(EditCommand::AddArtboard);
         let rows = build_layer_rows(&ed, &Default::default(), "", 0, &mut Default::default());
         let mut path = rows[0].clone();
         path.kind = LKind::Path;
