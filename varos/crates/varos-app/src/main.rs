@@ -1466,8 +1466,10 @@ fn main() {
     let mut gui = ui::Ui::new(&window);
     // ---- Lane G: async accessibility/update completions wake Wait without idle polling ----
     let release_proxy = event_loop.create_proxy();
+    let immediate_repaint = pacing::ImmediateRepaint::default();
+    let repaint_signal = immediate_repaint.clone();
     gui.accessibility_context().set_request_repaint_callback(move |info| {
-        if info.delay.is_zero() {
+        if repaint_signal.request(info.delay) {
             let _ = release_proxy.send_event(());
         }
     });
@@ -2009,7 +2011,7 @@ fn main() {
                     redraw!("queue");
                 }
                 // ---- Lane G ----
-                if gui.accessibility_context().has_requested_repaint() {
+                if immediate_repaint.take() {
                     redraw!("accessibility-update");
                 }
                 let turn_now = recovery.has_file_done();

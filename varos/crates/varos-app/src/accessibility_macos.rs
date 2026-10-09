@@ -89,6 +89,26 @@ fn toggle_value(value: accesskit::Toggled) -> Option<Retained<AnyObject>> {
     // SAFETY: Foundation's NSNumber factory accepts an int and returns a retained number.
     Some(unsafe { msg_send![class, numberWithInt: value] })
 }
+/// winit's NSView is flipped: AppKit performs the screen-space conversion itself.
+fn view_bounds(bounds: accesskit::Rect) -> NSRect {
+    NSRect::new(NSPoint::new(bounds.x0, bounds.y0), NSSize::new(bounds.width(), bounds.height()))
+}
+fn apply_selection(node: &accesskit::Node, set: impl FnOnce(bool)) {
+    if let Some(selected) = node.is_selected() {
+        set(selected);
+    }
+}
+fn native_value(node: &accesskit::Node) -> Option<Retained<AnyObject>> {
+    if matches!(node.role(), Role::Tab | Role::RadioButton) {
+        if let Some(selected) = node.is_selected() {
+            return toggle_value(if selected { accesskit::Toggled::True } else { accesskit::Toggled::False });
+        }
+    }
+    if let Some(value) = node.toggled().and_then(toggle_value) {
+        return Some(value);
+    }
+    node.value().map(|value| NSString::from_str(value).into_super().into_super())
+}
 pub fn publish(window: &winit::window::Window, ctx: &egui::Context, tree: &TreeUpdate) {
     let Some(mtm) = MainThreadMarker::new() else { return };
     let Ok(handle) = window.window_handle() else { return };
@@ -121,25 +141,16 @@ pub fn publish(window: &winit::window::Window, ctx: &egui::Context, tree: &TreeU
         if let Some(label) = node.label() {
             native.setAccessibilityLabel(Some(&NSString::from_str(label)));
         }
-        if let Some(value) = node.toggled().and_then(toggle_value) {
-            // SAFETY: NSNumber is AppKit's native checkbox/radio value type.
+        apply_selection(node, |selected| native.setAccessibilitySelected(selected));
+        if let Some(value) = native_value(node) {
+            // SAFETY: NSNumber and NSString are supported NSAccessibility value objects.
             unsafe {
                 native.setAccessibilityValue(Some(&value));
-            }
-        } else if let Some(value) = node.value() {
-            let text = NSString::from_str(value);
-            // SAFETY: NSString is a supported NSAccessibility value object.
-            unsafe {
-                native.setAccessibilityValue(Some(&text));
             }
         }
         native.setAccessibilityEnabled(!node.is_disabled());
         if let Some(bounds) = node.bounds() {
-            // egui node bounds are logical top-left coordinates; AppKit screen space is bottom-left.
-            let frame = NSRect::new(
-                NSPoint::new(bounds.x0, view.frame().size.height - bounds.y1),
-                NSSize::new(bounds.width(), bounds.height()),
-            );
+            let frame = view_bounds(bounds);
             if let Some(window) = view.window() {
                 let window_frame = view.convertRect_toView(frame, None);
                 native.setAccessibilityFrame(window.convertRectToScreen(window_frame));
@@ -187,6 +198,39 @@ pub fn publish(window: &winit::window::Window, ctx: &egui::Context, tree: &TreeU
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn flipped_view_bounds_preserve_top_left() {
+        let frame = view_bounds(accesskit::Rect::new(12., 24., 112., 54.));
+        assert_eq!(frame.origin, NSPoint::new(12., 24.));
+        assert_eq!(frame.size, NSSize::new(100., 30.));
+    }
+    #[test]
+    fn native_selection_transfers_both_states_for_tabs_and_list_rows() {
+        for role in [Role::Tab, Role::ListBoxOption] {
+            for selected in [true, false] {
+                let mut node = accesskit::Node::new(role);
+                node.set_selected(selected);
+                let mut native_selected = None;
+                apply_selection(&node, |value| native_selected = Some(value));
+                assert_eq!(native_selected, Some(selected));
+            }
+        }
+        apply_selection(&accesskit::Node::new(Role::Button), |_| panic!("no selected property"));
+    }
+    #[test]
+    fn selected_tabs_use_numeric_values_instead_of_counts() {
+        for selected in [false, true] {
+            for role in [Role::Tab, Role::RadioButton] {
+                let mut node = accesskit::Node::new(role);
+                node.set_selected(selected);
+                node.set_value("42");
+                let value = native_value(&node).unwrap();
+                // SAFETY: selected tabs/radios map to NSNumber.
+                let actual: i32 = unsafe { msg_send![&*value, intValue] };
+                assert_eq!(actual, i32::from(selected));
+            }
+        }
+    }
     #[test]
     fn toggle_values_are_native_numbers() {
         for (toggle, expected) in
