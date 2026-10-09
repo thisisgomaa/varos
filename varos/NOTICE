@@ -26,5 +26,7 @@ VectorCraft crates/tools/src/builder.rs, cut.rs and draw2/anchor.rs @ a469568.
 crates/varos-core/src/select_transform.rs and tools/select_transform.rs adapt transform axes,
 wand selection modes and layer operations from VectorCraft crates/tools/src/xform/{transform.rs,free.rs,wand.rs}
 and crates/engine/src/cmd/layerpanel.rs @ a469568.
+varos-core/src/trace/{mod,quantize,contour,fit}.rs adapts the Image Trace pipeline,
+quantization, contour following and Douglas-Peucker from VectorCraft crates/trace/src @ a469568.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.

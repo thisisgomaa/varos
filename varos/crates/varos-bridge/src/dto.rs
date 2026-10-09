@@ -214,6 +214,13 @@ pub enum Operation {
         ids: Vec<String>,
         action: varos_core::select_transform::LayerAction,
     },
+    TraceRgba {
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+        #[serde(default)]
+        options: varos_core::trace::TraceOptions,
+    },
     AddShape {
         kind: ShapeKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -435,6 +442,7 @@ impl Operation {
     pub fn ids(&self) -> &[String] {
         match self {
             Self::ToolOptions { .. }
+            | Self::TraceRgba { .. }
             | Self::AddShape { .. }
             | Self::AddPath { .. }
             | Self::AddArtboard { .. }
