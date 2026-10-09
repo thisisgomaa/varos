@@ -200,6 +200,7 @@ impl StrokeStyle {
             "scale_start":self.arrows.scale_start,"scale_end":self.arrows.scale_end,"align":self.arrows.align}})
     }
 }
+pub mod canvas;
 pub mod evaluate;
 pub mod heads;
 pub use evaluate::{evaluate, StrokeCoverage, StrokeError};

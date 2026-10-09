@@ -280,9 +280,9 @@ fn rect_intersection(a: R4, b: R4) -> Option<R4> {
 }
 
 /// The whole scene, uncut (no view culling). Used where the entire document must be described —
-/// tests, exports, thumbnails. Shares the cross-frame flatten cache with `build_scene_in_view`.
+/// tests and canvas previews. Export jobs use `build_scene_for_export`. Shares the cross-frame flatten cache with `build_scene_in_view`.
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
-    build_scene_impl(ed, ppu, None, None)
+    build_scene_impl(ed, ppu, None, None, true)
 }
 
 /// P11.2: the canvas scene for a `frame`-sized viewport seen through `view`. Paths whose world bbox
@@ -290,21 +290,29 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
 /// entirely; partially visible paths have their rings and stroke runs clipped to that grown rect, reusing
 /// the artboard clippers. Everything inside the frame renders exactly as `build_scene` would.
 pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None)
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None, true)
 }
 
-/// UI-independent canvas presentation input; exporters use the unstyled entry points.
+/// UI-independent canvas presentation input; exporters use `build_scene_for_export`.
 #[derive(Clone, Copy)]
 pub struct SceneStyle {
     pub checkerboard: [Rgba; 2],
 }
 pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style))
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style), true)
 }
-fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>) -> Scene {
+/// Full-quality scene for raster/export jobs: original tolerance, aggregate budget and diagnostics.
+pub fn build_scene_for_export(ed: &Editor, ppu: f32) -> Scene {
+    build_scene_impl(ed, ppu, None, None, false)
+}
+fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>, canvas: bool) -> Scene {
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
-    let stroke_budget = std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default());
+    let stroke_budget = (!canvas).then(|| std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default()));
     let stroke_errors = std::cell::RefCell::new(Vec::new());
+    if canvas {
+        ed.canvas_stroke_cache.retain_live(&ed.doc);
+    }
+
     let mut s = Scene { grid_step: ed.doc.snap.show_grid.then(|| ed.document_grid_step()), ..Default::default() };
     // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
     // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
@@ -531,16 +539,28 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
         let mut out = Vec::new();
         if !p.stroke_style.is_default() {
             if let Some(color) = p.stroke.solid() {
-                match crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false) {
+                let coverage = if canvas {
+                    ed.canvas_stroke_cache
+                        .lookup(p, ed.doc.unit_xform(p.id), ppu)
+                        .ok_or(crate::stroke::StrokeError::LimitExceeded)
+                } else {
+                    crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false).map(Arc::new)
+                };
+                match coverage {
                     Ok(coverage) => {
-                        if let Err(e) = stroke_budget.borrow_mut().charge(&coverage) {
-                            stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
-                            return out;
+                        if let Some(budget) = &stroke_budget {
+                            if let Err(e) = budget.borrow_mut().charge(&coverage) {
+                                stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                                return out;
+                            }
                         }
-                        stroke_report.borrow_mut().notes.extend(coverage.report.notes);
-                        let xf = ed.doc.unit_xform(p.id);
-                        let rings: Vec<Vec<Pt>> =
-                            coverage.rings.into_iter().map(|r| r.into_iter().map(|q| xf.apply(q)).collect()).collect();
+                        stroke_report.borrow_mut().notes.extend(coverage.report.notes.clone());
+                        let rings = if canvas {
+                            coverage.rings.clone()
+                        } else {
+                            let xf = ed.doc.unit_xform(p.id);
+                            coverage.rings.iter().map(|r| r.iter().map(|q| xf.apply(*q)).collect()).collect()
+                        };
                         let style = &p.stroke_style;
                         let native = (crate::stroke::evaluate::has_length(p)
                             && (style.align == crate::stroke::StrokeAlign::Center || !p.closed)
@@ -579,20 +599,29 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
                         }
                     }
                     Err(e) => {
-                        stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                        if canvas {
+                            crate::stroke::canvas::simplified(&mut stroke_report.borrow_mut(), p.id);
+                        } else {
+                            stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                        }
                     }
                 }
             }
-            // The renderer tessellates WORLD/clipped rings, whose band scan can cost more than
-            // local coverage after rotation. Reject that cost here so it produces a visible error.
-            if let Some(error) = out.iter().find_map(|prim| match prim {
-                Prim::StrokeCoverage { rings, .. } => crate::stroke::evaluate::triangles(rings).err(),
-                _ => None,
-            }) {
-                stroke_errors.borrow_mut().push(format!("path {}: {error}", p.id));
-                out.clear();
+            if !canvas {
+                if let Some(error) = out.iter().find_map(|prim| match prim {
+                    Prim::StrokeCoverage { rings, .. } => crate::stroke::evaluate::triangles(rings).err(),
+                    _ => None,
+                }) {
+                    stroke_errors.borrow_mut().push(format!("path {}: {error}", p.id));
+                    out.clear();
+                }
+                return out;
             }
-            return out;
+            if !out.is_empty() {
+                return out;
+            }
+            // Budget/numeric failure: draw the base geometry through the existing round,
+            // centre-aligned native stroke primitive, with the same page/view clipping.
         }
         if p.anchors.len() >= 2 {
             if let Some(c) = p.stroke.solid() {
@@ -1089,6 +1118,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option
 
     s.report = stroke_report.into_inner();
     s.errors = stroke_errors.into_inner();
+
     if ed.tool == ToolKind::ShapeBuilder {
         for shape in ed.construction_highlight() {
             let rings: Vec<Vec<Pt>> =

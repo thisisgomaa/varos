@@ -93,6 +93,7 @@ pub struct Ui {
     /// Background save / export status for the status bar (`file_jobs::status_text`); when set it
     /// takes the recovery status's place.
     pub file_status: String,
+    pub canvas_hint: bar::CanvasHint,
     /// DFS S6: the open Export PDF sheet and each tab's last scope; 4b: the panel column's x-span as
     /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
@@ -253,6 +254,7 @@ impl Ui {
             repaint_at: None,
             recovery: Default::default(),
             file_status: String::new(),
+            canvas_hint: Default::default(),
             document_sheet: None,
             export_sheet: None,
             panel_column: None,
@@ -591,7 +593,14 @@ impl Ui {
         let panel_column = self.panel_column; // last frame's — the band is built before the tree
         let mut new_column = None;
         let export_scopes = &mut self.export_scopes;
-        let status = if self.file_status.is_empty() { &self.recovery.status } else { &self.file_status };
+        let hint = self.canvas_hint.text(doc_active, ed.rev);
+        let status = if !self.file_status.is_empty() {
+            &self.file_status
+        } else if !hint.is_empty() {
+            hint
+        } else {
+            &self.recovery.status
+        };
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
         let out = self.ctx.run_ui(input, |root| {
             let ctx = root.ctx().clone();

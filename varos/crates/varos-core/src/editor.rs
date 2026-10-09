@@ -484,6 +484,7 @@ pub struct Editor {
     pub dirty: bool,
     /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
     /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
+    pub canvas_stroke_cache: crate::stroke::canvas::CanvasStrokeCache,
     pub flatten_cache: crate::flatten::SharedFlattenCache,
     /// Edit ▸ Copy / Cut / Paste — the IN-APP clipboard (deep copies of model data). Not the OS
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
@@ -551,6 +552,7 @@ impl Editor {
             rev: 0,
             construction_cache: Default::default(),
             dirty: false,
+            canvas_stroke_cache: Default::default(),
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
             id_high_water: 0,
