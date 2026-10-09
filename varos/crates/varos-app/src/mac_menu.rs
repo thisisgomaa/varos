@@ -137,7 +137,7 @@ impl MacMenu {
             }
         }
         for (check, item) in &self.checks {
-            let enabled = active || matches!(check, Check::Rail | Check::Dock | Check::Panel(_));
+            let enabled = active || matches!(check, Check::Rail | Check::Dock | Check::Picker | Check::Panel(_));
             if item.is_enabled() != enabled {
                 item.set_enabled(enabled);
             }

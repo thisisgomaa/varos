@@ -164,6 +164,13 @@ pub enum Icon {
     TransparentPage,
     /// Colour harmony "None".
     HarmonyNone,
+    PickerWheel,
+    PickerSliders,
+    PickerHarmony,
+    PickerGradient,
+    PickerSwap,
+    PickerNone,
+    Pipette,
     /// Colour harmony "Complementary".
     HarmonyComplementary,
     /// Colour harmony "Analogous".
@@ -180,7 +187,7 @@ pub enum Icon {
     HarmonyMono,
 }
 impl Icon {
-    pub const ALL: [Icon; 49] = [
+    pub const ALL: [Icon; 56] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -223,6 +230,13 @@ impl Icon {
         Self::SnapGrid,
         Self::TransparentPage,
         Self::HarmonyNone,
+        Self::PickerWheel,
+        Self::PickerSliders,
+        Self::PickerHarmony,
+        Self::PickerGradient,
+        Self::PickerSwap,
+        Self::PickerNone,
+        Self::Pipette,
         Self::HarmonyComplementary,
         Self::HarmonyAnalogous,
         Self::HarmonySplit,
@@ -287,6 +301,13 @@ impl Icon {
             Self::SnapPoint => varos!("snap-point"),
             Self::SnapGrid => varos!("snap-grid"),
             Self::TransparentPage => varos!("transparent-page"),
+            Self::PickerWheel => varos!("picker-wheel"),
+            Self::PickerSliders => varos!("picker-sliders"),
+            Self::PickerHarmony => varos!("picker-harmony"),
+            Self::PickerGradient => varos!("picker-gradient"),
+            Self::PickerSwap => varos!("picker-swap"),
+            Self::PickerNone => varos!("picker-none"),
+            Self::Pipette => svg!("pipette"),
             Self::HarmonyNone => varos!("harmony-none"),
             Self::HarmonyComplementary => varos!("harmony-complementary"),
             Self::HarmonyAnalogous => varos!("harmony-analogous"),

@@ -11,9 +11,33 @@ use crate::shell::ShellState;
 
 const SETTLE: Duration = Duration::from_secs(1);
 
+/// Additive v1 shell preference. Position is relative to the Board hole, in points.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PickerLayout {
+    pub open: bool,
+    pub position: Option<[f32; 2]>,
+    pub drawer_open: bool,
+    pub drawer_tab: u8,
+    pub mode: PickerMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PickerMode {
+    #[default]
+    Hsb,
+    Hsl,
+    Rgb,
+    Cmyk,
+    Lab,
+    Web,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Layout {
+    #[serde(default)]
+    pub picker: PickerLayout,
     pub tree: serde_json::Value,
     pub show_rail: bool,
     pub show_control_bar: bool,
@@ -21,13 +45,20 @@ pub struct Layout {
 
 impl Default for Layout {
     fn default() -> Self {
-        Self { tree: ShellState::standard().layout_value(), show_rail: true, show_control_bar: true }
+        Self {
+            picker: PickerLayout::default(),
+            tree: ShellState::standard().layout_value(),
+            show_rail: true,
+            show_control_bar: true,
+        }
     }
 }
 
 impl Layout {
     fn valid(&self) -> bool {
-        ShellState::from_layout_value(self.tree.clone()).is_some()
+        self.picker.drawer_tab < 3
+            && self.picker.position.is_none_or(|p| p.iter().all(|v| v.is_finite()))
+            && ShellState::from_layout_value(self.tree.clone()).is_some()
     }
 
     fn hash(&self) -> u64 {

@@ -126,3 +126,5 @@ BOARD:  Everything else. Rulers on.
   is born in its Stage 4 as the second floating hand, built as *mirrors of sections*. (The wgpu spike is
   DONE — `451ca2a`: wgpu 29 / egui 0.35.)
 - Every new system's panel = a **Section home** composed from the A-layer puzzle pieces, then mirrored to the bar.
+
+Owner-approved 2026-10-09: the Colour picker v3 is a 240 pt modeless hand inside the Board hole. The Figma Wheel export is the geometry reference; the warm dark tokens remain authoritative for chrome. The contract specifies a counter-clockwise hue axis, HSB readout, 36/44 pt target cluster and 20 pt default squares, which differ from the illustrative export; these explicit values govern this slice. OK/Cancel are removed: colour drags commit one undo step on release, fields commit through K3, and Esc closes without reverting. Selection and external edits re-seed the open panel; its position, open state and drawer preferences live in the additive version-1 layout store. The box system is unchanged.

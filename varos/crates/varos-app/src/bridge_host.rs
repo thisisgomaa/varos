@@ -205,6 +205,11 @@ impl Host for Desktop<'_> {
             ));
         }
         let s = self.ws.get_mut(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
+        if mutation && active {
+            if let Some(ui) = self.ui.as_deref_mut() {
+                ui.cancel_picker_sample(&mut s.editor);
+            }
+        }
         if s.editor.transaction_open()
             || (s.editor.tool == ToolKind::Pen && s.editor.active.is_some())
             || !matches!(s.editor.drag, Drag::None)
@@ -307,7 +312,7 @@ mod tests {
         }
         fn document_switched(&mut self) {}
     }
-    fn request(ws: &mut Workspace, fields: &mut Fields) -> varos_bridge::Reply {
+    fn request(ws: &mut Workspace, fields: &mut dyn DocUi) -> varos_bridge::Reply {
         initialize("epoch".into());
         let rev = ws.active().unwrap().editor.rev;
         let board = format!("b{}", ws.active_id().unwrap().0);
@@ -318,7 +323,7 @@ mod tests {
         .unwrap();
         dispatch(ws, fields, req)
     }
-    fn dispatch(ws: &mut Workspace, fields: &mut Fields, req: varos_bridge::Request) -> varos_bridge::Reply {
+    fn dispatch(ws: &mut Workspace, fields: &mut dyn DocUi, req: varos_bridge::Request) -> varos_bridge::Reply {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         run(
             varos_bridge::ipc::Pending {
@@ -560,6 +565,36 @@ mod tests {
             "board_not_active"
         );
         assert!(ws.on_home());
+    }
+    #[test]
+    fn bridge_mutation_cancels_unaccepted_sample_before_busy_check() {
+        struct Sample;
+        impl DocUi for Sample {
+            fn cancel_picker_sample(&mut self, ed: &mut varos_core::Editor) {
+                ed.execute(varos_core::EditCommand::PickerCancel);
+            }
+            fn settle(&mut self, _: &mut varos_core::Editor) -> bool {
+                true
+            }
+            fn document_switched(&mut self) {}
+        }
+        let mut ws = Workspace::new();
+        let ed = &mut ws.active_mut().unwrap().editor;
+        ed.doc.paths.push(varos_core::model::Path::new(1, vec![], true, Some([1., 0., 0., 1.]), None, 1.));
+        ed.doc.sync_tree();
+        ed.objsel.insert(1);
+        let before = ed.doc.clone();
+        let rev = ed.rev;
+        let defaults = (ed.cur_fill, ed.cur_stroke);
+        ed.picker_begin();
+        ed.paint_live(varos_core::editor::PaintTarget::Fill, Some([0., 1., 0., 1.]));
+        assert!(request(&mut ws, &mut Sample).ok);
+        let ed = &ws.active().unwrap().editor;
+        assert_eq!(ed.doc, before);
+        assert_eq!(ed.rev, rev);
+        assert_eq!((ed.cur_fill, ed.cur_stroke), defaults);
+        assert!(ed.recent_colors.is_empty());
+        assert!(!ed.transaction_open());
     }
     #[test]
     fn gesture_refuses() {

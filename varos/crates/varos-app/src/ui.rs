@@ -19,11 +19,11 @@ use winit::window::Window;
 // The law palette (warm ramp; tokens.rs) is shared with the split UI modules.
 // Legacy colour aliases retain the established body names.
 use varos_app::shell::tokens::{
-    micro_label, numeric_value, panel_title, shortcut_label, ACCENT, ACCENT_HOVER, ACCENT_TINT, ALIGN_SECTION_GAP,
-    CLOSE_RED, CONTROL_BAR_NAME_H, CONTROL_BAR_NAME_TEXT, CONTROL_BAR_NAME_W, DISABLED, HOVER, LABEL_GAP,
-    LINE as BORDER, LINE2, LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, PANEL_ITEM_GAP_X, PF_BAR_H,
-    PF_BAR_W, PF_OFFSET, PF_RADIUS, PF_SQUARE, PF_STROKE, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM, SECTION_GAP_HALF,
-    SEG_TEXT, SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, TRANSFORM_REFPOINT_SIZE,
+    micro_label, numeric_value, panel_title, shortcut_label, ACCENT, ACCENT_TINT, ALIGN_SECTION_GAP, CLOSE_RED,
+    CONTROL_BAR_NAME_H, CONTROL_BAR_NAME_TEXT, CONTROL_BAR_NAME_W, DISABLED, HOVER, LABEL_GAP, LINE as BORDER, LINE2,
+    LINE2 as BORDER_2, MUTED, NONE_RED, PANEL as SOLID_PANEL, PANEL_ITEM_GAP_X, PF_BAR_H, PF_BAR_W, PF_OFFSET,
+    PF_RADIUS, PF_SQUARE, PF_STROKE, R, RBOX, RCAP, ROW_HOVER, RULER_BG, SEAM, SECTION_GAP_HALF, SEG_TEXT,
+    SURFACE as BG_SURFACE, SURFACE as SWATCH_WELL, TEXT, TRANSFORM_REFPOINT_SIZE,
 };
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
 use varos_app::shell::kit::field::Label as Lab;
@@ -109,15 +109,14 @@ pub struct Ui {
     ic_opacity: Option<egui::TextureHandle>,
     ic_strokew: Option<egui::TextureHandle>,
     ic_fit: Option<egui::TextureHandle>,
-    ic_pipette: Option<egui::TextureHandle>, // real Lucide pipette (LEGACY_EYE) for the picker eyedropper (A16.2)
     align_icons: [Option<egui::TextureHandle>; 8], // align L/CH/R · T/M/B · distribute H/V
-    cursor: egui::CursorIcon,                // this frame's egui cursor (read from FullOutput, not post-frame state)
-    refpt: (f32, f32),                       // transform reference point (ax, ay each in {0, .5, 1})
-    lock: bool,                              // constrain W/H proportions
-    ab_lock: bool,                           // constrain artboard W/H proportions
-    align_target: AlignTarget,               // A4: Auto (smart) | Selection | Artboard — the align reference pref
-    ab_name_edit: Option<(usize, String)>,   // on-canvas rename open: artboard index + the name it opened with
-    pub fit_request: Option<usize>,          // an artboard asked to be fit in the window (host applies it)
+    cursor: egui::CursorIcon, // this frame's egui cursor (read from FullOutput, not post-frame state)
+    refpt: (f32, f32),        // transform reference point (ax, ay each in {0, .5, 1})
+    lock: bool,               // constrain W/H proportions
+    ab_lock: bool,            // constrain artboard W/H proportions
+    align_target: AlignTarget, // A4: Auto (smart) | Selection | Artboard — the align reference pref
+    ab_name_edit: Option<(usize, String)>, // on-canvas rename open: artboard index + the name it opened with
+    pub fit_request: Option<usize>, // an artboard asked to be fit in the window (host applies it)
     top: TopIcons,
     pub win_action: Option<WinAction>, // a window control was clicked this frame (host acts on it)
     show_rail: bool,
@@ -132,7 +131,8 @@ pub struct Ui {
     start_model: varos_app::start::StartModel,
     recent_warning: Option<String>,
     app_cmds: Vec<AppCommand>,
-    color_modal: Option<ColorModal>, // the Color Picker modal, when open
+    color_panel: Option<ColorPanel>,
+    picker_layout: varos_app::storage::layout::PickerLayout,
     layer_icons: LayerIcons,
     lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
     lay_search: String,
@@ -251,8 +251,6 @@ impl Ui {
         let ic_opacity = legacy_texture(&ctx, "lbl-op", LEGACY_OPACITY, false);
         let ic_strokew = legacy_texture(&ctx, "lbl-sw", LEGACY_STROKEW, false);
         let ic_fit = legacy_texture(&ctx, "lbl-fit", LEGACY_FIT, false);
-        // A16.2: reuse the real Lucide pipette (LEGACY_EYE) for the picker's in-picker eyedropper.
-        let ic_pipette = legacy_texture(&ctx, "lbl-pipette", LEGACY_EYE, false);
         // A16.1: FILLED (law-verbatim solid bars) loaded via load_icon_filled so they read bold at 16px.
         let align_icons = [
             legacy_texture(&ctx, "al-l", LEGACY_AL_L, true),
@@ -289,7 +287,6 @@ impl Ui {
             ic_opacity,
             ic_strokew,
             ic_fit,
-            ic_pipette,
             align_icons,
             cursor: egui::CursorIcon::Default,
             refpt: (0.0, 0.0),
@@ -309,7 +306,8 @@ impl Ui {
             start_model: varos_app::start::StartModel::without_recovery(&Default::default(), 0, |_| false),
             recent_warning: None,
             app_cmds: vec![],
-            color_modal: None,
+            color_panel: None,
+            picker_layout: Default::default(),
             layer_icons,
             lay_collapsed: std::collections::HashSet::new(),
             lay_search: String::new(),
@@ -355,19 +353,10 @@ impl Ui {
     pub fn wants_keyboard(&self) -> bool {
         wants_keyboard(&self.ctx)
     }
-    /// Is the Color Picker modal open? (canvas shortcuts must be fully gated off while it is)
-    pub fn modal_open(&self) -> bool {
-        self.color_modal.is_some()
-    }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.
     pub fn tab_drag_active(&self) -> bool {
         self.ctx.data(|d| d.get_temp::<TabDrag>(egui::Id::new(TAB_DRAG_KEY)).is_some())
-    }
-    /// Is the picker eyedropper armed? The host swallows canvas clicks after feeding egui, so
-    /// accepting a canvas sample cannot also select/deselect the artwork.
-    pub fn picking_screen(&self) -> bool {
-        self.color_modal.as_ref().is_some_and(|m| m.eyedropping)
     }
     /// DFS S1: the host hands the workspace's tabs over every frame.
     /// Home on/off. Entering Home starts Start's focus fresh (resting on New, ring hidden).
@@ -420,14 +409,16 @@ impl Ui {
     }
     /// DFS S1 + K3: before any lifecycle command, close every Ui-side edit still open on `ed` — the open
     /// field COMMITS first (`fields::settle`; unchanged text commits nothing), then an open colour picker
-    /// is CANCELLED (its live preview is not a commit). `false` = the field's text does not parse: it
+    /// finishes its current gesture. Closing never reverts paint. `false` = the field's text does not parse: it
     /// keeps the keyboard and its reason, nothing was touched, and the command must not run.
     pub fn settle(&mut self, ed: &mut Editor) -> bool {
         if !self.commit_fields(ed) {
             return false;
         }
-        if self.color_modal.take().is_some() {
-            ed.execute(EditCommand::PickerCancel);
+        if let Some(m) = &mut self.color_panel {
+            let mut ops = vec![];
+            m.finish(&mut ops);
+            apply_ops(ed, ops);
         }
         self.lay_rename = None;
         self.ab_name_edit = None;
@@ -436,7 +427,7 @@ impl Ui {
     /// K3: commit the open field into `ed` now (before a canvas press, which may change the selection
     /// the field edits). `false` = its text does not parse — it keeps the keyboard; drop the press.
     pub fn commit_fields(&mut self, ed: &mut Editor) -> bool {
-        fields::settle(&self.ctx, self.doc_active, &mut self.field_pending, ed)
+        self.commit_picker_fields(ed)
     }
     /// A text / number field is being edited right now.
     pub fn editing_field(&self) -> bool {
@@ -445,6 +436,7 @@ impl Ui {
     /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
     /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
     pub fn document_switched(&mut self) {
+        self.color_panel = None;
         self.layer_rows_cache = None;
         self.lay_drag = None;
         self.lay_anchor = None;
@@ -539,6 +531,15 @@ impl Ui {
         raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
         let input = self.state.take_egui_input(window);
         set_doc_salt(&self.ctx, self.doc_active); // per-widget edit state stays inside its document
+        layout::prepare_picker_input(
+            &self.ctx,
+            self.doc_active,
+            &mut self.field_pending,
+            &mut self.color_panel,
+            ed,
+            &input,
+        );
+        self.prepare_picker(ed);
         let snap = Snap::read(ed);
         let absnap = AbSnap::read(ed);
         let abs = ab_infos(ed);
@@ -559,7 +560,6 @@ impl Ui {
         };
         let recovery = &self.recovery;
         let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
-        let ic_pipette = &self.ic_pipette; // A16.2: the real pipette for the picker's in-picker eyedropper
         let shell = &mut self.shell; // Stage 4: the box tree hosting the whole workspace
         let prev_hole = self.board_hole; // last frame's canvas hole (the seam underlay paints around it)
         let mut new_hole: Option<egui::Rect> = None;
@@ -596,7 +596,8 @@ impl Ui {
         // an accumulating queue: nothing drains it until S1-D wires `take_app_commands` into the host,
         // so this frame's clicks are APPENDED to whatever earlier frames already queued.
         let mut app_cmds = std::mem::take(&mut self.app_cmds);
-        let mut color_modal = std::mem::take(&mut self.color_modal);
+        let mut color_panel = std::mem::take(&mut self.color_panel);
+        let picker_layout = &mut self.picker_layout;
         // the Export sheet belongs to one tab: another tab (or none) closes it
         let mut export_sheet = self.export_sheet.take().filter(|s| Some(s.sid) == doc_active);
         let panel_column = self.panel_column; // last frame's — the band is built before the tree
@@ -739,16 +740,16 @@ impl Ui {
             paint_agent_presence(ctx, view, ppp, hole, &presence);
             build_snap_hud(ctx, view, ppp, hole, &snap_hud);
             build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
-            if let Some(m) = color_modal.as_mut() {
+            if let Some(m) = color_panel.as_mut() {
                 prepare_canvas_sample(m, ed, view, ppp, hole);
             }
-            let sample = color_modal.as_ref().and_then(|m| picker_canvas_sample(ctx, m));
-            build_color_modal(ctx, &mut color_modal, &snap, ic_pipette, &mut ops, sample);
-            if let Some(m) = color_modal.as_mut() {
+            let sample = color_panel.as_ref().and_then(|m| picker_canvas_sample(ctx, m));
+            build_color_panel(ctx, &mut color_panel, &snap, &mut ops, sample, hole, picker_layout);
+            if let Some(m) = color_panel.as_mut() {
                 prepare_canvas_sample(m, ed, view, ppp, hole);
             }
         });
-        self.color_modal = color_modal;
+        self.color_panel = color_panel;
         self.refpt = refpt;
         self.lock = lock;
         self.ab_lock = ab_lock;
@@ -775,7 +776,7 @@ impl Ui {
         }
         self.panel_column = new_column;
         ed.set_constrain_wh(lock); // A12: mirror the Properties W/H lock so canvas scale drags honour it too
-                                   // OpenPicker is a UI op: apply_picker_frame applies the frame first, then opens the modal (K3 safe)
+                                   // OpenPicker is a UI op: apply_picker_frame applies the frame first, then opens the panel (K3 safe)
                                    // K3: field commits first; while a field holds invalid text the frame's presses are dropped
         fields::finish_frame(&self.ctx, self.doc_active, &mut ops, &mut self.field_pending);
         ops.retain(|op| {
@@ -785,7 +786,8 @@ impl Ui {
             }
             true
         });
-        apply_picker_frame(ed, snap_cfg, ops, &mut self.color_modal);
+        apply_picker_frame(ed, snap_cfg, ops, &mut self.color_panel);
+        self.picker_layout.open = self.color_panel.is_some();
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
 
         // macOS: cursors.rs owns the OS cursor (Retina NSCursor, re-set every frame from `chrome_ck` /
