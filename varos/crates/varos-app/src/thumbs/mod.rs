@@ -103,15 +103,26 @@ impl ThumbService {
         self.enqueue(Request { key, snapshot, mtime, panic_for_test: false, asset: None });
     }
 
-    /// Export cards reuse the same bounded thumbnail worker, PNG cache and eviction policy.
+    /// Export cards reuse the bounded worker/cache; each accepted request emits a completion, including failures.
     pub fn request_export(&self, key: ThumbKey, asset: varos_raster::export::Asset, mtime: SystemTime) -> bool {
-        if matches!(self.lookup(&key, mtime), Some(Lookup::Fresh(_))) {
-            return true;
-        }
-        if self.latest.lock().map_or(true, |pending| pending.len() >= QUEUE_LIMIT) {
+        if self.shutdown.load(Ordering::Acquire) {
             return false;
         }
-        self.enqueue(Request { key, snapshot: asset.doc.clone(), mtime, panic_for_test: false, asset: Some(asset) });
+        if let Ok(mut cancelled) = self.cancelled.lock() {
+            cancelled.remove(&key);
+        }
+        let Ok(mut latest) = self.latest.lock() else { return false };
+        if !latest.contains_key(&key) && latest.len() >= QUEUE_LIMIT {
+            return false;
+        }
+        latest.insert(
+            key.clone(),
+            Request { key, snapshot: asset.doc.clone(), mtime, panic_for_test: false, asset: Some(asset) },
+        );
+        drop(latest);
+        if let Some(wake) = &self.wake {
+            let _ = wake.try_send(());
+        }
         true
     }
 

@@ -389,7 +389,10 @@ impl DocStore for DiskStore {
                 durable::{write_replace_cancellable, WriteError},
             };
             match write_replace_cancellable(&fs, path, bytes, &new_nonce(), cancel) {
-                Ok(_) => Ok(crate::lifecycle::ExportWrite::Written),
+                Ok(varos_app::storage::durable::WriteOutcome::Durable) => Ok(crate::lifecycle::ExportWrite::Written),
+                Ok(varos_app::storage::durable::WriteOutcome::ReplacedUnconfirmed(e)) => {
+                    Ok(crate::lifecycle::ExportWrite::Unconfirmed(varos_app::storage::durable::io_reason(&e)))
+                }
                 Err(WriteError::Cancelled) => Ok(crate::lifecycle::ExportWrite::Cancelled),
                 Err(error) => Err(error.reason()),
             }
@@ -450,7 +453,10 @@ fn export_write(
         durable::{write_replace_cancellable, WriteError},
     };
     match write_replace_cancellable(fs, path, bytes, &new_nonce(), cancel) {
-        Ok(_) => Ok(ExportWrite::Written),
+        Ok(varos_app::storage::durable::WriteOutcome::Durable) => Ok(ExportWrite::Written),
+        Ok(varos_app::storage::durable::WriteOutcome::ReplacedUnconfirmed(e)) => {
+            Ok(ExportWrite::Unconfirmed(varos_app::storage::durable::io_reason(&e)))
+        }
         Err(WriteError::Cancelled) => Ok(ExportWrite::Cancelled),
         Err(e) => Err(e.reason()),
     }
@@ -927,5 +933,24 @@ mod tests {
         std::fs::create_dir_all(dir.0.join("other")).unwrap();
         assert!(!upper.same_file(&file_key(&dir.0.join("other").join("A.vrs"))));
         assert!(!upper.same_file(&file_key(&dir.0.join("other").join("a.vrs"))));
+    }
+}
+
+#[cfg(test)]
+mod export_durability_tests {
+    #[test]
+    fn directory_sync_failure_keeps_published_bytes_and_warning() {
+        use varos_app::storage::durable::{Fault, FaultFs, Step};
+        let path = std::env::temp_dir().join(format!("export-sync-{}", varos_app::storage::checksum::new_nonce()));
+        let result = super::export_write(
+            &FaultFs::new(vec![Fault::at(Step::SyncDir)]),
+            &path,
+            b"svg bytes",
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(matches!(result, crate::lifecycle::ExportWrite::Unconfirmed(_)));
+        assert_eq!(std::fs::read(&path).unwrap(), b"svg bytes");
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -24,6 +24,8 @@ const SHEET_W: f32 = t::EXPORT_SHEET_W;
 mod minimal;
 #[path = "ui/export/paint.rs"]
 mod paint;
+#[path = "ui/export/previews.rs"]
+mod previews;
 pub use minimal::{preferences, restore_preferences};
 
 /// One page-scope row.
@@ -131,6 +133,7 @@ impl ExportSheet {
             sheet.minimal.restore(key);
             if selection && sheet.minimal.selection_reason().is_none() {
                 sheet.minimal.selection_tab = true;
+                sheet.minimal.preferences_dirty = true;
             }
             sheet
         }
@@ -748,5 +751,27 @@ mod identity_tests {
         let a = ExportSheet::of(first.get(id).unwrap(), false, &Default::default());
         let b = ExportSheet::of(second.get(other).unwrap(), false, &Default::default());
         assert_ne!(a.minimal.key, b.minimal.key);
+    }
+}
+
+#[cfg(test)]
+mod repaint_fix_tests {
+    use super::*;
+    #[test]
+    fn headless_sheet_repaints_do_not_replace_preferences() {
+        let mut sheet = ExportSheet::new(SessionId(1), &Document::default(), &HashSet::new(), None, false);
+        sheet.minimal.restore("paint-dirty-fix".into());
+        sheet.minimal.folder = "/tmp/remembered".into();
+        sheet.minimal.preferences_dirty = true;
+        sheet.minimal.remember();
+        sheet.minimal.folder = "/tmp/not-a-control-edit".into();
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |_| {
+                let _ = draw(&ctx, &mut sheet, None);
+            });
+        }
+        assert!(!sheet.minimal.preferences_dirty);
+        assert_eq!(preferences()["paint-dirty-fix"].folder, "/tmp/remembered");
     }
 }

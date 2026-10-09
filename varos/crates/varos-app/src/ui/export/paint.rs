@@ -1,7 +1,6 @@
 //! Hand-painted Minimal sheet; card pixels are cached after one CPU worker pass per snapshot.
 use super::{ExportSheet, Phase, SheetAction};
 use egui::{Id, RichText};
-use std::sync::{Arc, Mutex};
 use varos_app::shell::{
     kit::{self, Availability, Control, Icon, MenuEntry},
     tokens as t,
@@ -26,6 +25,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                     }
                     if kit::action(ui, c, false).activated {
                         sheet.minimal.selection_tab = selection;
+                        sheet.minimal.preferences_dirty = true;
                     }
                 }
             });
@@ -39,6 +39,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                     }
                     if kit::action(ui, c, true).activated {
                         sheet.minimal.list = list;
+                        sheet.minimal.preferences_dirty = true;
                     }
                 }
             });
@@ -74,6 +75,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                 }
                 if kit::action(ui, c, false).activated {
                     sheet.minimal.cards_mut().checked.fill(false);
+                    sheet.minimal.preferences_dirty = true;
                 }
             });
         });
@@ -121,6 +123,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                     );
                     if let Some(value) = edit.commit {
                         sheet.minimal.folder = value;
+                        sheet.minimal.preferences_dirty = true;
                     }
                 }
                 let mut c = Control::new(Id::new("export-folder-picker"), "…");
@@ -131,6 +134,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                 if kit::action(ui, c, false).activated {
                     if let Some(path) = rfd::FileDialog::new().set_directory(&sheet.minimal.folder).pick_folder() {
                         sheet.minimal.folder = path.to_string_lossy().into_owned();
+                        sheet.minimal.preferences_dirty = true;
                     }
                 }
             });
@@ -143,6 +147,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                     dropdown(ui, "export-format", sheet.minimal.options.format.label(), &labels, running)
                 {
                     sheet.minimal.options.format = Format::ALL[index];
+                    sheet.minimal.preferences_dirty = true;
                 }
                 if matches!(sheet.minimal.options.format, Format::Png | Format::Jpeg) {
                     let mut c = Control::new(Id::new("export-options"), "Options");
@@ -175,6 +180,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                     if let Some(index) = dropdown(ui, "export-scale", &label, &["1×", "2×", "3×", "ppi…"], running)
                     {
                         sheet.minimal.options.scale = [1.0, 2.0, 3.0, 300.0 / 72.0][index];
+                        sheet.minimal.preferences_dirty = true;
                     }
                 }
             });
@@ -195,6 +201,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
                 );
                 if let Some(ppi) = edit.commit.or(edit.live) {
                     sheet.minimal.options.scale = ppi / 72.0;
+                    sheet.minimal.preferences_dirty = true;
                 }
             }
             options_popover(ui.ctx(), sheet);
@@ -234,6 +241,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
     });
     if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) && !running && !kit::field::any_open(ui.ctx()) {
         sheet.minimal.cards_mut().checked.fill(true);
+        sheet.minimal.preferences_dirty = true;
     }
     sheet.minimal.remember();
 }
@@ -265,6 +273,7 @@ fn options_popover(ctx: &egui::Context, sheet: &mut ExportSheet) {
         })];
         if kit::menu(ctx, owner, &entries).is_some() {
             sheet.minimal.options.transparent = !sheet.minimal.options.transparent;
+            sheet.minimal.preferences_dirty = true;
         }
     } else if sheet.minimal.options.format == Format::Jpeg {
         let anchor = ctx.data(|d| d.get_temp::<egui::Rect>(Id::new("export-options-anchor")));
@@ -293,6 +302,7 @@ fn options_popover(ctx: &egui::Context, sheet: &mut ExportSheet) {
                         );
                         if let Some(value) = edit.commit.or(edit.live) {
                             sheet.minimal.options.quality = value.round() as u8;
+                            sheet.minimal.preferences_dirty = true;
                         }
                         if kit::action(ui, Control::new(Id::new("export-quality-done"), "Done"), false).activated {
                             kit::close_menu(ctx);
@@ -319,6 +329,9 @@ fn card(ui: &mut egui::Ui, sheet: &mut ExportSheet, index: usize, running: bool)
         egui::vec2(t::EXPORT_CARD_W, t::EXPORT_CARD_H)
     };
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
     let fill = if checked {
         t::TOGGLE_WELL
     } else if response.hovered() {
@@ -351,7 +364,15 @@ fn card(ui: &mut egui::Ui, sheet: &mut ExportSheet, index: usize, running: bool)
         );
     } else {
         let preview = egui::Rect::from_min_size(rect.min, egui::vec2(t::EXPORT_CARD_W, t::EXPORT_CARD_W));
-        thumbnail(ui, asset, sheet.minimal.preview_id, index, sheet.minimal.selection_tab, preview.shrink(t::KIT_PAD));
+        thumbnail(
+            ui,
+            asset,
+            &sheet.minimal.previews,
+            sheet.minimal.preview_id,
+            index,
+            sheet.minimal.selection_tab,
+            preview.shrink(t::KIT_PAD),
+        );
         ui.painter().text(
             egui::pos2(checkbox.right() + t::KIT_TEXT_GAP, rect.bottom() - t::KIT_PAD),
             egui::Align2::LEFT_BOTTOM,
@@ -363,94 +384,33 @@ fn card(ui: &mut egui::Ui, sheet: &mut ExportSheet, index: usize, running: bool)
     response.clone().on_hover_text(&asset.name);
     if !running && (response.clicked() || response.double_clicked()) {
         sheet.minimal.cards_mut().click(index, ui.input(|i| i.modifiers.shift), response.double_clicked());
+        sheet.minimal.preferences_dirty = true;
     }
-}
-#[derive(Clone, Default)]
-struct Thumb {
-    pending: Arc<Mutex<Option<egui::ColorImage>>>,
-    texture: Option<egui::TextureHandle>,
 }
 fn thumbnail(
     ui: &egui::Ui,
     asset: &varos_raster::export::Asset,
+    previews: &super::previews::Previews,
     snapshot: u64,
     index: usize,
     selection: bool,
     rect: egui::Rect,
 ) {
     let id = Id::new(("export-thumbnail", snapshot, index, selection));
-    let stored = ui.ctx().data(|d| d.get_temp::<Thumb>(id));
-    let mut thumb = if let Some(t) = stored {
-        t
-    } else {
-        let thumb = Thumb::default();
-        let pending = thumb.pending.clone();
-        let asset = asset.clone();
-        let ctx = ui.ctx().clone();
-        let service_id = Id::new("export-thumbnail-service");
-        let service = ui.ctx().data_mut(|d| {
-            d.get_temp::<Arc<Mutex<Option<crate::thumbs::ThumbService>>>>(service_id).unwrap_or_else(|| {
-                let service = Arc::new(Mutex::new(
-                    varos_app::storage::paths::AppLayout::current()
-                        .and_then(|layout| crate::thumbs::ThumbService::at(layout.thumbs().join("Export"))),
-                ));
-                d.insert_temp(service_id, service.clone());
-                service
-            })
-        });
-        let key = crate::thumbs::ThumbKey(format!("export-{snapshot}-{selection}-{index}"));
-        let mtime = std::time::SystemTime::UNIX_EPOCH;
-        let accepted = service
-            .lock()
-            .ok()
-            .and_then(|s| s.as_ref().map(|s| s.request_export(key.clone(), asset, mtime)))
-            .unwrap_or(false);
-        if !accepted {
-            if service.lock().ok().is_none_or(|s| s.is_none()) {
-                return;
+    let mut texture = ui.ctx().data(|d| d.get_temp::<egui::TextureHandle>(id));
+    if texture.is_none() {
+        if let Some(pixels) = previews.pixels(ui.ctx(), format!("export-{snapshot}-{selection}-{index}"), asset) {
+            texture = Some(ui.ctx().load_texture(
+                format!("export-{snapshot}-{selection}-{index}"),
+                pixels,
+                egui::TextureOptions::LINEAR,
+            ));
+            if let Some(texture) = &texture {
+                ui.ctx().data_mut(|d| d.insert_temp(id, texture.clone()));
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(20));
-            return;
         }
-        std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-            while std::time::Instant::now() < deadline {
-                let path =
-                    service.lock().ok().and_then(|s| s.as_ref().and_then(|s| s.lookup(&key, mtime))).map(|lookup| {
-                        match lookup {
-                            crate::thumbs::Lookup::Fresh(path) | crate::thumbs::Lookup::Stale(path) => path,
-                        }
-                    });
-                if let Some(path) = path {
-                    if let Ok(bytes) = std::fs::read(path) {
-                        if let Ok(image) = image::load_from_memory(&bytes) {
-                            let rgba = image.to_rgba8();
-                            let color = egui::ColorImage::from_rgba_unmultiplied(
-                                [rgba.width() as usize, rgba.height() as usize],
-                                rgba.as_raw(),
-                            );
-                            if let Ok(mut result) = pending.lock() {
-                                *result = Some(color);
-                            }
-                        }
-                    }
-                    ctx.request_repaint();
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        });
-        thumb
-    };
-    let pixels = thumb.pending.lock().ok().and_then(|mut p| p.take());
-    if let Some(pixels) = pixels {
-        thumb.texture = Some(ui.ctx().load_texture(
-            format!("export-{snapshot}-{selection}-{index}"),
-            pixels,
-            egui::TextureOptions::LINEAR,
-        ));
     }
-    if let Some(texture) = &thumb.texture {
+    if let Some(texture) = &texture {
         let size = texture.size_vec2();
         let scale = (rect.width() / size.x).min(rect.height() / size.y);
         ui.painter().image(
@@ -460,5 +420,4 @@ fn thumbnail(
             t::TEXT,
         );
     }
-    ui.ctx().data_mut(|d| d.insert_temp(id, thumb));
 }

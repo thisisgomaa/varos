@@ -21,15 +21,13 @@ pub fn restore_preferences(value: BTreeMap<String, ExportPreferences>) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cards {
     pub assets: Vec<Asset>,
+    identities: Vec<String>,
     pub checked: Vec<bool>,
     pub anchor: Option<usize>,
 }
 impl Cards {
     pub fn new(assets: Vec<Asset>) -> Self {
-        Self { checked: vec![true; assets.len()], assets, anchor: None }
-    }
-    fn identities(&self) -> Vec<String> {
-        self.assets
+        let identities = assets
             .iter()
             .map(|asset| {
                 asset
@@ -37,15 +35,16 @@ impl Cards {
                     .artboard
                     .and_then(|i| asset.doc.artboards.get(i))
                     .map(|ab| format!("artboard:{}", ab.id))
-                    .unwrap_or_else(|| asset.name.clone())
+                    .unwrap_or_else(|| "whole-board".into())
             })
-            .collect()
+            .collect();
+        Self { checked: vec![true; assets.len()], assets, identities, anchor: None }
     }
     fn remembered(&self) -> Vec<(String, bool)> {
-        self.identities().into_iter().zip(self.checked.iter().copied()).collect()
+        self.identities.iter().cloned().zip(self.checked.iter().copied()).collect()
     }
     fn restore_checks(&mut self, checks: &[(String, bool)]) {
-        for (id, checked) in self.identities().iter().zip(&mut self.checked) {
+        for (id, checked) in self.identities.iter().zip(&mut self.checked) {
             if let Some((_, on)) = checks.iter().find(|(key, _)| key == id) {
                 *checked = *on;
             }
@@ -89,6 +88,8 @@ pub struct Minimal {
     pub destinations: Vec<PathBuf>,
     pub report: varos_core::ExportReport,
     pub preview_id: u64,
+    pub previews: super::previews::Previews,
+    pub preferences_dirty: bool,
 }
 impl Minimal {
     pub fn new(doc: &Document, selection: &HashSet<u32>, selection_tab: bool) -> Self {
@@ -96,6 +97,7 @@ impl Minimal {
             .unwrap_or_default();
         let mut seen = HashSet::new();
         let mut assets = vec![];
+        let mut selection_ids = vec![];
         for path in &doc.paths {
             if !selection.contains(&path.id) {
                 continue;
@@ -118,11 +120,13 @@ impl Minimal {
                         .filter(|s| !s.is_empty())
                         .map(str::to_owned)
                         .unwrap_or_else(|| format!("Asset {unit}"));
+                    selection_ids.push(format!("selection:{unit}"));
                     assets.push(asset);
                 }
             }
         }
-        let selection = Cards::new(assets);
+        let mut selection = Cards::new(assets);
+        selection.identities = selection_ids;
         let selection_tab = selection_tab && !selection.assets.is_empty();
         let folder = std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -135,7 +139,7 @@ impl Minimal {
         if let Ok(bytes) = serde_json::to_vec(doc) {
             bytes.hash(&mut hasher);
         }
-        let mut ids: Vec<_> = selection.assets.iter().map(|a| &a.name).collect();
+        let mut ids: Vec<_> = selection.identities.iter().collect();
         ids.sort();
         ids.hash(&mut hasher);
         Self {
@@ -150,6 +154,8 @@ impl Minimal {
             destinations: vec![],
             report: Default::default(),
             preview_id: hasher.finish(),
+            previews: Default::default(),
+            preferences_dirty: false,
         }
     }
     pub fn cards(&self) -> &Cards {
@@ -169,10 +175,11 @@ impl Minimal {
     pub fn selection_reason(&self) -> Option<&'static str> {
         self.selection.assets.is_empty().then_some("Select something to export it.")
     }
-    pub fn remember(&self) {
-        if self.key.is_empty() {
+    pub fn remember(&mut self) {
+        if !self.preferences_dirty || self.key.is_empty() {
             return;
         }
+        self.preferences_dirty = false;
         let p = ExportPreferences {
             selection_tab: self.selection_tab,
             list: self.list,
@@ -252,7 +259,7 @@ mod tests {
     use super::*;
     #[test]
     fn toggles_range_double_and_disable() {
-        let mut cards = Cards { assets: vec![], checked: vec![false; 4], anchor: None };
+        let mut cards = Cards { assets: vec![], identities: vec![], checked: vec![false; 4], anchor: None };
         cards.click(0, false, false);
         cards.click(2, true, false);
         assert_eq!(cards.checked, [true, true, true, false]);
@@ -277,6 +284,7 @@ mod integration_tests {
         model.boards.checked[1] = false;
         model.folder = "/tmp/Export".into();
         model.options.format = Format::Svg;
+        model.preferences_dirty = true;
         model.remember();
         let serialized = serde_json::to_vec(&preferences()).unwrap();
         restore_preferences(serde_json::from_slice(&serialized).unwrap());
@@ -354,5 +362,65 @@ mod integration_tests {
             );
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod fix_round_tests {
+    use super::*;
+    #[test]
+    fn duplicate_selection_names_restore_by_id_after_rename_and_reorder() {
+        let mut editor = varos_core::editor::Editor::new();
+        for x in [0.0, 50.0] {
+            editor
+                .try_execute_created(varos_core::EditCommand::AddShape {
+                    kind: varos_core::model::ShapeKind::Rect,
+                    bounds: [x, 0.0, 20.0, 20.0],
+                    parent: None,
+                    fill: Some([1.0; 4]),
+                    stroke: None,
+                    stroke_width: 0.0,
+                    opacity: 1.0,
+                    name: Some("Rectangle".into()),
+                })
+                .unwrap();
+        }
+        for node in &mut editor.doc.nodes {
+            node.name = "Rectangle".into();
+        }
+        let selected = editor.doc.paths.iter().map(|p| p.id).collect();
+        let mut model = Minimal::new(&editor.doc, &selected, true);
+        assert_eq!(model.selection.assets.len(), 2);
+        assert_eq!(model.selection.assets[0].name, model.selection.assets[1].name);
+        model.restore("duplicate-names-fix".into());
+        model.selection.click(0, false, false);
+        model.preferences_dirty = true;
+        model.remember();
+        let checks = model.selection.remembered();
+        editor.doc.paths.reverse();
+        for node in &mut editor.doc.nodes {
+            node.name = "Renamed".into();
+        }
+        let mut back = Minimal::new(&editor.doc, &selected, true);
+        back.restore("duplicate-names-fix".into());
+        for (id, checked) in back.selection.remembered() {
+            assert_eq!(checks.iter().find(|(key, _)| *key == id).unwrap().1, checked);
+        }
+        assert_eq!(back.selection.count(), 1);
+    }
+    #[test]
+    fn repaint_without_edits_does_not_rebuild_preferences() {
+        let mut model = Minimal::new(&Document::default(), &HashSet::new(), false);
+        model.restore("dirty-export-fix".into());
+        model.folder = "/tmp/first".into();
+        model.preferences_dirty = true;
+        model.remember();
+        assert!(!model.preferences_dirty);
+        model.folder = "/tmp/unmarked".into();
+        model.remember();
+        assert_eq!(preferences()["dirty-export-fix"].folder, "/tmp/first");
+        model.preferences_dirty = true;
+        model.remember();
+        assert_eq!(preferences()["dirty-export-fix"].folder, "/tmp/unmarked");
     }
 }
