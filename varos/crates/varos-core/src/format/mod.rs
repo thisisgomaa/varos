@@ -31,7 +31,10 @@ use std::path::Path;
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
 /// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
 /// 4 (2026-10-07): stable artboard ids — `doc.artboards[].id` (ADR-0008 amendment, Bridge slice 3).
-pub const FORMAT_VERSION: u32 = 5;
+// ---- w2-images ----
+/// Provisional next version; integrator assigns the final merge-order number.
+pub const IMAGE_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = IMAGE_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -64,6 +67,8 @@ struct VrsFileRef<'a> {
 pub struct Loaded {
     /// The document, in the current format's canonical form.
     pub doc: Document,
+    // ---- w2-images ----
+    pub blobs: crate::images::BlobStore,
     /// The format number the file was written in.
     pub source_version: u32,
     /// True when an older format was migrated up in memory (the file on disk is untouched).
@@ -134,6 +139,8 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     if version < 5 {
         stroke_keys::refuse(json, version)?;
     }
+    // ---- w2-images ----
+    crate::images::refuse_older_keys(json, version)?;
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let mut doc = file.doc;
     let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);
@@ -164,7 +171,7 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
             doc
         }
     };
-    Ok(Loaded { doc, source_version: version, migrated, released_legacy_masks })
+    Ok(Loaded { doc, blobs: Default::default(), source_version: version, migrated, released_legacy_masks })
 }
 
 /// A file that claims a format older than the one that introduced a key must not carry it: no writer

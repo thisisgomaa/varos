@@ -70,6 +70,7 @@ pub fn expanded_ops(edit: &dto::Edit) -> Vec<dto::Operation> {
     }
 }
 
+pub mod images;
 mod select_transform;
 pub mod storage_paths;
 

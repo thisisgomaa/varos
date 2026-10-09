@@ -4,6 +4,7 @@ pub mod export;
 
 mod clipboard;
 pub use clipboard::clipboard_png;
+pub mod images;
 use std::sync::Arc;
 use tiny_skia::{
     FillRule, LineCap, LineJoin, Mask, MaskType, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform,
@@ -307,6 +308,7 @@ fn stroke_coverage(prims: &[Prim], width: u32, height: u32, xf: Transform, only:
 fn draw_prims(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
     for prim in prims {
         match prim {
+            Prim::Image { pixels, corners, opacity, .. } => crate::images::draw(pixels, *corners, *opacity, dst, xf),
             Prim::Fill { rings, color } => {
                 if let Some(path) = rings_path(rings, false) {
                     dst.fill_path(&path, &paint(*color), FillRule::EvenOdd, xf, None);
@@ -427,6 +429,7 @@ fn scene_bounds(groups: &[Group]) -> Option<[f32; 4]> {
         };
         for prim in prims {
             let pts: Box<dyn Iterator<Item = &[f32; 2]> + '_> = match prim {
+                Prim::Image { corners, .. } => Box::new(corners.iter()),
                 Prim::Fill { rings, .. } | Prim::StrokeCoverage { rings, .. } => Box::new(rings.iter().flatten()),
                 Prim::Stroke { pts, .. } | Prim::Dashed { pts, .. } => Box::new(pts.iter()),
                 Prim::Square { c, .. } | Prim::Disc { c, .. } => Box::new(std::iter::once(c)),

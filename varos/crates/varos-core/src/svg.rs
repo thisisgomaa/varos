@@ -547,3 +547,13 @@ mod tests {
         assert_eq!(num(-0.00001), "0.000");
     }
 }
+
+// ---- w2-images ----
+pub(crate) fn image_clip_data(doc:&Document,clip:u32)->String {
+    mask_paths(doc,clip).iter().map(|(p,xf,_)|path_data(p,xf)).collect()
+}
+pub(crate) fn paint_image_companion(out:&mut String,doc:&Document,id:u32)->Result<(),ExportError> {
+    let Some(pi)=doc.pidx(id)else{return Ok(())};
+    let Some(d)=drawable(doc,pi,&doc.paths[pi])else{return Ok(())};
+    if d.p.stroke_style.is_default(){paint(out,&d);Ok(())}else{stroke::paint(out,&d)}
+}

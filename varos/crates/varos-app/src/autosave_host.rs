@@ -50,7 +50,7 @@ pub fn observe(
                     Some(SaveInFlight { ticket, dest: dest.clone(), doc: doc.clone(), follow_up: false, started: now });
                 s.autosave.ticket = Some(ticket);
                 s.autosave.status = "Autosaving…".into();
-                captured = Some(autosave_io::Job { sid: s.id, ticket, dest, doc, expected, permit: gate.capture() });
+                captured = Some(autosave_io::Job { blobs:s.editor.blobs.clone(), sid: s.id, ticket, dest, doc, expected, permit: gate.capture() });
                 continue;
             }
             wake = Some(wake.map_or(at, |old: Instant| old.min(at)));

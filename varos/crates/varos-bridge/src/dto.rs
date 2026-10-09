@@ -26,6 +26,8 @@ pub enum Request {
     ExportPdf(FileEffect),
     /// API 1.2 only; import source under the files scope, placed into board.
     ImportSvg(FileEffect),
+    // ---- w2-images ----
+    AddImage(FileEffect),
     ExportSvg(FileEffect),
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
@@ -814,6 +816,7 @@ impl Request {
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
             Self::ImportSvg(_) => "import_svg",
+            Self::AddImage(_) => "add_image",
             Self::ExportSvg(_) => "export_svg",
             Self::ExportRaster(_) => "export_raster",
             Self::SaveTemplate(_) => "save_template",
@@ -843,6 +846,7 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::AddImage(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => &v.api,
         }
@@ -860,6 +864,7 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::AddImage(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
@@ -882,6 +887,7 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::AddImage(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,

@@ -2,6 +2,7 @@
 //! MSAA, non-sRGB surface, Mailbox present (low latency). Knows nothing about winit/tauri.
 
 pub mod perf;
+pub mod images;
 mod tess;
 use std::io::Write;
 use tess::{build_bg, build_content, build_fg, Draw, GroupDraw, Vertex};
@@ -32,6 +33,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    image_cache: images::ImageCache,
     pipe_main: wgpu::RenderPipeline,
     pipe_stencil: wgpu::RenderPipeline,
     pipe_cover: wgpu::RenderPipeline,
@@ -593,7 +595,9 @@ impl Renderer {
                 ..Default::default()
             },
         );
+        let image_cache = images::ImageCache::new(&device, config.format, samples);
         Ok(Renderer {
+            image_cache,
             health,
             surface,
             device,
@@ -721,6 +725,14 @@ impl Renderer {
     fn draw_steps<'a>(&'a self, rp: &mut wgpu::RenderPass<'a>, draws: &[Draw], clip: bool) {
         for d in draws {
             match d {
+                Draw::Image { key, range } => {
+                    if let Some(bind) = self.image_cache.bind(key) {
+                        rp.set_vertex_buffer(0,self.fg_buf.slice(..));
+                        if clip {rp.set_stencil_reference(2);}
+                        rp.set_pipeline(if clip {&self.image_cache.clipped} else {&self.image_cache.normal});
+                        rp.set_bind_group(0,bind,&[]);rp.draw(range.0..range.0+range.1,0..1);
+                    }
+                }
                 Draw::Fill { fan, cover } => {
                     rp.set_vertex_buffer(0, self.fill_buf.slice(..));
                     rp.set_pipeline(&self.pipe_stencil);
@@ -999,6 +1011,7 @@ impl Renderer {
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
+        if let Err(reason)=self.image_cache.prepare(&self.device,&self.queue,&world.content) {self.health.stop(reason);return;}
         let bg = build_bg(view, fw, fh, world.grid_step);
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
         let ov_start = fgv.len() as u32;
@@ -1167,6 +1180,7 @@ impl Renderer {
         if !self.health.poll(&self.device) {
             return false;
         }
+        if let Some((world,_))=scene {if let Err(reason)=self.image_cache.prepare(&self.device,&self.queue,&world.content) {self.health.stop(reason);return false;}}
         let perf_start = std::time::Instant::now();
         // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
         // timeout, common on macOS) we return early, and a dropped full upload makes the next partial

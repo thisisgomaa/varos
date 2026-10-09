@@ -369,7 +369,7 @@ impl Service {
         if ![API, "1.1", "1.2"].contains(&req.api()) {
             return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0, 1.1 or 1.2"));
         }
-        if matches!(req, Request::ImportSvg(_)) && req.api() != "1.2" {
+        if matches!(req, Request::ImportSvg(_) | Request::AddImage(_)) && req.api() != "1.2" {
             return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
         }
         if [
@@ -480,7 +480,7 @@ impl Service {
                         if let Some(v) = &mut r.result {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
-                            v["readable_vrs"] = json!([1, 2, 3, 4, 5]);
+                            v["readable_vrs"] = json!([1, 2, 3, 4, 5, varos_core::format::IMAGE_VERSION]);
                             v["writable_vrs"] = json!([5]);
                             v["stroke_style_schema"] = crate::mcp::stroke_style_schema();
                             let tools = crate::mcp::full_tools_for("1.2");
@@ -641,6 +641,11 @@ impl Service {
                         }
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                }
+                // ---- w2-images ----
+                Request::AddImage(v) => {
+                    if v.path.is_none() || v.scope.is_some() {return Err(Error::new("invalid_argument","add_image requires a local path and no scope"));}
+                    host.file_effect("add_image",v)
                 }
                 Request::ImportSvg(v) => {
                     if v.path.is_none() || v.scope.is_some() {
@@ -1032,6 +1037,12 @@ impl Service {
         r
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
+        // ---- w2-images ----
+        if v.api == "1.2" && v.fields.as_ref().is_some_and(|f|f.as_slice()==["images"]) {
+            let a=host.access(&v.board)?;if v.rev.is_some_and(|r|r!=a.editor.rev){return Err(Error::new("stale_revision","document changed"));}
+            return Ok(Reply::success(crate::images::describe(a.editor)));
+        }
+        if v.api != "1.2" && !host.access(&v.board)?.editor.doc.images.is_empty() {return Err(Error::new("unsupported_version","image detail requires API 1.2"));}
         if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["document_info"]) {
             let b = &self.boards[&v.board];
             if v.rev.is_some_and(|r| r != b.rev) {

@@ -424,6 +424,8 @@ struct SelectionState {
 pub struct Editor {
     pub select_transform: crate::select_transform::State,
     pub last_error: Option<crate::guard::EngineError>,
+    // ---- w2-images ----
+    pub blobs: crate::images::BlobStore,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
@@ -506,6 +508,7 @@ impl Editor {
         Editor {
             select_transform: Default::default(),
             last_error: None,
+            blobs: crate::images::BlobStore::default(),
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
@@ -3531,6 +3534,7 @@ impl Editor {
         staged.key_object = self.key_object;
         staged.distribute_gap = self.distribute_gap;
         staged.paste_remembers_layers = self.paste_remembers_layers;
+        staged.blobs = self.blobs.clone();
         staged.cur_fill = self.cur_fill;
         staged.cur_stroke = self.cur_stroke;
         staged.cur_sw = self.cur_sw;
@@ -3553,6 +3557,7 @@ impl Editor {
             staged.doc != self.doc
         } {
             self.begin();
+            self.blobs = staged.blobs;
             self.doc = staged.doc;
             self.dirty = true;
             self.commit();
@@ -3598,6 +3603,12 @@ impl Editor {
     pub(crate) fn clear_batch_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
+    }
+    // ---- w2-images ----
+    pub fn image_pins(&self) -> std::collections::HashSet<crate::images::BlobKey> {
+        std::iter::once(&self.doc).chain(self.undo.iter().map(std::sync::Arc::as_ref))
+            .chain(self.redo.iter().map(std::sync::Arc::as_ref)).chain(self.pending.iter().map(std::sync::Arc::as_ref))
+            .flat_map(|d| d.images.iter().map(|i| i.blob.clone())).collect()
     }
     pub fn history_preview(&self, redo: bool) -> Option<&Document> {
         if redo { self.redo.last() } else { self.undo.last() }.map(std::sync::Arc::as_ref)

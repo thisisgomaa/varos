@@ -51,7 +51,10 @@ pub fn load_vrs_bytes(bytes: &[u8], limits: &Limits) -> Result<Loaded, LoadError
     }
     bound(LimitKind::ModelBytes, stream.content.len(), limits.max_model_bytes)?;
     bound(LimitKind::DecodedStreams, stream.content.len(), limits.max_decoded_stream_bytes)?;
-    decode_model(&stream.content, version, limits)
+    // ---- w2-images ----
+    let mut loaded = decode_model(&stream.content, version, limits)?;
+    crate::images::load_assets(&pdf,catalog,&mut loaded,limits)?;
+    Ok(loaded)
 }
 
 fn resolve<'a>(pdf: &'a Document, o: &'a Object) -> Result<&'a Object, LoadError> {

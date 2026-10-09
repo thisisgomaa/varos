@@ -43,7 +43,8 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
             if envelope.api != "1.2"
                 && matches!(
                     command,
-                    EditCommand::SetWandOptions(_)
+                    EditCommand::Image(_)
+                        | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
                         | EditCommand::TransformBegin
@@ -261,6 +262,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             Ok(())
         }
         Eyedropper { source, .. } => path(*source),
+        Image(edit) => crate::images::check(ed, edit),
         InsertTracedPaths { paths } => crate::trace::check_insert(ed, paths),
         PlaceArtwork(doc) => crate::placement::check(ed, doc),
         ZoomPercent(v) => {

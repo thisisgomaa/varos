@@ -103,6 +103,18 @@ impl Host for Desktop<'_> {
         verb: &str,
         request: &varos_bridge::dto::FileEffect,
     ) -> Result<varos_bridge::Reply, Error> {
+        // ---- w2-images ----
+        if verb == "add_image" {
+            let sid=session(&request.board)?;let s=self.ws.get(sid).ok_or_else(||Error::new("not_found","board closed"))?;
+            if s.editor.rev!=request.expected_rev {return Err(Error::new("stale_revision","document changed"));}
+            if FILE_PENDING.with(|r|r.borrow().len()>=8){return Err(Error::new("busy","eight file jobs are already pending"));}
+            let options=serde_json::from_value(request.options.clone().unwrap_or_else(||serde_json::json!({}))).map_err(|e|Error::new("invalid_argument",e.to_string()))?;
+            let ticket=crate::file_jobs::next_ticket();
+            let job=crate::image_jobs::Job {sid,ticket,expected_rev:request.expected_rev,path:std::path::PathBuf::from(request.path.as_deref().ok_or_else(||Error::new("invalid_argument","image path required"))?),options,bridge:true,cancel:crate::file_jobs::CancelFlag::from_shared(self.cancel.clone())};
+            self.files.as_deref_mut().ok_or_else(||Error::new("busy","file worker unavailable"))?.submit(crate::file_jobs::FileJob::Image(job)).map_err(|_|Error::new("busy","file worker unavailable"))?;
+            FILE_PENDING.with(|r|r.borrow_mut().insert(ticket));
+            return Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true,"ticket":ticket})));
+        }
         if verb == "import_svg" {
             let id = session(&request.board)?;
             let path = std::path::Path::new(
@@ -288,7 +300,7 @@ impl Host for Desktop<'_> {
                 ticket: 0, // a Bridge export has no sheet
             })
         } else {
-            FileJob::Save(SaveJob { sid: id, ticket, dest: dest.clone(), doc: std::sync::Arc::new(snapshot) })
+            FileJob::Save(SaveJob { blobs: s.editor.blobs.clone(),  sid: id, ticket, dest: dest.clone(), doc: std::sync::Arc::new(snapshot) })
         };
         let save = if let FileJob::Save(j) = &inner { Some(j.doc.clone()) } else { None };
         let worker = self.files.as_deref_mut().ok_or_else(|| Error::new("busy", "file worker unavailable"))?;
