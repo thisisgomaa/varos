@@ -697,3 +697,51 @@ mod tests {
 #[cfg(test)]
 #[path = "svg_tests.rs"]
 mod svg_tests;
+
+#[test]
+fn clip_preserves_object_opacity_expected_blend() {
+    use varos_core::model::{Anchor, Path};
+    let square = |id, size| {
+        Path::new(
+            id,
+            [[0., 0.], [size, 0.], [size, size], [0., size]]
+                .into_iter()
+                .enumerate()
+                .map(|(i, p)| Anchor { id: id * 10 + i as u32, p, hin: None, hout: None, smooth: false })
+                .collect(),
+            true,
+            Some([1., 0., 0., 1.]),
+            None,
+            0.,
+        )
+    };
+    let mut doc = Document::default();
+    let mut art = square(10, 20.);
+    art.opacity = 0.5;
+    art.stroke = varos_core::model::Paint::Solid([0., 0., 1., 1.]);
+    art.stroke_width = 2.;
+    doc.paths = vec![art, square(11, 10.)];
+    doc.ids = 200;
+    doc.sync_tree();
+    doc.clip_group(&[10, 11], 11).unwrap();
+    let mut editor = Editor::new();
+    editor.replace_doc(doc.clone());
+    let scene = build_scene(&editor, 1.);
+    assert!(
+        matches!(&scene.content[0],Group::Clip {members,..} if matches!(members[0],Group::Isolated {opacity:0.5,..}))
+    );
+    let clipped = rasterize_canvas(&doc, [25, 25], [0., 0.], 1.);
+    let p = clipped.sample([5., 5.]).unwrap();
+    assert!((p[0] - (0.5 + 20. / 255. * 0.5)).abs() < 2. / 255.);
+    assert!((p[1] - 19. / 255. * 0.5).abs() < 2. / 255.);
+    // Compare with the same isolated object outside the mask container.
+    doc.release_clip(doc.clip_group_of(10).unwrap());
+    doc.paths.retain(|p| p.id == 10);
+    doc.sync_tree();
+    let outside = rasterize_canvas(&doc, [25, 25], [0., 0.], 1.);
+    // The clip's extra premultiplied intermediate can round by one RGBA8 quantum.
+    for (a, b) in clipped.sample([5., 5.]).unwrap().into_iter().zip(outside.sample([5., 5.]).unwrap()) {
+        assert!((a - b).abs() <= 1. / 255. + f32::EPSILON);
+    }
+    assert_ne!(clipped.sample([15., 15.]), outside.sample([15., 15.]));
+}

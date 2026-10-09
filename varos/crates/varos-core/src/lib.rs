@@ -24,3 +24,6 @@ pub mod file;
 pub use units::{DocUnits, Unit};
 
 pub mod bridge;
+
+pub mod export;
+pub use export::{ExportNote, ExportReport};

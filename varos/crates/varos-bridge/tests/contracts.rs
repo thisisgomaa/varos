@@ -2071,7 +2071,7 @@ fn slice4_files_scope_and_save_ticket_completion_fake_host() {
         fn file_status(&mut self, t: u64) -> Option<Reply> {
             (t == 77 && self.done).then(|| {
                 self.code.map_or_else(
-                    || Reply::success(json!({"saved":true,"durable":true})),
+                    || Reply::success(json!({"saved":true,"durable":true,"report":{"notes":[{"kind":"synthetic","object_id":42,"message":"worker note"}]}})),
                     |c| Reply::failure(Error::new(c, "test failure")),
                 )
             })
@@ -2099,6 +2099,27 @@ fn slice4_files_scope_and_save_ticket_completion_fake_host() {
         assert!(accepted.ok, "{accepted:?}");
         assert_eq!(accepted.undo_steps, 0);
         assert_eq!(separate.calls, 1);
+    }
+
+    for api in ["1.0", "1.1", "1.2"] {
+        let mut host = Files { host: FakeHost::new(), calls: 0, done: false, code: None, pending: true };
+        let mut service = Service::new("test-epoch".into());
+        let result=service.handle(&mut host,&context,req("export_pdf",json!({"api":api,"board":"b1","expected_rev":rev,"request_id":"r1","path":"/granted/report.pdf","scope":"artwork_bounds"})),&AtomicBool::new(false));
+        assert!(result.ok, "{result:?}");
+        host.done = true;
+        let completed = service.handle(
+            &mut host,
+            &context,
+            req("request_status", json!({"request_id":"r1"})),
+            &AtomicBool::new(false),
+        );
+        let done = completed.result.unwrap()["receipt"]["result"].clone();
+        assert_eq!(done.get("report").is_some(), api == "1.2");
+        let result = result.result.unwrap();
+        assert!(result.get("report").is_none(), "accepted work has no completed report");
+        if api == "1.2" {
+            assert_eq!(done["report"]["notes"][0]["message"], "worker note");
+        }
     }
 
     let r = s.handle(&mut h, &context, request(), &AtomicBool::new(false));
@@ -2876,7 +2897,8 @@ fn economy_snapshot_summary_hint_and_revision_pinned_detail() {
     assert_eq!(h.editor.doc, before);
     let cap = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.1"})));
     let cap = cap.result.unwrap();
-    assert_eq!(cap["supported_api"], json!(["1.0", "1.1"]));
+    assert_eq!(cap["supported_api"], json!(["1.0", "1.1"]), "1.1 capabilities stay byte-stable");
+    assert_eq!(cap["api_by_tool"]["export_pdf"], json!(["1.0", "1.1", "1.2"]));
     assert!(cap["economy_hint"].as_str().unwrap().contains("repeat"));
     assert!(!cap["economy_hint"].as_str().unwrap().contains("bars"));
     let old = handle(&mut s, &mut h, req("capabilities", json!({})));

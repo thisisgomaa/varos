@@ -1,0 +1,6 @@
+Varos third-party attribution
+
+varos-core/tests/boolean_props.rs adapts boolean area and membership identities from
+VectorCraft crates/pathops/tests/prop_pathops.rs @ a469568.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
