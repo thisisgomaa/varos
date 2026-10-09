@@ -83,6 +83,12 @@ pub trait Host {
         Err(Error::new("unsupported", "host has no desktop command index"))
     }
     // ---- Lane F ----
+    fn help(&mut self, _v: &crate::application::HelpRequest) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no desktop Help surface"))
+    }
+    fn application_commands_available(&self) -> bool {
+        false
+    }
     fn preferences(&mut self, _request: &crate::application::Preferences) -> Result<Reply, Error> {
         Err(Error::new("unsupported", "host has no preferences writer"))
     }
@@ -391,6 +397,7 @@ impl Service {
         if [
             "shortcuts",
             "command_index",
+            "help",
             "preferences",
             "history_list",
             "history_jump",
@@ -478,6 +485,7 @@ impl Service {
                 }
             }
             match req {
+                Request::Help(v) => host.help(v),
                 Request::Preferences(v) => host.preferences(v),
                 Request::Shortcuts(v) => host.shortcuts(v),
                 Request::CommandIndex(v) => host.command_index(v),
@@ -498,6 +506,10 @@ impl Service {
                     let a = host.access(&v.board)?;
                     let from = a.editor.rev;
                     let result = match &v.action {
+                        crate::application::Action::Cancel {} => {
+                            a.editor.cancel_action_recording();
+                            json!({"recording":false})
+                        }
                         crate::application::Action::Start {} => {
                             a.editor.start_action_recording().map_err(|e| Error::new("busy", e))?;
                             json!({"recording":true})
@@ -521,11 +533,35 @@ impl Service {
                     };
                     self.observe(host);
                     let mut reply = self.edit_receipt(&v.board, from);
+                    if !matches!(v.action, crate::application::Action::Replay { .. }) {
+                        reply.undo_steps = 0;
+                    }
                     reply.result = Some(result);
                     Ok(reply)
                 }
                 Request::Schema(v) => Ok(Reply::success(crate::mcp::schema(&v.tool, v.verb.as_deref())?)),
-                Request::ListVerbs(_) => Ok(Reply::success(crate::mcp::list_verbs())),
+                Request::ListVerbs(_) => {
+                    let mut value = crate::mcp::list_verbs();
+                    if !host.application_commands_available() {
+                        if let Some(groups) = value["groups"].as_array_mut() {
+                            for group in groups {
+                                if let Some(rows) = group["verbs"].as_array_mut() {
+                                    for row in rows {
+                                        if matches!(
+                                            row["name"].as_str(),
+                                            Some("help" | "preferences" | "shortcuts" | "command_index")
+                                        ) {
+                                            row["enabled"] = json!(false);
+                                            row["disabled_reason"] = json!("unsupported_host");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    value["epoch"] = json!(self.epoch);
+                    Ok(Reply::success(value))
+                }
                 Request::WindowMemory(v) => {
                     if v.api != "1.2" {
                         return Err(Error::new("unsupported", "window_memory requires API 1.2"));
@@ -869,6 +905,10 @@ impl Service {
                     let mut locals = BTreeMap::new();
                     let mut expanded = 0usize;
                     let mut affected = std::collections::BTreeSet::new();
+                    let recording = a.editor.action_recording_len().is_some();
+                    let mut recorded: Vec<Option<Result<Vec<varos_core::actions::Step>, String>>> =
+                        vec![None; ops.len()];
+                    let source_targets = ops.iter().find(|op| !op.ids().is_empty()).map(|op| op.ids().to_vec());
                     let batch = a.editor.prepare_design_batch(
                         ops.len(),
                         |staged, index| {
@@ -877,6 +917,7 @@ impl Service {
                                 expanded = 0;
                                 affected.clear();
                             }
+                            let recording_before = recording.then(|| staged.doc.clone());
                             let created = apply_design_op(
                                 staged,
                                 ops[index],
@@ -902,6 +943,17 @@ impl Service {
                                         Some(format!("{label} {id}"));
                                 }
                             }
+                            if let Some(before) = recording_before {
+                                recorded[index] = if before.content_eq(&staged.doc) {
+                                    None
+                                } else {
+                                    Some(if source_targets.as_deref() != Some(ops[index].ids()) {
+                                        Err("Action targets changed within the recorded batch".into())
+                                    } else {
+                                        crate::action_recording::steps(ops[index])
+                                    })
+                                };
+                            }
                             Ok(())
                         },
                         |index, reason| {
@@ -926,7 +978,23 @@ impl Service {
                         return Err(Error::new("cancelled", "cancelled before commit"));
                     }
                     a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
+                    if recording {
+                        let steps = recorded
+                            .into_iter()
+                            .flatten()
+                            .collect::<Result<Vec<_>, _>>()
+                            .map(|parts| parts.into_iter().flatten().collect());
+                        a.editor.record_action_batch(from, steps);
+                    }
                     a.editor.annotate_history(from, actor, format!("Agent batch · {} operations", v.ops.len()));
+                    a.editor.annotate_history_verbs(
+                        from,
+                        ops.iter()
+                            .filter_map(|op| {
+                                serde_json::to_value(op).ok().and_then(|v| v["verb"].as_str().map(str::to_owned))
+                            })
+                            .collect(),
+                    );
                     self.observe(host);
                     let mut reply = if v.receipt.as_deref() == Some("ids") {
                         self.ids_receipt(&v.board, from)

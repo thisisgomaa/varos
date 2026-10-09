@@ -170,9 +170,6 @@ impl Ui {
     pub fn toggle_dock(&mut self) {
         self.show_dock = !self.show_dock;
     }
-    pub fn toggle_panel(&mut self, p: varos_app::shell::PanelId) {
-        self.shell.toggle_panel(p);
-    }
     /// The check marks those rows show.
     pub fn rail_shown(&self) -> bool {
         self.show_rail
@@ -204,6 +201,9 @@ impl Ui {
     }
 }
 impl Ui {
+    pub fn toggle_panel(&mut self, p: varos_app::shell::PanelId) {
+        self.shell.toggle_panel(p);
+    }
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
@@ -334,7 +334,10 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        export::wants_keyboard(self)
+        matches!(
+            self.phase9.sheet,
+            Some(crate::phase9::DesktopAction::Preferences | crate::phase9::DesktopAction::Shortcuts)
+        ) || export::wants_keyboard(self)
     }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.
@@ -444,8 +447,6 @@ impl Ui {
             _ => CK::Select,
         }
     }
-    /// Editor-free Start pass: no Snap, EditCommand, document panels, or canvas overlays.
-
     pub fn run(
         &mut self,
         window: &Window,
@@ -640,6 +641,10 @@ impl Ui {
                                 &mut lay_anchor,
                                 &mut ops,
                             );
+                            true
+                        }
+                        P::Actions => {
+                            self.phase9.actions(ui, &mut app_cmds, doc_active);
                             true
                         }
                         P::History => {

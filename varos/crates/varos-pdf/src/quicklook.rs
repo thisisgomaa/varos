@@ -25,6 +25,9 @@ pub fn embed_preview_next(pdf: &[u8], png: &[u8]) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 pub fn preview(pdf: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    if pdf.len() as u64 > varos_core::format::Limits::DEFAULT.max_file_bytes {
+        return Err("Container exceeds file limit".into());
+    }
     let doc = Document::load_mem(pdf).map_err(|e| e.to_string())?;
     let root = doc.trailer.get(b"Root").and_then(Object::as_reference).map_err(|e| e.to_string())?;
     let catalog = doc.get_dictionary(root).map_err(|e| e.to_string())?;
@@ -36,11 +39,35 @@ pub fn preview(pdf: &[u8]) -> Result<Option<Vec<u8>>, String> {
     if stream.content.len() > MAX_PREVIEW || stream.dict.has(b"Filter") {
         return Err("Unsupported or oversized preview stream".into());
     }
+    if !stream.content.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("Invalid PNG preview".into());
+    }
     Ok(Some(stream.content.clone()))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frozen_container_input_and_future_preview_refusal() {
+        let original = include_bytes!("../../varos-core/tests/fixtures/v3/v3_boardless_pdf.vrs");
+        let png = include_bytes!("../fixtures/quicklook/preview-v1.png");
+        let upgraded = embed_preview_next(original, png).unwrap();
+        assert_eq!(preview(&upgraded).unwrap().unwrap(), png);
+        let old = crate::load_vrs_bytes(original, &varos_core::format::Limits::DEFAULT).unwrap().doc;
+        let new = crate::load_vrs_bytes(&upgraded, &varos_core::format::Limits::DEFAULT).unwrap().doc;
+        assert!(old.content_eq(&new));
+        assert!(embed_preview_next(original, include_bytes!("../fixtures/quicklook/refuse-not-png.bin")).is_err());
+        let refused: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../fixtures/quicklook/refuse-version.json")).unwrap();
+        let mut doc = Document::load_mem(&upgraded).unwrap();
+        let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        doc.get_dictionary_mut(root)
+            .unwrap()
+            .set("VAROS_PreviewVersion", refused["VAROS_PreviewVersion"].as_i64().unwrap());
+        let mut bytes = vec![];
+        doc.save_to(&mut bytes).unwrap();
+        assert!(preview(&bytes).unwrap_err().contains("version"));
+    }
     #[test]
     fn frozen_model_roundtrip_and_preview_refusals() {
         let doc = varos_core::board::new_board();

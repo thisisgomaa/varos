@@ -39,9 +39,23 @@ pub fn edit_id(verb: &str) -> String {
 pub fn menu_id(alias: &str) -> String {
     match alias {
         "edit.undo" => "history.undo".into(),
-        "obj.group"=>"edit.group".into(),"obj.ungroup"=>"edit.ungroup".into(),"obj.clip"=>"edit.clip".into(),"obj.release_clip"=>"edit.release_clip".into(),"file.savecopy"=>"file.save-copy".into(),"file.print"=>"bridge.print".into(),"file.export.pdf"=>"bridge.export_pdf".into(),"file.save-template"=>"bridge.save_template".into(),"file.new-template"=>"bridge.new_from_template".into(),"file.place.svg"=>"bridge.import_svg".into(),
         "edit.redo" => "history.redo".into(),
-        "file.save-copy" => "file.save-copy".into(),
+        "help.shortcuts" => "app.shortcuts".into(),
+        "win.panel.Actions" => "app.actions".into(),
+        "obj.group" => "edit.group".into(),
+        "obj.ungroup" => "edit.ungroup".into(),
+        "obj.clip" => "edit.clip".into(),
+        "obj.release_clip" => "edit.release_clip".into(),
+        "edit.delete" => "edit.delete".into(),
+        "file.savecopy" | "file.save-copy" => "file.save-copy".into(),
+        "file.saveas" => "file.save-as".into(),
+        "file.closeall" => "file.close-all".into(),
+        "file.print" => "bridge.print".into(),
+        "file.export.pdf" => "bridge.export_pdf".into(),
+        "file.save-template" => "bridge.save_template".into(),
+        "file.new-template" => "bridge.new_from_template".into(),
+        "file.place.svg" => "bridge.import_svg".into(),
+        "win.document-info" => "file.document-info".into(),
         _ => alias
             .chars()
             .map(|c| {

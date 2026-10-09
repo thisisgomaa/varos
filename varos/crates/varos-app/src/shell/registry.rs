@@ -15,15 +15,16 @@ pub enum PanelId {
     Layers,
     Swatches,
     History,
+    Actions,
     Assets,
 }
 
 impl PanelId {
-    /// The panels the Window / box ⌄ menu can dock. Swatches/History/Assets are NOT here yet — they are
+    /// The panels the Window / box ⌄ menu can dock. Swatches/Assets are NOT here yet — they are
     /// unbuilt (sandbox dummies), so they must not appear as choices until they have real bodies (Ahmed
     /// 07-08). The enum variants stay, ready to re-list the moment each is built for real.
-    pub const DOCKABLE: [PanelId; 5] =
-        [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers, PanelId::History];
+    pub const DOCKABLE: [PanelId; 6] =
+        [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers, PanelId::History, PanelId::Actions];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -34,6 +35,7 @@ impl PanelId {
             PanelId::Layers => "Layers",
             PanelId::Swatches => "Swatches",
             PanelId::History => "History",
+            PanelId::Actions => "Actions",
             PanelId::Assets => "Assets",
         }
     }
@@ -68,6 +70,9 @@ pub fn render_panel(id: PanelId, ui: &mut egui::Ui) {
         PanelId::Layers => layers_panel(ui),
         PanelId::Swatches => swatches_panel(ui),
         PanelId::History => history_panel(ui),
+        PanelId::Actions => {
+            micro(ui, "Actions are supplied by the document host");
+        }
         PanelId::Assets => assets_panel(ui),
     }
 }

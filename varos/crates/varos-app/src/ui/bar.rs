@@ -351,8 +351,14 @@ fn file_menu_row(
     why: &str,
     cmds: &mut Vec<AppCommand>,
 ) -> bool {
-    match crate::host::to_app_command(f, active).filter(|_| crate::menus::file_row_enabled(f, state)) {
-        Some(cmd) if menu_row(ui, label, shortcut) => {
+    let registry =
+        crate::command_registry::commands().into_iter().find(|c| c.handler == crate::menus::MenuCmd::File(f));
+    let label = registry.as_ref().map_or(label, |c| c.label);
+    let hint = registry.as_ref().map(crate::command_registry::shortcut_text).unwrap_or_else(|| shortcut.into());
+    match crate::host::to_app_command(f, active)
+        .filter(|_| registry.as_ref().is_some_and(|c| crate::command_registry::availability(c, state).enabled))
+    {
+        Some(cmd) if menu_row(ui, label, &hint) => {
             cmds.push(cmd);
             true
         }
@@ -677,16 +683,12 @@ pub(crate) fn build_topbar(
                 hit = true;
             }
             // ---- Lane F ----
-            for (label, action) in [
-                ("Preferences…", crate::phase9::DesktopAction::Preferences),
-                ("Keyboard Shortcuts…", crate::phase9::DesktopAction::Shortcuts),
-                ("Actions…", crate::phase9::DesktopAction::Actions),
-                ("Varos Help", crate::phase9::DesktopAction::Help),
-                ("Report a problem", crate::phase9::DesktopAction::ReportProblem),
-            ] {
-                if menu_row(ui, label, "") {
-                    cmds.push(AppCommand::Phase9(action));
-                    hit = true;
+            for command in crate::command_registry::commands() {
+                if let crate::menus::MenuCmd::Phase9(action) = command.handler {
+                    if menu_row(ui, command.label, &crate::command_registry::shortcut_text(&command)) {
+                        cmds.push(AppCommand::Phase9(action));
+                        hit = true;
+                    }
                 }
             }
 

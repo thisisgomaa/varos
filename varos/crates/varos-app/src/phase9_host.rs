@@ -1,15 +1,25 @@
 //! Lane F: desktop effects, separate from the document lifecycle.
 use crate::{app_command::SessionId, phase9::DesktopAction, ui::Ui, workspace::Workspace};
-pub fn desktop(action: DesktopAction, ui: &mut Ui) {
+pub fn desktop(action: DesktopAction, ui: &mut Ui, has_document: bool) {
     match action {
         DesktopAction::Help => open("https://github.com/thisisgomaa/varos/tree/main/docs", ui),
         DesktopAction::ReportProblem => {
             if let Some(layout) = varos_app::storage::paths::AppLayout::current() {
                 if let Some(folder) = layout.crash_log().parent() {
-                    open(&folder.to_string_lossy(), ui);
+                    match std::fs::create_dir_all(folder) {
+                        Ok(()) => open(&folder.to_string_lossy(), ui),
+                        Err(e) => {
+                            ui.phase9.open(DesktopAction::Help);
+                            ui.phase9.error = Some(format!("Couldn't prepare the crash-log folder: {e}"));
+                        }
+                    }
                 }
+            } else {
+                ui.phase9.open(DesktopAction::Help);
+                ui.phase9.error = Some("The application data folder is unavailable".into());
             }
         }
+        DesktopAction::Actions if has_document => ui.toggle_panel(varos_app::shell::PanelId::Actions),
         _ => ui.phase9.open(action),
     }
 }
@@ -21,7 +31,8 @@ fn open(target: &str, ui: &mut Ui) {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let result = std::process::Command::new("xdg-open").arg(target).spawn();
     if let Err(e) = result {
-        ui.phase9.error = Some(e.to_string());
+        ui.phase9.open(DesktopAction::Help);
+        ui.phase9.error = Some(format!("Couldn't open the requested Help destination: {e}"));
     }
 }
 pub fn record(ui: &mut Ui, ws: &mut Workspace, id: SessionId, start: bool) {
@@ -30,14 +41,39 @@ pub fn record(ui: &mut Ui, ws: &mut Workspace, id: SessionId, start: bool) {
             return;
         }
         if start {
-            if let Err(e) = s.editor.start_action_recording() {
-                ui.phase9.error = Some(e);
+            match s.editor.start_action_recording() {
+                Ok(()) => ui.phase9.recording = true,
+                Err(e) => ui.phase9.error = Some(e),
             }
         } else {
             match s.editor.finish_action_recording("Recorded action".into()) {
-                Ok(a) => ui.phase9.actions = Some(a),
+                Ok(a) => {
+                    ui.phase9.actions = Some(a);
+                    ui.phase9.recording = false;
+                }
                 Err(e) => ui.phase9.error = Some(e),
             }
+        }
+    }
+}
+pub fn load_action(ui: &mut Ui) {
+    if let Some(path) = rfd::FileDialog::new().add_filter("Varos Actions", &["vrs-actions"]).pick_file() {
+        use std::io::Read;
+        let result = (|| {
+            let mut bytes = vec![];
+            std::fs::File::open(path)
+                .map_err(|e| e.to_string())?
+                .take(1_048_577)
+                .read_to_end(&mut bytes)
+                .map_err(|e| e.to_string())?;
+            varos_core::actions::Actions::decode(&bytes)
+        })();
+        match result {
+            Ok(a) => {
+                ui.phase9.actions = Some(a);
+                ui.phase9.error = None;
+            }
+            Err(e) => ui.phase9.error = Some(e),
         }
     }
 }

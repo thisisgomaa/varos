@@ -338,7 +338,7 @@ fn family(panel: PanelId) -> &'static [PanelId] {
         PanelId::Align | PanelId::Pathfinder => &[PanelId::Align, PanelId::Pathfinder],
         PanelId::Properties | PanelId::Layers => &[PanelId::Properties, PanelId::Layers],
         PanelId::Swatches => &[PanelId::Properties],
-        PanelId::History | PanelId::Assets => &[PanelId::Layers],
+        PanelId::History | PanelId::Actions | PanelId::Assets => &[PanelId::Layers],
         _ => &[],
     }
 }

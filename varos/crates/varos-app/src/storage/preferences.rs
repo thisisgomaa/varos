@@ -28,11 +28,49 @@ pub enum GpuPreference {
     LowPower,
     HighPerformance,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Language {
     System,
     En,
+    /// Previously selected catalog unavailable in this build; retained with English fallback.
+    Unavailable {
+        catalog: [u8; 64],
+        len: u8,
+    },
+}
+impl Language {
+    pub fn requested(&self) -> &str {
+        match self {
+            Self::System => "system",
+            Self::En => "en",
+            Self::Unavailable { catalog, len } => {
+                std::str::from_utf8(&catalog[..usize::from(*len).min(64)]).unwrap_or("system")
+            }
+        }
+    }
+}
+impl Serialize for Language {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.requested())
+    }
+}
+impl<'de> Deserialize<'de> for Language {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(d)?;
+        match value.as_str() {
+            "system" => Ok(Self::System),
+            "en" => Ok(Self::En),
+            _ if !value.is_empty()
+                && value.len() <= 64
+                && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_".contains(&b)) =>
+            {
+                let mut catalog = [0; 64];
+                catalog[..value.len()].copy_from_slice(value.as_bytes());
+                Ok(Self::Unavailable { catalog, len: value.len() as u8 })
+            }
+            _ => Err(serde::de::Error::custom("Use a catalog identifier up to 64 ASCII characters")),
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasColour {
@@ -271,5 +309,51 @@ mod tests {
             assert!(validate(&s).is_err());
         }
         assert_eq!(serde_json::from_str::<CanvasColour>("\"#aBcD12\"").unwrap().to_string(), "#ABCD12");
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+    #[test]
+    fn setting_bounds_wrong_types_and_unavailable_catalog_roundtrip() {
+        for (key, valid, invalid) in [
+            (
+                "keyboard_increment_pt",
+                vec![serde_json::json!(0.001), serde_json::json!(1296)],
+                vec![serde_json::json!(0.0009), serde_json::json!(1296.1), serde_json::json!("1")],
+            ),
+            (
+                "history_depth",
+                vec![serde_json::json!(5), serde_json::json!(1000)],
+                vec![serde_json::json!(4), serde_json::json!(1001), serde_json::json!(5.5)],
+            ),
+            (
+                "autosave_interval_seconds",
+                vec![serde_json::json!(30), serde_json::json!(1800)],
+                vec![serde_json::json!(29), serde_json::json!(1801), serde_json::json!(-1)],
+            ),
+        ] {
+            let spec = SPECS.iter().find(|s| s.key == key).unwrap();
+            for value in valid {
+                assert!(spec.set(&mut Settings::default(), value).is_ok());
+            }
+            for value in invalid {
+                assert!(spec.set(&mut Settings::default(), value).is_err());
+            }
+        }
+        let mut settings = Settings::default();
+        settings.preferences.language = serde_json::from_str("\"ar-eg\"").unwrap();
+        let bytes = serde_json::to_vec(&settings.preferences.language).unwrap();
+        assert_eq!(serde_json::from_slice::<Language>(&bytes).unwrap().requested(), "ar-eg");
+        assert!(serde_json::from_str::<CanvasColour>("\"#12🍎\"").is_err());
+        assert!(serde_json::from_str::<GpuPreference>("\"software\"").is_err());
+        for recovery in [false, true] {
+            for autosave in [false, true] {
+                settings.recovery_enabled = recovery;
+                settings.autosave_enabled = autosave;
+                assert!(validate(&settings).is_ok());
+            }
+        }
     }
 }

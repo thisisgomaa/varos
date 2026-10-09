@@ -13,7 +13,8 @@
     },
     "name": {
       "type": "string",
-      "maxLength": 256
+      "maxLength": 256,
+      "minLength": 1
     },
     "steps": {
       "type": "array",
@@ -120,6 +121,109 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 64
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "fill",
+              "colour"
+            ],
+            "properties": {
+              "id": {
+                "const": "edit.paint"
+              },
+              "fill": {
+                "type": "boolean"
+              },
+              "colour": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "value"
+            ],
+            "properties": {
+              "id": {
+                "const": "edit.stroke-width"
+              },
+              "value": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "degrees"
+            ],
+            "properties": {
+              "id": {
+                "const": "edit.rotation"
+              },
+              "degrees": {
+                "type": "number"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "edit.delete"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "edit.group"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "edit.ungroup"
               }
             }
           }

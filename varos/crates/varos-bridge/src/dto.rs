@@ -11,6 +11,7 @@ fn page() -> usize {
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     // ---- Lane F ----
+    Help(crate::application::HelpRequest),
     Preferences(crate::application::Preferences),
     Shortcuts(crate::application::ShortcutsRequest),
     CommandIndex(crate::application::CommandIndex),
@@ -806,6 +807,7 @@ impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
         match self {
+            Self::Help(_) => "help",
             Self::Preferences(_) => "preferences",
             Self::Shortcuts(_) => "shortcuts",
             Self::CommandIndex(_) => "command_index",
@@ -839,6 +841,7 @@ impl Request {
     pub fn api(&self) -> &str {
         match self {
             Self::Capabilities(v) | Self::WindowMemory(v) | Self::ListVerbs(v) => &v.api,
+            Self::Help(v) => &v.api,
             Self::Preferences(v) => &v.api,
             Self::Shortcuts(v) => &v.api,
             Self::CommandIndex(v) => &v.api,

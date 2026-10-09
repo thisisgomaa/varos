@@ -32,6 +32,7 @@ pub mod health;
 pub struct Renderer {
     // ---- Lane F ----
     pasteboard: [f32; 4],
+    pub adapter_description: String,
     pub health: health::DeviceHealth,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -611,6 +612,7 @@ impl Renderer {
             },
         );
         Ok(Renderer {
+            adapter_description: format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend),
             pasteboard: BG,
             health,
             surface,

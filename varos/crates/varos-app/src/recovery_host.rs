@@ -43,11 +43,12 @@ pub struct RecoveryUi {
 // ---- Lane F ----
 #[path = "preferences_host.rs"]
 mod preferences_host;
+type SettingsSources = (Option<Vec<u8>>, Option<Vec<u8>>);
 enum Finished {
     Preferences(Settings, Result<Vec<u8>, String>),
-    Shortcuts(crate::shortcut_editor::Overrides, Result<(), String>),
+    Shortcuts(Result<(crate::shortcut_editor::Overrides, Vec<u8>), String>),
+    Reconciled(Result<SettingsSources, String>),
     Recovery(Completion<SessionId>),
-    Settings(Settings, Result<(), String>),
     Scanned(Vec<OrphanEntry>),
     ScanFailed,
     Loaded(String, Result<Box<crate::workspace::RecoveredDocument>, String>),
@@ -66,7 +67,8 @@ pub struct RecoveryHost {
     autosave_wake: Option<Instant>,
     worker: Option<IoWorker<Finished>>,
     store: Option<Arc<RecoveryStore>>,
-    settings_path: Option<PathBuf>,
+    shortcuts_path: Option<PathBuf>,
+    shortcuts_source: Option<Vec<u8>>,
     pub warning: Option<String>,
     orphans: Vec<OrphanEntry>,
     busy: std::collections::HashSet<String>,
@@ -133,14 +135,15 @@ impl RecoveryHost {
             scheduler: Scheduler::default(),
             settings: Settings::default(),
             preferences_generation: 0,
-            shortcuts: crate::shortcut_editor::Overrides::load(),
+            shortcuts: Default::default(),
             preferences_pending: false,
             settings_evidence_path: None,
             settings_source: None,
             autosave_wake: None,
             worker: None,
             store: None,
-            settings_path: None,
+            shortcuts_path: None,
+            shortcuts_source: None,
             warning: None,
             orphans: Vec::new(),
             busy: Default::default(),
@@ -170,13 +173,16 @@ impl RecoveryHost {
         let (settings, warning) = settings::load(&RealFs, &layout.settings());
         host.settings = settings;
         host.settings_evidence_path = Some(layout.settings());
-        host.settings_source = RealFs.read(&layout.settings()).ok();
+        host.settings_source =
+            RealFs.read_limited(&layout.settings(), varos_app::storage::settings_codec::MAX_BYTES).ok();
         host.scheduler.set_enabled(settings.recovery_enabled);
-        if warning.is_none() {
-            host.settings_path = Some(layout.settings());
-        }
+        let shortcut_path = layout.settings().with_file_name("shortcuts.json");
+        let (shortcuts, source, shortcut_warning) = crate::shortcut_editor::Overrides::load_at(&shortcut_path);
+        host.shortcuts = shortcuts;
+        host.shortcuts_path = Some(shortcut_path);
+        host.shortcuts_source = source;
         host.settings_unsaved.clone_from(&warning);
-        host.warning = warning;
+        host.warning = warning.or(shortcut_warning);
         match RecoveryStore::open(Arc::new(RealFs), layout.recovery()) {
             Ok(store) => host.store = Some(Arc::new(store)),
             Err(e) => {
@@ -397,7 +403,8 @@ impl RecoveryHost {
             AppCommand::ApplyPreferences(settings, generation, reset) => {
                 self.apply_preferences(*settings, *generation, *reset)
             }
-            AppCommand::ApplyShortcuts(overrides) => self.apply_shortcuts(overrides.clone()),
+            AppCommand::ApplyShortcuts(overrides, generation) => self.apply_shortcuts(overrides.clone(), *generation),
+            AppCommand::ReconcilePreferences => self.reconcile_preferences(),
             AppCommand::SetRecoveryEnabled(_)
             | AppCommand::SetAutosave(_, _)
             | AppCommand::TogglePasteRemembersLayers
@@ -422,34 +429,11 @@ impl RecoveryHost {
                         }
                         desired.autosave_enabled = *enabled;
                         desired.autosave_interval_seconds = *seconds;
-                        for s in ws.sessions_mut() {
-                            s.autosave.reset();
-                        }
                     }
                     _ => {}
                 }
-                if let (Some(path), Some(worker)) = (self.settings_path.clone(), &self.worker) {
-                    let settings = desired;
-                    self.preferences_pending = true;
-                    let job = Box::new(move || {
-                        Finished::Settings(
-                            settings,
-                            settings.save(&RealFs, &path).map_err(|e| e.reason()).and_then(|outcome| match outcome {
-                                WriteOutcome::Durable => Ok(()),
-                                WriteOutcome::ReplacedUnconfirmed(e) => Err(e.to_string()),
-                            }),
-                        )
-                    });
-                    if worker.submit(job, Finished::Settings(settings, Err("Settings writer failed.".into()))).is_err()
-                    {
-                        self.preferences_pending = false;
-                        self.warning = Some("Couldn't save preferences.".into());
-                    }
-                } else {
-                    self.settings = desired;
-                    self.preferences_generation += 1;
-                    self.scheduler.set_enabled(desired.recovery_enabled);
-                }
+                // ---- Lane F: all settings clients share the same compare-and-publish writer ----
+                self.apply_preferences(desired, self.preferences_generation, false);
                 true
             }
             AppCommand::RetryRecovery(id) => {
@@ -552,14 +536,24 @@ impl RecoveryHost {
                         match result {
                             Ok(bytes) => {
                                 self.settings_source = Some(bytes);
-                                self.settings_path = self.settings_evidence_path.clone();
                                 self.settings_unsaved = None;
                                 self.warning = None;
+                                let reset_autosave = self.settings.autosave_enabled != settings.autosave_enabled
+                                    || self.settings.autosave_interval_seconds != settings.autosave_interval_seconds;
                                 self.settings = settings;
                                 self.preferences_generation += 1;
                                 self.scheduler.set_enabled(settings.recovery_enabled);
                                 for s in ws.sessions_mut() {
-                                    s.autosave.reset();
+                                    if reset_autosave {
+                                        s.autosave.reset();
+                                    }
+                                    if s.editor.paste_remembers_layers != settings.paste_remembers_layers {
+                                        s.editor.execute_ui(varos_core::EditCommand::SetPasteRemembersLayers(
+                                            settings.paste_remembers_layers,
+                                        ));
+                                    }
+                                    s.editor.keyboard_increment_pt = settings.preferences.keyboard_increment_pt;
+                                    let _ = s.editor.set_history_depth(settings.preferences.history_depth);
                                 }
                                 self.changed = true;
                             }
@@ -569,37 +563,31 @@ impl RecoveryHost {
                             }
                         }
                     }
-                    Finished::Shortcuts(overrides, result) => {
+                    Finished::Shortcuts(result) => {
+                        self.preferences_pending = false;
                         match result {
-                            Ok(()) => {
+                            Ok((overrides, bytes)) => {
                                 self.shortcuts = overrides;
+                                self.shortcuts_source = Some(bytes);
                                 self.preferences_generation += 1;
+                                self.warning = None;
                             }
                             Err(e) => self.warning = Some(e),
                         }
                         self.changed = true;
                     }
-                    Finished::Settings(settings, result) => {
+                    Finished::Reconciled(result) => {
                         self.preferences_pending = false;
                         match result {
-                            Ok(()) => {
-                                self.settings = settings;
-                                self.preferences_generation += 1;
-                                self.scheduler.set_enabled(settings.recovery_enabled);
-                                for tab in ws.sessions_mut() {
-                                    tab.editor.execute_ui(varos_core::EditCommand::SetPasteRemembersLayers(
-                                        settings.paste_remembers_layers,
-                                    ));
-                                    tab.editor.keyboard_increment_pt = settings.preferences.keyboard_increment_pt;
-                                    let _ = tab.editor.set_history_depth(settings.preferences.history_depth);
-                                }
-                                self.changed = true;
+                            Ok((settings, shortcuts)) => {
+                                self.settings_source = settings;
+                                self.shortcuts_source = shortcuts;
+                                self.warning =
+                                    Some("Disk reconciled; Apply explicitly to retry saving the draft".into());
                             }
-                            Err(e) => {
-                                self.warning = Some(format!("Couldn't save preferences. {e}"));
-                                self.changed = true;
-                            }
+                            Err(e) => self.warning = Some(e),
                         }
+                        self.changed = true;
                     }
                 }
             }
@@ -958,24 +946,26 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_settings_switch_applies_for_the_session_and_says_it_was_not_saved() {
+    fn unknown_settings_toggle_refuses_publication_and_preserves_source() {
         let layout = AppLayout { root: std::env::temp_dir().join(format!("varos-f1-{}", new_nonce())) };
         std::fs::create_dir_all(layout.settings().parent().unwrap()).unwrap();
-        std::fs::write(layout.settings(), br#"{"version":99,"recovery_enabled":true}"#).unwrap();
-        let mut host = RecoveryHost::at(Some(layout.clone()), Box::new(|| {}));
-        assert!(host.warning.is_some());
-        let mut ws = Workspace::new();
-        let mut dialogs = Dialog::default();
-        let cmd = AppCommand::SetRecoveryEnabled(false);
-        assert!(!host.handle_read(&cmd, &mut dialogs) && host.handle(&cmd, &mut ws, Instant::now()));
-        assert!(!host.presentation(ws.active()).enabled, "the switch still applies to this session");
-        assert_eq!(dialogs.notices.len(), 1);
-        assert!(dialogs.notices[0].starts_with("Recovery setting could not be saved: "), "{:?}", dialogs.notices);
-        assert_eq!(
-            std::fs::read(layout.settings()).unwrap(),
-            br#"{"version":99,"recovery_enabled":true}"#,
-            "the unreadable file is not overwritten"
+        let bytes = br#"{"version":99,"recovery_enabled":true}"#;
+        std::fs::write(layout.settings(), bytes).unwrap();
+        let (tx, wake) = mpsc::channel();
+        let mut host = RecoveryHost::at(
+            Some(layout.clone()),
+            Box::new(move || {
+                let _ = tx.send(());
+            }),
         );
+        let mut ws = Workspace::new();
+        host.handle(&AppCommand::SetRecoveryEnabled(false), &mut ws, Instant::now());
+        wake.recv_timeout(Duration::from_secs(5)).unwrap();
+        host.observe(&mut ws, Instant::now());
+        assert!(host.presentation(ws.active()).enabled, "unconfirmed settings never become effective");
+        assert_eq!(host.preferences_generation, 0);
+        assert!(host.warning.as_ref().unwrap().contains("writes locked"));
+        assert_eq!(std::fs::read(layout.settings()).unwrap(), bytes);
         host.shutdown();
         let _ = std::fs::remove_dir_all(&layout.root);
     }

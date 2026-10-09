@@ -495,6 +495,7 @@ pub struct Editor {
     id_high_water: u32,
     pub keyboard_increment_pt: f32,
     pub(crate) action_recording: Option<Vec<crate::actions::Step>>,
+    pub(crate) action_recording_warning: Option<String>,
     history_log: history::Log,
     undo: Vec<std::sync::Arc<Document>>,
     redo: Vec<std::sync::Arc<Document>>,
@@ -563,6 +564,7 @@ impl Editor {
             id_high_water: 0,
             keyboard_increment_pt: 1.0,
             action_recording: None,
+            action_recording_warning: None,
             history_log: history::Log { limit: 200, ..history::Log::default() },
             undo: vec![],
             redo: vec![],
@@ -3759,6 +3761,9 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        // ---- Lane F ----
+        self.action_recording = None;
+        self.action_recording_warning = None;
         self.stroke_error = None;
         self.select_transform = Default::default();
         self.reselect.clear();

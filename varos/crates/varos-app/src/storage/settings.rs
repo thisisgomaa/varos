@@ -69,7 +69,7 @@ impl Settings {
             autosave_interval_seconds: self.autosave_interval_seconds,
         };
         // Additive lane settings: preserve keys owned by sibling lanes at the FIFO writer.
-        let mut value = match fs.read(path) {
+        let mut value = match fs.read_limited(path, super::settings_codec::MAX_BYTES) {
             Ok(bytes) => {
                 let existing = super::settings_codec::envelope(&bytes)
                     .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
@@ -130,7 +130,7 @@ fn bad_path(path: &Path) -> PathBuf {
 /// Missing file → default (Recovery on), no warning. Corrupt JSON → default + warning, moved aside
 /// to `<name>.bad`. A version this build does not recognise → default + warning, file untouched.
 pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
-    let bytes = match fs.read(path) {
+    let bytes = match fs.read_limited(path, super::settings_codec::MAX_BYTES) {
         Ok(b) => b,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
         Err(e) => return (Settings::default(), Some(format!("Couldn't read settings: {}", durable::io_reason(&e)))),
@@ -220,7 +220,6 @@ mod tests {
             paste_remembers_layers: true,
             autosave_enabled: false,
             autosave_interval_seconds: 300,
-            ..Settings::default()
         };
         s.save(&RealFs, &path).unwrap();
         let (loaded, warning) = load(&RealFs, &path);

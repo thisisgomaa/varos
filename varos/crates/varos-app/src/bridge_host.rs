@@ -64,6 +64,24 @@ fn session(board: &str) -> Result<SessionId, Error> {
         .ok_or_else(|| Error::new("invalid_argument", "board must be a session handle bN"))
 }
 impl Host for Desktop<'_> {
+    fn help(&mut self, v: &varos_bridge::application::HelpRequest) -> Result<varos_bridge::Reply, Error> {
+        use varos_bridge::application::HelpAction;
+        let action = match v.action {
+            HelpAction::Docs => crate::phase9::DesktopAction::Help,
+            HelpAction::Shortcuts => crate::phase9::DesktopAction::Shortcuts,
+            HelpAction::ReportProblem => crate::phase9::DesktopAction::ReportProblem,
+        };
+        if self.ui.as_deref_mut().is_some_and(|ui| ui.queue_app_command(crate::app_command::AppCommand::Phase9(action)))
+        {
+            Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true})))
+        } else {
+            Err(Error::new("unsupported", "desktop Help queue unavailable"))
+        }
+    }
+    fn application_commands_available(&self) -> bool {
+        self.files.is_some()
+    }
+
     fn shortcuts(&mut self, v: &varos_bridge::application::ShortcutsRequest) -> Result<varos_bridge::Reply, Error> {
         self.files.as_deref_mut().ok_or_else(|| Error::new("unsupported", "No shortcut writer"))?.shortcuts(v)
     }
@@ -76,6 +94,7 @@ impl Host for Desktop<'_> {
                 can_revert: self.ws.active().is_some_and(crate::lifecycle::can_revert),
                 has_selection: self.ws.active().is_some_and(|s| crate::lifecycle::has_selection(&s.editor)),
             },
+            self.ws.active().map(|s| &s.editor),
         )
     }
     // ---- Lane F ----
