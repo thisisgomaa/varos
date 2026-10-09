@@ -28,3 +28,7 @@ pub mod autosave;
 pub mod publication;
 pub mod templates;
 pub mod window;
+
+// ---- Lane F ----
+pub mod preferences;
+pub mod settings_codec;

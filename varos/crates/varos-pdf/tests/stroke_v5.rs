@@ -84,6 +84,19 @@ fn next_future_refusal_precedes_typed_decode_in_both_containers() {
         );
     }
 }
+#[test]
+fn quicklook_future_refusal_precedes_typed_decode_in_both_containers() {
+    for ext in ["json", "pdf"] {
+        let bytes = std::fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/quicklook/future-v10.{ext}")),
+        )
+        .unwrap();
+        assert_eq!(
+            varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap_err(),
+            LoadError::NewerVersion { found: 10, supported: varos_core::format::FORMAT_VERSION }
+        );
+    }
+}
 
 #[test]
 fn v5_fixture_hashes_are_frozen() {

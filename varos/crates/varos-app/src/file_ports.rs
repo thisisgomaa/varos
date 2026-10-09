@@ -575,6 +575,8 @@ fn durable_save_published(
     // Cheap: writer-side object/token counts against the reader's own limits; the full reopen decode
     // runs only within 10 % of a limit (`varos_pdf::write_pdf_checked_report`).
     let bytes = varos_pdf::write_pdf_checked(doc, limits).map_err(|e| plain_reason(&e, NOT_WRITTEN))?;
+    // ---- Lane F ----
+    let bytes = crate::quicklook::with_cached_preview(doc, path, bytes).map_err(|e| plain_reason(&e, NOT_WRITTEN))?;
     let mut published = None;
     match write_replace_published(fs, path, &bytes, &new_nonce(), &mut published).map_err(|e| e.reason())? {
         WriteOutcome::Durable => {

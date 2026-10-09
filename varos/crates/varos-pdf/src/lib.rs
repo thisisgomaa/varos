@@ -152,3 +152,5 @@ pub fn load_vrs_with_notice(path: &FsPath) -> Result<(Document, Option<&'static 
 
 mod gradient;
 pub mod package;
+// ---- Lane F ----
+pub mod quicklook;

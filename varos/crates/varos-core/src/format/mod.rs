@@ -51,6 +51,9 @@ pub const PRE_TEXT_FORMAT_VERSION: u32 = GRADIENT_VERSION;
 /// 9 (2026-10-09, wave 2): Live Corners — `doc.paths[].corners` (w2-export-paths), plus the
 /// app lane's container-level embedded preview in the same bump.
 pub const CORNERS_VERSION: u32 = 9;
+/// Lane F: the optional PDF-catalog Quick Look preview (`/VAROS_Preview` + `/VAROS_PreviewVersion`)
+/// is container-only (no model key, no reader impact on the JSON body); folded into the v9 bump.
+pub const PREVIEW_FORMAT_VERSION: u32 = CORNERS_VERSION;
 pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;

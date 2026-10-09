@@ -13,6 +13,8 @@ pub fn save(
     path: &Path,
 ) -> Result<(SaveOutcome, Option<Fingerprint>), String> {
     let bytes = varos_pdf::images::write_vrs(doc, store, &Limits::DEFAULT)?;
+    // Lane F × w2-images: the optional Quick Look preview for image documents too
+    let bytes = crate::quicklook::with_cached_preview_resources(doc, store, path, bytes)?;
     let mut published = None;
     let outcome = write_replace_published(fs, path, &bytes, &new_nonce(), &mut published).map_err(|e| e.reason())?;
     Ok((

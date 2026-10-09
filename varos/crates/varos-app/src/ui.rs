@@ -38,12 +38,14 @@ mod guide_field;
 mod lane_c;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
+// ---- Lane F ----
 mod bar;
 mod canvas_overlay;
 mod clipping;
 mod colour_tools;
 mod control_bar;
 mod controls;
+mod home;
 mod layout;
 mod menus;
 pub(crate) mod ops;
@@ -104,6 +106,8 @@ pub struct Ui {
     /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
     panel_column: Option<egui::Rangef>,
+    // ---- Lane F ----
+    pub phase9: crate::phase9::State,
     pub document_sheet: Option<crate::document_ui::Sheet>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
     ic_rotate: Option<egui::TextureHandle>,
@@ -170,9 +174,6 @@ impl Ui {
     pub fn toggle_dock(&mut self) {
         self.show_dock = !self.show_dock;
     }
-    pub fn toggle_panel(&mut self, p: varos_app::shell::PanelId) {
-        self.shell.toggle_panel(p);
-    }
     /// The check marks those rows show.
     pub fn rail_shown(&self) -> bool {
         self.show_rail
@@ -204,6 +205,9 @@ impl Ui {
     }
 }
 impl Ui {
+    pub fn toggle_panel(&mut self, p: varos_app::shell::PanelId) {
+        self.shell.toggle_panel(p);
+    }
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
@@ -241,6 +245,7 @@ impl Ui {
             recovery: Default::default(),
             file_status: String::new(),
             canvas_hint: Default::default(),
+            phase9: Default::default(),
             document_sheet: None,
             export_sheet: None,
             panel_column: None,
@@ -313,8 +318,14 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        // ---- Lane D: numeric sheets own canvas shortcuts; Lane G: a live text session too ----
-        drawing::blocks_keyboard(&self.ctx) || self.text_tool.session.is_some() || export::wants_keyboard(self)
+        // Lane D numeric sheets, Lane G text session, Lane F Preferences/Shortcuts sheets, export fields
+        drawing::blocks_keyboard(&self.ctx)
+            || self.text_tool.session.is_some()
+            || matches!(
+                self.phase9.sheet,
+                Some(crate::phase9::DesktopAction::Preferences | crate::phase9::DesktopAction::Shortcuts)
+            )
+            || export::wants_keyboard(self)
     }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.
@@ -433,62 +444,6 @@ impl Ui {
             _ => CK::Select,
         }
     }
-    /// Editor-free Start pass: no Snap, EditCommand, document panels, or canvas overlays.
-    fn run_home(
-        &mut self,
-        window: &Window,
-        maximized: bool,
-    ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
-        let raw = self.state.egui_input_mut();
-        raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
-        let input = self.state.take_egui_input(window);
-        self.start_page.recovery_status.clone_from(&self.recovery.footer);
-        self.export_sheet = None; // Home has no document to export
-        let out = self.ctx.run_ui(input, |root| {
-            build_home_frame(
-                root,
-                &self.top,
-                &mut self.shell,
-                &mut self.win_action,
-                &self.doc_tabs,
-                &mut self.app_cmds,
-                &mut self.show_rail,
-                &mut self.show_dock,
-                &mut self.start_page,
-                &mut self.start_model,
-                self.recent_warning.as_deref(),
-                maximized,
-            );
-            lane_c::sheets(root.ctx(), &mut self.app_cmds, &mut Vec::new(), None);
-        });
-        // K3: Home draws no document field; any edit left open (an invalid one a non-user command
-        // passed) is closed here — there is no document to commit into
-        let _ = kit::field::end_frame(&self.ctx);
-        self.field_pending = None;
-        self.board_hole = None;
-        self.board_px = None;
-        self.cursor = out.platform_output.cursor_icon;
-        #[cfg(target_os = "macos")]
-        let out = {
-            let mut out = out;
-            out.platform_output.cursor_icon = egui::CursorIcon::Default;
-            out
-        };
-        self.state.handle_platform_output(window, out.platform_output);
-        self.repaint_at =
-            out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| Instant::now().checked_add(v.repaint_delay));
-        let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);
-        let size = window.inner_size();
-        (
-            jobs,
-            out.textures_delta,
-            egui_wgpu::ScreenDescriptor {
-                size_in_pixels: [size.width, size.height],
-                pixels_per_point: out.pixels_per_point,
-            },
-        )
-    }
-
     pub fn run(
         &mut self,
         window: &Window,
@@ -624,6 +579,7 @@ impl Ui {
             lane_c::sheets(ctx, &mut app_cmds, &mut ops, doc_active);
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
+            self.phase9.draw(ctx, &mut app_cmds, doc_active);
             crate::document_ui::draw(ctx, &mut self.document_sheet, ed, doc_active, &mut ops);
             build_statusbar(root, (absnap.active, absnap.count), view.zoom, ic_fit, &mut fit_request, status, &mut ops);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
@@ -713,6 +669,14 @@ impl Ui {
                         }
                         P::Swatches => {
                             colour_tools::panel(ui, ed, &mut ops);
+                            true
+                        }
+                        P::Actions => {
+                            self.phase9.actions(ui, &mut app_cmds, doc_active);
+                            true
+                        }
+                        P::History => {
+                            crate::phase9::history(ui, ed, doc_active, &mut app_cmds);
                             true
                         }
                         P::Align => {

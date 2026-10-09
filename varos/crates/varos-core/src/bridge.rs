@@ -214,6 +214,13 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
         SetScaleStrokes(_) => Ok(()),
         NewDocument(settings) => settings.document().map(|_| ()),
+        HistoryJump { undo_depth } => {
+            if ed.transaction_open() || *undo_depth > ed.history_depths().0 + ed.history_depths().1 {
+                Err("History position unavailable or edit in progress".into())
+            } else {
+                Ok(())
+            }
+        }
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());
@@ -595,9 +602,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             Ok(())
         }
         Nudge { x, y } => {
-            if ed.selected.is_empty() {
-                return Err("Nudge requires SelectAnchors (use SetObjectBounds for objects)".into());
-            }
+            // ---- Lane F: checked nudge accepts either explicit object or anchor selection ----
+            selection()?;
             finite(*x)?;
             finite(*y)
         }

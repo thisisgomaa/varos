@@ -108,6 +108,11 @@ fn sample_canvas(editor: &Editor, world: [f32; 2], ppu: f32) -> Rgba {
 
 /// Render an immutable document snapshot to a dotted `#141313` well, fitting visible scene bounds.
 pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
+    rasterize_with_blobs(snapshot, &varos_core::images::BlobStore::default(), size)
+}
+/// [`rasterize`] for documents with placed images (integration w2: the Quick Look preview of an image
+/// document draws its images instead of failing on a missing resource).
+pub fn rasterize_with_blobs(snapshot: Arc<Document>, blobs: &varos_core::images::BlobStore, size: [u32; 2]) -> Raster {
     let (w, h) = (size[0].max(1), size[1].max(1));
     let mut editor = Editor::new();
     let doc = match varos_text_layout::outline_document(&snapshot) {
@@ -115,6 +120,9 @@ pub fn rasterize(snapshot: Arc<Document>, size: [u32; 2]) -> Raster {
         Err(e) => return failed_raster(vec![e]),
     };
     editor.replace_doc(doc);
+    if !editor.doc.images.is_empty() {
+        editor.blobs = blobs.clone();
+    }
     let scene = build_scene(&editor, 1.0);
     if !scene.errors.is_empty() {
         return failed_raster(scene.errors);

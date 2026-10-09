@@ -1,0 +1,12 @@
+{
+  "rev": 1,
+  "undo_depth": 1,
+  "next_cursor": null,
+  "entries": [{
+    "rev_after": 1,
+    "actor": {"kind": "agent", "profile_id": "agent-a", "label": "Claude"},
+    "label": "Rename board",
+    "summary": {"created": 0, "changed": 0, "removed": 0, "verbs": ["set_board_name"], "artboards": []},
+    "at": 0
+  }]
+}

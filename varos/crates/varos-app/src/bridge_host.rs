@@ -64,6 +64,48 @@ fn session(board: &str) -> Result<SessionId, Error> {
         .ok_or_else(|| Error::new("invalid_argument", "board must be a session handle bN"))
 }
 impl Host for Desktop<'_> {
+    fn help(&mut self, v: &varos_bridge::application::HelpRequest) -> Result<varos_bridge::Reply, Error> {
+        use varos_bridge::application::HelpAction;
+        let action = match v.action {
+            HelpAction::Docs => crate::phase9::DesktopAction::Help,
+            HelpAction::Shortcuts => crate::phase9::DesktopAction::Shortcuts,
+            HelpAction::ReportProblem => crate::phase9::DesktopAction::ReportProblem,
+        };
+        if self.ui.as_deref_mut().is_some_and(|ui| ui.queue_app_command(crate::app_command::AppCommand::Phase9(action)))
+        {
+            Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true})))
+        } else {
+            Err(Error::new("unsupported", "desktop Help queue unavailable"))
+        }
+    }
+    fn application_commands_available(&self) -> bool {
+        self.files.is_some()
+    }
+
+    fn shortcuts(&mut self, v: &varos_bridge::application::ShortcutsRequest) -> Result<varos_bridge::Reply, Error> {
+        self.files.as_deref_mut().ok_or_else(|| Error::new("unsupported", "No shortcut writer"))?.shortcuts(v)
+    }
+    fn command_index(&self, v: &varos_bridge::application::CommandIndex) -> Result<varos_bridge::Reply, Error> {
+        crate::command_registry::index(
+            v.limit,
+            v.cursor,
+            crate::menus::DocMenuState {
+                active: !self.ws.on_home() && self.ws.active().is_some(),
+                can_revert: self.ws.active().is_some_and(crate::lifecycle::can_revert),
+                has_selection: self.ws.active().is_some_and(|s| crate::lifecycle::has_selection(&s.editor)),
+            },
+            self.ws.active().map(|s| &s.editor),
+        )
+    }
+    // ---- Lane F ----
+    fn preferences(&mut self, v: &varos_bridge::application::Preferences) -> Result<varos_bridge::Reply, Error> {
+        self.files.as_deref_mut().ok_or_else(|| Error::new("unsupported", "No preferences writer"))?.preferences(v)
+    }
+    fn history_actor(&self, client: &str) -> varos_core::editor::history::Actor {
+        let profile_id = client.split(':').next().unwrap_or(client).to_string();
+        let label = self.audit.as_ref().map(|(_, a)| a.label.clone()).unwrap_or_else(|| profile_id.clone());
+        varos_core::editor::history::Actor::Agent { profile_id, label }
+    }
     fn set_paste_remembers_layers(&mut self, board: &str, enabled: bool) -> Result<(), Error> {
         if !self
             .ui

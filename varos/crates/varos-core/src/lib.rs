@@ -69,3 +69,7 @@ pub mod colour_lab;
 
 mod gradient_scene;
 mod gradient_transform;
+// ---- Lane F ----
+pub mod actions;
+mod command_labels;
+pub mod registry;

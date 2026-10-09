@@ -2,6 +2,10 @@
 //! The editor: transient interaction state + shared operations + the drag/undo engine.
 //! Tools (see `tools/`) define what a *press* does; the shared move/up engine handles the drag.
 
+// ---- Lane F ----
+#[path = "history.rs"]
+pub mod history;
+
 use crate::boolean::{run_boolean_curves, BoolOp, ResultShape, Seg};
 use crate::clipboard::Clipboard;
 use crate::geom::*;
@@ -524,6 +528,14 @@ pub struct Editor {
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
     clipboard: Clipboard,
     id_high_water: u32,
+    pub keyboard_increment_pt: f32,
+    pub(crate) action_recording: Option<Vec<crate::actions::Step>>,
+    pub(crate) action_recording_warning: Option<String>,
+    // ---- Lane F: recording coverage at every document commit ----
+    pub(crate) action_recording_targets: Vec<u32>,
+    pub(crate) action_commit_step: Option<crate::actions::Step>,
+    pub(crate) action_batch_covered: bool,
+    history_log: history::Log,
     undo: Vec<std::sync::Arc<Document>>,
     redo: Vec<std::sync::Arc<Document>>,
     pending: Option<std::sync::Arc<Document>>,
@@ -600,6 +612,13 @@ impl Editor {
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
             id_high_water: 0,
+            keyboard_increment_pt: 1.0,
+            action_recording: None,
+            action_recording_warning: None,
+            action_recording_targets: vec![],
+            action_commit_step: None,
+            action_batch_covered: false,
+            history_log: history::Log { limit: 200, ..history::Log::default() },
             undo: vec![],
             redo: vec![],
             pending: None,
@@ -3678,6 +3697,7 @@ impl Editor {
                 .map_err(|reason| crate::bridge::BatchError { index, reason })?;
             // The staging host never undoes individual entries. Retaining their snapshots would
             // multiply document memory by up to 200 for a large batch; only the published step lives.
+            staged.history_log.clear();
             staged.undo.clear();
             staged.redo.clear();
         }
@@ -3787,6 +3807,7 @@ impl Editor {
         self.id_high_water.max(self.doc.ids)
     }
     pub(crate) fn clear_batch_history(&mut self) {
+        self.history_log.clear();
         self.undo.clear();
         self.redo.clear();
     }
@@ -3829,17 +3850,21 @@ impl Editor {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
-                // Retire only dropped history keys; staged batch resources stay admitted.
-                let mut retired: std::collections::HashSet<_> =
+                // Retire only dropped history keys; staged batch resources stay admitted (w2-images).
+                let retired: std::collections::HashSet<_> =
                     self.redo.iter().flat_map(|d| d.images.iter().map(|i| i.blob.clone())).collect();
+                self.history_log.push(self.rev + 1, &p, &self.doc);
                 self.undo.push(p);
-                if self.undo.len() > 200 {
-                    retired.extend(self.undo.remove(0).images.iter().map(|i| i.blob.clone()));
-                }
+                self.trim_history(); // Lane F's configurable ceiling; retires what it drops
                 self.redo.clear();
                 let pins = self.image_pins();
                 self.blobs.retire(&retired, &pins);
+                let before_rev = self.rev;
                 self.rev += 1;
+                // ---- Lane F: a direct gesture cannot silently disappear from Actions ----
+                if !self.action_batch_covered {
+                    self.record_step(self.action_commit_step.clone(), before_rev);
+                }
             }
         }
         self.pending = None;
@@ -3854,6 +3879,9 @@ impl Editor {
     }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
+            if let Some(entry) = self.history_log.undo.pop() {
+                self.history_log.redo.push(entry);
+            }
             self.redo.push(std::sync::Arc::new(self.doc.clone()));
             self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
@@ -3862,6 +3890,9 @@ impl Editor {
     }
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
+            if let Some(entry) = self.history_log.redo.pop() {
+                self.history_log.undo.push(entry);
+            }
             self.undo.push(std::sync::Arc::new(self.doc.clone()));
             self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
@@ -3875,6 +3906,8 @@ impl Editor {
     /// `active` / `active_layer` stay history-restored (pinned by tests); units and move-art are real
     /// undo steps and stay restored too.
     fn restore_keeping_prefs(&mut self, mut snapshot: Document) {
+        // ---- Lane F: direct undo/redo cannot leave a silently incomplete recording ----
+        self.refuse_action_recording();
         snapshot.snap = self.doc.snap;
         snapshot.guides_locked = self.doc.guides_locked;
         snapshot.ruler_origin = self.doc.ruler_origin;
@@ -3972,6 +4005,9 @@ impl Editor {
         self.requested_zoom = None;
         self.requested_canvas = None;
         self.image_drag = None;
+        // ---- Lane F ----
+        self.action_recording = None;
+        self.action_recording_warning = None;
         self.stroke_error = None;
         self.gradient_tool = Default::default();
         self.colour_error = None;
@@ -3984,6 +4020,7 @@ impl Editor {
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
         self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
         self.id_high_water = self.doc.ids;
+        self.history_log.clear();
         self.undo.clear();
         self.redo.clear();
         self.pending = None;
