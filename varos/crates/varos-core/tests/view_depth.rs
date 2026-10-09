@@ -90,3 +90,44 @@ fn preferences_and_drawing_readout() {
     assert_eq!(ed.doc.transparency_grid, !before);
     assert_eq!(varos_core::view_depth::drawing_readout([0.0, 0.0], [3.0, 4.0]).1, "-53.1°   5.00 pt");
 }
+
+#[test]
+fn trim_pixel_grid_stays_inside_artboards_and_outline_has_no_pixel_grid() {
+    let mut ed = editor();
+    ed.view_depth.pixel_preview = true;
+    ed.view_depth.trim = true;
+    let view = View { zoom: 6.0, pan: [0.0, 0.0] };
+    let drawn = scene::build_scene_in_view_styled(&ed, view, [600, 600], style());
+    assert!(drawn.overlay.is_empty());
+    assert!(drawn.grid_step.is_none());
+    let Group::Clip { members, .. } = &drawn.content[0] else { panic!("artboard clip missing") };
+    assert!(members.iter().flat_map(Group::prims).any(|p| matches!(p,
+        Prim::Stroke { width, color, .. } if *width == 1.0 / 6.0 && *color == style().outline)));
+    ed.view_depth.trim = false;
+    ed.view_depth.outline = true;
+    let outline = scene::build_scene_in_view_styled(&ed, view, [600, 600], style());
+    assert!(outline.pixel_preview.is_none());
+    // Only path centerlines belong in the content; no pixel furniture in outline.
+    assert_eq!(outline.content.iter().flat_map(Group::prims).count(), 1);
+}
+
+#[test]
+fn presentation_settles_drawing_and_loaded_documents_reset_view_requests() {
+    let mut ed = editor();
+    ed.tool = varos_core::editor::ToolKind::Rect;
+    ed.pointer_down([50.0, 50.0]);
+    ed.pointer_move([80.0, 80.0]);
+    ed.execute_ui(EditCommand::View(ViewAction::Depth(D::Presentation)));
+    assert!(!ed.transaction_open());
+    let before = ed.doc.clone();
+    ed.pointer_down([90.0, 90.0]);
+    ed.pointer_move([100.0, 100.0]);
+    ed.pointer_up();
+    assert_eq!(before, ed.doc);
+    ed.requested_pan = Some([100.0, 100.0]);
+    ed.requested_zoom = Some(600.0);
+    ed.requested_canvas = Some([1, 2, 3]);
+    ed.replace_doc(before);
+    assert_eq!(ed.view_depth, Default::default());
+    assert!(ed.requested_pan.is_none() && ed.requested_zoom.is_none() && ed.requested_canvas.is_none());
+}

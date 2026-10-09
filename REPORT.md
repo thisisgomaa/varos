@@ -1,26 +1,26 @@
-# Lane E — Phase 8 (feat/w2-view)
-- State: implemented (provisional UI, owner design review pending); image-outline integration pending.
-- 8.1: Cmd+Y global Outline; MUTED one-pixel transformed path/hole strokes; exports retain normal paint; scene signature includes modes.
-- Layers primary-click eye toggles node/subtree Outline without hiding it.
-- Image boxes: base has no Image node; moderator must connect this pass after the image lane lands.
-- 8.2: Option+Cmd+Y GPU pixel-lattice preview; ppi-based grid at ≥600% with a density guard; Snap to Pixel / Move Whole Pixels reuse existing fields.
-- Pixel Preview also samples canvas editing overlays; egui chrome stays sharp. Native fidelity is unverified.
-- 8.3: real dockable Navigator PanelId, whole-board thumbnail cache, viewport rectangle, drag-to-pan and zoom slider.
-- Navigator proxy is synchronous, 224×126, cached per session/revision; large-document responsiveness needs native acceptance.
-- Navigator/cache pacing tests prove idle Wait and no repeated texture upload; no periodic repaint was added.
-- 8.4: Shift+F Presentation hides chrome, clips to artboards, Esc exits; Trim uses an artboard union without overlap double-compositing.
-- Canvas presets + arbitrary API RGB persist via the existing settings queue; transparency grid reuses Document Setup; shape/Pen angle-distance HUD.
-- Command: EditCommand::View(ViewAction::Depth); deferred camera/preferences use existing host/AppCommand paths.
-- Bridge API 1.2: `view`, ids [], action {depth: ACTION}; list_verbs + schema expose payloads; legacy fixtures unchanged.
-- CLI: `view-depth FILE.vrs --batch ACTIONS.json` inspects headless state; attached `bridge edit` controls desktop views.
-- New .vrs keys/version/migration: none. Existing document snap/grid keys reused. Settings additive key: canvas_color [u8;3].
-- No prior-art code lifted. Dev-only naga 29 validates WGSL headlessly; already available offline; no missing crates.
-- Most implementation is in new modules; shared-file hooks are small. ui.rs: 830/843 lines; ratchet limits unchanged.
-- fmt --all --check: pending final ledger.
-- dependency directions: PASS.
-- workspace --offline -j 3 --no-fail-fast: pending final ledger.
-- native + Windows x86_64-pc-windows-msvc Clippy, all targets, -D warnings: PASS.
-- shell ratchets: 3 passed, 0 failed; Bridge ratchets/legacy byte fixtures: 6 passed, 0 failed.
-- GUI/native acceptance/independent moderator review: not performed; no commit, push, merge, install or GUI launch.
-- Spec/API examples/owner checks: docs/reference/VIEW_DEPTH_8_LANE_E.md; PLAN Progress updated.
-- Gate evidence: /tmp/lane-e-{workspace,fmt-final,deps-final,clippy-native-final2,clippy-windows-final,ratchets,bridge-fixtures}.log.
+# Lane E — Phase 8 resume (feat/w2-view)
+- Resumed WIP 056447e; kept completed implementation and finished remaining wiring.
+- State: implemented (provisional UI, owner design review pending), subject to image-lane integration below.
+- 8.1: Cmd+Y Outline; MUTED physical-pixel path/hole strokes, unchanged normal/export scenes, mode-keyed cache.
+- Primary-click Layers eye toggles subtree outline; persistent muted marker/tooltip now reflects per-row state.
+- Image-box outlines: this base has no Image node; moderator must connect the image lane's objects before acceptance.
+- 8.2: Option+Cmd+Y lattice preview; one ppi-based grid at ≥600%, density bounded, clipped with Trim artwork.
+- Snap to Pixel / Move Whole Pixels read existing snap flags; regression checks standalone Bridge publication.
+- Pixel quantization now clears stale alignment guides; resumed Pen readout uses transformed world coordinates.
+- 8.3: real dockable Navigator, cached whole-board proxy, viewport rectangle, click/drag pan and zoom slider.
+- Fixed click-only input, aspect distortion and thumbnail tint; 4 Navigator interaction/cache/pacing tests pass.
+- Navigator raster is synchronous, 224×126 and revision cached; large-board responsiveness needs native acceptance.
+- 8.4: Shift+F Presentation, Escape exit; settles active drawing and suppresses drawing/edit keys despite hidden focus.
+- Trim clips once over artboard union; canvas colour persists; transparency menu reflects Document Setup flag.
+- Shape/Pen angle-distance HUD; document replacement resets view modes and pending camera/preferences requests.
+- EditCommand::View(DepthAction), API 1.2 view verb + schema/list_verbs, and headless CLI view-depth preserved.
+- New .vrs keys/version/migration: none. Existing snap/grid keys reused; additive settings key: canvas_color [u8;3].
+- No prior-art code lifted. Dev-only naga 29 available offline; no missing registry crates.
+- UI remains in new modules / small shared hooks; ui.rs 830/843 lines; ratchet thresholds unchanged.
+- cargo fmt --all --check: PASS; dependency directions: PASS; git diff --check: PASS.
+- cargo test --offline --workspace -j 3 --no-fail-fast: PASS — 1905 passed, 0 failed, 15 ignored (runner summaries).
+- Native + x86_64-pc-windows-msvc Clippy (--offline --workspace --all-targets -j 3, -D warnings): PASS.
+- Shell ratchets: 3 passed, 0 failed; Bridge ratchets + frozen 1.0/1.1 fixtures: 6 passed, 0 failed.
+- Bridge view-depth: 2 passed, 0 failed; core view-depth: 7 passed, 0 failed.
+- Evidence: /tmp/w2-view-gate-*.log; spec and PLAN Progress updated.
+- No new commit/push/merge, GUI launch, installation or independent moderator review; owner native/design acceptance pending.

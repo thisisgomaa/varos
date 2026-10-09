@@ -40,13 +40,8 @@ pub fn present(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle, mut 
     let a = view.s2w([0.0, 0.0]);
     let b = view.s2w([frame[0] as f32, frame[1] as f32]);
     scene.canvas_color = Some(style.canvas);
-    if ed.view_depth.trim || ed.view_depth.presentation {
-        let content = std::mem::take(&mut scene.content);
-        scene.content.push(Group::Clip { mask_rings: trim_rings(ed), members: content });
-        scene.overlay.clear();
-        scene.grid_step = None;
-    }
-    if ed.view_depth.pixel_preview && view.zoom >= 6.0 && !ed.view_depth.presentation {
+    let mut pixel_grid = Vec::new();
+    if scene.pixel_preview.is_some() && view.zoom >= 6.0 && !ed.view_depth.presentation {
         let step = crate::view_depth::pixel_step(ed.doc.units.ppi);
         // Bounded by a screen-density floor, never allocate millions of lines at high ppi.
         if step * view.zoom >= 2.0 {
@@ -58,10 +53,31 @@ pub fn present(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle, mut 
                 for i in 0..count.min(8192) {
                     let x = (start + i as i64) as f32 * step;
                     let (p, q) = if axis == 0 { ([x, a[1]], [x, b[1]]) } else { ([a[0], x], [b[0], x]) };
-                    scene.overlay.push(Prim::Stroke { pts: vec![p, q], width: 1.0, color: style.outline, clip: None });
+                    pixel_grid.push(Prim::Stroke {
+                        pts: vec![p, q],
+                        width: 1.0 / view.zoom,
+                        color: style.outline,
+                        clip: None,
+                    });
                 }
             }
         }
+    }
+    if ed.view_depth.trim || ed.view_depth.presentation {
+        // Pixel furniture belongs inside the same artboard clip as the artwork.
+        scene.content.push(Group::Opaque(pixel_grid));
+        let content = std::mem::take(&mut scene.content);
+        scene.content.push(Group::Clip { mask_rings: trim_rings(ed), members: content });
+        scene.overlay.clear();
+        scene.grid_step = None;
+    } else {
+        // Content strokes scale with zoom; editing overlay strokes do not.
+        for prim in &mut pixel_grid {
+            if let Prim::Stroke { width, .. } = prim {
+                *width = 1.0;
+            }
+        }
+        scene.overlay.extend(pixel_grid);
     }
     scene
 }

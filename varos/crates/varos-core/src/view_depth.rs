@@ -49,7 +49,12 @@ impl Editor {
             DepthAction::SnapPixel => self.doc.snap.force_pixel_align = !self.doc.snap.force_pixel_align,
             DepthAction::MoveWholePixel => self.doc.snap.move_whole_px = !self.doc.snap.move_whole_px,
             DepthAction::Trim => self.view_depth.trim = !self.view_depth.trim,
-            DepthAction::Presentation => self.view_depth.presentation = !self.view_depth.presentation,
+            DepthAction::Presentation => {
+                if !self.view_depth.presentation && self.transaction_open() {
+                    self.pointer_up();
+                }
+                self.view_depth.presentation = !self.view_depth.presentation;
+            }
             DepthAction::ExitPresentation => self.view_depth.presentation = false,
             DepthAction::OutlineNode { id } => {
                 if self.doc.nodes.iter().any(|n| n.id == id) && !self.view_depth.outline_nodes.remove(&id) {
@@ -120,6 +125,7 @@ pub fn navigator_camera(bounds: [f32; 4], size: Pt) -> crate::geom::View {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DepthCheck {
+    TransparencyGrid,
     Outline,
     PixelPreview,
     SnapPixel,
@@ -130,6 +136,7 @@ pub enum DepthCheck {
 impl DepthCheck {
     pub fn read(self, ed: &Editor) -> bool {
         match self {
+            Self::TransparencyGrid => ed.doc.transparency_grid,
             Self::Outline => ed.view_depth.outline,
             Self::PixelPreview => ed.view_depth.pixel_preview,
             Self::SnapPixel => ed.doc.snap.force_pixel_align,

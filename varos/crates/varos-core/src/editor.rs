@@ -3036,7 +3036,8 @@ impl Editor {
     pub fn snap_xy(&self, w: Pt, want_x: bool, want_y: bool) -> (Pt, Vec<SnapGuide>) {
         let (p, guides) = self.snap_xy_lines(w, want_x, want_y, self.snap_target_lines());
         let q = self.pixel_point(p);
-        ([if want_x { q[0] } else { p[0] }, if want_y { q[1] } else { p[1] }], guides)
+        let snapped = [if want_x { q[0] } else { p[0] }, if want_y { q[1] } else { p[1] }];
+        (snapped, if snapped != p { vec![] } else { guides })
     }
     /// Point-snap for the ARTBOARD tool (resize handle / create corner): targets = every visible page
     /// except `skip` (pass `usize::MAX` to keep them all) + artwork + guides.
@@ -3778,6 +3779,11 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        // ---- Lane E ----
+        self.view_depth = Default::default();
+        self.requested_pan = None;
+        self.requested_zoom = None;
+        self.requested_canvas = None;
         self.stroke_error = None;
         self.select_transform = Default::default();
         self.reselect.clear();
@@ -4134,6 +4140,9 @@ impl Editor {
         }
     }
     pub fn pointer_down(&mut self, pos: Pt) {
+        if self.view_depth.presentation {
+            return;
+        }
         self.cursor = pos;
         self.begin();
         self.gesture_copy = false;
@@ -4265,6 +4274,9 @@ impl Editor {
         }
     }
     pub fn pointer_move(&mut self, pos: Pt) {
+        if self.view_depth.presentation {
+            return;
+        }
         if crate::tools::select_transform::movement(self, pos) {
             self.cursor = pos;
             return;
@@ -4286,10 +4298,15 @@ impl Editor {
             self.hover_path = self.path_under(pos);
             self.hover_snap(pos); // A10: phantom snap point before the first click of a drawing tool
             if self.tool == ToolKind::Pen && self.doc.snap.smart {
-                if let Some(a) =
-                    self.active.and_then(|id| self.doc.paths.iter().find(|p| p.id == id)).and_then(|p| p.anchors.last())
+                if let Some((pid, a)) = self
+                    .active
+                    .and_then(|id| self.doc.paths.iter().find(|p| p.id == id))
+                    .and_then(|p| p.anchors.last().map(|a| (p.id, a)))
                 {
-                    self.snap_hud = Some(crate::view_depth::drawing_readout(a.p, self.pixel_point(pos)));
+                    self.snap_hud = Some(crate::view_depth::drawing_readout(
+                        self.doc.unit_xform(pid).apply(a.p),
+                        self.pixel_point(pos),
+                    ));
                 }
             }
         }

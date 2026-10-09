@@ -28,12 +28,13 @@ pub(super) fn rows() -> Vec<Entry> {
             check: Some(Check::Depth(check)),
         });
     }
-    rows.push(item(
-        "view.transparency",
-        "Transparency Grid",
-        None,
-        MenuCmd::View(ViewAction::Depth(D::TransparencyGrid)),
-    ));
+    rows.push(Entry::Item {
+        id: "view.transparency".into(),
+        label: "Transparency Grid",
+        accel: None,
+        cmd: MenuCmd::View(ViewAction::Depth(D::TransparencyGrid)),
+        check: Some(Check::Depth(C::TransparencyGrid)),
+    });
     for (id, label, rgb) in [
         ("view.canvas.dark", "Canvas Colour: Dark", varos_app::shell::tokens::CANVAS_DARK),
         ("view.canvas.mid", "Canvas Colour: Medium", varos_app::shell::tokens::CANVAS_MID),
