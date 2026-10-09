@@ -51,6 +51,7 @@ impl Tool for Object {
             if let Some(group) = group.filter(|_| members.iter().all(|member| ed.objsel.contains(member))) {
                 ed.group_sel.insert(group);
             }
+            ed.key_object = Some(pid);
             let (base, base_world, piv_base) = ed.object_move_base();
             ed.drag = Drag::Object { down: pos, base, base_world, piv_base };
             return;

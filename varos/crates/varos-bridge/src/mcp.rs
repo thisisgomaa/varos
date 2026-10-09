@@ -77,7 +77,7 @@ pub fn tools() -> Value {
         ),
         object(json!({"verb":{"const":"rename"},"ids":edit_ids,"name":name}), &["verb", "ids", "name"]),
         object(
-            json!({"verb":{"const":"align"},"ids":edit_ids,"mode":{"enum":["left","center","right","top","middle","bottom"]},"target":{"type":"string","pattern":"^(selection|artboard:[1-9][0-9]*|\\$[A-Za-z][A-Za-z0-9_]{0,62}|a[0-9]+@[0-9]+)$","description":"selection, artboard:N, a request-local bound to an artboard, or the deprecated revision-bound aN@rev"}}),
+            json!({"verb":{"const":"align"},"ids":edit_ids,"mode":{"enum":["left","center","right","top","middle","bottom"]},"target":{"type":"string","pattern":"^(selection|key_object|artboard:[1-9][0-9]*|\\$[A-Za-z][A-Za-z0-9_]{0,62}|a[0-9]+@[0-9]+)$","description":"selection, artboard:N, a request-local bound to an artboard, or the deprecated revision-bound aN@rev"}}),
             &["verb", "ids", "mode", "target"],
         ),
         object(
@@ -213,6 +213,91 @@ pub fn tools() -> Value {
         schemas.get_mut(tool).unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1"],"default":"1.0"});
     }
     schemas.get_mut("export_pdf").unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+    for name in ["select", "edit"] {
+        if let Some(schema) = schemas.get_mut(name) {
+            schema["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+        }
+    }
+    if let Some(schema) = schemas.get_mut("select") {
+        schema["properties"]["paste_remembers_layers"] =
+            json!({"type":"boolean","description":"API 1.2 app paste preference; ids must be empty"});
+        schema["properties"]["lasso"] = json!({"type":"object","additionalProperties":false,"required":["points","objects","additive"],"properties":{"points":{"type":"array","minItems":3,"maxItems":4096,"items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}},"objects":{"type":"boolean"},"additive":{"type":"boolean"}}});
+        schema["properties"]["mode"] = json!({"description":"API 1.2 only; omitted retains explicit ids selection", "oneOf":[{"enum":["all","deselect","reselect","inverse","above","below","artboard"]},{"type":"object","additionalProperties":false,"required":["same"],"properties":{"same":{"enum":["fill","fill_stroke","stroke","stroke_weight","opacity","appearance"]}}},{"type":"object","additionalProperties":false,"required":["key_object"],"properties":{"key_object":{"type":"integer","minimum":1}}},{"type":"object","additionalProperties":false,"required":["group"],"properties":{"group":{"type":"integer","minimum":1}}}]});
+    }
+    if let Some(schema) = schemas.get_mut("edit") {
+        let wave = [
+            object(
+                json!({"verb":{"const":"view"},"ids":ids,"action":{"description":"API 1.2 view actions","oneOf":[{"enum":["make_guides","release_guides","clear_guides","toggle_grid","convert_artboards"]},{"type":"object","minProperties":1,"maxProperties":1,"additionalProperties":false,"properties":{"grid":object(json!({"spacing":{"type":"number","minimum":0.01,"maximum":1000000},"subdivisions":{"type":"integer","minimum":1,"maximum":100}}), &["spacing","subdivisions"]),"guide_position":object(json!({"index":{"type":"integer","minimum":0},"position":{"type":"number"}}), &["index","position"]),"fit_artboard":object(json!({"id":{"type":"integer","minimum":1},"selected":{"type":"boolean"}}), &["id","selected"]),"reorder_artboard":object(json!({"id":{"type":"integer","minimum":1},"position":{"type":"integer","minimum":0}}), &["id","position"])}}]}}),
+                &["verb", "ids", "action"],
+            ),
+            object(
+                json!({"verb":{"const":"anchor_type"},"ids":ids,"anchor":{"type":"integer","minimum":1},"smooth":{"type":"boolean"}}),
+                &["verb", "ids", "anchor", "smooth"],
+            ),
+            object(
+                json!({"verb":{"const":"object"},"ids":{"type":"array","maxItems":1000,"items":{"type":"string"}},"action":{"enum":["lock","unlock_all","hide","show_all","expand_transform","reverse","average","add_anchors","clean_up","join","compound_make","compound_release","new_layer","new_sublayer","send_to_current_layer"]},"anchors":{"type":"array","maxItems":1000,"items":{"type":"integer","minimum":1}}}),
+                &["verb", "ids", "action"],
+            ),
+            object(
+                json!({"verb":{"const":"insert_anchor"},"ids":ids,"segment":{"type":"integer","minimum":0},"t":{"type":"number","exclusiveMinimum":0,"exclusiveMaximum":1}}),
+                &["verb", "ids", "segment", "t"],
+            ),
+            object(
+                json!({"verb":{"const":"delete_anchor"},"ids":ids,"anchor":{"type":"integer","minimum":1}}),
+                &["verb", "ids", "anchor"],
+            ),
+            object(
+                json!({"verb":{"const":"distribute_mode"},"ids":ids,"mode":{"enum":["left","center","right","top","middle","bottom"]}}),
+                &["verb", "ids", "mode"],
+            ),
+            object(
+                json!({"verb":{"const":"distribute_spacing"},"ids":ids,"axis":{"enum":["h","v"]},"gap":{"type":"number"}}),
+                &["verb", "ids", "axis", "gap"],
+            ),
+        ];
+        if let Some(ops) = schema["$defs"]["operation"]["anyOf"].as_array_mut() {
+            ops.extend(wave);
+        }
+    }
+    // Intern repeated edit schemas rather than widening the tools/list byte ratchet.
+    if let Some(schema) = schemas.get_mut("edit") {
+        fn intern(value: &mut Value, patterns: &[(&str, Value)]) {
+            if let Some((name, _)) = patterns.iter().find(|(_, pattern)| value == pattern) {
+                *value = json!({"$ref":format!("#/$defs/{name}")});
+                return;
+            }
+            match value {
+                Value::Object(map) => {
+                    for v in map.values_mut() {
+                        intern(v, patterns);
+                    }
+                }
+                Value::Array(array) => {
+                    for v in array {
+                        intern(v, patterns);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let patterns = [
+            ("paint", paint.clone()),
+            ("point", point.clone()),
+            ("page_bounds", page_bounds.clone()),
+            ("artboard", artboard.clone()),
+            ("object_ids", edit_ids.clone()),
+            ("plain_ids", ids.clone()),
+            ("bounds", bounds.clone()),
+            ("local", local.clone()),
+            ("name", name.clone()),
+        ];
+        intern(schema, &patterns);
+        if let Some(defs) = schema["$defs"].as_object_mut() {
+            for (name, value) in patterns {
+                defs.insert(name.into(), value);
+            }
+        }
+    }
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
         "capabilities"=>"Negotiate Bridge API 1.0/1.1; export_pdf additionally supports 1.2 reports; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",

@@ -50,6 +50,7 @@ mod os_open;
 mod pacing;
 mod recent_files;
 mod recovery_host;
+mod shortcuts;
 mod single_instance;
 mod thumbs;
 mod ui;
@@ -176,6 +177,11 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         ToolKind::Ellipse => CK::CrossEllipse,
         ToolKind::Triangle => CK::CrossTriangle,
         ToolKind::Polygon => CK::CrossPolygon,
+        ToolKind::Hand => CK::Hand,
+        ToolKind::Zoom => CK::Direct,
+        ToolKind::Lasso => CK::Direct,
+        ToolKind::AddAnchor => CK::PenAdd,
+        ToolKind::DeleteAnchor => CK::PenDel,
         ToolKind::Convert => CK::Convert,
         ToolKind::Eyedropper => CK::Eye,
         ToolKind::Pen => match ed.pen_hint(world) {
@@ -254,7 +260,12 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Ellipse => "Ellipse (L)",
         ToolKind::Triangle => "Triangle",
         ToolKind::Polygon => "Polygon",
-        ToolKind::Convert => "Convert",
+        ToolKind::Convert => "Anchor Point (Shift+C)",
+        ToolKind::Hand => "Hand (H)",
+        ToolKind::Zoom => "Zoom (Z)",
+        ToolKind::Lasso => "Lasso (Q)",
+        ToolKind::AddAnchor => "Add Anchor (+)",
+        ToolKind::DeleteAnchor => "Delete Anchor (-)",
         ToolKind::Eyedropper => "Eyedropper (I)",
         ToolKind::Artboard => "Artboard (Shift+O)",
         ToolKind::Rotate => "Rotate (R)",
@@ -266,8 +277,33 @@ fn tool_name(t: ToolKind) -> &'static str {
 /// `canvas_centre` = the centre of the visible drawing area (physical px): the point the keyboard
 /// zooms (⌘= / ⌘− / ⌘1) keep fixed, so the view never jumps away from the work.
 fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ctrl: bool, shift: bool, alt: bool) {
+    if !shortcuts::parity::is_bound(code, ctrl, shift, alt) {
+        return;
+    }
+    use varos_core::editor::wave::{ObjectAction as O, Selection as S};
     if ctrl {
         match code {
+            "Digit5" => ed.execute_ui(EditCommand::View(if alt {
+                varos_core::editor::view_commands::ViewAction::ReleaseGuides
+            } else {
+                varos_core::editor::view_commands::ViewAction::MakeGuides
+            })),
+            "Quote" => {
+                if shift {
+                    menu_snap_toggle(ed, chrome::SnapRow::Grid);
+                } else {
+                    ed.execute_ui(EditCommand::View(varos_core::editor::view_commands::ViewAction::ToggleGrid));
+                }
+            }
+            "Digit2" => ed.execute_ui(EditCommand::Object(if alt { O::UnlockAll } else { O::Lock })),
+            "Digit3" => ed.execute_ui(EditCommand::Object(if alt { O::ShowAll } else { O::Hide })),
+            "Digit6" => ed.execute_ui(EditCommand::Selection(S::Reselect)),
+            "Digit8" if !alt && !shift => ed.execute_ui(EditCommand::Object(O::CompoundMake)),
+            "Digit8" if alt && shift => ed.execute_ui(EditCommand::Object(O::CompoundRelease)),
+            "KeyJ" => ed.execute_ui(EditCommand::Object(if alt { O::Average } else { O::Join })),
+            "KeyA" if alt => ed.execute_ui(EditCommand::Selection(S::Artboard)),
+            "BracketRight" if alt => ed.execute_ui(EditCommand::Selection(S::Above)),
+            "BracketLeft" if alt => ed.execute_ui(EditCommand::Selection(S::Below)),
             "Semicolon" => {
                 if alt {
                     ed.execute_ui(EditCommand::ToggleGuidesLocked)
@@ -311,9 +347,9 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
             // text field: the keyboard path skips canvas shortcuts there and the menu hands ⌘A to egui.
             "KeyA" if !alt => {
                 if shift {
-                    ed.escape()
+                    ed.execute_ui(EditCommand::Selection(S::Deselect))
                 } else {
-                    ed.select_all()
+                    ed.execute_ui(EditCommand::Selection(S::All))
                 }
             }
             _ => {}
@@ -325,6 +361,12 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
         "KeyP" => ed.set_tool(ToolKind::Pen),
+        "KeyH" => ed.set_tool(ToolKind::Hand),
+        "KeyZ" => ed.set_tool(ToolKind::Zoom),
+        "KeyQ" => ed.set_tool(ToolKind::Lasso),
+        "KeyC" if shift => ed.set_tool(ToolKind::Convert),
+        "Equal" | "NumpadAdd" => ed.set_tool(ToolKind::AddAnchor),
+        "Minus" | "NumpadSubtract" => ed.set_tool(ToolKind::DeleteAnchor),
         "KeyM" => ed.set_tool(ToolKind::Rect),
         "KeyL" => ed.set_tool(ToolKind::Ellipse),
         "KeyR" => ed.set_tool(ToolKind::Rotate), // Rotate tool (Illustrator R)
@@ -360,6 +402,8 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
 fn editor_check(ed: &Editor, c: chrome::Check) -> Option<bool> {
     use chrome::Check as C;
     Some(match c {
+        C::Grid => ed.doc.snap.show_grid,
+        C::PasteRemembersLayers => ed.paste_remembers_layers,
         C::Rulers => ed.show_rulers,
         C::Guides => !ed.guides_hidden,
         C::GuidesLocked => ed.doc.guides_locked,
@@ -623,14 +667,35 @@ fn zoom_step(view: &mut View, screen: Pt, factor: f32) {
 /// menu bar (MAC_CHROME.md §C) both land here, so a menu row can never drift from its key.
 /// `canvas` = the visible drawing area in physical px (`canvas_px`).
 fn doc_key(ed: &mut Editor, view: &mut View, canvas: egui::Rect, code: KeyCode, m: Mods) {
+    if !shortcuts::parity::is_bound(&format!("{code:?}"), m.ctrl, m.shift, m.alt) {
+        return;
+    }
     let c = canvas.center();
     if m.ctrl && matches!(code, KeyCode::Digit0 | KeyCode::Numpad0) {
-        let (x, y, w, h) = fit_rect(ed);
+        let (x, y, w, h) = if m.alt { fit_all_rect(ed) } else { fit_rect(ed) };
         *view = fit_in(canvas, x, y, w, h, 0.9);
     } else if m.ctrl && !m.alt && code == KeyCode::KeyV {
         paste_key(ed, view, [c.x, c.y], m.shift);
     } else {
         apply_key(ed, view, [c.x, c.y], &format!("{code:?}"), m.ctrl, m.shift, m.alt);
+    }
+}
+
+fn fit_all_rect(ed: &Editor) -> (f32, f32, f32, f32) {
+    let bounds = ed
+        .doc
+        .artboards
+        .iter()
+        .filter(|ab| !ab.hidden)
+        .map(|ab| ab.rect())
+        .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))
+        .or_else(|| ed.artwork_bounds(false));
+    bounds.map_or_else(|| fit_rect(ed), |b| (b.0, b.1, (b.2 - b.0).max(1.0), (b.3 - b.1).max(1.0)))
+}
+fn apply_view_request(ed: &mut Editor, view: &mut View, canvas: egui::Rect) {
+    if let Some(percent) = ed.requested_zoom.take() {
+        let c = canvas.center();
+        gestures::zoom_to(view, [c.x, c.y], percent / 100.0);
     }
 }
 
@@ -743,6 +808,38 @@ fn run_action(
 ) -> host::Ran {
     match action {
         host::HostAction::App(AppCommand::Bridge(request)) => bridge_host::run_with_files(*request, ws, ui, Some(jobs)),
+        host::HostAction::App(AppCommand::Selection(id, s)) => {
+            if let Some(tab) = ws.active_mut().filter(|tab| tab.id == id) {
+                if !run_doc(host::DocAction::Selection(s), &mut tab.editor, &mut tab.view, canvas, ui) {
+                    return host::Ran { held: true, ..Default::default() };
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::FitAll(id)) => {
+            if let Some(tab) = ws.active_mut().filter(|tab| tab.id == id) {
+                if !run_doc(host::DocAction::FitAll, &mut tab.editor, &mut tab.view, canvas, ui) {
+                    return host::Ran { held: true, ..Default::default() };
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::View(id, s)) => {
+            if let Some(tab) = ws.active_mut().filter(|tab| tab.id == id) {
+                if !run_doc(host::DocAction::View(s), &mut tab.editor, &mut tab.view, canvas, ui) {
+                    return host::Ran { held: true, ..Default::default() };
+                }
+            }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::Object(id, s)) => {
+            if let Some(tab) = ws.active_mut().filter(|tab| tab.id == id) {
+                if !run_doc(host::DocAction::Object(s), &mut tab.editor, &mut tab.view, canvas, ui) {
+                    return host::Ran { held: true, ..Default::default() };
+                }
+            }
+            host::Ran::default()
+        }
         host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
         host::HostAction::Doc(a) => {
             if ws.on_home() {
@@ -770,6 +867,7 @@ fn run_doc(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::R
     if !ui.settle_fields(ed) {
         return false;
     }
+    apply_view_request(ed, view, canvas);
     run_doc_action(a, ed, view, canvas);
     true
 }
@@ -779,6 +877,13 @@ fn run_doc_action(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: 
     match a {
         host::DocAction::Key(code, m) => doc_key(ed, view, canvas, code, m),
         host::DocAction::Snap(row) => menu_snap_toggle(ed, row),
+        host::DocAction::Selection(s) => ed.execute_ui(EditCommand::Selection(s)),
+        host::DocAction::FitAll => {
+            let (x, y, w, h) = fit_all_rect(ed);
+            *view = fit_in(canvas, x, y, w, h, 0.9);
+        }
+        host::DocAction::View(s) => ed.execute_ui(EditCommand::View(s)),
+        host::DocAction::Object(s) => ed.execute_ui(EditCommand::Object(s)),
     }
 }
 
@@ -1146,6 +1251,7 @@ fn main() {
     // a drag / marquee / pen gesture that STARTED on the canvas — keep feeding it moves even if the
     // cursor strays over a panel (C5), so it never freezes under chrome; cleared on button release.
     let mut canvas_gesture = false;
+    let mut zoom_drag: Option<gestures::ZoomDrag> = None;
     // window-geometry persistence: track the NORMAL (un-maximized) bounds so we can save them on close,
     // and refit the view ONCE if we restored a maximized window (so the page isn't tiny in the corner).
     let mut win_norm: (i32, i32, u32, u32) = {
@@ -1304,6 +1410,23 @@ fn main() {
                                 raise_doc(&mut pending, D::Snap(row), &mut s.editor, &mut s.view, canvas, &mut gui);
                             }
                         }
+                        Some(R::Selection(s)) => {
+                            if let Some(tab) = ws.active_mut() {
+                                raise_doc(
+                                    &mut pending,
+                                    D::Selection(s),
+                                    &mut tab.editor,
+                                    &mut tab.view,
+                                    canvas,
+                                    &mut gui,
+                                );
+                            }
+                        }
+                        Some(R::Object(s)) => {
+                            if let Some(tab) = ws.active_mut() {
+                                raise_doc(&mut pending, D::Object(s), &mut tab.editor, &mut tab.view, canvas, &mut gui);
+                            }
+                        }
                         None => {}
                     }
                     redraw!("menu-row");
@@ -1339,6 +1462,7 @@ fn main() {
                     }
                     if ran.switched {
                         canvas_gesture = false;
+                        zoom_drag = None;
                         panning = false;
                     }
                 }
@@ -1366,6 +1490,11 @@ fn main() {
                         let (ds, keys) = (&mut dialogs, &keyboard);
                         let jobs = &mut recovery;
                         let bridge = matches!(&action, host::HostAction::App(AppCommand::Bridge(_)));
+                        if zoom_drag.take().is_some() {
+                            if let Some(session) = ws.active_mut() {
+                                session.editor.drag = Drag::None;
+                            }
+                        }
                         let ran =
                             dispatch(action, &mut ws, &mut gui, &window, hwnd, canvas, ds, &mut store, keys, jobs);
                         if reset_layout {
@@ -1391,6 +1520,7 @@ fn main() {
                         if ran.switched {
                             // a gesture / pan in flight belonged to the tab that was active before
                             canvas_gesture = false;
+                            zoom_drag = None;
                             panning = false;
                         }
                         if ran.exit {
@@ -1508,8 +1638,12 @@ fn main() {
                     _ => {}
                 }
                 if let WindowEvent::Focused(false) = &event {
-                    if keyboard.space() {
-                        panning = false; // as a Space key-up does: the Space pan ends
+                    panning = false;
+                    zoom_drag = None;
+                    if let Some(s) = ws.active_mut() {
+                        if matches!(s.editor.drag, Drag::ViewZoom { .. }) {
+                            s.editor.drag = Drag::None;
+                        }
                     }
                     keyboard.focus_lost(ws.active_mut().map(|s| &mut s.editor));
                 }
@@ -1630,11 +1764,22 @@ fn main() {
                     WindowEvent::CursorMoved { position, .. } => {
                         let PhysicalPosition { x, y } = position;
                         screen_cursor = [x as f32, y as f32];
-                        if !home && panning {
-                            view.pan = [
-                                view.pan[0] + screen_cursor[0] - pan_last[0],
-                                view.pan[1] + screen_cursor[1] - pan_last[1],
-                            ];
+                        if !home && zoom_drag.is_some() {
+                            if let Some(drag) = &mut zoom_drag {
+                                drag.current = screen_cursor;
+                                ed.drag =
+                                    Drag::ViewZoom { start: view.s2w(drag.start), current: view.s2w(screen_cursor) };
+                            }
+                        } else if !home && panning {
+                            gestures::apply(
+                                view,
+                                screen_cursor,
+                                gestures::Gesture::Pan([
+                                    screen_cursor[0] - pan_last[0],
+                                    screen_cursor[1] - pan_last[1],
+                                ]),
+                                false,
+                            );
                             pan_last = screen_cursor;
                         } else if !home && !gui.picking_screen() && (!over_panel || canvas_gesture) {
                             // a gesture that began on the canvas keeps tracking even under a panel (C5)
@@ -1710,7 +1855,24 @@ fn main() {
                                     }
                                     last_click = Some((now, screen_cursor));
                                     ed.ppu = view.zoom;
+                                    apply_view_request(ed, view, canvas_px(&gui, &window));
                                     let wp = view.s2w(screen_cursor);
+                                    if ed.tool == ToolKind::Hand {
+                                        panning = true;
+                                        pan_last = screen_cursor;
+                                        redraw!("hand-tool");
+                                        return;
+                                    }
+                                    if ed.tool == ToolKind::Zoom {
+                                        zoom_drag = Some(gestures::ZoomDrag {
+                                            start: screen_cursor,
+                                            current: screen_cursor,
+                                            out: ed.mods.alt,
+                                        });
+                                        ed.drag = Drag::ViewZoom { start: wp, current: wp };
+                                        redraw!("zoom-tool");
+                                        return;
+                                    }
                                     if dbl && matches!(ed.tool, ToolKind::Object | ToolKind::Direct) {
                                         ed.double_click(wp);
                                     } else {
@@ -1719,6 +1881,12 @@ fn main() {
                                     canvas_gesture = true; // started on the canvas — track it through panels until release
                                 }
                                 ElementState::Released => {
+                                    if let Some(drag) = zoom_drag.take() {
+                                        gestures::finish_zoom_drag(view, drag, canvas_px(&gui, &window));
+                                        ed.drag = Drag::None;
+                                        redraw!("zoom-tool-release");
+                                        return;
+                                    }
                                     // the release goes where its press went (UI audit 04 A2/B1): a press
                                     // on chrome never ends an Editor transaction such as the colour
                                     // picker's open session
@@ -1816,6 +1984,13 @@ fn main() {
                             }
                             redraw!("space-key");
                         } else if event.state == ElementState::Pressed {
+                            if code == KeyCode::Escape {
+                                zoom_drag = None;
+                                panning = false;
+                                if matches!(ed.drag, Drag::ViewZoom { .. }) {
+                                    ed.drag = Drag::None;
+                                }
+                            }
                             // runs now, or waits behind a command raised earlier in this batch (FIFO)
                             let d = host::DocAction::Key(code, keyboard.held());
                             let canvas = canvas_px(&gui, &window);
@@ -1849,6 +2024,7 @@ fn main() {
                         // the updated editor so the change shows this same frame.
                         let (jobs, tdelta, screen) =
                             gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
+                        apply_view_request(ed, view, canvas_px(&gui, &window));
                         pace.frame();
                         if pace.enabled() {
                             pace.egui_causes(gui.repaint_causes());
@@ -2811,7 +2987,7 @@ mod menu_mirror_tests {
         for (_, m) in menus() {
             keyed_checks(&m, &mut rows);
         }
-        assert_eq!(rows.len(), 4, "Rulers · Guides · Lock Guides · Smart Guides");
+        assert_eq!(rows.len(), 6, "Rulers · Guides · Lock Guides · Smart Guides · Grid · Snap Grid");
         for (id, k, c) in rows {
             let mut ed = Editor::new();
             let mut view = View::identity();
@@ -3081,7 +3257,7 @@ mod select_all_key_tests {
     fn cmd_a_selects_all_and_shift_cmd_a_deselects() {
         let mut ed = two_squares();
         let mut view = View::identity();
-        for (id, want) in [("edit.selectall", 2), ("edit.deselect", 0)] {
+        for (id, want) in [("select.all", 2), ("select.deselect", 0)] {
             let MenuCmd::Key(k) = row(id) else { panic!("{id} is a ⌘-row") };
             apply_key(&mut ed, &mut view, [0.0, 0.0], &format!("{:?}", k.code), true, k.shift, k.alt);
             assert_eq!(ed.objsel.len(), want, "{id}");
@@ -3144,5 +3320,51 @@ mod picker_shortcut_tests {
         assert!(if ed.paint == PaintTarget::Fill { ed.cur_fill.is_none() } else { ed.cur_stroke.is_none() });
         apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyI", false, false, false);
         assert!(ed.tool == ToolKind::Eyedropper);
+    }
+}
+#[cfg(test)]
+mod view_quick_wins_tests {
+    use super::*;
+    #[test]
+    fn fit_all_tool_keys_and_typed_zoom_route_headless_without_dirtying() {
+        let mut ed = Editor::new();
+        let mut view = View::identity();
+        ed.doc.artboards.clear();
+        ed.artboard_add([0.0, 0.0, 100.0, 100.0], None).unwrap();
+        ed.artboard_add([500.0, 0.0, 100.0, 100.0], None).unwrap();
+        let rev = ed.rev;
+        assert_eq!(fit_all_rect(&ed), (0.0, 0.0, 600.0, 100.0));
+        for (key, tool) in [("KeyZ", ToolKind::Zoom), ("KeyH", ToolKind::Hand)] {
+            apply_key(&mut ed, &mut view, [200.0, 200.0], key, false, false, false);
+            assert!(ed.tool == tool);
+        }
+        ed.execute_ui(EditCommand::ZoomPercent(125.0));
+        let canvas = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 400.0));
+        let point = view.s2w([200.0, 200.0]);
+        apply_view_request(&mut ed, &mut view, canvas);
+        assert_eq!(view.zoom, 1.25);
+        assert_eq!(view.s2w([200.0, 200.0]), point);
+        assert_eq!(ed.rev, rev);
+        doc_key(&mut ed, &mut view, canvas, KeyCode::Digit0, Mods { ctrl: true, alt: true, shift: false });
+        assert!(view.zoom < 1.0);
+        assert_eq!(ed.rev, rev);
+    }
+    #[test]
+    fn zoom_tool_click_option_click_and_marquee_preserve_the_view_anchor() {
+        let canvas = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 400.0));
+        let mut view = View::identity();
+        let drag = gestures::ZoomDrag { start: [100.0, 100.0], current: [100.0, 100.0], out: false };
+        gestures::finish_zoom_drag(&mut view, drag, canvas);
+        assert_eq!(view.zoom, 1.5);
+        assert_eq!(view.s2w([100.0, 100.0]), [100.0, 100.0]);
+        gestures::finish_zoom_drag(&mut view, gestures::ZoomDrag { out: true, ..drag }, canvas);
+        assert_eq!(view.zoom, 1.0);
+        gestures::finish_zoom_drag(
+            &mut view,
+            gestures::ZoomDrag { start: [100.0, 100.0], current: [200.0, 200.0], out: false },
+            canvas,
+        );
+        assert_eq!(view.zoom, 4.0);
+        assert_eq!(view.s2w([200.0, 200.0]), [150.0, 150.0]);
     }
 }

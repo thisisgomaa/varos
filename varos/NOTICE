@@ -12,3 +12,27 @@ PhotoCraft crates/gpu/src/health.rs @ 4cb7cf3.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft/PhotoCraft contributors.
 Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft,
 LICENSE-APACHE.vectorcraft, LICENSE-MIT.photocraft and LICENSE-APACHE.photocraft.
+
+varos-core/src/command_wave.rs and varos-app/src/menus/select.rs adapt selection,
+object command semantics and path-edit algorithms from VectorCraft
+crates/engine/src/cmd/select.rs:22-145, object.rs:85-176 and
+crates/pathops/src/edit.rs:299-346 @ a469568.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-app/src/shortcuts/parity.rs adapts the tool/key catalogue as data from
+VectorCraft crates/tools/src/catalog.rs:20-140 @ a469568 (MIT OR Apache-2.0).
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+
+varos-core/src/command_wave.rs lasso polygon test adapts VectorCraft
+crates/tools/src/xform/wand.rs:49,67 @ a469568 (MIT OR Apache-2.0).
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+
+Twelve rail/distribution/view-tool SVGs under varos-app/assets/icons are built from
+lucide@1.8.0 dist/esm/icons icon nodes (ISC), with embedded provenance.
+See the existing Lucide and Feather license text in THIRD_PARTY_NOTICES.md.
+
+varos-core/src/view_commands.rs adapts artboard fit/conversion ideas from
+VectorCraft crates/engine/src/cmd/layer.rs:142 and menucmds.rs:150-155 @ a469568.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.

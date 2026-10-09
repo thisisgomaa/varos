@@ -52,6 +52,7 @@ pub struct RecoveryHost {
     worker: Option<IoWorker<Finished>>,
     store: Option<Arc<RecoveryStore>>,
     settings_path: Option<PathBuf>,
+    settings: Settings,
     pub warning: Option<String>,
     orphans: Vec<OrphanEntry>,
     busy: std::collections::HashSet<String>,
@@ -119,6 +120,7 @@ impl RecoveryHost {
             worker: None,
             store: None,
             settings_path: None,
+            settings: Settings::default(),
             warning: None,
             orphans: Vec::new(),
             busy: Default::default(),
@@ -146,6 +148,7 @@ impl RecoveryHost {
             return host;
         };
         let (settings, warning) = settings::load(&RealFs, &layout.settings());
+        host.settings = settings;
         host.scheduler.set_enabled(settings.recovery_enabled);
         if warning.is_none() {
             host.settings_path = Some(layout.settings());
@@ -276,7 +279,9 @@ impl RecoveryHost {
     }
     pub fn handle_read(&mut self, cmd: &AppCommand, dialogs: &mut dyn crate::lifecycle::Dialogs) -> bool {
         match cmd {
-            AppCommand::SetRecoveryEnabled(_) => {
+            AppCommand::SetRecoveryEnabled(_)
+            | AppCommand::TogglePasteRemembersLayers
+            | AppCommand::SetPasteRemembersLayers(_) => {
                 if let Some(reason) = &self.settings_unsaved {
                     // The switch still applies for this session (`handle`); say it won't persist.
                     dialogs.notice("Recovery", &format!("Recovery setting could not be saved: {reason}"));
@@ -363,10 +368,29 @@ impl RecoveryHost {
     }
     pub fn handle(&mut self, cmd: &AppCommand, ws: &mut Workspace, now: Instant) -> bool {
         match cmd {
-            AppCommand::SetRecoveryEnabled(enabled) => {
-                self.scheduler.set_enabled(*enabled);
+            AppCommand::SetRecoveryEnabled(_)
+            | AppCommand::TogglePasteRemembersLayers
+            | AppCommand::SetPasteRemembersLayers(_) => {
+                match cmd {
+                    AppCommand::SetRecoveryEnabled(enabled) => {
+                        self.settings.recovery_enabled = *enabled;
+                        self.scheduler.set_enabled(*enabled);
+                    }
+                    AppCommand::SetPasteRemembersLayers(enabled) => self.settings.paste_remembers_layers = *enabled,
+                    AppCommand::TogglePasteRemembersLayers => {
+                        self.settings.paste_remembers_layers = !self.settings.paste_remembers_layers
+                    }
+                    _ => {}
+                }
+                for s in ws.sessions_mut() {
+                    if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers {
+                        s.editor.execute(varos_core::EditCommand::SetPasteRemembersLayers(
+                            self.settings.paste_remembers_layers,
+                        ));
+                    }
+                }
                 if let (Some(path), Some(worker)) = (self.settings_path.clone(), &self.worker) {
-                    let settings = Settings { recovery_enabled: *enabled };
+                    let settings = self.settings;
                     let job = Box::new(move || {
                         Finished::Settings(settings.save(&RealFs, &path).map_err(|e| e.reason()).and_then(|outcome| {
                             match outcome {
@@ -376,7 +400,7 @@ impl RecoveryHost {
                         }))
                     });
                     if worker.submit(job, Finished::Settings(Err("Settings writer failed.".into()))).is_err() {
-                        self.warning = Some("Couldn't save the Recovery setting.".into());
+                        self.warning = Some("Couldn't save settings.".into());
                     }
                 }
                 true
@@ -391,6 +415,12 @@ impl RecoveryHost {
         }
     }
     pub fn observe(&mut self, ws: &mut Workspace, now: Instant) {
+        for s in ws.sessions_mut() {
+            if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers {
+                s.editor
+                    .execute(varos_core::EditCommand::SetPasteRemembersLayers(self.settings.paste_remembers_layers));
+            }
+        }
         {
             self.pump();
             let completed = std::mem::take(&mut self.held);
@@ -433,7 +463,7 @@ impl RecoveryHost {
                     }
                     Finished::Settings(result) => {
                         if let Err(e) = result {
-                            self.warning = Some(format!("Couldn't save the Recovery setting. {e}"));
+                            self.warning = Some(format!("Couldn't save settings. {e}"));
                         }
                     }
                 }
@@ -704,6 +734,40 @@ mod tests {
             self.host.shutdown();
             let _ = std::fs::remove_dir_all(&self.layout.root);
         }
+    }
+
+    #[test]
+    fn unchanged_paste_preference_does_not_execute_or_prune_selection() {
+        let mut r = Rig::new();
+        // An invalid transient id exposes execute's selection-pruning side effect.
+        r.ws.active_mut().unwrap().editor.selected.insert(u32::MAX);
+        r.host.observe(&mut r.ws, r.now);
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.ws.active().unwrap().editor.selected.contains(&u32::MAX));
+        r.host.handle(&AppCommand::SetPasteRemembersLayers(true), &mut r.ws, r.now);
+        r.complete();
+        r.ws.new_untitled();
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.ws.active().unwrap().editor.paste_remembers_layers);
+    }
+
+    #[test]
+    fn paste_layer_setting_persists_and_recovery_toggle_preserves_it() {
+        let mut r = Rig::new();
+        r.host.handle(&AppCommand::TogglePasteRemembersLayers, &mut r.ws, r.now);
+        r.complete();
+        assert!(r.ws.active().unwrap().editor.paste_remembers_layers);
+        r.host.handle(&AppCommand::SetRecoveryEnabled(false), &mut r.ws, r.now);
+        r.complete();
+        let (s, warning) = settings::load(&RealFs, &r.layout.settings());
+        assert!(warning.is_none());
+        assert!(s.paste_remembers_layers && !s.recovery_enabled);
+        r.ws.new_untitled();
+        r.host.observe(&mut r.ws, r.now);
+        assert!(r.ws.active().unwrap().editor.paste_remembers_layers);
+        r.host.handle(&AppCommand::SetPasteRemembersLayers(false), &mut r.ws, r.now);
+        r.complete();
+        assert!(!settings::load(&RealFs, &r.layout.settings()).0.paste_remembers_layers);
     }
 
     #[test]

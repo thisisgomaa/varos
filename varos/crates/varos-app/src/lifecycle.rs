@@ -199,7 +199,13 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
-            AppCommand::SetRecoveryEnabled(_)
+            AppCommand::Selection(..)
+            | AppCommand::Object(..)
+            | AppCommand::View(..)
+            | AppCommand::FitAll(_)
+            | AppCommand::SetRecoveryEnabled(_)
+            | AppCommand::TogglePasteRemembersLayers
+            | AppCommand::SetPasteRemembersLayers(_)
             | AppCommand::RetryRecovery(_)
             | AppCommand::Recover(_)
             | AppCommand::DiscardRecovery(_)
