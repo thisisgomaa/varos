@@ -276,3 +276,50 @@ mod tests {
         assert_eq!(decoded.to_rgba8().get_pixel(0, 0)[3], 0);
     }
 }
+
+#[cfg(test)]
+mod rendering_correctness_tests {
+    use super::*;
+    #[test]
+    fn known_rectangle_has_correct_fill_transparency_scale_and_selection_crop() {
+        let mut editor = varos_core::editor::Editor::new();
+        editor
+            .try_execute_created(varos_core::EditCommand::AddShape {
+                kind: varos_core::model::ShapeKind::Rect,
+                bounds: [2.0, 2.0, 3.0, 2.0],
+                parent: None,
+                fill: Some([1.0, 0.0, 0.0, 1.0]),
+                stroke: None,
+                stroke_width: 0.0,
+                opacity: 1.0,
+                name: None,
+            })
+            .unwrap();
+        editor.doc.artboards = vec![Artboard { id: 1, w: 8.0, h: 6.0, ..Default::default() }];
+        let asset = plan(&editor.doc, &Scope::Artboard(1)).unwrap().remove(0);
+        for format in [Format::Png, Format::WebP, Format::Tiff] {
+            let output =
+                encode(&asset, &Options { format, scale: 2.0, ..Default::default() }, &AtomicBool::new(false)).unwrap();
+            let pixels = image::load_from_memory(&output.bytes).unwrap().to_rgba8();
+            assert_eq!(pixels.dimensions(), (16, 12));
+            assert_eq!(pixels.get_pixel(6, 6).0, [255, 0, 0, 255]);
+            assert_eq!(pixels.get_pixel(0, 0).0[3], 0);
+        }
+        let svg =
+            encode(&asset, &Options { format: Format::Svg, ..Default::default() }, &AtomicBool::new(false)).unwrap();
+        let svg = String::from_utf8(svg.bytes).unwrap();
+        assert!(svg.contains("viewBox=\"0.000 0.000 8.000 6.000\""));
+        assert!(svg.contains("fill=\"#ff0000\""));
+        let selected = editor.doc.paths.iter().map(|p| p.id).collect();
+        let selection = plan(&editor.doc, &Scope::Selection(selected)).unwrap().remove(0);
+        for (actual, expected) in selection.page.rect.into_iter().zip([2.0, 2.0, 3.0, 2.0]) {
+            assert!((actual - expected).abs() < 0.00001, "{actual} != {expected}");
+        }
+        let output =
+            encode(&selection, &Options { format: Format::Png, ..Default::default() }, &AtomicBool::new(false))
+                .unwrap();
+        let pixels = image::load_from_memory(&output.bytes).unwrap().to_rgba8();
+        assert_eq!(pixels.dimensions(), (3, 2));
+        assert!(pixels.pixels().all(|p| p.0 == [255, 0, 0, 255]));
+    }
+}
