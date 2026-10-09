@@ -27,6 +27,8 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (10, migrate_v10_to_v11),
     // ---- w3-cmyk ----
     (11, migrate_v11_to_v12),
+    // ---- Lane E: Phase 11 ----
+    (12, migrate_v12_to_v13),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the
@@ -182,4 +184,10 @@ pub fn migrate_v10_to_v11(doc: Document, _limits: &Limits) -> Result<Document, L
 /// v11 → v12: optional colour fields default to RGB. No conversions occur during migration.
 pub fn migrate_v11_to_v12(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
+}
+// ---- Lane E: Phase 11 ----
+/// v12 → v13 (live Blend/Repeat/Envelope nodes) is identity: older writers emitted no `NodeKind::Live`
+/// (`live::refuse_older_keys` refuses one before typed decode), so nothing is invented.
+pub fn migrate_v12_to_v13(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
+    crate::live::migrate_v12_to_v13(doc, limits)
 }

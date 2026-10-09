@@ -19,6 +19,8 @@ pub enum EditCommand {
     // ---- Lane B w3-effects ----
     LiveEffects(crate::effects::Action),
     // ---- end Lane B w3-effects ----
+    // ---- Lane E: Phase 11 ----
+    Live(crate::live::Action),
     // ---- Lane D: deterministic drawing boundary ----
     Drawing(crate::drawing::Action),
     // ---- Lane G ----
@@ -420,6 +422,10 @@ impl EditCommand {
             // ---- Lane B w3-effects ----
             Self::LiveEffects(action) => crate::effects::apply(ed, action),
             // ---- end Lane B w3-effects ----
+            // ---- Lane E: Phase 11 ----
+            Self::Live(action) => {
+                let _ = crate::live::apply(ed, action);
+            }
             Self::Drawing(action) => crate::drawing::apply(ed, action),
             Self::Image(edit) => crate::images::apply(ed, edit),
             // Checked colour command dispatch.
@@ -783,8 +789,26 @@ impl Editor {
             crate::effects_preview::cancel(self);
         }
         // ---- end Lane B w3-effects ----
+        // ---- Lane E: Phase 11: fallible live staging must reach every host ----
+        if let EditCommand::Live(action) = command {
+            let snapshot = self.clone();
+            let before = self.rev;
+            let result = crate::guard::catch_panic(|| crate::live::apply(self, action))
+                .and_then(|r| r.map_err(|what| crate::EngineError::Internal { what }));
+            if result.is_err() {
+                *self = snapshot;
+            } else {
+                self.annotate_history(before, crate::editor::history::Actor::Human, "Live object".into());
+            }
+            return result;
+        }
         // Immutable history handles bound rollback cost independently of retained artwork.
         let snapshot = self.clone();
+        // ---- Lane E: Phase 11: distinguish a repeated rejection from an older notice ----
+        let live_sources = crate::live::has_live(&snapshot.doc);
+        if live_sources {
+            self.last_error = None;
+        }
         let label = crate::command_labels::label(&command);
         let semantic = crate::actions::semantic(&command);
         // ---- Lane F: bind every supported edit to the recording's original selection ----
@@ -799,7 +823,16 @@ impl Editor {
             // One invariant gate for every command, including commands whose geometry changes artboard
             // membership (and therefore effective hidden/locked state) without touching a node flag.
             self.prune_inert_selection();
-        });
+            // ---- Lane E: Phase 11: a rolled-back source edit must fail at the host boundary ----
+            if live_sources {
+                if let Some(error) = &self.last_error {
+                    return Err(error.clone());
+                }
+                self.last_error = snapshot.last_error.clone();
+            }
+            Ok(())
+        })
+        .and_then(|result| result);
         if result.is_err() {
             *self = snapshot;
         } else {

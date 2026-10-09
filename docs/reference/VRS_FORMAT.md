@@ -640,3 +640,6 @@ live in `varos-core/tests/fixtures/v12` and PDF operator goldens in `varos-pdf/t
 Historical fixtures remain unchanged. RGB authored bodies/page operators are identical;
 container/model stamps and dependent PDF offsets/lengths necessarily advance.
 <!-- ---- end w3-cmyk ---- -->
+<!-- Lane E: Phase 11 -->
+## Reserved wave-3 v13: live nodes
+`nodes[].kind.Live` stores source-child Blend, Repeat and Envelope parameters; derived paths are runtime only. `migrate_v12_to_v13` is pure identity. Versions ≤12 must not contain `Live`. Lane-local preceding identity rows are integration placeholders, not implementations of sibling phases. Full contract: [LIVE_NODES_V13.md](LIVE_NODES_V13.md). Frozen fixture family: `varos-core/tests/fixtures/v13/`.

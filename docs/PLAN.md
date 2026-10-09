@@ -231,3 +231,5 @@ ADR-0016 proposed. Appearance-stack integration deferred to integrator.
 <!-- ---- w3-cmyk ---- -->
 | 12.0–12.2 colour management (Lane C) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-cmyk` | FORMAT v12; explicit CMYK/Gray/Spot paints, document mode/profile, moxcms, progressive Bridge 1.2 + CLI, ICCBased/Separation + OutputIntent, bounded vector PDF/X-4 preset. Overprint is approximate vector multiply; image proof/PDF-X preflight, external conformance and native UI acceptance remain unverified. Integration must replace reserved v10/v11 identity steps. Gates: root REPORT.md. |
 <!-- ---- end w3-cmyk ---- -->
+<!-- Lane E: Phase 11 -->
+| 11.0 Blend / Repeat / Envelope basics (Lane E) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-live` | v13; source children, shared evaluator/cache, W, kit options, isolation, Expand/Release, PDF/SVG, API 1.2 and CLI apply. Integrator replaces the three reserved-era identity steps with sibling v10–v12 migrations. See worktree REPORT.md and reference/LIVE_NODES_V13.md; native acceptance pending. |

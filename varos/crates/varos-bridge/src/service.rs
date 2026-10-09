@@ -926,6 +926,7 @@ impl Service {
                         && ops.iter().any(|op| {
                             op.slice4a()
                                 || op.lane_c()
+                                || op.live()
                                 || matches!(op, Operation::Appearance { .. } | Operation::Mask { .. })
                         })
                     {

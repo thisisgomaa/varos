@@ -8,9 +8,10 @@ use varos_core::format::{
 #[test]
 fn writer_and_lane_numbers_are_pinned_literally() {
     assert_eq!((IMAGE_VERSION, GRADIENT_VERSION, TEXT_FORMAT_VERSION, CORNERS_VERSION), (6, 7, 8, 9));
-    assert_eq!(FORMAT_VERSION, 12);
+    // ---- Lane E: Phase 11 ----
+    assert_eq!(FORMAT_VERSION, 13);
     let blob = encode_model(&varos_core::model::Document::default(), &Limits::DEFAULT).unwrap();
-    assert!(blob.starts_with("{\"varos\":12,\"doc\":{"));
+    assert!(blob.starts_with("{\"varos\":13,\"doc\":{"));
 }
 
 #[test]

@@ -159,7 +159,8 @@ impl Editor {
         false
     }
     pub fn isolate(&mut self, node: Option<u32>) {
-        if node.is_some_and(|n| self.doc.node(n).is_none_or(|n| n.kind != NodeKind::Group)) {
+        if node.is_some_and(|n| self.doc.node(n).is_none_or(|n| !matches!(n.kind, NodeKind::Group | NodeKind::Live(_))))
+        {
             return;
         }
         self.select_transform.isolation = node;

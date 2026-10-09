@@ -123,6 +123,10 @@ pub fn default_scope(doc: &Document) -> ExportScope {
 
 /// Plan the pages `scope` exports, or say why it can't. Never a dummy page.
 pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportUnavailable> {
+    // integration w3: evaluation order live → effects (→ corners → stroke → appearance stack)
+    // ---- Lane E: Phase 11 ----
+    let live = varos_core::live::evaluated_document(doc).map_err(|_| ExportUnavailable::NothingToExport)?;
+    let doc = live.as_ref().unwrap_or(doc);
     // ---- Lane B w3-effects ----
     let resolved = varos_core::effects_document::document(doc).map_err(|_| ExportUnavailable::NothingToExport)?;
     let doc = resolved.as_ref();
@@ -194,6 +198,9 @@ pub fn plan_selection_export(
     varos_core::images::hide_unselected(&mut narrowed, selected);
     // the page reaches as far as the selection PAINTS: the outline grown by the shared painted extent
     // (`varos_core::geom::painted_padding` — the one rule cull and hit-test use too)
+    // ---- Lane E: Phase 11 ----
+    let evaluated = varos_core::live::evaluated_document(&narrowed).map_err(|_| ExportUnavailable::NothingToExport)?;
+    let narrowed = evaluated.unwrap_or(narrowed);
     let page = bounds_page(&narrowed, Reach::Painted).ok_or(ExportUnavailable::NothingToExport)?;
     Ok((narrowed, ExportPlan { scope: ExportScope::Selection, pages: vec![page] }))
 }

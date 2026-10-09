@@ -81,6 +81,10 @@ pub const BINDINGS: &[Binding] = &[
     b!("Digit5", true, false, true, "Release Guides"),
     b!("Quote", true, false, false, "Show Grid"),
     b!("Quote", true, true, false, "Snap to Grid"),
+    // ---- Lane E: Phase 11 ----
+    b!("KeyW", false, false, false, "Blend"),
+    b!("KeyB", true, false, true, "Make Blend"),
+    b!("KeyB", true, true, true, "Release Blend"),
     b!("KeyZ", false, false, false, "Zoom"),
     b!("KeyH", false, false, false, "Hand"),
     b!("Numpad0", true, false, false, "Fit Artboard"),

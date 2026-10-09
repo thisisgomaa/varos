@@ -41,6 +41,9 @@ mod effects;
 mod lane_c;
 // ---- Lane A ----
 mod appearance;
+// ---- Lane E: Phase 11 ----
+mod live;
+pub(crate) use live::{key as live_key, menu_rows as live_menu_rows};
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 // ---- Lane F ----
@@ -595,6 +598,7 @@ impl Ui {
             effects::sheet(ctx, ed, doc_active);
             // ---- end Lane B w3-effects ----
             lane_c::sheets(ctx, &mut app_cmds, &mut ops, doc_active);
+            live::sheet(ctx, ed, doc_active, &mut ops);
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
             self.phase9.draw(ctx, &mut app_cmds, doc_active);

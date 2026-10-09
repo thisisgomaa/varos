@@ -309,6 +309,8 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         // ---- Lane E ----
         K::KeyY => E::Y,
         K::KeyF => E::F,
+        // ---- Lane E: Phase 11 ----
+        K::KeyB => E::B,
         K::KeyA => E::A,
         K::KeyC => E::C,
         K::KeyD => E::D,

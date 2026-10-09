@@ -36,7 +36,7 @@ fn older(d: &Document, version: u32) -> Value {
 
 #[test]
 fn format_4_is_current_and_artboard_ids_arrive_with_it() {
-    assert_eq!(FORMAT_VERSION, varos_core::format::COLOUR_VERSION);
+    assert_eq!(FORMAT_VERSION, varos_core::format::LIVE_VERSION);
     assert_eq!(ARTBOARD_ID_VERSION, 4);
 }
 
