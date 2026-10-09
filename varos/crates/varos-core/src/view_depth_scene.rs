@@ -19,20 +19,6 @@ pub fn outlined(ed: &Editor, pid: u32) -> bool {
     false
 }
 pub fn present(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle, mut scene: Scene) -> Scene {
-    if ed.view_depth.outline {
-        scene.content.clear();
-    }
-    if ed.view_depth.outline || !ed.view_depth.outline_nodes.is_empty() {
-        let mut prims = Vec::new();
-        for (pi, p) in ed.doc.paths.iter().enumerate().filter(|(_, p)| !ed.doc.eff_hidden(p.id) && outlined(ed, p.id)) {
-            for pts in std::iter::once(ed.doc.world_outline_px(pi, view.zoom))
-                .chain(p.holes.iter().map(|h| ed.doc.world_ring_px(h, pi, view.zoom)))
-            {
-                prims.push(Prim::Stroke { pts, width: 1.0 / view.zoom.max(0.0001), color: style.outline, clip: None });
-            }
-        }
-        scene.content.push(Group::Opaque(prims));
-    }
     scene.preview_color = style.outline;
     scene.pixel_preview = (ed.view_depth.pixel_preview && !ed.view_depth.outline)
         .then(|| crate::view_depth::pixel_step(ed.doc.units.ppi));

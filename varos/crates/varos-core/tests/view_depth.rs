@@ -131,3 +131,31 @@ fn presentation_settles_drawing_and_loaded_documents_reset_view_requests() {
     assert_eq!(ed.view_depth, Default::default());
     assert!(ed.requested_pan.is_none() && ed.requested_zoom.is_none() && ed.requested_canvas.is_none());
 }
+
+#[test]
+fn outline_reuses_flatten_cache_and_culls_offscreen_geometry() {
+    let mut ed = editor();
+    let mut far = ed.doc.paths[0].clone();
+    far.id = 100;
+    for a in &mut far.anchors {
+        a.id += 100;
+        a.p[0] += 10000.0;
+    }
+    ed.doc.paths.push(far);
+    ed.doc.sync_tree();
+    ed.view_depth.outline = true;
+    let view = View::identity();
+    let first = scene::build_scene_in_view_styled(&ed, view, [100, 100], style());
+    let misses = ed.flatten_cache.lock().stats().1;
+    assert_eq!(misses, 1, "offscreen geometry is never flattened");
+    ed.objsel.insert(10);
+    let second = scene::build_scene_in_view_styled(&ed, view, [100, 100], style());
+    assert_eq!(ed.flatten_cache.lock().stats().1, misses, "selection changes reuse geometry");
+    assert_eq!(first.content, second.content);
+    assert_eq!(second.content.iter().flat_map(Group::prims).count(), 1);
+    for prim in second.content.iter().flat_map(Group::prims) {
+        if let Prim::Stroke { pts, .. } = prim {
+            assert!(pts.iter().all(|p| p[0] < 100.0));
+        }
+    }
+}

@@ -389,7 +389,14 @@ impl RecoveryHost {
             | AppCommand::TogglePasteRemembersLayers
             | AppCommand::SetPasteRemembersLayers(_) => {
                 match cmd {
-                    AppCommand::SetCanvasColor(rgb) => self.settings.canvas_color = *rgb,
+                    // ---- Lane E: unchanged canvas preference is a persistence no-op ----
+                    AppCommand::SetCanvasColor(rgb) => {
+                        if self.settings.canvas_color == *rgb {
+                            return true;
+                        }
+                        self.settings.canvas_color = *rgb;
+                    }
+                    // ---- end Lane E ----
                     AppCommand::SetRecoveryEnabled(enabled) => {
                         self.settings.recovery_enabled = *enabled;
                         self.scheduler.set_enabled(*enabled);
@@ -806,6 +813,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unchanged_canvas_color_never_schedules_a_settings_write() {
+        let mut rig = Rig::new();
+        let path = rig.host.settings_path.clone().expect("settings path");
+        // A sentinel proves no unchanged write replaces the file; changed requests still save.
+        rig.host.settings.save(&RealFs, &path).unwrap();
+        let mut sentinel = std::fs::read(&path).unwrap();
+        sentinel.extend_from_slice(b"\n  ");
+        std::fs::write(&path, &sentinel).unwrap();
+        let color = rig.host.settings.canvas_color;
+        assert!(rig.host.handle(&AppCommand::SetCanvasColor(color), &mut rig.ws, rig.now));
+        let (tx, rx) = mpsc::channel();
+        rig.host
+            .worker
+            .as_ref()
+            .unwrap()
+            .submit(
+                Box::new(move || {
+                    tx.send(()).unwrap();
+                    Finished::Settings(Ok(()))
+                }),
+                Finished::Settings(Err("barrier failed".into())),
+            )
+            .unwrap();
+        rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), sentinel);
+        let changed = [color[0].wrapping_add(1), color[1], color[2]];
+        assert!(rig.host.handle(&AppCommand::SetCanvasColor(changed), &mut rig.ws, rig.now));
+        let (tx, rx) = mpsc::channel();
+        rig.host
+            .worker
+            .as_ref()
+            .unwrap()
+            .submit(
+                Box::new(move || {
+                    tx.send(()).unwrap();
+                    Finished::Settings(Ok(()))
+                }),
+                Finished::Settings(Err("barrier failed".into())),
+            )
+            .unwrap();
+        rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_ne!(std::fs::read(&path).unwrap(), sentinel);
+    }
     #[test]
     fn unchanged_paste_preference_does_not_execute_or_prune_selection() {
         let mut r = Rig::new();
