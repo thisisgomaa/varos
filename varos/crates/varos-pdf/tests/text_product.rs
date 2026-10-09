@@ -52,3 +52,28 @@ fn frozen_v5_reader_refuses_text_json_and_native_pdf_before_document_decode() {
     let (_, model) = pdf.dereference(model).unwrap();
     assert!(frozen_v5_gate(&model.as_stream().unwrap().content).unwrap_err().contains("newer Varos"));
 }
+
+#[test]
+fn object_clipboard_keeps_source_and_exports_only_selected_text() {
+    let mut ed = Editor::new();
+    let id = ed
+        .try_execute_created(EditCommand::AddText {
+            text: varos_text_layout::default_text("ABC", [20., 80.]).unwrap(),
+            parent: None,
+        })
+        .unwrap();
+    ed.try_execute_created(EditCommand::AddText {
+        text: varos_text_layout::default_text("UNSELECTED", [2000., 80.]).unwrap(),
+        parent: None,
+    })
+    .unwrap();
+    ed.try_execute(EditCommand::SelectPaths(vec![id])).unwrap();
+    let clipboard = ed.capture_selection_clipboard(false);
+    let vectors = varos_pdf::clipboard_vectors(&ed.doc, &clipboard).unwrap();
+    assert!(String::from_utf8(vectors.internal).unwrap().contains("ABC"));
+    assert!(vectors.rect[2] < 500.);
+    assert!(!vectors.document.paths.is_empty());
+    assert!(vectors.document.text_boxes.is_empty());
+    assert!(vectors.pdf.starts_with(b"%PDF"));
+    assert!(String::from_utf8(vectors.svg).unwrap().contains("<path"));
+}

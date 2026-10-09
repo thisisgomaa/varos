@@ -3698,7 +3698,7 @@ impl Editor {
     /// what still exists in the restored document (a selected path/anchor that the undo removed is dropped,
     /// never left dangling).
     fn clear_transient_keep_selection(&mut self) {
-        self.objsel.retain(|&p| self.doc.pidx(p).is_some());
+        self.objsel.retain(|&p| self.doc.pidx(p).is_some() || crate::text::node_id(&self.doc, p).is_some());
         self.selected.retain(|&a| self.doc.anchor_address(a).is_some());
         self.absel.retain(|&i| i < self.doc.artboards.len());
         if self.dsel_path.is_some_and(|p| self.doc.pidx(p).is_none()) {
@@ -3715,12 +3715,15 @@ impl Editor {
     /// cannot remain selected through either object selection, Direct path selection, or grabbed anchors.
     pub(crate) fn prune_inert_selection(&mut self) {
         let allowed = self.select_transform.isolation.map(|n| self.doc.node_paths(n));
+        // ---- Lane G ----
+        let texts = crate::text::selected_ids(self);
         let doc = &self.doc;
         self.objsel.retain(|&pid| {
-            doc.pidx(pid).is_some()
-                && allowed.as_ref().is_none_or(|a| a.contains(&pid))
-                && !doc.eff_hidden(pid)
-                && !doc.eff_locked(pid)
+            texts.contains(&pid)
+                || doc.pidx(pid).is_some()
+                    && allowed.as_ref().is_none_or(|a| a.contains(&pid))
+                    && !doc.eff_hidden(pid)
+                    && !doc.eff_locked(pid)
         });
         self.group_sel.retain(|&gid| {
             let editable: Vec<u32> =
@@ -4886,7 +4889,10 @@ impl Editor {
             }
         } else if !self.objsel.is_empty() {
             let gone: HashSet<u32> = self.structural_object_paths().into_iter().collect();
-            if !gone.is_empty() {
+            // ---- Lane G ----
+            let texts = crate::text::selected_ids(self);
+            crate::text::remove(&mut self.doc, &texts);
+            if !gone.is_empty() || !texts.is_empty() {
                 self.doc.paths.retain(|path| !gone.contains(&path.id));
                 self.objsel.clear();
                 self.group_sel.clear();
@@ -4967,27 +4973,29 @@ impl Editor {
     /// Fresh detached payload using the same source rules as Copy/Cut. No editor mutation.
     /// Desktop adapters can publish it before a destructive Cut; anchors alone capture nothing.
     pub fn capture_selection_clipboard(&self, cut: bool) -> Clipboard {
-        Clipboard::capture(&self.doc, &self.clipboard_sources(!cut))
+        Clipboard::capture_objects(&self.doc, &self.clipboard_sources(!cut), &crate::text::selected_ids(self))
     }
     /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
     /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
     /// nothing selected the clipboard keeps its previous content (Illustrator).
     pub fn copy_selection(&mut self) {
         let pids = self.clipboard_sources(true);
-        if !pids.is_empty() {
-            self.clipboard = Clipboard::capture(&self.doc, &pids);
+        if !pids.is_empty() || !crate::text::selected_ids(self).is_empty() {
+            self.clipboard = self.capture_selection_clipboard(false);
         }
     }
     /// Edit ▸ Cut (⌘X): Copy, then delete the selection — ONE undo step. No-op with nothing selected.
     pub fn cut_selection(&mut self) {
         let pids = self.clipboard_sources(false);
-        if pids.is_empty() {
+        let texts = crate::text::selected_ids(self);
+        if pids.is_empty() && texts.is_empty() {
             return;
         }
-        self.clipboard = Clipboard::capture(&self.doc, &pids);
+        self.clipboard = self.capture_selection_clipboard(true);
         let gone: HashSet<u32> = pids.into_iter().collect();
         self.begin();
         self.doc.paths.retain(|p| !gone.contains(&p.id));
+        crate::text::remove(&mut self.doc, &texts);
         self.objsel.clear();
         self.group_sel.clear();
         self.selected.clear();

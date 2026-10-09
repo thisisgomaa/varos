@@ -15,6 +15,7 @@ pub struct TextProduct {
     pub session: Option<EditSession>,
     pub selected: Option<u32>,
     press: Option<[f32; 2]>,
+    object_drag: Option<[f32; 2]>,
     last_click: Option<(f64, u32)>,
     selecting: bool,
     pending_copy: Option<String>,
@@ -23,6 +24,13 @@ pub struct TextProduct {
 }
 impl TextProduct {
     pub fn finish_ops(&mut self, ed: &mut Editor, ops: &mut Vec<crate::ui::ops::Op>) {
+        *ops = ops
+            .drain(..)
+            .map(|op| match op {
+                crate::ui::ops::Op::Field(inner) if matches!(inner.as_ref(), crate::ui::ops::Op::Text(_)) => *inner,
+                op => op,
+            })
+            .collect();
         ops.retain(|op| {
             if let crate::ui::ops::Op::Text(text) = op {
                 if let Some(session) = self.session.as_mut().filter(|s| s.draft.id == text.id) {
@@ -55,7 +63,7 @@ impl TextProduct {
         self.session
             .as_ref()
             .map(|s| s.draft.clone())
-            .or_else(|| self.selected.and_then(|id| ed.doc.text_boxes.iter().find(|t| t.id == id)).cloned())
+            .or_else(|| ed.doc.text_boxes.iter().find(|t| ed.objsel.contains(&t.id)).cloned())
     }
     pub fn commit(&mut self, ed: &mut Editor) -> Result<(), String> {
         let Some(session) = self.session.as_ref() else {
@@ -66,7 +74,13 @@ impl TextProduct {
             let id = ed.try_execute_created(EditCommand::AddText { text, parent: None })?;
             self.selected = Some(id);
         } else {
+            self.selected = Some(text.id);
             ed.try_execute(EditCommand::SetText { id: text.id, text })?;
+        }
+        if let Some(id) = self.selected {
+            let tool = ed.tool;
+            ed.try_execute(EditCommand::SelectPaths(vec![id]))?;
+            ed.set_tool(tool);
         }
         self.session = None;
         self.generation += 1;
@@ -74,12 +88,15 @@ impl TextProduct {
     }
     fn hit(&mut self, ed: &Editor, p: [f32; 2], zoom: f32) -> Option<u32> {
         let mut order = Vec::new();
+        let path_hit = ed.path_under(p);
         let mut stack: Vec<_> = ed.doc.roots.iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
             let n = ed.doc.node(id)?;
             stack.extend(n.children.iter().rev().copied());
-            if let NodeKind::Text(id) = n.kind {
-                order.push((id, Some(n.id)));
+            match n.kind {
+                NodeKind::Text(id) => order.push((id, Some(n.id))),
+                NodeKind::Path(id) if path_hit == Some(id) => order.push((id, Some(n.id))),
+                _ => {}
             }
         }
         if self.session.as_ref().is_some_and(|s| s.draft.id == 0) {
@@ -95,6 +112,9 @@ impl TextProduct {
             }
             if hidden {
                 continue;
+            }
+            if node.and_then(|n| ed.doc.node(n)).is_some_and(|n| matches!(n.kind, NodeKind::Path(_))) {
+                return None;
             }
             let t = self
                 .session
@@ -142,10 +162,11 @@ impl TextProduct {
             }
             WindowEvent::Ime(_) => self.session.is_some(),
             WindowEvent::MouseInput { .. } => {
-                !over_panel
-                    && (ed.tool == ToolKind::Text
-                        || self.session.is_some()
-                        || ed.tool == ToolKind::Object && self.hit(ed, view.s2w(screen), view.zoom).is_some())
+                self.object_drag.is_some()
+                    || !over_panel
+                        && (ed.tool == ToolKind::Text
+                            || self.session.is_some()
+                            || ed.tool == ToolKind::Object && self.hit(ed, view.s2w(screen), view.zoom).is_some())
             }
             _ => false,
         }
@@ -204,20 +225,36 @@ impl TextProduct {
                 }
                 let outside = !hole.is_some_and(|r| r.contains(*pos))
                     || ctx.layer_id_at(*pos).is_some_and(|l| l.order != egui::Order::Background);
-                if outside && (*pressed || self.press.is_none()) {
+                if outside && (*pressed || self.press.is_none() && self.object_drag.is_none()) {
                     continue;
                 }
                 let p = view.s2w([pos.x * ppp, pos.y * ppp]);
                 if *pressed {
                     let hit = self.hit(ed, p, view.zoom);
                     if let Some(id) = hit {
-                        ed.try_execute(EditCommand::Selection(varos_core::editor::wave::Selection::Deselect))?;
                         let double = self
                             .last_click
                             .is_some_and(|(time, last)| last == id && input.time.unwrap_or(0.) - time < 0.4);
                         self.last_click = Some((input.time.unwrap_or(0.), id));
                         self.selected = Some(id);
-                        self.selecting = true;
+                        self.selecting = double || ed.tool == ToolKind::Text || self.session.is_some();
+                        if ed.tool == ToolKind::Object && !double && self.session.is_none() {
+                            let mut ids: Vec<_> = if modifiers.shift || ed.objsel.contains(&id) {
+                                ed.objsel.iter().copied().collect()
+                            } else {
+                                vec![]
+                            };
+                            if modifiers.shift && ids.contains(&id) {
+                                ids.retain(|i| *i != id);
+                            } else if !ids.contains(&id) {
+                                ids.push(id);
+                            }
+                            ed.try_execute(EditCommand::SelectPaths(ids))?;
+                            if ed.objsel.contains(&id) {
+                                ed.try_execute(EditCommand::TransformBegin)?;
+                                self.object_drag = Some(p);
+                            }
+                        }
                         if double || ed.tool == ToolKind::Text {
                             if self.session.as_ref().is_none_or(|s| s.draft.id != id) {
                                 self.commit(ed)?;
@@ -252,6 +289,12 @@ impl TextProduct {
                         self.commit(ed)?;
                         self.selected = None;
                     }
+                } else if let Some(start) = self.object_drag.take() {
+                    ed.try_execute(EditCommand::TransformLive(varos_core::select_transform::Transform {
+                        movement: [p[0] - start[0], p[1] - start[1]],
+                        ..Default::default()
+                    }))?;
+                    ed.try_execute(EditCommand::TransformCommit)?;
                 } else if let Some(start) = self.press.take() {
                     let mut text = varos_text_layout::default_text("", start)?;
                     if varos_core::geom::dist(start, p) * view.zoom > 4. {
@@ -270,6 +313,13 @@ impl TextProduct {
                 self.selecting = false;
             }
             if let Event::PointerMoved(pos) = event {
+                if let Some(start) = self.object_drag {
+                    let p = view.s2w([pos.x * ppp, pos.y * ppp]);
+                    ed.try_execute(EditCommand::TransformLive(varos_core::select_transform::Transform {
+                        movement: [p[0] - start[0], p[1] - start[1]],
+                        ..Default::default()
+                    }))?;
+                }
                 if self.selecting {
                     if let Some(draft) = self.session.as_ref().map(|s| s.draft.clone()) {
                         let p = text_transform(ed, draft.id).inverse_apply(view.s2w([pos.x * ppp, pos.y * ppp]));
@@ -387,6 +437,13 @@ impl TextProduct {
                 return scene;
             }
         }
+        // Source identities remain selected in the editor; preview outlines carry that frame.
+        for id in varos_core::text::selected_ids(ed) {
+            preview.objsel.remove(&id);
+            if let Some(node) = varos_core::text::node_id(&ed.doc, id) {
+                preview.objsel.extend(preview.doc.node_paths(node));
+            }
+        }
         varos_core::scene::build_scene_in_view_styled(&preview, view, frame, style)
     }
     pub fn paint(&mut self, ctx: &egui::Context, ed: &Editor, view: View, ppp: f32) {
@@ -494,6 +551,40 @@ mod tests {
             pressed,
             modifiers: Default::default(),
         }
+    }
+    #[test]
+    fn object_drag_selects_core_identity_and_moves_one_undo_step() {
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddText { text: left_text("ABC", [20., 50.]).unwrap(), parent: None })
+            .unwrap();
+        ed.set_tool(ToolKind::Object);
+        let mut tool = TextProduct { engine: Some(TextLayout::bundled().unwrap()), ..Default::default() };
+        send(&mut tool, &mut ed, vec![pointer(25., 45., true)], 1.);
+        assert!(ed.objsel.contains(&id));
+        send(&mut tool, &mut ed, vec![Event::PointerMoved(egui::pos2(45., 65.)), pointer(45., 65., false)], 2.);
+        assert_eq!(ed.doc.text_boxes[0].frame, [40., 70.]);
+        assert_eq!(ed.rev, 2);
+        ed.undo();
+        assert_eq!(ed.doc.text_boxes[0].frame, [20., 50.]);
+    }
+    #[test]
+    fn path_above_text_occludes_and_below_does_not() {
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddText { text: left_text("ABC", [20., 50.]).unwrap(), parent: None })
+            .unwrap();
+        let path = ed.doc.nid();
+        let anchors = [[0., 0.], [100., 0.], [100., 100.], [0., 100.]]
+            .into_iter()
+            .map(|p| varos_core::model::Anchor { id: ed.doc.nid(), p, hin: None, hout: None, smooth: false })
+            .collect();
+        ed.doc.paths.push(varos_core::model::Path::new(path, anchors, true, Some([0., 0., 0., 1.]), None, 1.));
+        ed.doc.sync_tree();
+        let mut tool = TextProduct { engine: Some(TextLayout::bundled().unwrap()), ..Default::default() };
+        assert_eq!(tool.hit(&ed, [25., 45.], 1.), None);
+        ed.doc.nodes.iter_mut().find(|n| n.id == ed.doc.active_layer).unwrap().children.reverse();
+        assert_eq!(tool.hit(&ed, [25., 45.], 1.), Some(id));
     }
     #[test]
     fn point_area_and_edit_batch_without_window() {
