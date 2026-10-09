@@ -249,6 +249,9 @@ impl Minimal {
             let mut settings = self.screen_settings.clone();
             // Range refers to the original artboard grid, before checkbox filtering.
             settings.range.clear();
+            if self.selection_tab {
+                settings.pdf_single = false;
+            }
             return settings
                 .expand(&assets, &self.options)
                 .unwrap_or_default()
@@ -407,8 +410,13 @@ mod integration_tests {
             model.folder = dir.to_string_lossy().into_owned();
             model.options.format = format;
             let jobs = model.jobs(SessionId(1), 42, Default::default());
-            let output =
-                export::encode(&jobs[0].asset, &jobs[0].options, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+            let output = export::encode_with_svg_options(
+                &jobs[0].asset,
+                &jobs[0].options,
+                &std::sync::atomic::AtomicBool::new(false),
+                &jobs[0].svg_options,
+            )
+            .unwrap();
             let dest = jobs[0].job.dest.clone();
             let done = crate::file_jobs::execute(
                 crate::file_jobs::FileJob::Screen(Box::new(jobs[0].clone())),
@@ -435,9 +443,14 @@ mod integration_tests {
             )
             .unwrap();
             assert_eq!(
-                export::encode(&bridge.asset, &bridge.options, &std::sync::atomic::AtomicBool::new(false))
-                    .unwrap()
-                    .bytes,
+                export::encode_with_svg_options(
+                    &bridge.asset,
+                    &bridge.options,
+                    &std::sync::atomic::AtomicBool::new(false),
+                    &bridge.svg_options
+                )
+                .unwrap()
+                .bytes,
                 output.bytes
             );
             let done = crate::file_jobs::execute(
@@ -549,6 +562,43 @@ mod lane_c_tests {
         assert_eq!(jobs[0].job.plan.pages.len(), 2);
     }
     #[test]
+    fn selection_single_pdf_setting_exports_each_snapshot_separately() {
+        let mut editor = varos_core::Editor::new();
+        for x in [0., 40.] {
+            editor
+                .try_execute(varos_core::EditCommand::AddShape {
+                    kind: varos_core::model::ShapeKind::Rect,
+                    bounds: [x, 0., x + 20., 20.],
+                    parent: None,
+                    fill: Some([1., 0., 0., 1.]),
+                    stroke: None,
+                    stroke_width: 0.,
+                    opacity: 1.,
+                    name: None,
+                })
+                .unwrap();
+        }
+        let selected = editor.doc.paths.iter().map(|p| p.id).collect();
+        let mut m = Minimal::new(&editor.doc, &selected, true);
+        m.advanced = true;
+        m.screen_settings.pdf_single = true;
+        m.screen_settings.rows = vec![varos_raster::screens::Row { format: "pdf".into(), ..Default::default() }];
+        let jobs = m.jobs(SessionId(1), 42, Default::default());
+        assert_eq!(jobs.len(), 2);
+        for job in jobs {
+            assert_eq!(job.job.plan.pages.len(), 1);
+            let (bytes, _) = varos_pdf::export_pdf_with_options(
+                &job.job.doc,
+                &job.job.plan,
+                &job.job.pdf_options,
+                job.job.cancel.flag(),
+            )
+            .unwrap();
+            assert!(bytes.starts_with(b"%PDF"));
+            assert_eq!(job.job.doc.paths.iter().filter(|p| !p.hidden).count(), 1);
+        }
+    }
+    #[test]
     fn advanced_worker_keeps_prefix_suffix_and_numbers_collisions() {
         let doc = varos_core::new_document::Settings::category(3).document().unwrap();
         let mut m = Minimal::new(&doc, &HashSet::new(), false);
@@ -560,12 +610,47 @@ mod lane_c_tests {
         m.folder = dir.to_string_lossy().into_owned();
         for n in 1..=2 {
             let job = m.jobs(SessionId(1), n, Default::default()).remove(0);
+            let expected = varos_raster::export::encode_with_svg_options(
+                &job.asset,
+                &job.options,
+                job.job.cancel.flag(),
+                &job.svg_options,
+            )
+            .unwrap()
+            .bytes;
+            let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({
+                "api":"1.2", "board":"b1", "request_id":"svg", "expected_rev":0,
+                "path":"/tmp/shared.svg", "scope":"all_visible_artboards", "options":{"screens":m.screen_settings}
+            }))
+            .unwrap();
+            let bridge = crate::export_ui::bridge_job(
+                SessionId(1),
+                n,
+                &doc,
+                &HashSet::new(),
+                "/tmp/shared.svg".into(),
+                &request,
+                "export_svg",
+            )
+            .unwrap();
+            assert_eq!(
+                expected,
+                varos_raster::export::encode_with_svg_options(
+                    &bridge.asset,
+                    &bridge.options,
+                    bridge.job.cancel.flag(),
+                    &bridge.svg_options,
+                )
+                .unwrap()
+                .bytes
+            );
             let done = crate::file_jobs::execute(
                 crate::file_jobs::FileJob::Screen(Box::new(job)),
                 &mut crate::file_ports::DiskStore,
             );
             let crate::file_jobs::FileDone::Exported(done) = done else { panic!("Expected export") };
             assert!(matches!(done.result, crate::file_jobs::ExportResult::Exported));
+            assert_eq!(std::fs::read(&done.job.dest).unwrap(), expected);
             assert_eq!(
                 done.job.dest.file_name().unwrap().to_string_lossy(),
                 if n == 1 { "icon-Artboard 1@2x.svg" } else { "icon-Artboard 1@2x 2.svg" }

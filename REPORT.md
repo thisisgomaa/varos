@@ -1,25 +1,24 @@
-# w2-export-paths — Lane C completion
-Branch feat/w2-export-paths; original base b3d39ee; resumed WIP 67b2f9b, completion uncommitted.
-Status: implemented (provisional UI, owner design review pending).
-1.8: persisted Advanced toggle/state; All/Range, bleed/colour/whole-board scope, card × row expansion.
-Exports: Scale/Suffix/Format/remove/add; iOS/Android/Web; prefix, folder reveal, scale/format sub-folders; single/per-artboard PDF.
-SVG: row-specific styling/decimals/IDs/minify popovers; incumbent PDF options hook retained.
-1.4: ⌘N New Document categories, size/units, count/grid/row/column/spacing, bleed/ppi; quick presets reachable.
-Unit switching preserves physical dimensions; real headless kit Create → document test passes.
-2.3: Outline uses coverage rings; Offset delta/join/miter; Expand bakes fill/stroke/corners/transforms; scale-strokes panel toggle.
-Fixed grouped rotation, stroke sibling placement/paint order/clip exemption, and unstroked Outline no-op; mask-source conversion refuses.
-4F: Direct-selection corner widgets, radius drag/typed field, round/inverted/chamfer; authored anchors stay live until bake.
-Fixed tab-scoped corner IDs, locked/hidden targets, one-undo corner gesture, independent SVG row control IDs.
-Fixed persisted grid-relative ranges, invalid ranges, Selection/whole-board availability, and app/Bridge PDF bleed parity/double expansion.
-Bridge sub-folders authorize/canonicalize the root, use no-follow directory descriptors, retain fresh publication/collision refusal.
-API 1.2 verbs/schema/list_verbs + capabilities; CLI new-document/export-screens; path/corner operations via CLI apply/EditCommand.
-Writer change: next version, locally 6; key doc.paths[].corners with radius/kind; integrator assigns final number.
-Named pure migration migrate_v5_to_live_corners; earlier-key/future-version refusals; frozen live fixture and v5 header replay.
-Attribution: VectorCraft adaptations and NOTICE present; no missing offline crates or new uncached dependencies.
-Gates: fmt / dependency directions / git diff --check PASS; native + Windows x86_64-pc-windows-msvc all-target Clippy -D warnings PASS.
-Workspace gate: cargo test --offline --workspace -j 3 --no-fail-fast PASS (exit 0): 1,913 passed / 0 failed / 15 existing ignored; 110 suites.
-Ratchets 3/3 PASS; unchanged ratchet source, ui.rs 816 ≤ 843; Bridge contracts 88 passed / 4 ignored.
-Frozen audit: all 247 original fixture files (231 core + 16 Bridge) byte-identical to b3d39ee.
-Evidence: /tmp/w2-final-*.log; /tmp/w2-ratchets.log; /tmp/w2-bridge-fixtures.log; /tmp/w2-immutability-audit.json; /tmp/w2-final-test-totals.json.
-Merge: retain later-main changes; union Bridge 1.2 discovery and commands; renumber corner constant/migration/lane fixtures with sibling writers.
-No commit/push/merge, GUI launch or installation; independent review, owner design/native acceptance and Windows runtime remain pending.
+# w2-export-paths — Lane C
+Status: implemented (provisional UI, owner design review pending); committed lane plus uncommitted fix-round changes.
+1.8: persisted Advanced state; ranges/bleed/colour/whole-board; card × row exports, presets, names/sub-folders, PDF modes, SVG options.
+1.4: kit New Document dialog, categories/units/count/layout/bleed/ppi; physical dimensions preserved across unit changes.
+2.3 / 4F: Outline/Offset/Expand, scale-strokes preference, live corner widgets/typed radius, undoable commands.
+Hosts: EditCommand/AppCommand, API 1.2 verbs/schema/discovery, CLI new-document/export-screens/apply; frozen 1.0/1.1 retained.
+Writer: next version (locally 6), doc.paths[].corners {radius,kind}; migrate_v5_to_live_corners and frozen/refusal fixtures.
+Attribution: VectorCraft adaptation headers and NOTICE; no new dependencies.
+Merge: integrator assigns version/migration/fixture numbers with sibling writers; union Bridge 1.2 and reconcile shared host changes.
+## Fix round
+Astra fdd7ec6 review: all five P1/P2 findings accepted and fixed; no disagreements.
+P1 corners: shared stroke evaluator resolves live corners; rounded/inverted/chamfer, styled/dashed Outline and Expand match baked geometry.
+P1 compositing: Expand refuses mixed fill/stroke with object opacity <1 or stroke alpha <1 before mutation; single-paint expansion remains supported.
+P1 Selection PDF: UI disables single mode with a reason, jobs export each snapshot separately; shared planner refuses mismatched combined snapshots.
+P2 host parity: app/Bridge/CLI use shared SVG options encoder; headless worker/Bridge and real CLI byte comparisons pass.
+P2 precision: 0–8 decimals applied at initial numeric serialization, including stroke/clip geometry; legacy core API preserves frozen goldens.
+Cheap coverage fix: corner cache test now checks actual hits, misses, fresh equivalence and Arc reuse after invalidation.
+Workspace: cargo test --offline --workspace -j 3 --no-fail-fast PASS: 1,922 passed / 0 failed / 15 existing ignored; 114 suites.
+Gates: fmt, dependency directions, native + Windows all-target Clippy -D warnings, git diff --check PASS.
+Ratchets 3/3 PASS; Bridge contracts/fixtures 88 passed / 4 existing ignored; no fixture updates.
+Audit: all 247 original core/Bridge fixtures byte-identical to b3d39ee; ratchet source unchanged; ui.rs 816 ≤843.
+Evidence: /tmp/w2-export-fix-final-*.log, /tmp/w2-export-fix-final-gates.json, /tmp/w2-export-fix-final-audit.json.
+No git writes, push, merge, GUI launch, build installation or new independent review performed.
+Still pending: independent re-review, integration/version assignment, owner design/native acceptance, Windows runtime, idle heat/undo RAM measurements.

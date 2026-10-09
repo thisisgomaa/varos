@@ -56,13 +56,8 @@ pub fn run(verb: &str, args: Vec<OsString>) -> Result<Value, String> {
                         varos_pdf::export_pdf_with_options(&job.asset.doc, &plan, &Default::default(), &cancel)
                             .map_err(|e| e.to_string())
                     } else {
-                        let mut output = varos_raster::export::encode(&job.asset, &job.options, &cancel)?;
-                        if job.options.format == varos_raster::export::Format::Svg {
-                            output.bytes = job
-                                .svg
-                                .apply(std::str::from_utf8(&output.bytes).map_err(|e| e.to_string())?)?
-                                .into_bytes();
-                        }
+                        let output =
+                            varos_raster::export::encode_with_svg_options(&job.asset, &job.options, &cancel, &job.svg)?;
                         Ok((output.bytes, output.report))
                     }
                 })

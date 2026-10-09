@@ -53,6 +53,9 @@ impl Options {
                 "width",
                 "height",
                 "stroke-width",
+                "stroke-miterlimit",
+                "stroke-dasharray",
+                "stroke-dashoffset",
                 "fill-opacity",
                 "stroke-opacity",
                 "opacity",
@@ -126,19 +129,7 @@ fn round_numbers(value: &str, decimals: u8) -> String {
                 }
             }
             if let Ok(v) = value[start..i].parse::<f64>() {
-                let mut n = format!("{v:.prec$}", prec = decimals as usize);
-                if n.contains('.') {
-                    while n.ends_with('0') {
-                        n.pop();
-                    }
-                    if n.ends_with('.') {
-                        n.pop();
-                    }
-                }
-                if n == "-0" {
-                    n = "0".into();
-                }
-                out.push_str(&n);
+                out.push_str(&format_number(v, decimals));
             } else {
                 out.push_str(&value[start..i]);
             }
@@ -149,6 +140,21 @@ fn round_numbers(value: &str, decimals: u8) -> String {
         }
     }
     out
+}
+pub(crate) fn format_number(v: f64, decimals: u8) -> String {
+    let mut n = format!("{v:.prec$}", prec = decimals as usize);
+    if n.contains('.') {
+        while n.ends_with('0') {
+            n.pop();
+        }
+        if n.ends_with('.') {
+            n.pop();
+        }
+    }
+    if n == "-0" {
+        n = "0".into();
+    }
+    n
 }
 #[cfg(test)]
 mod tests {
