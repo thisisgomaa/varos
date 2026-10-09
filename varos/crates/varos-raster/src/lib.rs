@@ -1,6 +1,7 @@
 //! Pure CPU rasterisation of the core's renderer-independent scene description.
 
 pub mod export;
+mod gradient;
 
 mod clipboard;
 pub use clipboard::clipboard_png;
@@ -239,9 +240,7 @@ fn draw_groups(groups: &[Group], dst: &mut Pixmap, xf: Transform) {
             Group::Knockout(prims) => draw_knockout(prims, dst, xf),
             Group::Isolated { opacity, prims } => {
                 let mut layer = Pixmap::new(dst.width(), dst.height()).unwrap();
-                if prims.iter().any(|p| matches!(p,Prim::StrokeCoverage {color,..} if color[3]<0.999))
-                    && prims.iter().any(|p| matches!(p, Prim::Fill { .. }))
-                {
+                if gradient::isolated_knockout(prims) {
                     draw_knockout(prims, &mut layer, xf);
                 } else {
                     draw_prims(prims, &mut layer, xf);
@@ -265,8 +264,13 @@ fn draw_groups(groups: &[Group], dst: &mut Pixmap, xf: Transform) {
 
 fn draw_knockout(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
     let mut fill_layer = Pixmap::new(dst.width(), dst.height()).unwrap();
-    let fills: Vec<_> =
-        prims.iter().filter(|p| !matches!(p, Prim::Stroke { .. } | Prim::StrokeCoverage { .. })).cloned().collect();
+    let fills: Vec<_> = prims
+        .iter()
+        .filter(|p| {
+            !matches!(p, Prim::Stroke { .. } | Prim::StrokeCoverage { .. } | Prim::GradientFill { stroke: true, .. })
+        })
+        .cloned()
+        .collect();
     draw_prims(&fills, &mut fill_layer, xf);
 
     let coverage = stroke_coverage(prims, dst.width(), dst.height(), xf, None);
@@ -282,6 +286,11 @@ fn draw_knockout(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
     }) {
         if !colors.contains(&color) {
             colors.push(color);
+        }
+    }
+    for p in prims {
+        if matches!(p, Prim::GradientFill { stroke: true, .. }) {
+            draw_prims(std::slice::from_ref(p), dst, xf);
         }
     }
     for color in colors {
@@ -306,6 +315,14 @@ fn stroke_coverage(prims: &[Prim], width: u32, height: u32, xf: Transform, only:
     let mut white = Paint::default();
     white.set_color_rgba8(255, 255, 255, 255);
     for prim in prims {
+        if let Prim::GradientFill { rings, stroke: true, .. } = prim {
+            if only.is_none() {
+                if let Some(path) = rings_path(rings, false) {
+                    coverage.fill_path(&path, &white, FillRule::EvenOdd, xf, None);
+                }
+            }
+            continue;
+        }
         if let Prim::StrokeCoverage { rings, color, clip, native } = prim {
             if only.is_some_and(|wanted| wanted != *color) {
                 continue;
@@ -333,6 +350,7 @@ fn draw_prims(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
             Prim::Image { pixels, corners, opacity, clip, .. } => {
                 crate::images::draw(pixels, *corners, *opacity, *clip, dst, xf)
             }
+            Prim::GradientFill { rings, gradient, opacity, .. } => gradient::draw(dst, rings, gradient, *opacity, xf),
             Prim::Fill { rings, color } => {
                 if let Some(path) = rings_path(rings, false) {
                     dst.fill_path(&path, &paint(*color), FillRule::EvenOdd, xf, None);
@@ -454,7 +472,9 @@ fn scene_bounds(groups: &[Group]) -> Option<[f32; 4]> {
         for prim in prims {
             let pts: Box<dyn Iterator<Item = &[f32; 2]> + '_> = match prim {
                 Prim::Image { corners, .. } => Box::new(corners.iter()),
-                Prim::Fill { rings, .. } | Prim::StrokeCoverage { rings, .. } => Box::new(rings.iter().flatten()),
+                Prim::Fill { rings, .. } | Prim::GradientFill { rings, .. } | Prim::StrokeCoverage { rings, .. } => {
+                    Box::new(rings.iter().flatten())
+                }
                 Prim::Stroke { pts, .. } | Prim::Dashed { pts, .. } => Box::new(pts.iter()),
                 Prim::Square { c, .. } | Prim::Disc { c, .. } => Box::new(std::iter::once(c)),
                 Prim::Tri { a, b, c, .. } => Box::new([a, b, c].into_iter()),
@@ -921,3 +941,6 @@ mod stroke_failure_tests {
         assert!(rasterize_artboard_checked(Arc::new(doc), 0, [100, 100]).unwrap_err().contains("limit_exceeded"));
     }
 }
+
+#[cfg(test)]
+mod gradient_tests;

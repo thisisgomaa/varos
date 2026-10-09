@@ -338,6 +338,13 @@ pub fn build_fills(prims: &[Prim], view: View, w: f32, h: f32) -> (Vec<Vertex>, 
     let mut v = Vec::new();
     let mut ranges = Vec::new();
     for prim in prims {
+        if let Prim::GradientFill { rings, .. } = prim {
+            let (vertices, ranges2) = build_fills(&[Prim::Fill { rings: rings.clone(), color: [1.; 4] }], view, w, h);
+            let offset = v.len() as u32;
+            v.extend(vertices);
+            ranges.extend(ranges2.into_iter().map(|((a, b), (c, d))| ((a + offset, b), (c + offset, d))));
+            continue;
+        }
         if let Prim::Fill { rings, color } = prim {
             // map every ring (outer + holes) to screen, then draw pivot-triangles for ALL edges into the
             // stencil with one global pivot — even-odd parity then cuts the holes in a single cover pass.
@@ -380,7 +387,7 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
     let z = size_scale;
     for prim in prims {
         match prim {
-            Prim::Fill { .. } | Prim::Image { .. } => {}
+            Prim::Fill { .. } | Prim::Image { .. } | Prim::GradientFill { .. } => {}
             // `clip` is honoured at DRAW time (a GPU scissor set around this stroke's Fg range) — the band
             // is tessellated here in full and trimmed to the page edge by the scissor. See build_content.
             Prim::Stroke { pts, width, color, .. } => {
@@ -418,15 +425,49 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
 /// once — so the stroke blends against what's BEHIND the object, never against its own fill.
 #[derive(Debug, PartialEq)]
 pub enum Draw {
-    Image { key: varos_core::images::BlobKey, range: (u32, u32), scissor: Option<[u32; 4]> },
-    Fill { fan: (u32, u32), cover: (u32, u32) },
+    Image {
+        key: varos_core::images::BlobKey,
+        range: (u32, u32),
+        scissor: Option<[u32; 4]>,
+    },
+    MaskedFill {
+        fan: (u32, u32),
+        cover: (u32, u32),
+        band: (u32, u32),
+        clear: (u32, u32),
+    },
+    Gradient {
+        fan: (u32, u32),
+        cover: (u32, u32),
+        key: u64,
+        gradient: varos_core::gradient::Gradient,
+        pan: [f32; 2],
+        zoom: f32,
+        opacity: f32,
+        mask: Option<((u32, u32), (u32, u32))>,
+    },
+    Fill {
+        fan: (u32, u32),
+        cover: (u32, u32),
+    },
     // `scissor` = a pixel-space rect [x, y, w, h] to confine this run to (A2: an artboard-clipped OPAQUE
     // stroke, so its extruded band is trimmed to the page edge, not just its centerline). `None` = draw
     // across the whole framebuffer (the usual case). A degenerate/off-screen clip resolves to `None` in
     // `scissor_px`, so a missed clip draws UNCLIPPED (overflowing) — never clipped-to-nothing. Fail-open.
-    Fg { range: (u32, u32), scissor: Option<[u32; 4]> },
-    StrokeCov { tris: (u32, u32), cover: (u32, u32) },
-    Knockout { band: (u32, u32), fan: (u32, u32), fcover: (u32, u32), bcover: (u32, u32) },
+    Fg {
+        range: (u32, u32),
+        scissor: Option<[u32; 4]>,
+    },
+    StrokeCov {
+        tris: (u32, u32),
+        cover: (u32, u32),
+    },
+    Knockout {
+        band: (u32, u32),
+        fan: (u32, u32),
+        fcover: (u32, u32),
+        bcover: (u32, u32),
+    },
 }
 
 /// Map a world-space clip rect `[x0,y0,x1,y1]` to an integer pixel scissor `[x, y, w, h]` on a `w`×`h`
@@ -511,10 +552,10 @@ fn knock_draws(
 
 /// Does this (single-object) prim set need knockout? = has a fill AND a translucent stroke.
 fn needs_knockout(prims: &[Prim]) -> bool {
-    prims.iter().any(|p| matches!(p, Prim::Fill { .. }))
+    prims.iter().any(|p| matches!(p, Prim::Fill { .. } | Prim::GradientFill{stroke:false,..}))
         && prims
             .iter()
-            .any(|p| matches!(p, Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } if color[3] < 0.999))
+            .any(|p| matches!(p, Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } if color[3] < 0.999) || matches!(p,Prim::GradientFill{stroke:true,gradient,..} if gradient.stops.iter().any(|s|s.colour[3]*s.opacity<0.999)))
 }
 
 /// Build ONE group's ordered draw steps (fill fan+cover, stroke fg, translucent-stroke mark+cover,
@@ -534,10 +575,32 @@ fn group_draws(
         return Vec::new();
     }
     // knockout objects (and isolated layers that contain a translucent stroke) take the dedicated path
-    if matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { prims, .. } if needs_knockout(prims)) {
+    if !g.prims().iter().any(|p| matches!(p, Prim::GradientFill { .. }))
+        && (matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { prims, .. } if needs_knockout(prims)))
+    {
         return knock_draws(g.prims(), view, zoom, w, h, fillv, fgv);
     }
     let prims = g.prims();
+    let masked = prims.iter().any(|p| matches!(p, Prim::GradientFill { .. }))
+        && (matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { .. }) && needs_knockout(prims));
+    let mask = masked.then(|| {
+        let bands: Vec<Prim> = prims
+            .iter()
+            .filter_map(|p| match p {
+                Prim::GradientFill { rings, stroke: true, .. } => {
+                    Some(Prim::StrokeCoverage { rings: rings.clone(), color: [1.; 4], clip: None, native: None })
+                }
+                Prim::Stroke { .. } | Prim::StrokeCoverage { .. } => Some(p.clone()),
+                _ => None,
+            })
+            .collect();
+        let start = fgv.len() as u32;
+        fgv.extend(build_fg(&bands, view, zoom, w, h));
+        let band = (start, fgv.len() as u32 - start);
+        let clear = fillv.len() as u32;
+        quad(fillv, [0., 0.], [w, 0.], [w, h], [0., h], [0.; 4], w, h);
+        (band, (clear, fillv.len() as u32 - clear))
+    });
     let mut draws = Vec::new();
     let mut i = 0;
     while i < prims.len() {
@@ -561,13 +624,30 @@ fn group_draws(
             i += 1;
             continue;
         }
-        if matches!(prims[i], Prim::Fill { .. }) {
+        if matches!(prims[i], Prim::Fill { .. } | Prim::GradientFill { .. }) {
             // one fill → its own stencil+cover step (offset into the shared fill buffer)
             let (fv, fr) = build_fills(&prims[i..i + 1], view, w, h);
             let off = fillv.len() as u32;
             fillv.extend(fv);
             for ((fs, fl), (cs, cl)) in fr {
-                draws.push(Draw::Fill { fan: (fs + off, fl), cover: (cs + off, cl) });
+                if let Prim::GradientFill { gradient, opacity, stroke, .. } = &prims[i] {
+                    draws.push(Draw::Gradient {
+                        fan: (fs + off, fl),
+                        cover: (cs + off, cl),
+                        key: crate::gradient::key(gradient, view, [w, h], *opacity),
+                        gradient: gradient.clone(),
+                        pan: view.pan,
+                        zoom: view.zoom,
+                        opacity: *opacity,
+                        mask: if *stroke { None } else { mask },
+                    });
+                } else {
+                    if let Some((band, clear)) = mask {
+                        draws.push(Draw::MaskedFill { fan: (fs + off, fl), cover: (cs + off, cl), band, clear });
+                    } else {
+                        draws.push(Draw::Fill { fan: (fs + off, fl), cover: (cs + off, cl) });
+                    }
+                }
             }
             i += 1;
         } else {
@@ -576,7 +656,7 @@ fn group_draws(
             // must paint its overlapping quads + join discs EXACTLY ONCE → stencil-mark + cover step
             // (otherwise every overlap re-blends and the band turns into the blotchy "blur").
             let j = (i..prims.len())
-                .find(|&k| matches!(prims[k], Prim::Fill { .. } | Prim::Image { .. }))
+                .find(|&k| matches!(prims[k], Prim::Fill { .. } | Prim::Image { .. } | Prim::GradientFill { .. }))
                 .unwrap_or(prims.len());
             while i < j {
                 if let Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } = &prims[i] {

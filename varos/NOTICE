@@ -105,3 +105,15 @@ semantics from VectorCraft engine/cmd/links.rs@a469568 (MIT OR Apache-2.0, ArtCr
 crates/varos-pdf/src/package.rs and varos-core/src/images/links.rs adapt package/link contracts
 from VectorCraft engine/cmd/{package.rs,links.rs}@a469568. Copyright (c) 2026 ArtCraft Team.
 MIT OR Apache-2.0; independent filesystem/UI implementation; no prior UI/assets copied.
+
+Lane B gradient mathematics:
+Adapted from VectorCraft color/src/gradient.rs @ a469568 (MIT OR Apache-2.0).
+Placement, spread and validation are Varos additions; see varos-core/src/gradient.rs.
+Appearance entry options/read-view shape: adapted from VectorCraft
+doc/src/appearance.rs @ a469568 (MIT OR Apache-2.0); no effects or new persisted keys.
+Lane B swatches, palette codecs/library shape and Lab recoloring:
+Adapted from VectorCraft color/src/{swatch,palette_io,libraries,recolor}.rs and
+color/src/cms/lab.rs @ a469568. Copyright (c) 2026 ArtCraft Team and contributors.
+MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+Lane B GPU radial ray/circle equation idea: PhotoCraft gpu/src/compose.wgsl:632-680
+@ a469568 (MIT OR Apache-2.0); independent Varos LUT/dither/stencil pipeline.

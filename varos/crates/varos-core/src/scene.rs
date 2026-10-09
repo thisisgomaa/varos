@@ -1,3 +1,4 @@
+// ---- w2-gradients: Appearance routing and next-format paint integration ----
 //! The HARD SEAM: the core describes WHAT to draw as render-agnostic primitives.
 //! No wgpu, no triangles, no NDC here — a renderer turns these into pixels however it likes.
 //!
@@ -45,6 +46,13 @@ pub enum Prim {
         rings: Vec<Vec<Pt>>,
         color: Rgba,
     }, // outer ring + hole rings — filled even-odd (holes cut through)
+    // ---- w2-gradients ----
+    GradientFill {
+        rings: Vec<Vec<Pt>>,
+        gradient: crate::gradient::Gradient,
+        opacity: f32,
+        stroke: bool,
+    },
     // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
     // is ALREADY cut to the rect (clip_polyline_rect), but the extruded BAND still overhangs the edge by up
     // to half the width — a renderer may honour this rect (e.g. a GPU scissor) to trim that overhang. `None`
@@ -204,8 +212,8 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
         for hole in &path.holes {
             hole.len().hash(&mut state);
         }
-        path.fill.hash(&mut state);
-        path.stroke.hash(&mut state);
+        path.appearance().fill().resolved_ref(&ed.doc).hash(&mut state);
+        path.appearance().stroke().resolved_ref(&ed.doc).hash(&mut state);
         f32_hash(path.stroke_width, &mut state);
         f32_hash(path.opacity, &mut state);
         for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
@@ -270,11 +278,16 @@ pub struct Scene {
 /// Multiply a primitive's colour alpha — folds object-opacity into a single-primitive object (no overlap
 /// to double-blend, so no isolated layer needed).
 fn scale_alpha(p: &mut Prim, o: f32) {
+    if let Prim::GradientFill { opacity, .. } = p {
+        *opacity *= o;
+        return;
+    }
     let c = match p {
         Prim::Image { opacity, .. } => {
             *opacity *= o;
             return;
         }
+        Prim::GradientFill { .. } => return,
         Prim::Fill { color, .. } => color,
         Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } => color,
         Prim::Dashed { color, .. } => color,
@@ -582,7 +595,9 @@ fn build_scene_impl(
         // between the endpoints) — so deleting an anchor to open a shape keeps its fill (A32). Only paths
         // that actually carry a fill colour reach here; a bare stroke line (fill None) never fills.
         if p.anchors.len() >= 3 {
-            if let Some(c) = p.fill.solid() {
+            let paint = p.appearance().fill().resolved(&ed.doc);
+            if paint.is_painted() {
+                let painted = |rings| crate::gradient_scene::prim(rings, &paint, ed.doc.unit_xform(p.id));
                 // A7 seam: WORLD-space rings (unit transform composed). Identity ⇒ today's geometry.
                 let mut rings = Vec::with_capacity(1 + geom.holes.len());
                 rings.push(geom.outline.clone());
@@ -604,7 +619,7 @@ fn build_scene_impl(
                                 .filter(|ring| ring.len() >= 3)
                                 .collect();
                             if clipped.first().is_some_and(|o| o.len() >= 3) {
-                                out.push(Prim::Fill { rings: clipped, color: c });
+                                out.push(painted(clipped));
                             }
                         }
                     }
@@ -616,10 +631,10 @@ fn build_scene_impl(
                                 .filter(|ring| ring.len() >= 3)
                                 .collect();
                             if clipped.first().is_some_and(|o| o.len() >= 3) {
-                                out.push(Prim::Fill { rings: clipped, color: c });
+                                out.push(painted(clipped));
                             }
                         }
-                        None => out.push(Prim::Fill { rings, color: c }),
+                        None => out.push(painted(rings)),
                     },
                 }
             }
@@ -632,8 +647,55 @@ fn build_scene_impl(
         if style.is_some() && crate::view_depth_scene::outlined(ed, p.id) {
             return out;
         }
+        let paint = p.appearance().stroke().resolved(&ed.doc);
+        if let crate::model::Paint::Gradient(g) = paint {
+            // Integration w2: gradient strokes take THE stroke seam too — main's canvas cache/cap/back-off
+            // on the canvas (world rings), strict evaluation + aggregate budget for export.
+            match crate::gradient_canvas::coverage(ed, p, ppu, canvas) {
+                Ok(cov) => {
+                    if let Some(budget) = &stroke_budget {
+                        if let Err(e) = budget.borrow_mut().charge(&cov) {
+                            stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                            return out;
+                        }
+                    }
+                    stroke_report.borrow_mut().notes.extend(cov.report.notes.clone());
+                    let xf = ed.doc.unit_xform(p.id);
+                    let rings: Vec<Vec<Pt>> = if canvas {
+                        cov.rings.clone()
+                    } else {
+                        cov.rings.iter().map(|r| r.iter().map(|q| xf.apply(*q)).collect()).collect()
+                    };
+                    let gradient = g.transformed(xf);
+                    if let Some(rects) = clip_rects(pi) {
+                        for r in rects {
+                            out.push(Prim::GradientFill {
+                                rings: rings
+                                    .iter()
+                                    .map(|ring| clip_poly_rect(ring, r))
+                                    .filter(|r| r.len() >= 3)
+                                    .collect(),
+                                gradient: gradient.clone(),
+                                opacity: 1.0,
+                                stroke: true,
+                            });
+                        }
+                    } else {
+                        out.push(Prim::GradientFill { rings, gradient, opacity: 1.0, stroke: true });
+                    }
+                }
+                Err(e) => {
+                    if canvas {
+                        crate::stroke::canvas::simplified(&mut stroke_report.borrow_mut(), p.id, true);
+                    } else {
+                        stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                    }
+                }
+            }
+            return out;
+        }
         if !p.stroke_style.is_default() {
-            if let Some(color) = p.stroke.solid() {
+            if let Some(color) = paint.solid() {
                 match crate::stroke::canvas_seam(ed, p, ppu, canvas) {
                     Ok(coverage) => {
                         if let Some(budget) = &stroke_budget {
@@ -712,7 +774,7 @@ fn build_scene_impl(
             // centre-aligned native stroke primitive, with the same page/view clipping.
         }
         if p.anchors.len() >= 2 {
-            if let Some(c) = p.stroke.solid() {
+            if let Some(c) = p.appearance().stroke().resolved(&ed.doc).solid() {
                 let clip = clip_rects(pi);
                 // Only the styled canvas fallback needs this expansion; preserve the
                 // ordinary native/export stroke geometry and its frozen vertex counts.
@@ -798,7 +860,10 @@ fn build_scene_impl(
     // accumulators (MASKS_PLAN §2.4: members reuse every branch, they only land in a different vec).
     let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
         let o = p.opacity * if ed.in_isolation(p.id) { 1.0 } else { 0.25 };
-        let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
+        let s_alpha = match p.appearance().stroke().resolved(&ed.doc) {
+            crate::model::Paint::Gradient(g) => g.stops.iter().map(|s| s.colour[3] * s.opacity).fold(1., f32::min),
+            paint => paint.solid().map_or(1., |c| c[3]),
+        };
         let vclip = view_clip[pi];
         let mut fp = fill_prims(pi, geom, vclip);
         let mut sp = stroke_prims(pi, geom, vclip);
@@ -1325,6 +1390,7 @@ fn build_scene_impl(
     if let Drag::Construction { points, .. } = &ed.drag {
         s.overlay.push(Prim::Stroke { pts: points.clone(), width: 1.0, color: ACCENT, clip: None });
     }
+    s.overlay.extend(crate::tools::gradient::overlay(ed));
     s
 }
 

@@ -245,8 +245,11 @@ fn v4_reader_refuses_v5_before_decode() {
     for body in [raw.as_str(), pdf.as_str()] {
         assert_eq!(
             v4_gate(body).unwrap_err(),
-            varos_core::format::LoadError::NewerVersion { found: varos_core::format::FORMAT_VERSION, supported: 4 }
-                .to_string()
+            varos_core::format::LoadError::NewerVersion {
+                found: serde_json::from_str::<serde_json::Value>(body).unwrap()["varos"].as_u64().unwrap() as u32,
+                supported: 4
+            }
+            .to_string()
         );
     }
     assert_eq!(
@@ -286,3 +289,58 @@ fn v5_gate_refuses_v6_image_json_and_pdf_before_decode() {
         assert_eq!(v5_gate(&embedded_model_json(bytes)), Err(expected.clone()));
     }
 }
+// ---- w2-gradients: frozen v5/v6 gates; schema versions checked before model/assets ----
+// Adapted from the v5 `peek_version` gate. Literal supported values stay fixed even after
+// integration renumbers the current writer; this does not execute an old binary.
+fn frozen_paint_gate(body: &[u8], supported: u32) -> Result<u32, varos_core::format::LoadError> {
+    use varos_core::format::LoadError;
+    #[derive(serde::Deserialize)]
+    struct Head {
+        varos: u32,
+    }
+    let head: Head = serde_json::from_slice(body).expect("test input has a valid version header");
+    if head.varos > supported {
+        Err(LoadError::NewerVersion { found: head.varos, supported })
+    } else {
+        Ok(head.varos)
+    }
+}
+#[test]
+fn v5_and_v6_gates_refuse_raw_json_and_pdf_before_model_or_assets() {
+    use varos_core::format::LoadError;
+    for (supported, newer) in [(5, 6), (6, 7)] {
+        let body = format!("{{\"varos\":{newer},\"doc\":42}}");
+        let expected = Err(LoadError::NewerVersion { found: newer, supported });
+        assert_eq!(frozen_paint_gate(body.as_bytes(), supported), expected);
+        let mut pdf = lopdf::Document::load_mem(&varos_pdf::write_pdf(&sample_doc()).unwrap()).unwrap();
+        let catalog_id = pdf.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let model_id = pdf.add_object(lopdf::Stream::new(lopdf::Dictionary::new(), body.into_bytes()));
+        let catalog = pdf.get_object_mut(catalog_id).unwrap().as_dict_mut().unwrap();
+        catalog.set("VAROS_SchemaVersion", i64::from(newer));
+        catalog.set("VAROS_Model", model_id);
+        // Synthetic future asset marker: no image lane code is available in this worktree.
+        catalog.set("VAROS_Assets", lopdf::Object::Null);
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        let loaded = lopdf::Document::load_mem(&bytes).unwrap();
+        let version = loaded.catalog().unwrap().get(b"VAROS_SchemaVersion").unwrap().as_i64().unwrap() as u32;
+        let gate = if version > supported {
+            Err(LoadError::NewerVersion { found: version, supported })
+        } else {
+            frozen_paint_gate(embedded_model_json(&bytes).as_bytes(), supported)
+        };
+        assert_eq!(gate, expected);
+    }
+}
+#[test]
+fn frozen_v5_gate_refuses_current_gradient_writer_output() {
+    let mut doc = sample_doc();
+    doc.paths[0].fill = varos_core::model::Paint::Gradient(Default::default());
+    let raw = varos_core::format::encode_model(&doc, &varos_core::format::Limits::DEFAULT).unwrap();
+    let expected =
+        Err(varos_core::format::LoadError::NewerVersion { found: varos_core::format::FORMAT_VERSION, supported: 5 });
+    assert_eq!(frozen_paint_gate(raw.as_bytes(), 5), expected);
+    let pdf = varos_pdf::write_pdf(&doc).unwrap();
+    assert_eq!(frozen_paint_gate(embedded_model_json(&pdf).as_bytes(), 5), expected);
+}
+// ---- end w2-gradients ----

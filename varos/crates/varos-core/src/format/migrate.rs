@@ -18,8 +18,8 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (3, migrate_v3_to_v4),
     (4, migrate_v4_to_v5),
     (5, migrate_v5_to_v6),
-    // TEMPORARY until the gradients merge: one identity step spans 6 → 8 (7 = gradients, reserved).
-    (6, migrate_v6_to_v8),
+    (6, migrate_v6_to_v7),
+    (7, migrate_v7_to_v8),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the
@@ -38,24 +38,14 @@ pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result
             return Err(LoadError::MigrationFailed { from: v, reason: format!("no migration from format {v}") });
         };
         doc = step(doc, limits)?;
-        v = step_target(v);
+        v += 1;
     }
     Ok(doc)
 }
 
-/// The format a step starting at `from` produces. Every step is `N → N+1` except the temporary
-/// `migrate_v6_to_v8` (see `MIGRATIONS`), which the gradients merge splits.
-fn step_target(from: u32) -> u32 {
-    if from == super::IMAGE_VERSION {
-        super::TEXT_FORMAT_VERSION
-    } else {
-        from + 1
-    }
-}
-
-/// TEMPORARY v6 → v8 identity (format 7 is reserved for gradients). Text: legacy readers supplied
-/// the empty default; never fabricates source/fonts.
-pub fn migrate_v6_to_v8(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
+/// v7 → v8 (editable text): legacy readers supplied the empty default; never fabricates
+/// source/fonts (`text_format::migrate_to_text_boxes`).
+pub fn migrate_v7_to_v8(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
     crate::text_format::migrate_to_text_boxes(doc, limits)
 }
 
@@ -153,5 +143,12 @@ pub fn migrate_v4_to_v5(doc: Document, _limits: &Limits) -> Result<Document, Loa
 // ---- w2-images ----
 /// v5 → v6 (images) is identity: no source bytes or image identities are invented.
 pub fn migrate_v5_to_v6(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    Ok(doc)
+}
+
+// ---- w2-gradients ----
+/// v6 → v7 (gradient paints + document swatches) is a pure identity: old paints and absent
+/// swatches are already the canonical stored form. No validation here (the loader validates).
+pub fn migrate_v6_to_v7(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

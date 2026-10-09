@@ -11,18 +11,15 @@ fn writer_is_pinned_to_literal_8() {
 }
 
 #[test]
-fn reserved_format_7_is_refused_by_this_build() {
+fn the_chain_is_contiguous_and_the_next_number_is_newer() {
+    assert_eq!(varos_core::format::readable_versions(), (1..=FORMAT_VERSION).collect::<Vec<_>>());
     let v5 = std::str::from_utf8(include_bytes!("fixtures/v5/plain.json")).unwrap();
-    for v in [7u32, 7] {
-        let json = v5.replacen("{\"varos\":5,", &format!("{{\"varos\":{v},"), 1);
-        assert!(
-            matches!(
-                decode_model(json.as_bytes(), None, &Limits::DEFAULT),
-                Err(LoadError::MigrationFailed { from, .. }) if from == v
-            ),
-            "format {v}"
-        );
-    }
+    let next = FORMAT_VERSION + 1;
+    let json = v5.replacen("{\"varos\":5,", &format!("{{\"varos\":{next},"), 1);
+    assert_eq!(
+        decode_model(json.as_bytes(), None, &Limits::DEFAULT).unwrap_err(),
+        LoadError::NewerVersion { found: next, supported: FORMAT_VERSION }
+    );
 }
 
 #[test]

@@ -224,7 +224,17 @@ impl Clipboard {
             resources: Default::default(),
             layers,
             texts: doc.text_boxes.iter().filter(|t| texts.contains(&t.id)).cloned().collect(),
-            paths: sel.iter().filter(|(pi, _)| *pi < doc.paths.len()).map(|&(pi, _)| doc.paths[pi].clone()).collect(),
+            // w2-gradients: copied paints are resolved (a swatch table is per document)
+            paths: sel
+                .iter()
+                .filter(|(pi, _)| *pi < doc.paths.len())
+                .map(|&(pi, _)| {
+                    let mut p = doc.paths[pi].clone();
+                    p.fill = p.fill.resolved(doc);
+                    p.stroke = p.stroke.resolved(doc);
+                    p
+                })
+                .collect(),
             nodes,
             roots: roots.into_iter().map(|(_, id)| id).collect(),
             bounds: (x0 <= x1).then_some((x0, y0, x1, y1)),
@@ -299,7 +309,9 @@ impl Clipboard {
             let anchors: Vec<Anchor> = src.anchors.iter().map(&mut fresh).collect();
             let holes: Vec<Vec<Anchor>> = src.holes.iter().map(|h| h.iter().map(&mut fresh).collect()).collect();
             pmap.insert(src.id, id);
-            new_paths.push(Path { id, anchors, holes, ..src.clone() });
+            let mut path = Path { id, anchors, holes, ..src.clone() };
+            path.map_gradient_placement(moved);
+            new_paths.push(path);
         }
         let mut text_ids = Vec::new();
         for src in &self.texts {

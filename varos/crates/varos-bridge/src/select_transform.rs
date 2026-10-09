@@ -10,6 +10,8 @@ pub(crate) fn apply(ed: &mut Editor, op: &Operation, affected: &mut BTreeSet<Str
     let fail = |s| Error::new("invalid_argument", s);
     let ids = op.ids();
     match op {
+        // ---- w2-gradients ----
+        Operation::Colour { command, .. } => return crate::colour::apply(ed, op, command, affected),
         Operation::ToolOptions { wand, eyedropper } => {
             if let Some(o) = wand {
                 ed.try_execute(EditCommand::SetWandOptions(*o)).map_err(fail)?;

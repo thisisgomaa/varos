@@ -84,3 +84,5 @@ pub const TOOLS_12: &[&str] = &["print", "copy", "cut"];
 mod view_depth;
 // ---- Lane G ----
 mod text;
+// ---- w2-gradients ----
+mod colour;

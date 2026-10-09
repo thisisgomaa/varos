@@ -319,6 +319,7 @@ impl Editor {
                 continue;
             }
             let Some(pi) = self.doc.pidx(pid) else { continue };
+            crate::gradient_transform::map(&mut self.doc, pid, |p| s.map(p, o));
             let path = &mut self.doc.paths[pi];
             for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
                 a.p = s.map(a.p, o);
@@ -331,11 +332,13 @@ impl Editor {
     }
     pub fn magic_wand(&mut self, source: u32, options: WandOptions, mode: SelectMode) {
         let Some(p) = self.doc.paths.iter().find(|p| p.id == source) else { return };
-        let close = |a: crate::model::Paint, b: crate::model::Paint| match (a.solid(), b.solid()) {
-            (None, None) => true,
-            (Some(a), Some(b)) => a.iter().zip(b).all(|(x, y)| (*x - y).abs() <= options.colour),
-            _ => false,
-        };
+        let close =
+            |a: crate::model::Paint, b: crate::model::Paint| match (a.resolved(&self.doc), b.resolved(&self.doc)) {
+                (crate::model::Paint::Solid(a), crate::model::Paint::Solid(b)) => {
+                    a.iter().zip(b).all(|(x, y)| (*x - y).abs() <= options.colour)
+                }
+                (a, b) => a == b,
+            };
         let ids: Vec<_> = self
             .doc
             .paths
@@ -344,8 +347,8 @@ impl Editor {
                 self.in_isolation(q.id)
                     && !self.doc.eff_hidden(q.id)
                     && !self.doc.eff_locked(q.id)
-                    && (!options.pick.fill || close(p.fill, q.fill))
-                    && (!options.pick.stroke || close(p.stroke, q.stroke))
+                    && (!options.pick.fill || close(p.appearance().fill().clone(), q.appearance().fill().clone()))
+                    && (!options.pick.stroke || close(p.appearance().stroke().clone(), q.appearance().stroke().clone()))
                     && (!options.pick.weight || (p.stroke_width - q.stroke_width).abs() <= options.weight)
                     && (!options.pick.opacity || (p.opacity - q.opacity).abs() <= options.opacity)
             })
@@ -368,23 +371,34 @@ impl Editor {
         let Some(p) = self.doc.paths.iter().find(|p| p.id == source).cloned() else { return };
         let ids = self.selected_pids();
         if colour_only {
-            let colour = p.fill.solid().or(p.stroke.solid());
-            self.apply_paint(colour);
+            let paint = if p.fill.is_painted() { p.fill } else { p.stroke };
+            self.execute_ui(crate::EditCommand::Colour(crate::colour_commands::ColourCommand::Paint {
+                target: self.paint,
+                paint,
+            }));
             return;
         }
         if pick.fill {
-            self.cur_fill = p.fill.solid();
+            self.set_sampled_paint(crate::editor::PaintTarget::Fill, p.appearance().fill().clone(), &p);
         }
         if pick.stroke {
-            self.cur_stroke = p.stroke.solid();
+            self.set_sampled_paint(crate::editor::PaintTarget::Stroke, p.appearance().stroke().clone(), &p);
         }
         if pick.weight {
             self.cur_sw = p.stroke_width;
         }
         let changed = ids.iter().filter_map(|id| self.doc.pidx(*id)).any(|i| {
             let q = &self.doc.paths[i];
-            (pick.fill && q.fill != p.fill)
-                || (pick.stroke && q.stroke != p.stroke)
+            (pick.fill
+                && q.appearance().fill().clone()
+                    != crate::current_paint::fit(p.appearance().fill().clone(), crate::current_paint::bounds(&p), q))
+                || (pick.stroke
+                    && q.appearance().stroke().clone()
+                        != crate::current_paint::fit(
+                            p.appearance().stroke().clone(),
+                            crate::current_paint::bounds(&p),
+                            q,
+                        ))
                 || (pick.weight && q.stroke_width != p.stroke_width)
                 || (pick.opacity && q.opacity != p.opacity)
         });
@@ -399,10 +413,12 @@ impl Editor {
             if let Some(i) = self.doc.pidx(id) {
                 let q = &mut self.doc.paths[i];
                 if pick.fill {
-                    q.fill = p.fill;
+                    q.fill =
+                        crate::current_paint::fit(p.appearance().fill().clone(), crate::current_paint::bounds(&p), q);
                 }
                 if pick.stroke {
-                    q.stroke = p.stroke;
+                    q.stroke =
+                        crate::current_paint::fit(p.appearance().stroke().clone(), crate::current_paint::bounds(&p), q);
                 }
                 if pick.weight {
                     q.stroke_width = p.stroke_width;

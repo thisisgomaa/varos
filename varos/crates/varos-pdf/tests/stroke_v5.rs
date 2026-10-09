@@ -14,25 +14,34 @@ fn v5_frozen_json_pdf_and_svg_goldens() {
         let json = std::fs::read(root.join(format!("{name}.json"))).unwrap();
         let loaded = decode_model(&json, None, &Limits::DEFAULT).unwrap();
         assert!(loaded.migrated);
-        let current_json = varos_core::format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap();
-        let expected = String::from_utf8(json.clone()).unwrap().replacen(
-            "\"varos\":5",
-            &format!("\"varos\":{}", varos_core::format::FORMAT_VERSION),
-            1,
+        assert_eq!(
+            varos_core::format::encode_model(&loaded.doc, &Limits::DEFAULT)
+                .unwrap()
+                .replacen(&format!("\"varos\":{}", varos_core::format::FORMAT_VERSION), "\"varos\":5", 1)
+                .as_bytes(),
+            json,
+            "{name}: JSON"
         );
-        assert_eq!(current_json.as_bytes(), expected.as_bytes(), "{name}: only envelope may migrate");
         let pdf = std::fs::read(root.join(format!("{name}.pdf"))).unwrap();
         assert_eq!(varos_pdf::load_vrs_bytes(&pdf, &Limits::DEFAULT).unwrap().doc, loaded.doc);
         let current = varos_pdf::write_pdf(&loaded.doc).unwrap();
-        let normalized = normalize_version(&current);
-        assert_eq!(normalized, pdf, "{name}: envelope-normalized PDF byte golden");
+        // Only the container and model version stamps change; all legacy appearance bytes stay frozen.
+        let mut current = current;
+        for (from, to) in [
+            (format!("\"varos\":{}", varos_core::format::FORMAT_VERSION), "\"varos\":5"),
+            (format!("/VAROS_SchemaVersion {}", varos_core::format::FORMAT_VERSION), "/VAROS_SchemaVersion 5"),
+        ] {
+            let offset = current.windows(from.len()).position(|w| w == from.as_bytes()).unwrap();
+            current.splice(offset..offset + from.len(), to.bytes());
+        }
+        assert_eq!(current, pdf, "{name}: PDF");
         let plan = plan_svg_export(&loaded.doc, ExportScope::WholeBoard).unwrap();
         let files = export_svg_files(&loaded.doc, &plan, &AtomicBool::new(false)).unwrap();
         assert_eq!(files[0].bytes, std::fs::read(root.join(format!("{name}.svg"))).unwrap(), "{name}: SVG");
     }
 }
 #[test]
-fn historical_future_v6_is_still_refused_as_malformed_in_both_containers() {
+fn frozen_v6_refusals_stay_invalid_with_current_version() {
     for ext in ["json", "pdf"] {
         let bytes = std::fs::read(root().join(format!("refused/future_v6.{ext}"))).unwrap();
         assert!(matches!(varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT), Err(LoadError::Malformed { .. })));
@@ -87,25 +96,4 @@ fn baked_translucent_stroke_stream_contains_only_coverage_not_centerline() {
         }
     }
     assert_eq!(checked, 1);
-}
-
-// This lane's single-digit v5→v6 bump preserves stream lengths and xref offsets.
-fn normalize_version(bytes: &[u8]) -> Vec<u8> {
-    let mut bytes = bytes.to_vec();
-    for (current, old) in [
-        (format!("\"varos\":{}", varos_core::format::FORMAT_VERSION), "\"varos\":5"),
-        (format!("/VAROS_SchemaVersion {}", varos_core::format::FORMAT_VERSION), "/VAROS_SchemaVersion 5"),
-    ] {
-        assert_eq!(current.len(), old.len());
-        let positions: Vec<_> = bytes
-            .windows(current.len())
-            .enumerate()
-            .filter(|(_, b)| *b == current.as_bytes())
-            .map(|(i, _)| i)
-            .collect();
-        for i in positions {
-            bytes[i..i + old.len()].copy_from_slice(old.as_bytes());
-        }
-    }
-    bytes
 }

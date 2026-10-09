@@ -26,6 +26,8 @@ pub enum EditCommand {
     },
     // ---- w2-images ----
     Image(crate::images::ImageEdit),
+    // ---- w2-gradients ----
+    Colour(crate::colour_commands::ColourCommand),
     SetWandOptions(crate::select_transform::WandOptions),
     SetEyedropperOptions(crate::select_transform::PickOptions),
     Transform(crate::select_transform::Transform),
@@ -390,6 +392,8 @@ impl EditCommand {
         match self {
             Self::Drawing(action) => crate::drawing::apply(ed, action),
             Self::Image(edit) => crate::images::apply(ed, edit),
+            // Checked colour command dispatch.
+            Self::Colour(c) => crate::colour_commands::apply(ed, c),
             Self::SetWandOptions(options) => {
                 ed.select_transform.wand = options;
                 ed.select_transform.options_requested = true;

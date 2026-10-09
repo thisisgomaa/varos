@@ -48,3 +48,20 @@ pub mod trace;
 // ---- Lane G ----
 pub mod text;
 pub mod text_format;
+// ---- Lane B: appearance and gradient mathematics ----
+pub mod appearance;
+mod current_paint;
+pub mod gradient;
+mod gradient_canvas;
+
+// ---- w2-gradients ----
+pub mod colour_commands;
+pub mod colour_guide;
+pub mod palette_io;
+pub mod recolor;
+pub mod swatches;
+
+pub mod colour_lab;
+
+mod gradient_scene;
+mod gradient_transform;

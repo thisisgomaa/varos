@@ -1,3 +1,4 @@
+// ---- w2-gradients: Appearance routing and next-format paint integration ----
 //! Semantic checks on authored content. Structural checks run first; these checks never walk the
 //! tree recursively or repair it. Both load and save check authored values BEFORE normalization,
 //! so pruning a group or clearing a nested transform cannot hide an invalid number.
@@ -46,6 +47,8 @@ pub(crate) fn before_artboard_ids(doc: &Document) -> Result<(), Invalid> {
 pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
     // ---- w2-images ----
     crate::images::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
+    // ---- w2-gradients ----
+    crate::swatches::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;
     let index: HashMap<u32, _> = doc.nodes.iter().map(|n| (n.id, n)).collect();
     let mut leaves = HashSet::with_capacity(doc.paths.len());
     for n in &doc.nodes {
@@ -111,10 +114,10 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
             stroke_budget.charge(&coverage).map_err(|e| Invalid::Stroke { path: p.id, reason: e.to_string() })?;
         }
         unit(p.opacity, &label, "opacity")?;
-        if let Some(c) = p.fill.solid() {
+        if let Some(c) = p.appearance().fill().solid() {
             color(c, &label, "fill")?;
         }
-        if let Some(c) = p.stroke.solid() {
+        if let Some(c) = p.appearance().stroke().solid() {
             color(c, &label, "stroke")?;
         }
     }
