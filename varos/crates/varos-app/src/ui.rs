@@ -787,7 +787,7 @@ impl Ui {
             true
         });
         apply_picker_frame(ed, snap_cfg, ops, &mut self.color_panel);
-        self.picker_layout.open = self.color_panel.is_some();
+        self.picker_layout.open = self.color_panel.as_ref().is_some_and(|m| !m.mini());
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
 
         // macOS: cursors.rs owns the OS cursor (Retina NSCursor, re-set every frame from `chrome_ck` /

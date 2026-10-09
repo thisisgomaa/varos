@@ -362,6 +362,7 @@ fn layout_v1_missing_picker_is_closed_and_new_preferences_round_trip() {
         drawer_open: true,
         drawer_tab: 2,
         mode: Default::default(),
+        harmony: Default::default(),
     };
     assert_eq!(serde_json::from_str::<PickerLayout>(&serde_json::to_string(&layout).unwrap()).unwrap(), layout);
 }
@@ -1196,4 +1197,178 @@ fn grey_slider_state_is_invalidated_by_real_wheel_hue_rotation() {
     let m = r.panel.as_ref().unwrap();
     assert!((m.channel_values()[0] - 180.).abs() < 1e-4);
     assert_eq!(r.ed.rev, 0);
+}
+
+#[test]
+fn harmony_recovered_angles_wrap_and_original_brightness_are_preserved() {
+    use varos_app::storage::layout::HarmonyRule as R;
+    let base = [350. / 360., 0.65, 0.8];
+    for (rule, angles) in [
+        (R::Complementary, vec![180.]),
+        (R::Analogous, vec![-30., 30.]),
+        (R::Split, vec![150., 210.]),
+        (R::Triadic, vec![120., 240.]),
+        (R::Tetradic, vec![60., 180., 240.]),
+        (R::Square, vec![90., 180., 270.]),
+    ] {
+        let set = harmony_rules::linked(rule, base);
+        assert_eq!(set[0], base);
+        assert_eq!(set.len(), angles.len() + 1);
+        for (c, angle) in set.iter().skip(1).zip(angles) {
+            assert!((c[0] - ((350.0_f32 + angle) / 360.).rem_euclid(1.)).abs() < 1e-6);
+            assert_eq!([c[1], c[2]], [base[1], base[2]]);
+        }
+        assert_eq!(harmony_rules::swatches(rule, base).len(), 6);
+    }
+    for rule in [R::Mono, R::Shades] {
+        for (c, k) in harmony_rules::linked(rule, base).iter().zip([1., 0.78, 0.56, 0.36]) {
+            assert_eq!([c[0], c[1]], [base[0], base[1]]);
+            assert!((c[2] - base[2] * k).abs() < 1e-6);
+        }
+        assert_eq!(harmony_rules::linked(rule, [1., 0.5, 0.])[3], [1., 0.5, 0.06]);
+        assert_eq!(harmony_rules::swatches(rule, base).len(), 6);
+    }
+    assert_eq!(harmony_rules::linked(R::Complementary, [0.5, 0.7, 0.9])[1], [0., 0.7, 0.9]);
+}
+#[test]
+fn harmony_click_drag_persistence_and_idle_are_change_only() {
+    use varos_app::storage::layout::HarmonyRule as R;
+    let mut r = Rig::new(selected(false));
+    super::super::fields::tests::clear_probes();
+    r.panel.as_mut().unwrap().tab = Tab::Harmony;
+    r.frame(vec![], None);
+    r.frame(vec![], None);
+    let at = super::super::fields::tests::probed_rect("harmony swatch 1", 0).center();
+    r.frame(pointer(at, true), None);
+    r.frame(pointer(at, false), None);
+    assert_eq!(r.ed.rev, 1);
+    assert!(!r.ed.transaction_open());
+    r.ed.undo();
+    r.frame(vec![], None);
+    let at = super::super::fields::tests::probed_rect("harmony swatch 0", 0).center();
+    let rev = r.ed.rev;
+    r.frame(pointer(at, true), None);
+    r.frame(pointer(at, false), None);
+    assert_eq!(r.ed.rev, rev);
+    let wheel = super::super::fields::tests::probed_rect("picker wheel", 0);
+    let center = wheel.min + egui::vec2(t::PICKER_RING_CENTER[0], t::PICKER_RING_CENTER[1]);
+    let point = |h| wheel::ring_pos(center, t::PICKER_RING_R - t::PICKER_RING_BAND / 2., h);
+    r.frame(pointer(point(0.25), true), None);
+    r.frame(vec![Event::PointerMoved(point(0.5))], None);
+    assert_eq!(r.ed.rev, rev);
+    r.frame(pointer(point(0.5), false), None);
+    assert_eq!(r.ed.rev, rev + 1);
+    // Select a rule through the actual glyph hit, and persist it additively.
+    let rule = egui::pos2(
+        300. + t::PICKER_PAD + 3. * (t::PICKER_TAB_H + t::PICKER_TAB_GAP) + t::PICKER_TAB_H / 2.,
+        84. + t::PICKER_HEADER_H + t::PICKER_PAD + t::PICKER_TAB_H / 2.,
+    );
+    r.frame(pointer(rule, true), None);
+    r.frame(pointer(rule, false), None);
+    assert_eq!(r.layout.harmony, R::Triadic);
+    assert_eq!(
+        serde_json::from_str::<PickerLayout>(&serde_json::to_string(&r.layout).unwrap()).unwrap().harmony,
+        R::Triadic
+    );
+    assert_eq!(serde_json::from_str::<PickerLayout>("{}").unwrap().harmony, R::Complementary);
+    r.frame(vec![Event::PointerMoved(egui::pos2(1100., 800.))], None);
+    for _ in 0..8 {
+        r.frame(vec![], None);
+    }
+    assert_eq!(r.delay, std::time::Duration::MAX);
+}
+fn open_mini(r: &mut Rig, id: u32) {
+    let anchor = egui::Rect::from_min_size(egui::pos2(500., 80.), egui::Vec2::splat(24.));
+    let cfg = r.ed.doc.snap;
+    apply_picker_frame(&mut r.ed, cfg, vec![Op::OpenMini(id, anchor)], &mut r.panel);
+    r.frame(vec![], None);
+    r.frame(vec![], None);
+}
+#[test]
+fn mini_structure_page_drag_escape_outside_and_single_owner() {
+    let mut r = Rig::new(selected(false));
+    r.ed.doc.artboards = vec![
+        varos_core::model::Artboard { id: 30, ..Default::default() },
+        varos_core::model::Artboard { id: 40, page_color: Some([1., 0., 0., 1.]), ..Default::default() },
+    ];
+    // A live big-panel gesture must finish before the popover can own a new one.
+    let at = r.ring(0.25);
+    r.frame(pointer(at, true), None);
+    super::super::fields::tests::clear_probes();
+    open_mini(&mut r, 40);
+    assert_eq!(r.ed.rev, 1);
+    assert!(!r.ed.transaction_open());
+    assert!(r.panel.as_ref().unwrap().mini());
+    assert!(r.panel.as_ref().unwrap().target == MTarget::Ab(40));
+    let rect = super::super::fields::tests::probed_rect("picker mini", 0);
+    assert_eq!(rect.width(), t::PICKER_MINI_W);
+    assert_eq!(rect.height(), t::PICKER_MINI_BODY_H + t::PICKER_FIELD_ROW_H + t::PICKER_SWATCH_ROW_H);
+    assert_eq!(super::super::fields::tests::probe_count("picker cluster"), 0);
+    assert_eq!(super::super::fields::tests::probe_count("picker header"), 0);
+    assert_eq!(super::super::fields::tests::probe_count("picker wheel"), 2);
+    assert_eq!(super::super::fields::tests::probe_count("picker hex"), 2);
+    assert_eq!(super::super::fields::tests::probe_count("picker alpha slider"), 2);
+    r.ed.doc.artboards.swap(0, 1);
+    r.frame(vec![], None);
+    let center = rect.min + egui::vec2(t::PICKER_MINI_CENTER[0], t::PICKER_MINI_CENTER[1]);
+    let point = |h| wheel::ring_pos(center, t::PICKER_MINI_RING_R - t::PICKER_RING_BAND / 2., h);
+    let before = r.ed.doc.clone();
+    r.frame(pointer(point(0.25), true), None);
+    r.frame(vec![Event::PointerMoved(point(0.5))], None);
+    assert_eq!(r.ed.rev, 1);
+    r.frame(pointer(point(0.5), false), None);
+    assert_eq!(r.ed.rev, 2);
+    assert_ne!(r.ed.doc.artboards[0].page_color, before.artboards[0].page_color);
+    assert_eq!(r.ed.doc.artboards[1], before.artboards[1]);
+    r.ed.undo();
+    assert_eq!(r.ed.doc, before);
+    // Escape is owned even from the canvas; it cannot deselect the artwork.
+    assert!(super::super::layout::picker_owns_escape(&r.ctx, true));
+    r.frame(vec![Event::PointerMoved(egui::pos2(80., 80.)), key(Key::Escape)], None);
+    assert!(r.panel.is_none());
+    open_mini(&mut r, 40);
+    r.frame(pointer(egui::pos2(80., 80.), true), None);
+    assert!(r.panel.is_none());
+}
+#[test]
+fn drawer_tabs_choose_three_distinct_sources_and_mini_idle_sleeps() {
+    let mut r = Rig::new(selected(false));
+    r.ed.doc.artboards.push(varos_core::model::Artboard { id: 30, ..Default::default() });
+    r.ed.push_recent([0., 1., 0., 1.]);
+    let snap = Snap::read(&r.ed);
+    assert_eq!(snap.recent[0], [0., 1., 0., 1.]);
+    assert_eq!(snap.doc_colors, vec![[1., 0., 0., 1.], [0., 0., 1., 1.]]);
+    assert_eq!(drawer::source(&snap, 0), &snap.recent);
+    assert_eq!(drawer::source(&snap, 1), &snap.board_colors);
+    assert_eq!(drawer::source(&snap, 2), &snap.doc_colors);
+    for tab in 0..3 {
+        r.layout.drawer_tab = tab;
+        r.layout.drawer_open = true;
+        r.frame(vec![], None);
+        assert_eq!(
+            serde_json::from_str::<PickerLayout>(&serde_json::to_string(&r.layout).unwrap()).unwrap().drawer_tab,
+            tab
+        );
+    }
+    r.layout.drawer_open = false;
+    open_mini(&mut r, 30);
+    r.frame(vec![Event::PointerMoved(egui::pos2(1100., 800.))], None);
+    for _ in 0..8 {
+        r.frame(vec![], None);
+    }
+    assert_eq!(r.delay, std::time::Duration::MAX);
+    assert_eq!(r.ed.rev, 0);
+}
+
+#[test]
+fn mini_deleted_page_closes_without_retargeting_or_undo() {
+    let mut r = Rig::new(selected(false));
+    r.ed.doc.artboards.push(varos_core::model::Artboard { id: 40, ..Default::default() });
+    open_mini(&mut r, 40);
+    let rev = r.ed.rev;
+    r.ed.doc.artboards.clear();
+    r.frame(vec![], None);
+    assert!(r.panel.is_none());
+    assert_eq!(r.ed.rev, rev);
+    assert!(!r.ed.transaction_open());
 }

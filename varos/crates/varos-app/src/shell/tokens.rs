@@ -622,6 +622,17 @@ pub const PICKER_SLIDER_ROW_H: f32 = 24.0;
 pub const PICKER_SLIDER_LABEL_W: f32 = 18.0;
 pub const PICKER_SLIDER_W: f32 = 140.0;
 
+// Picker slice 4: compact popover and harmony strip, in points.
+pub const PICKER_MINI_W: f32 = 192.0;
+pub const PICKER_MINI_BODY_H: f32 = 184.0;
+pub const PICKER_MINI_RING_R: f32 = 80.0;
+pub const PICKER_MINI_TRIANGLE_R: f32 = 66.0;
+pub const PICKER_MINI_CENTER: [f32; 2] = [96.0, 92.0];
+pub const PICKER_MINI_ALPHA_W: f32 = 60.0;
+pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
+pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
+pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

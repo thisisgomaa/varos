@@ -23,6 +23,7 @@ pub(crate) struct Snap {
     pub(crate) any_clip: bool,    // any board clips → the "Clip to artboard" toggle is relevant to show
     pub(crate) paint: PaintTarget, // which target has focus (the rail control + X)
     pub(crate) recent: Vec<Rgba>,
+    pub(crate) board_colors: Vec<Rgba>,
     pub(crate) doc_colors: Vec<Rgba>, // the picker's swatch strips (MRU + derived document scan)
     pub(crate) has_paint: bool, // a representative path exists (object OR Direct/anchor selection) → show paint, not Document
     // ── the Board section (Start v2 L5) ──
@@ -120,6 +121,7 @@ impl Snap {
             any_clip: ed.doc.artboards.iter().any(|a| a.clip),
             paint: ed.paint,
             recent: ed.recent_colors.clone(),
+            board_colors: ed.board_colors(),
             doc_colors: ed.document_colors(),
             has_paint: repr.is_some(),
             board_name: ed.doc.name.clone(),

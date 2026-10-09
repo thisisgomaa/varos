@@ -74,3 +74,36 @@ fn document_colors_scan_dedupes_in_first_appearance_order() {
     let dc = ed.document_colors();
     assert_eq!(dc, vec![RED, BLUE, GREEN], "unique colours in first-appearance order, got {:?}", dc);
 }
+
+#[test]
+fn board_document_and_recent_sources_are_distinct_first_use_and_capped_36() {
+    use varos_core::model::Artboard;
+    let mut ed = Editor::new();
+    ed.doc.artboards = vec![
+        Artboard { id: 100, x: -5., y: -5., w: 30., h: 30., ..Default::default() },
+        Artboard { id: 101, x: 95., y: -5., w: 30., h: 30., ..Default::default() },
+    ];
+    ed.doc.paths.push(tri(1, 1, Some(RED), Some(BLUE)));
+    let mut off = tri(2, 10, Some(GREEN), Some(BLUE));
+    for a in &mut off.anchors {
+        a.p[0] += 100.;
+    }
+    ed.doc.paths.push(off);
+    ed.doc.paths.push(tri(3, 20, Some(RED), None));
+    ed.push_recent([0.5, 0.5, 0.5, 1.]);
+    assert_eq!(ed.board_colors(), vec![RED, BLUE]);
+    ed.doc.active = 1;
+    assert_eq!(ed.board_colors(), vec![GREEN, BLUE]);
+    assert_eq!(ed.document_colors(), vec![RED, BLUE, GREEN]);
+    assert_eq!(ed.recent_colors, vec![[0.5, 0.5, 0.5, 1.]]);
+    ed.doc.active = 0;
+    for i in 0..40 {
+        ed.doc.paths.push(tri(10 + i, 100 + i * 3, Some([i as f32 / 40., 0.5, 0.5, 1.]), None));
+    }
+    assert_eq!(ed.board_colors().len(), 36);
+    assert_eq!(ed.document_colors().len(), 36);
+    assert_eq!(&ed.document_colors()[..3], &[RED, BLUE, GREEN]);
+    ed.doc.artboards.clear();
+    assert!(ed.board_colors().is_empty());
+    assert_eq!(ed.document_colors().len(), 36);
+}

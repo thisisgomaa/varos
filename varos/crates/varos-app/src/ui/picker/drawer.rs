@@ -1,8 +1,8 @@
 use super::*;
 pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut PickerLayout, ops: &mut Vec<Op>) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(t::PICKER_W, t::PICKER_SWATCH_ROW_H), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(m.width(), t::PICKER_SWATCH_ROW_H), egui::Sense::hover());
     ui.painter().hline(rect.x_range(), rect.top(), t::hairline());
-    for i in 0..9 {
+    for i in 0..if m.mini() { 7 } else { 9 } {
         let r = egui::Rect::from_min_size(
             rect.min
                 + egui::vec2(
@@ -24,9 +24,12 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
             t::hairline(),
             StrokeKind::Inside,
         );
+        if color.is_none() {
+            mixed_swatch(ui.painter(), r);
+        }
         let response = ui.interact(r, ui.id().with(("recent", i)), egui::Sense::click());
         if let Some(c) = color {
-            if response.clicked() {
+            if response.clicked() && !kit::field::blocked(ui.ctx()) {
                 ops.push(Op::PickerSet(m.target, c));
             }
             response.on_hover_text(hex_of(c));
@@ -48,23 +51,21 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
         layout.drawer_open = !layout.drawer_open;
     }
     if layout.drawer_open {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(t::PICKER_W, t::PICKER_DRAWER_H), egui::Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(m.width(), t::PICKER_DRAWER_H), egui::Sense::hover());
         let mut drawer_ui = ui.new_child(egui::UiBuilder::new().id_salt("picker-drawer").max_rect(rect));
         drawer_ui.set_clip_rect(rect);
         egui::ScrollArea::vertical().max_height(t::PICKER_DRAWER_H).show(&mut drawer_ui, |ui| {
             if let Some(tab) = segmented_text(
                 ui,
                 ui.id().with("drawer-tabs"),
-                t::PICKER_W / 3.0,
+                m.width() / 3.0,
                 &["Recent", "Board", "Document"],
                 None,
                 layout.drawer_tab as usize,
             ) {
                 layout.drawer_tab = tab as u8;
             }
-            // Board and Document are both derived from the current Board's artwork; there is no
-            // separate saved colour-library model yet. Never invent stored colours.
-            let colors = if layout.drawer_tab == 0 { &s.recent } else { &s.doc_colors };
+            let colors = source(s, layout.drawer_tab);
             ui.horizontal_wrapped(|ui| {
                 for c in colors {
                     let (r, response) =
@@ -73,7 +74,7 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
                         checker(&ui.painter_at(r), r, t::PICKER_CHECKER);
                     }
                     ui.painter().rect_filled(r, t::r_ctrl(), rgba_c32a(*c));
-                    if response.on_hover_text(hex_of(*c)).clicked() {
+                    if response.on_hover_text(hex_of(*c)).clicked() && !kit::field::blocked(ui.ctx()) {
                         ops.push(Op::PickerSet(m.target, *c));
                     }
                 }
@@ -82,5 +83,13 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
                 kit::text(ui, "No colours yet", t::mono(), t::MUTED);
             }
         });
+    }
+}
+
+pub(super) fn source(s: &Snap, tab: u8) -> &[Rgba] {
+    match tab {
+        0 => &s.recent,
+        1 => &s.board_colors,
+        _ => &s.doc_colors,
     }
 }

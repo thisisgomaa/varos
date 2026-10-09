@@ -161,6 +161,12 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, origin: egui::Pos2, m: &ColorPanel, s: &Snap, ops: &mut Vec<Op>) {
+    #[cfg(test)]
+    super::super::fields::tests::probe(
+        "picker cluster",
+        egui::Rect::from_min_size(origin, egui::Vec2::splat(t::PICKER_FILL_R)),
+    );
+
     for (target, point, radius) in [
         (PaintTarget::Stroke, t::PICKER_STROKE_CENTER, t::PICKER_STROKE_R),
         (PaintTarget::Fill, t::PICKER_FILL_CENTER, t::PICKER_FILL_R),
