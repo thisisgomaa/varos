@@ -1,0 +1,15 @@
+test text_layout_and_editing_spike ... ignored, manual U0-A shaping/bidi/caret/grapheme diagnostic; inspect output and the native window
+test ipc::tests::blocking_accept_thread_stops_promptly_on_drop ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test ipc::tests::both_blocking_accept_threads_stop_promptly_on_drop ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test local_host_key_change_resets_session_without_pairing ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test local_socket_authentication_permissions_and_revocation ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test real_binary_mcp_initialization_call_cancel_and_shared_cli ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test same_uid_socket_all_scopes_no_pairing_audit_and_registry_lifecycle ... ignored, requires native Unix socket bind; sandbox denies bind with EPERM
+test decode_timing_at_caps ... ignored
+test validate_is_linear ... ignored, manual release timing, no flaky wall-clock assertion
+test lopdf_peak_memory_on_large_array ... ignored, manual release /usr/bin/time -l measurement; rejects before lopdf allocation
+test corpus_check ... ignored, requires VAROS_CORPUS_DIR pointing at personal Varos documents; not fixture/CI acceptance
+test the_largest_allowed_knockout_document_saves_and_reopens ... ignored, slow: maximum-size document; run with -- --ignored (release recommended)
+test tests::rasterizes_two_thousand_paths_under_release_budget ... ignored, performance probe; run with --release --ignored --nocapture
+test tests::render_three_frozen_fixture_samples ... ignored, writes moderator review artifacts to the requested scratchpad
+test tests::snapshot_five_thousand_paths_timings ... ignored, headless 5k-path clone/raster/encode timing probe; run --release --ignored --nocapture

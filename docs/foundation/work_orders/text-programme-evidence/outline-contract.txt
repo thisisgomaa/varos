@@ -1,0 +1,9 @@
+
+running 4 tests
+test malformed_outline_refuses_instead_of_losing_segments ... ok
+test cubic_close_keeps_incoming_handle_and_winding ... ok
+test rtl_brackets_use_mirrored_glyphs ... ok
+test arabic_ligatures_marks_anchor_conversion_has_pixel_parity ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+

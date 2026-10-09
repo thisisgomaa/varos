@@ -1,0 +1,17 @@
+
+running 11 tests
+test source_working_mapping_and_frame_constraints ... ok
+test impossible_single_word_and_invalid_policy_are_explicit ... ok
+test split_carets_preserve_logical_visual_identity ... ok
+test alignment_modes_and_last_line_contract ... ok
+test mixed_size_style_shift_and_empty_caret_follow_composed_metrics ... ok
+test mark_ink_fits_line_boxes_across_metrics_modes ... ok
+test every_line_is_measured_and_distinct_from_greedy ... ok
+test every_grapheme_has_a_caret_after_wrapping_and_justification ... ok
+test composer_breaks_are_legal_cover_source_and_keep_nbsp ... ok
+test lam_alef_marks_digits_and_latin_unchanged_by_elongation ... ok
+Arabic justification: 576 configurations, 1671 virtual insertions
+test justification_matrix_two_bundled_arabic_fonts ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+

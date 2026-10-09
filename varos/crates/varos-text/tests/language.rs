@@ -33,6 +33,7 @@ fn compare(
     let data = hb::ShaperData::new(&font);
     let shaper = data.shaper(&font).build();
     let mut buffer = hb::UnicodeBuffer::new();
+    buffer.set_flags(hb::BufferFlags::PRODUCE_SAFE_TO_INSERT_TATWEEL);
     buffer.push_str(&text[range.clone()]);
     buffer.set_pre_context(&text[..range.start]);
     buffer.set_post_context(&text[range.end..]);
@@ -49,6 +50,11 @@ fn compare(
     for ((a, b), p) in word.glyphs.iter().zip(shaped.glyph_infos()).zip(shaped.glyph_positions()) {
         assert_eq!(u32::from(a.glyph_id), b.glyph_id, "{text:?}/{lang:?}/{script:?}");
         assert_eq!(a.start, range.start + b.cluster as usize);
+        assert_eq!(
+            a.safe_to_insert_tatweel,
+            b.safe_to_insert_tatweel(),
+            "safe flag must survive shaping and cache hits"
+        );
         let em = shaper.units_per_em() as f32;
         assert!((a.x_advance - p.x_advance as f32 / em).abs() < 0.00001);
         assert!((a.x_offset - p.x_offset as f32 / em).abs() < 0.00001);
@@ -141,7 +147,7 @@ fn engine_mixed_language_runs_and_rejection() {
 
 #[test]
 fn real_arabic_font_boundary_matches_context_oracles() {
-    let noto = include_bytes!("../../../vendor/cosmic-text/fonts/NotoSansArabic.ttf");
+    let noto = include_bytes!("../assets/fonts/NotoSansArabic.ttf");
     let mut db = fontdb::Database::new();
     db.load_font_data(PLEX.to_vec());
     db.load_font_data(noto.to_vec());

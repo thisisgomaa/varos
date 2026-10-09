@@ -5,16 +5,11 @@ fn main() {
     let init = Instant::now();
     let fonts = FontSet::new(
         vec![
-            FontFace::new(
-                "Inter",
-                400,
-                include_bytes!("../../varos-app/assets/fonts/Inter-Regular.ttf").as_slice().into(),
-            )
-            .unwrap(),
+            FontFace::new("Inter", 400, include_bytes!("../assets/fonts/Inter-Regular.ttf").as_slice().into()).unwrap(),
             FontFace::new(
                 "IBM Plex Sans Arabic",
                 400,
-                include_bytes!("../../varos-app/assets/fonts/IBMPlexSansArabic-Regular.ttf").as_slice().into(),
+                include_bytes!("../assets/fonts/IBMPlexSansArabic-Regular.ttf").as_slice().into(),
             )
             .unwrap(),
         ],

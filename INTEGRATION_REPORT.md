@@ -72,3 +72,14 @@
 - Unifications: one CLI verb table, MCP projection and capability response; no duplicate shortcut/command/setting/store/adapter or Bridge verb. Canonical painted_extent, geom/kurbo.rs, NOTICE and GATE_LOG byte-identical to HEAD; all nine conflict files marker-free.
 - Validation: cargo fmt --all and cargo build --offline -j 3 --workspace --all-targets PASS; git diff --check PASS. Thirteen cargo test --offline -j 3 -p <crate> <filter> invocations cover import/placement/app menus, trace core/Bridge/CLI, full CLI commands/Bridge contracts/artboards, geometry/stroke/construction/select_transform: 248 passed, 0 failed, 4 existing ignored.
 - Evidence: /tmp/g2-svg-build.log, /tmp/g2-svg-test-results.json, /tmp/g2-svg-*.log and /tmp/g2-svg-schema.json. Deferred merge work: none. No Git write command used; moderator owns staging/commit.
+
+
+## feat/text-programme
+- `REPORT.md`: retained both complete reports, every prior lane entry and all Text programme findings, tests, gates and historical limitations; removed only conflict markers and added a separating blank line.
+- `varos/NOTICE`: retained all existing geometry/kurbo/construction/transform/trace attribution and added composer, BStudio kashida/caret and bundled-font attribution with every copyright/license row preserved.
+- Unifications: additive document union; no duplicate implementation, shortcut, command, setting, store, adapter or Bridge verb introduced. No source repair required; canonical painted_extent and geom/kurbo.rs, PLAN and GATE_LOG byte-identical to integration HEAD.
+- Validation: `cd varos && cargo fmt --all && cargo build --offline -j 3 --workspace --all-targets` PASS; both-side lines checked verbatim, both conflict files marker-free; `git diff --check` PASS.
+- Lane tests: `cargo test --offline -j 3 -p <crate> <filter>` PASS: varos-text empty filter 62; varos-import empty filter 14; varos-bridge `--test import_svg` empty filter 3; varos-cli import_svg 1; varos-core placement 1; varos-app svg 4 — 85 passed, zero failed/ignored.
+- Vendor reconstruction: COSMIC PASS including both patches and ledger hashes; egui_tiles verification SKIP because pristine archive is uncached (existing lane limitation; no egui_tiles changes in this merge).
+- Evidence: `/tmp/g2-text-build.log`, `/tmp/g2-text-test-results.json`, `/tmp/g2-text-{text,svg,bridge-svg-full,cli-import,core-placement,app-svg,vendor}.log`.
+- Deferred merge work: none. No Git write command used; moderator owns staging and commit.
