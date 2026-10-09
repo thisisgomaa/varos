@@ -412,3 +412,132 @@ fn pencil_continuation_stays_inside_isolation_and_offsets_join_handle() {
     assert_eq!(p.anchors[1].p, [100., 0.]);
     assert!((p.anchors[1].hout.unwrap()[0] - 116.).abs() < 0.001);
 }
+
+#[test]
+fn join_brushed_right_endpoints_even_when_left_endpoints_are_nearer() {
+    for right in [false, true] {
+        let mut e = Editor::new();
+        let a = line(&mut e, [0., 0.], [100., 0.]);
+        let b = line(&mut e, [2., 0.], [101., 0.]);
+        e.try_execute(EditCommand::SelectPaths(vec![a, b])).unwrap();
+        let before = e.doc.clone();
+        let points = if right { vec![[99., -1.], [104., 1.]] } else { vec![[-1., -1.], [3., 1.]] };
+        draw(&mut e, Action::Join { points, options: Options::default() });
+        assert_eq!(e.doc.paths.len(), 1);
+        let p = &e.doc.paths[0];
+        let endpoints = [p.anchors[0].p, p.anchors.last().unwrap().p];
+        assert_eq!(endpoints, if right { [[0., 0.], [2., 0.]] } else { [[100., 0.], [103., 0.]] });
+        assert_eq!(e.rev, 3);
+        e.undo();
+        assert_eq!(e.doc, before);
+    }
+}
+
+#[test]
+fn join_consumed_endpoint_does_not_expose_an_untouched_endpoint() {
+    let mut e = Editor::new();
+    let a = line(&mut e, [0., 0.], [100., 0.]);
+    let b = line(&mut e, [2., 0.], [101., 0.]);
+    let c = line(&mut e, [4., 0.], [102., 0.]);
+    e.try_execute(EditCommand::SelectPaths(vec![a, b, c])).unwrap();
+    draw(&mut e, Action::Join { points: vec![[99., -1.], [107., 1.]], options: Options::default() });
+    // Each path had only one touched endpoint: one pair can join, the third stays open.
+    assert_eq!(e.doc.paths.len(), 2);
+    assert!(e.doc.paths.iter().all(|p| !p.closed));
+    assert_eq!(e.doc.paths.iter().map(|p| p.anchors.len()).sum::<usize>(), 5);
+}
+
+#[test]
+fn numeric_sheet_rolls_back_rectangle_and_ellipse_at_every_zoom() {
+    for tool in [ToolKind::Rect, ToolKind::Ellipse] {
+        for zoom in [0.1, 1., 10.] {
+            let mut e = Editor::new();
+            e.ppu = zoom;
+            e.set_tool(tool);
+            let before = e.doc.clone();
+            e.pointer_down([200., 200.]);
+            e.pointer_move([200. + 1.5 / zoom, 200. + 1.5 / zoom]);
+            assert!(!e.doc.paths.is_empty());
+            e.pointer_up();
+            let spec = e.drawing.dialog.unwrap();
+            assert_eq!(e.doc, before);
+            assert!(!e.transaction_open());
+            assert!(!e.history_available(false));
+            drawing::finish(&mut e, true);
+            assert_eq!(e.doc, before);
+            draw(&mut e, Action::Shape { spec });
+            assert_eq!(e.doc.paths.len(), 1);
+            assert_eq!(e.rev, 1);
+            e.undo();
+            assert_eq!(e.doc, before);
+        }
+    }
+}
+
+#[test]
+fn undo_and_redo_cancel_freehand_and_curvature_but_keep_preferences() {
+    for tool in [ToolKind::Pencil, ToolKind::Curvature] {
+        for redo in [false, true] {
+            let mut e = Editor::new();
+            line(&mut e, [0., 0.], [100., 0.]);
+            if redo {
+                e.undo();
+            }
+            let prefs = Options { fidelity: 3., smoothness: 0.7, ..Default::default() };
+            e.drawing.options = prefs;
+            e.drawing.shape.sides = 7;
+            e.set_tool(tool);
+            e.pointer_down([200., 200.]);
+            e.pointer_move([220., 230.]);
+            if tool == ToolKind::Curvature {
+                e.pointer_down([240., 200.]);
+            }
+            if redo {
+                e.redo();
+            } else {
+                e.undo();
+            }
+            let restored = e.doc.clone();
+            let rev = e.rev;
+            assert!(e.drawing.start.is_none());
+            assert!(e.drawing.samples.is_empty());
+            assert!(e.drawing.curvature.is_empty());
+            assert!(e.drawing.preview.is_empty());
+            assert_eq!(e.drawing.options, prefs);
+            assert_eq!(e.drawing.shape.sides, 7);
+            assert!(!e.transaction_open());
+            e.pointer_move([260., 260.]);
+            e.pointer_up();
+            drawing::finish(&mut e, false);
+            assert_eq!(e.doc, restored);
+            assert_eq!(e.rev, rev);
+        }
+    }
+}
+
+#[test]
+fn eraser_refuses_default_path_cap_without_document_or_history_changes() {
+    let mut e = Editor::new();
+    let id = line(&mut e, [0., 0.], [100., 0.]);
+    e.try_execute(EditCommand::SelectPaths(vec![id])).unwrap();
+    let source = e.doc.paths[0].clone();
+    // Check runs before tree adoption/history; cap padding need not be adopted to reproduce the count.
+    for _ in 1..varos_core::format::Limits::DEFAULT.max_paths {
+        let mut p = source.clone();
+        p.id = e.doc.nid();
+        for a in &mut p.anchors {
+            a.id = e.doc.nid();
+        }
+        e.doc.paths.push(p);
+    }
+    let before = e.doc.clone();
+    let rev = e.rev;
+    let result = e.try_execute(EditCommand::Drawing(Action::PathErase {
+        points: vec![[50., -10.], [50., 10.]],
+        options: Options { brush_radius: 5., ..Default::default() },
+    }));
+    assert!(result.unwrap_err().contains("limit"));
+    assert_eq!(e.doc, before);
+    assert_eq!(e.rev, rev);
+    assert!(!e.transaction_open());
+}
