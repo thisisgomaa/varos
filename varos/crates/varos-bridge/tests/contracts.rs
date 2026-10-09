@@ -3089,17 +3089,24 @@ fn collect_creation_names(ops: &Value, out: &mut Vec<Option<String>>) {
 
 #[test]
 fn economy_schema_size_and_flat_roots() {
-    let list = varos_bridge::mcp::tools();
-    let bytes = serde_json::to_vec(&list).unwrap().len();
-    println!("compact tools/list bytes: {bytes}");
-    assert!(bytes <= 24_000, "tools/list grew to {bytes} bytes");
-    for tool in list["tools"].as_array().unwrap() {
-        let root = &tool["inputSchema"];
-        assert_eq!(root["type"], "object");
-        for key in ["oneOf", "anyOf", "allOf"] {
-            assert!(root.get(key).is_none(), "{} root {key}", tool["name"]);
+    for api in ["1.0", "1.1", "1.2"] {
+        let list = varos_bridge::mcp::tools_for_api(api);
+        let wire = serde_json::to_vec(&list).unwrap();
+        if api != "1.2" {
+            assert_eq!(wire, serde_json::to_vec(&varos_bridge::mcp::tools()).unwrap());
+        }
+        let bytes = wire.len();
+        println!("API {api} tools/list bytes: {bytes}");
+        assert!(bytes <= 24_000, "API {api} tools/list grew to {bytes} bytes");
+        for tool in list["tools"].as_array().unwrap() {
+            let root = &tool["inputSchema"];
+            assert_eq!(root["type"], "object");
+            for key in ["oneOf", "anyOf", "allOf"] {
+                assert!(root.get(key).is_none(), "{} root {key}", tool["name"]);
+            }
         }
     }
+    let list = varos_bridge::mcp::tools();
     let edit = list["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
     for kind in ["rect", "ellipse", "path"] {
         let tuple = &edit["inputSchema"]["$defs"][format!("{kind}_tuple")];

@@ -349,7 +349,95 @@ pub fn tools_for_api(api: &str) -> Value {
             list.push(json!({"name":name,"description":"API 1.2 desktop host effect. Print opens a prepared PDF in Preview; Copy/Cut publish the current selection to the OS clipboard.","inputSchema": {"type":"object","additionalProperties":false,"properties":{"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"scope":{"enum":["active_artboard","all_visible_artboards","artwork_bounds"]},"options":{"type":"object"}},"required":["api","board","request_id","expected_rev"]}}));
         }
     }
+    if let Some(rows) = table["tools"].as_array_mut() {
+        for row in rows {
+            compact_api_12_schema(&mut row["inputSchema"]);
+            row["description"] = json!(match row["name"].as_str().unwrap_or("") {
+                "capabilities" => "Negotiate API, scopes, limits and file guards.",
+                "describe" => "Summary/detail by fields and ids; cursor pages; since returns changes or resync_required.",
+                "edit" => "Atomic batch; one undo step; retains selection. Tuples or object operations; artboard:N page ids.",
+                "snapshot" => "Revision-pinned CPU PNG; board or artboard:N; max 1024px per dimension.",
+                "save" | "save_as" | "export_pdf" | "export_svg" | "export_raster" => "Queue revision-pinned output; poll request_status. Fresh names only; capabilities lists file guards.",
+                "save_template" => "Save NAME.vrs template; poll request_status.",
+                "new_from_template" => "Open NAME.vrs template as dirty Untitled; poll request_status.",
+                "print" => "Open prepared PDF in Preview.",
+                "copy" => "Publish selection to OS clipboard.",
+                "cut" => "Publish selection to OS clipboard, then delete in one undo step.",
+                _ => row["description"].as_str().unwrap_or(""),
+            });
+        }
+    }
     table
+}
+// Each inputSchema is an independent JSON Schema resource: keep its references local.
+// Only annotations and definition names change; validation constraints are retained.
+fn compact_api_12_schema(schema: &mut Value) {
+    fn visit(value: &mut Value, action: &mut impl FnMut(&mut Value)) {
+        action(value);
+        match value {
+            Value::Object(map) => {
+                for child in map.values_mut() {
+                    visit(child, action);
+                }
+            }
+            Value::Array(array) => {
+                for child in array {
+                    visit(child, action);
+                }
+            }
+            _ => {}
+        }
+    }
+    visit(schema, &mut |value| {
+        if let Some(map) = value.as_object_mut() {
+            map.remove("description");
+        }
+    });
+    let Some(defs) = schema["$defs"].as_object() else { return };
+    let names: std::collections::BTreeMap<_, _> = defs
+        .keys()
+        .filter(|name| !matches!(name.as_str(), "operation" | "document_setup"))
+        .enumerate()
+        .map(|(index, name)| (name.clone(), index.to_string()))
+        .collect();
+    visit(schema, &mut |value| {
+        if let Some(reference) = value.get_mut("$ref") {
+            if let Some(name) = reference.as_str().and_then(|s| s.strip_prefix("#/$defs/")) {
+                if let Some(short) = names.get(name) {
+                    *reference = json!(format!("#/$defs/{short}"));
+                }
+            }
+        }
+    });
+    let Some(old_defs) = schema["$defs"].as_object_mut() else { return };
+    let defs = std::mem::take(old_defs);
+    for (name, value) in defs {
+        old_defs.insert(names.get(&name).cloned().unwrap_or(name), value);
+    }
+    // Repeated numeric/parent constraints are cheaper as shared definitions.
+    for (index, pattern) in [
+        json!({"type":"number","minimum":0,"maximum":1}),
+        json!({"type":"string","pattern":"^node:[1-9][0-9]*$"}),
+        json!({"type":"number","minimum":0}),
+        json!({"type":"integer","minimum":1,"maximum":100}),
+        json!({"type":"integer","minimum":1}),
+        json!({"type":"integer","minimum":0}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("c{index}");
+        let mut count = 0;
+        visit(schema, &mut |value| {
+            if *value == pattern {
+                *value = json!({"$ref":format!("#/$defs/{name}")});
+                count += 1;
+            }
+        });
+        if count > 0 {
+            schema["$defs"][name] = pattern;
+        }
+    }
 }
 fn rpc_result(id: Value, result: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"result":result})
@@ -598,6 +686,37 @@ pub fn tools_12() -> Value {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+
+    #[test]
+    fn api_12_schema_compaction_preserves_validation_constraints() {
+        fn expand(value: &Value, root: &Value, depth: usize) -> Value {
+            assert!(depth < 64, "cyclic schema reference");
+            if let Some(reference) = value.get("$ref").and_then(Value::as_str) {
+                let pointer = reference.strip_prefix('#').expect("local schema reference");
+                return expand(root.pointer(pointer).expect("resolved schema reference"), root, depth + 1);
+            }
+            match value {
+                Value::Object(map) => Value::Object(
+                    map.iter()
+                        .filter(|(key, _)| !matches!(key.as_str(), "$defs" | "description"))
+                        .map(|(key, value)| (key.clone(), expand(value, root, depth + 1)))
+                        .collect(),
+                ),
+                Value::Array(array) => Value::Array(array.iter().map(|v| expand(v, root, depth + 1)).collect()),
+                _ => value.clone(),
+            }
+        }
+        let mut table = tools();
+        append_export_tools(&mut table);
+        append_document_tools(&mut table);
+        // Includes nested repeat/tuple references and all additive document schemas.
+        for row in table["tools"].as_array().unwrap() {
+            let original = &row["inputSchema"];
+            let mut compact = original.clone();
+            compact_api_12_schema(&mut compact);
+            assert_eq!(expand(original, original, 0), expand(&compact, &compact, 0), "{}", row["name"]);
+        }
+    }
 
     #[test]
     fn api_12_discovery_unifies_export_and_command_lanes() {

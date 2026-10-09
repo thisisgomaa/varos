@@ -449,3 +449,12 @@ fn select_menu_is_between_edit_and_object_and_has_six_same_modes() {
     assert_eq!(same.len(), 6);
     assert!(same.iter().all(|e| matches!(e, Entry::Item { cmd: MenuCmd::Selection(_), accel: None, .. })));
 }
+
+#[test]
+fn redo_uses_only_shift_command_z_across_menu_mirrors() {
+    let rows = flat_items(&menus());
+    let redo = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "edit.redo")).unwrap();
+    let chord = cmd_shift(KeyCode::KeyZ).unwrap();
+    assert!(matches!(redo, Entry::Item { accel: Some(a), cmd: MenuCmd::Key(k), .. } if *a == chord && *k == chord));
+    assert!(!rows.iter().any(|row| matches!(row, Entry::Item { accel: Some(a), .. } if a.code == KeyCode::KeyY && a.cmd && !a.shift && !a.alt)));
+}
