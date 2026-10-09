@@ -26,6 +26,7 @@ use varos_core::model::Document;
 // this file keeps the compatible public entry points.
 mod clipboard;
 mod export;
+mod image_write;
 pub mod images;
 pub use clipboard::{clipboard_vectors, ClipboardVectors};
 mod options;

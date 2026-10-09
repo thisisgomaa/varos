@@ -41,3 +41,22 @@ fn proxy_fitted_snapshot_and_crop_alpha() {
     assert_eq!(&raster.pixels[(36 * 72 + 36) * 4..][..4], &[128, 0, 0, 128]);
     assert_eq!(&raster.pixels[(36 * 72 + 4) * 4..][..4], &[0; 4]);
 }
+#[test]
+fn board_clip_and_crop_mask_both_cut_image_pixels() {
+    let mut ed = Editor::new();
+    let id = place(&mut ed, [255, 0, 0, 255], [0.; 2]);
+    ed.doc.artboards.push(varos_core::model::Artboard {
+        w: 24.,
+        h: 24.,
+        clip: true,
+        page_color: None,
+        ..Default::default()
+    });
+    ed.doc.assign_artboard_ids();
+    ed.try_execute(EditCommand::Image(ImageEdit::Crop { id, bounds: [0., 0., 48., 16.] })).unwrap();
+    let raster = varos_raster::images::rasterize_with_images(&ed.doc, &ed.blobs, [72, 72], [0.; 2], 1., None).unwrap();
+    let pixel = |x: usize, y: usize| &raster.pixels[(y * 72 + x) * 4..][..4];
+    assert_eq!(pixel(8, 8), &[255, 0, 0, 255]);
+    assert_eq!(pixel(32, 8), &[0; 4]);
+    assert_eq!(pixel(8, 20), &[0; 4]);
+}

@@ -37,7 +37,10 @@ fn native_binary_streams_roundtrip_and_missing_original_refuses() {
     assets.get_mut(ed.doc.assets[0].key.0.as_bytes()).unwrap().as_dict_mut().unwrap().remove(b"Original");
     let mut corrupt = vec![];
     pdf.save_to(&mut corrupt).unwrap();
-    assert!(varos_pdf::load_vrs_bytes(&corrupt, &Limits::DEFAULT).is_err());
+    assert_eq!(
+        varos_pdf::load_vrs_bytes(&corrupt, &Limits::DEFAULT).unwrap_err(),
+        varos_core::format::LoadError::MalformedPdf("Embedded image original stream missing".into())
+    );
     assert!(varos_pdf::write_pdf_checked(&ed.doc, &Limits::DEFAULT).is_err());
 }
 #[test]
@@ -86,7 +89,10 @@ fn svg_portable_upright_image_and_clip_validate() {
 fn frozen_image_container_and_svg_are_stable() {
     let data = include_bytes!("../../varos-core/tests/fixtures/v6-images/embedded-crop.vrs");
     let loaded = varos_pdf::load_vrs_bytes(data, &Limits::DEFAULT).unwrap();
-    assert_eq!(varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap(), data);
+    assert_eq!(
+        varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap(),
+        include_bytes!("fixtures/image-fixed-writer.vrs")
+    );
     let plan = varos_core::svg::plan_svg_export(&loaded.doc, varos_core::svg::ExportScope::WholeBoard).unwrap();
     assert_eq!(
         images::svg::export(&loaded.doc, &loaded.blobs, &plan, false, &AtomicBool::new(false)).unwrap().0[0].bytes,

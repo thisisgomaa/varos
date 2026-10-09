@@ -253,3 +253,31 @@ fn v4_reader_refuses_v5_before_decode() {
         varos_core::format::LoadError::NewerVersion { found: 5, supported: 4 }.to_string()
     );
 }
+
+/// Frozen v5 gate (header peek before typed decode), including the binary asset catalog.
+#[test]
+fn v5_gate_refuses_v6_image_json_and_pdf_before_decode() {
+    fn v5_gate(body: &str) -> Result<u32, varos_core::format::LoadError> {
+        #[derive(serde::Deserialize)]
+        struct Header {
+            varos: u32,
+        }
+        let head: Header = serde_json::from_str(body).unwrap();
+        if head.varos > 5 {
+            return Err(varos_core::format::LoadError::NewerVersion { found: head.varos, supported: 5 });
+        }
+        Ok(head.varos)
+    }
+    let expected = varos_core::format::LoadError::NewerVersion { found: 6, supported: 5 };
+    assert_eq!(
+        v5_gate(include_str!("../../varos-core/tests/fixtures/v6-images/embedded-crop.json")),
+        Err(expected.clone())
+    );
+    for bytes in [
+        include_bytes!("../../varos-core/tests/fixtures/v6-images/embedded-crop.vrs").as_slice(),
+        include_bytes!("fixtures/image-fixed-writer.vrs"),
+    ] {
+        assert!(lopdf::Document::load_mem(bytes).unwrap().catalog().unwrap().has(b"VAROS_Assets"));
+        assert_eq!(v5_gate(&embedded_model_json(bytes)), Err(expected.clone()));
+    }
+}

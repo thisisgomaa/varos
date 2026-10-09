@@ -2,12 +2,19 @@
 use std::sync::Arc;
 use tiny_skia::{FilterQuality, Pixmap, PixmapPaint, Transform};
 use varos_core::{
-    build_scene,
     images::{BlobStore, Pixels},
     model::Document,
+    scene::build_artwork_scene,
     Editor,
 };
-pub(crate) fn draw(p: &Pixels, c: [[f32; 2]; 4], opacity: f32, dst: &mut Pixmap, view: Transform) {
+pub(crate) fn draw(
+    p: &Pixels,
+    c: [[f32; 2]; 4],
+    opacity: f32,
+    clip: Option<[f32; 4]>,
+    dst: &mut Pixmap,
+    view: Transform,
+) {
     let mut rgba = p.rgba.to_vec();
     for px in rgba.as_chunks_mut::<4>().0 {
         let a = u16::from(px[3]);
@@ -27,13 +34,23 @@ pub(crate) fn draw(p: &Pixels, c: [[f32; 2]; 4], opacity: f32, dst: &mut Pixmap,
         c[0][0],
         c[0][1],
     );
+    let mask = clip.and_then(|r| {
+        let rect = tiny_skia::Rect::from_ltrb(r[0], r[1], r[2], r[3])?;
+        let path = tiny_skia::PathBuilder::from_rect(rect);
+        let mut mask = tiny_skia::Mask::new(dst.width(), dst.height())?;
+        mask.fill_path(&path, tiny_skia::FillRule::Winding, true, view);
+        Some(mask)
+    });
+    if clip.is_some() && mask.is_none() {
+        return;
+    }
     dst.draw_pixmap(
         0,
         0,
         src.as_ref(),
         &PixmapPaint { opacity, quality: FilterQuality::Bilinear, ..Default::default() },
         view.pre_concat(image),
-        None,
+        mask.as_ref(),
     );
 }
 pub fn rasterize_with_images(
@@ -55,7 +72,7 @@ pub fn rasterize_with_images(
     let mut ed = Editor::new();
     ed.replace_doc(doc.clone());
     ed.blobs = blobs.clone();
-    let scene = build_scene(&ed, ppu);
+    let scene = build_artwork_scene(&ed, ppu);
     if !scene.errors.is_empty() {
         return Err(scene.errors.join("; "));
     }
@@ -108,7 +125,7 @@ pub fn rasterize_object(ed: &mut Editor, id: u32, ppi: f32, background: Option<[
     let mut view = Editor::new();
     view.replace_doc(source.clone());
     view.blobs = ed.blobs.clone();
-    let scene = build_scene(&view, ppi / 72.);
+    let scene = build_artwork_scene(&view, ppi / 72.);
     if !scene.errors.is_empty() {
         return Err(scene.errors.join("; "));
     }
@@ -174,7 +191,7 @@ pub fn fitted(
         let mut ed = Editor::new();
         ed.replace_doc(doc.clone());
         ed.blobs = blobs.clone();
-        let scene = build_scene(&ed, 1.);
+        let scene = build_artwork_scene(&ed, 1.);
         if !scene.errors.is_empty() {
             return Err(scene.errors.join("; "));
         }

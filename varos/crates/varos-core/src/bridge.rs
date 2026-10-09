@@ -68,7 +68,12 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
 pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
     // ---- w2-images: mixed leaf selection for clipboard/delete ----
-    if matches!(command, Copy | Cut | DeleteSelected) && ed.doc.images.iter().any(|i| ed.objsel.contains(&i.id)) {
+    if matches!(command, Copy | Cut | DeleteSelected | Transform(_) | TransformBegin | TransformLive(_))
+        && ed.doc.images.iter().any(|i| ed.objsel.contains(&i.id))
+    {
+        if let Transform(spec) | TransformLive(spec) = command {
+            spec.check()?;
+        }
         for id in &ed.objsel {
             if ed.doc.pidx(*id).is_none() && !ed.doc.images.iter().any(|i| i.id == *id) {
                 return Err("Unknown object".into());

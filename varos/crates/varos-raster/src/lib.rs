@@ -308,7 +308,9 @@ fn stroke_coverage(prims: &[Prim], width: u32, height: u32, xf: Transform, only:
 fn draw_prims(prims: &[Prim], dst: &mut Pixmap, xf: Transform) {
     for prim in prims {
         match prim {
-            Prim::Image { pixels, corners, opacity, .. } => crate::images::draw(pixels, *corners, *opacity, dst, xf),
+            Prim::Image { pixels, corners, opacity, clip, .. } => {
+                crate::images::draw(pixels, *corners, *opacity, *clip, dst, xf)
+            }
             Prim::Fill { rings, color } => {
                 if let Some(path) = rings_path(rings, false) {
                     dst.fill_path(&path, &paint(*color), FillRule::EvenOdd, xf, None);

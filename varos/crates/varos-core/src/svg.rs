@@ -375,11 +375,7 @@ fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<St
                 }
             }
             open = ancestors;
-            if d.p.stroke_style.is_default() {
-                paint(&mut out, d);
-            } else {
-                stroke::paint(&mut out, d)?;
-            }
+            paint_drawn(&mut out, d)?;
         }
         for _ in open {
             out.push_str("</g>\n");
@@ -390,6 +386,16 @@ fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<St
     }
     out.push_str("</svg>\n");
     Ok(out)
+}
+// ---- w2-images: one vector-paint dispatch for standalone and image companion paths ----
+// Gradient integration must extend drawable + this dispatch together; companion exports share both.
+fn paint_drawn(out: &mut String, d: &Drawn<'_>) -> Result<(), ExportError> {
+    if d.p.stroke_style.is_default() {
+        paint(out, d);
+        Ok(())
+    } else {
+        stroke::paint(out, d)
+    }
 }
 fn paint(out: &mut String, d: &Drawn<'_>) {
     let p = d.p;
@@ -537,12 +543,7 @@ pub(crate) fn image_clip_data(doc: &Document, clip: u32) -> String {
 pub(crate) fn paint_image_companion(out: &mut String, doc: &Document, id: u32) -> Result<(), ExportError> {
     let Some(pi) = doc.pidx(id) else { return Ok(()) };
     let Some(d) = drawable(doc, pi, &doc.paths[pi]) else { return Ok(()) };
-    if d.p.stroke_style.is_default() {
-        paint(out, &d);
-        Ok(())
-    } else {
-        stroke::paint(out, &d)
-    }
+    paint_drawn(out, &d)
 }
 
 #[cfg(test)]

@@ -44,6 +44,20 @@ pub fn export(
             if doc.eff_hidden(id) || doc.is_mask_source(id) {
                 continue;
             }
+            let board_clip = if matches!(kind, NodeKind::Image(_)) { board_clips(doc, id) } else { None };
+            if let Some(rects) = &board_clip {
+                out += &format!("<defs><clipPath id=\"image-board-{id}\" clipPathUnits=\"userSpaceOnUse\">");
+                for r in rects {
+                    out += &format!(
+                        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>",
+                        r.0,
+                        r.1,
+                        r.2 - r.0,
+                        r.3 - r.1
+                    );
+                }
+                out += &format!("</clipPath></defs><g clip-path=\"url(#image-board-{id})\">\n");
+            }
             let mut clips = vec![];
             let mut node = doc.node_of_path(id);
             while let Some(n) = node {
@@ -64,7 +78,9 @@ pub fn export(
                 NodeKind::Image(id) => {
                     let image = doc.images.iter().find(|i| i.id == id).ok_or("Missing SVG image metadata")?;
                     let b = store.get(&image.blob).ok_or("Missing SVG original")?;
-                    if b.original.is_none() && !preview {
+                    if (b.original.is_none() || b.pixels.width != b.meta.px_w || b.pixels.height != b.meta.px_h)
+                        && !preview
+                    {
                         return Err("Production SVG requires full image originals".into());
                     }
                     let bytes = codec::encode_png(&b.pixels)?;
@@ -86,6 +102,9 @@ pub fn export(
                 _ => {}
             }
             for _ in clips {
+                out += "</g>\n";
+            }
+            if board_clip.is_some() {
                 out += "</g>\n";
             }
         }

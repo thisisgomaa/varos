@@ -250,21 +250,30 @@ fn named_next_migration_and_refusal_fixtures_are_frozen() {
     let loaded = decode_model(json, None, &limits).unwrap();
     assert!(!loaded.migrated);
     assert_eq!(encode_model(&loaded.doc, &limits).unwrap().as_bytes(), json);
+    use varos_core::format::{Invalid, LoadError, FORMAT_VERSION};
     for bytes in [
         include_bytes!("fixtures/v6-images/refused-missing-asset.json").as_slice(),
         include_bytes!("fixtures/v6-images/refused-singular-affine.json"),
-        include_bytes!("fixtures/v6-images/refused-unknown-pixels.json"),
-        include_bytes!("fixtures/v6-images/refused-future.json"),
     ] {
-        assert!(decode_model(bytes, None, &limits).is_err());
+        assert!(
+            matches!(decode_model(bytes,None,&limits),Err(LoadError::Invalid(Invalid::NonFinite{what})) if what=="Invalid image metadata")
+        );
     }
-    let mut old: serde_json::Value = serde_json::from_slice(include_bytes!("fixtures/v5/cap_Butt.json")).unwrap();
-    old["varos"] = 6.into();
-    let migrated = decode_model(include_bytes!("fixtures/v5/cap_Butt.json"), None, &limits).unwrap();
+    assert!(
+        matches!(decode_model(include_bytes!("fixtures/v6-images/refused-unknown-pixels.json"),None,&limits),Err(LoadError::Malformed{detail,..}) if detail.contains("unknown field `pixels`"))
+    );
+    assert_eq!(
+        decode_model(include_bytes!("fixtures/v6-images/refused-future.json"), None, &limits).unwrap_err(),
+        LoadError::NewerVersion { found: 7, supported: FORMAT_VERSION }
+    );
+    let old = include_str!("fixtures/v5/cap_Butt.json");
+    let migrated = decode_model(old.as_bytes(), None, &limits).unwrap();
     assert!(migrated.migrated);
-    assert!(migrated.doc.images.is_empty());
-    assert!(migrated.doc.assets.is_empty());
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&encode_model(&migrated.doc, &limits).unwrap()).unwrap(), old);
+    assert!(migrated.doc.images.is_empty() && migrated.doc.assets.is_empty());
+    assert_eq!(
+        encode_model(&migrated.doc, &limits).unwrap(),
+        old.replacen("\"varos\":5", &format!("\"varos\":{FORMAT_VERSION}"), 1)
+    );
 }
 
 #[test]
@@ -439,4 +448,122 @@ fn local_links_update_relink_embed_unembed_and_missing_are_atomic() {
     assert!(links::update(&mut ed, &[id], None).is_err());
     assert_eq!(ed.doc, before);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn fix_round_live_image_signature_mixed_selection_and_transforms() {
+    use varos_core::{
+        geom::View,
+        model::{Anchor, Path},
+        scene::scene_signature,
+        select_transform::Transform,
+    };
+    let mut ed = Editor::new();
+    let id = place(&mut ed, [255; 4]);
+    let pid = ed.doc.nid();
+    let points = [[100., 100.], [120., 100.], [100., 120.]];
+    let anchors =
+        points.into_iter().map(|p| Anchor { id: ed.doc.nid(), p, hin: None, hout: None, smooth: false }).collect();
+    ed.doc.paths.push(Path::new(pid, anchors, true, Some([1.; 4]), None, 0.));
+    ed.doc.sync_tree();
+    ed.select_all();
+    assert!(ed.objsel.contains(&id) && ed.objsel.contains(&pid));
+    assert!(ed.frame_corners().is_some());
+    let signature = scene_signature(&ed, View { pan: [0.; 2], zoom: 1. }, [800, 600]);
+    ed.doc.images[0].xform.e += 15.;
+    assert_ne!(signature, scene_signature(&ed, View { pan: [0.; 2], zoom: 1. }, [800, 600]));
+    let before = ed.doc.clone();
+    ed.try_execute(EditCommand::Transform(Transform { movement: [15., 20.], ..Default::default() })).unwrap();
+    assert_eq!(ed.doc.images[0].xform.e, before.images[0].xform.e + 15.);
+    assert_eq!(ed.doc.paths[0].anchors[0].p, [115., 120.]);
+    ed.undo();
+    assert_eq!(ed.doc, before);
+    ed.objsel.clear();
+    ed.objsel.insert(id);
+    let corners = ed.frame_corners().unwrap();
+    ed.begin();
+    ed.start_transform(varos_core::editor::TfHit::Scale(2), corners[2]);
+    ed.pointer_move([
+        corners[0][0] + (corners[2][0] - corners[0][0]) * 2.,
+        corners[0][1] + (corners[2][1] - corners[0][1]) * 2.,
+    ]);
+    assert!((ed.doc.images[0].xform.a - before.images[0].xform.a * 2.).abs() < 0.01);
+    ed.pointer_up();
+    ed.undo();
+    assert_eq!(ed.doc, before);
+}
+#[test]
+fn fix_round_image_board_clip_visibility_and_zero_opacity() {
+    use varos_core::scene::{build_artwork_scene, Prim};
+    let mut ed = Editor::new();
+    let id = place(&mut ed, [255; 4]);
+    ed.doc.artboards.push(varos_core::model::Artboard::default());
+    ed.doc.assign_artboard_ids();
+    ed.doc.artboards[0].w = 11.;
+    ed.doc.artboards[0].h = 21.;
+    ed.doc.artboards[0].clip = true;
+    let scene = build_artwork_scene(&ed, 1.);
+    assert!(scene
+        .content
+        .iter()
+        .any(|g| g.prims().iter().any(|p| matches!(p, Prim::Image { clip: Some([0., 0., 11., 21.]), .. }))));
+    ed.doc.artboards[0].hidden = true;
+    assert!(image_hidden(&ed.doc, id));
+    assert!(build_artwork_scene(&ed, 1.).content.is_empty());
+    ed.doc.artboards[0].hidden = false;
+    ed.doc.images[0].opacity = 0.;
+    assert!(build_artwork_scene(&ed, 1.).content.is_empty());
+}
+#[test]
+fn fix_round_mixed_image_drag_copy_and_transform_cancel() {
+    use varos_core::select_transform::Transform;
+    let mut ed = Editor::new();
+    let id = place(&mut ed, [255; 4]);
+    let id2 = links::place_bytes(
+        &mut ed,
+        &png([0, 255, 0, 255]),
+        [40., 50.],
+        Some([40., 50., 30., 30.]),
+        PlacementMode::Embed,
+        None,
+    )
+    .unwrap()
+    .0;
+    ed.doc.images[0].xform.a = 15.;
+    ed.doc.images[0].xform.d = 10.;
+    ed.objsel = [id, id2].into_iter().collect();
+    let before = ed.doc.clone();
+    let bytes = ed.blobs.retained_bytes();
+    ed.pointer_down([20., 30.]);
+    ed.pointer_move([35., 45.]);
+    ed.pointer_up();
+    assert_eq!(ed.doc.images[0].xform.e, before.images[0].xform.e + 15.);
+    assert_eq!(ed.doc.images[1].xform.e, before.images[1].xform.e + 15.);
+    ed.undo();
+    assert_eq!(ed.doc, before);
+    ed.transform_begin();
+    ed.transform_live(Transform { scale: [2., 2.], ..Default::default() });
+    ed.transform_end(true);
+    assert_eq!(ed.doc, before);
+    ed.transform_edit(Transform { copy: true, movement: [100., 0.], ..Default::default() });
+    assert_eq!(ed.doc.images.len(), 4);
+    assert_eq!(ed.blobs.retained_bytes(), bytes);
+    ed.undo();
+    assert_eq!(ed.doc, before);
+}
+#[test]
+fn fix_round_ordered_path_lookup_scene_probe() {
+    use varos_core::model::Path;
+    for count in [200, 400, 800] {
+        let mut ed = Editor::new();
+        for _ in 0..count {
+            let id = ed.doc.nid();
+            ed.doc.paths.push(Path::new(id, vec![], false, None, None, 0.));
+        }
+        ed.doc.sync_tree();
+        let start = std::time::Instant::now();
+        let scene = varos_core::scene::build_artwork_scene(&ed, 1.);
+        eprintln!("ordered scene: {count} empty paths, {} us", start.elapsed().as_micros());
+        assert!(scene.errors.is_empty() && scene.content.is_empty());
+    }
 }

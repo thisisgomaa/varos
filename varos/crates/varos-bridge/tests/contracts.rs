@@ -3577,7 +3577,7 @@ fn stroke_api_12_schemas_capabilities_and_limit_errors() {
     let mut h = FakeHost::new();
     let reply = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"})));
     assert!(reply.ok, "{reply:?}");
-    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([5]));
+    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([varos_core::format::FORMAT_VERSION]));
     assert!(reply.result.as_ref().unwrap()["stroke_operations_schema"].is_object());
     h.editor.doc.paths[0].stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
     let rev = h.editor.rev;

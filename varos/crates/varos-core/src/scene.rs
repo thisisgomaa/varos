@@ -34,19 +34,55 @@ pub struct NativeStroke {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prim {
     // ---- w2-images ----
-    Image { key: crate::images::BlobKey, pixels: Arc<crate::images::Pixels>, corners: [Pt; 4], opacity: f32 },
-    Fill { rings: Vec<Vec<Pt>>, color: Rgba }, // outer ring + hole rings — filled even-odd (holes cut through)
+    Image {
+        key: crate::images::BlobKey,
+        pixels: Arc<crate::images::Pixels>,
+        corners: [Pt; 4],
+        opacity: f32,
+        clip: Option<[f32; 4]>,
+    },
+    Fill {
+        rings: Vec<Vec<Pt>>,
+        color: Rgba,
+    }, // outer ring + hole rings — filled even-odd (holes cut through)
     // `clip` (A2): the artboard rect [x0,y0,x1,y1] (world) this stroke is clipped to, if any. The centerline
     // is ALREADY cut to the rect (clip_polyline_rect), but the extruded BAND still overhangs the edge by up
     // to half the width — a renderer may honour this rect (e.g. a GPU scissor) to trim that overhang. `None`
     // = draw uncut (a floater or a page that invited bleed). A missed/degenerate rect MUST draw the stroke
     // uncut (overflowing), never clipped-to-nothing — fail-open.
-    Stroke { pts: Vec<Pt>, width: f32, color: Rgba, clip: Option<[f32; 4]> },
-    StrokeCoverage { rings: Vec<Vec<Pt>>, color: Rgba, clip: Option<[f32; 4]>, native: Option<NativeStroke> },
-    Dashed { pts: Vec<Pt>, width: f32, color: Rgba },
-    Square { c: Pt, half: f32, color: Rgba },
-    Disc { c: Pt, r: f32, color: Rgba },
-    Tri { a: Pt, b: Pt, c: Pt, color: Rgba }, // a single filled triangle (icons)
+    Stroke {
+        pts: Vec<Pt>,
+        width: f32,
+        color: Rgba,
+        clip: Option<[f32; 4]>,
+    },
+    StrokeCoverage {
+        rings: Vec<Vec<Pt>>,
+        color: Rgba,
+        clip: Option<[f32; 4]>,
+        native: Option<NativeStroke>,
+    },
+    Dashed {
+        pts: Vec<Pt>,
+        width: f32,
+        color: Rgba,
+    },
+    Square {
+        c: Pt,
+        half: f32,
+        color: Rgba,
+    },
+    Disc {
+        c: Pt,
+        r: f32,
+        color: Rgba,
+    },
+    Tri {
+        a: Pt,
+        b: Pt,
+        c: Pt,
+        color: Rgba,
+    }, // a single filled triangle (icons)
 }
 
 /// A z-ordered draw group. `Opaque` runs paint straight onto the canvas. `Isolated` renders its prims
@@ -137,6 +173,24 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     live_paths.sort_unstable();
     live_paths.dedup();
     for pid in live_paths {
+        if let Some(image) = ed.doc.images.iter().find(|i| i.id == pid) {
+            image.id.hash(&mut state);
+            image.blob.hash(&mut state);
+            for v in [
+                image.xform.a,
+                image.xform.b,
+                image.xform.c,
+                image.xform.d,
+                image.xform.e,
+                image.xform.f,
+                image.opacity,
+            ] {
+                f32_hash(v, &mut state);
+            }
+            for corner in crate::images::world_corners(&ed.doc, image) {
+                point_hash(corner, &mut state);
+            }
+        }
         let Some(path) = ed.doc.paths.iter().find(|path| path.id == pid) else { continue };
         path.id.hash(&mut state);
         path.closed.hash(&mut state);
@@ -549,7 +603,7 @@ fn build_scene_impl(
         let mut out = Vec::new();
         if !p.stroke_style.is_default() {
             if let Some(color) = p.stroke.solid() {
-                match crate::stroke::evaluate(p, 0.025 / f64::from(ppu.max(0.0001)), &|| false) {
+                match crate::stroke::canvas_seam(ed, p, ppu) {
                     Ok(coverage) => {
                         if let Err(e) = stroke_budget.borrow_mut().charge(&coverage) {
                             stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
@@ -763,12 +817,16 @@ fn build_scene_impl(
     let mut clip_members: Vec<Group> = Vec::new();
     let mut clip_open: Vec<Prim> = Vec::new();
     // ---- w2-images ----
+    let paths: std::collections::HashMap<_, _> = ed.doc.paint_list().map(|(pi, p)| (p.id, (pi, p))).collect();
     for item in crate::images::paint_order(&ed.doc) {
         if let crate::model::NodeKind::Image(id) = item {
             if ed.doc.eff_hidden(id) || ed.doc.is_mask_source(id) {
                 continue;
             }
             let Some(image) = ed.doc.images.iter().find(|i| i.id == id) else { continue };
+            if image.opacity == 0. {
+                continue;
+            }
             let Some(blob) = ed.blobs.get(&image.blob) else {
                 stroke_errors.borrow_mut().push(format!("Image {id} resource unavailable"));
                 continue;
@@ -791,17 +849,27 @@ fn build_scene_impl(
                 }
                 cur_clip = unit_clip;
             }
-            let prim =
-                Prim::Image { key: image.blob.clone(), pixels: blob.pixels.clone(), corners, opacity: image.opacity };
-            if cur_clip.is_some() {
-                clip_open.push(prim);
+            let prim = |clip| Prim::Image {
+                key: image.blob.clone(),
+                pixels: blob.pixels.clone(),
+                corners,
+                opacity: image.opacity,
+                clip,
+            };
+            let prims = if let Some(rects) = crate::images::board_clips(&ed.doc, id) {
+                rects.into_iter().map(|r| prim(Some([r.0, r.1, r.2, r.3]))).collect::<Vec<_>>()
             } else {
-                open.push(prim);
+                vec![prim(None)]
+            };
+            if cur_clip.is_some() {
+                clip_open.extend(prims);
+            } else {
+                open.extend(prims);
             }
             continue;
         }
         let crate::model::NodeKind::Path(id) = item else { continue };
-        let Some((pi, p)) = ed.doc.paint_list().find(|(_, p)| p.id == id) else { continue };
+        let Some(&(pi, p)) = paths.get(&id) else { continue };
         // P11.2: a culled path is skipped exactly like a hidden one — BEFORE the clip-run tracking, so a
         // clip's remaining visible members stay one contiguous run.
         let Some(geom) = geometry[pi].as_deref() else { continue };

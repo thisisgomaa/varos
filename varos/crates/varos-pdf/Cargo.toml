@@ -10,6 +10,7 @@ edition = "2021"
 [dependencies]
 varos-core = { path = "../varos-core" }
 pdf-writer = "0.15"
+flate2 = "1"
 lopdf = "0.43"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
