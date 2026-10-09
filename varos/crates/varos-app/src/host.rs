@@ -576,6 +576,14 @@ pub fn run_lifecycle(
     {
         return Ran { held: true, ..Ran::default() };
     }
+    // ---- Lane H: import refusal/cancellation must not settle the active editor ----
+    let cmd = match cmd {
+        AppCommand::FileDone(done) => match *done {
+            FileDone::Import(done) => return crate::import_jobs::complete_on_host(done, ws, ui, dialogs, keys),
+            done => AppCommand::FileDone(Box::new(done)),
+        },
+        cmd => cmd,
+    };
     if matches!(&cmd, AppCommand::FileDone(done) if done.is_quiet()) {
         let effect = Lifecycle { ws: &mut *ws, dialogs, store, jobs }.run(cmd);
         return Ran { follow_up_saves: effect.follow_up_saves, ..Ran::default() };

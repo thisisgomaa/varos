@@ -138,3 +138,93 @@ fn cancellation_limits_and_no_preferred_flavour_fallback() {
     assert!(varos_import::clipboard::stage(&png, options()).unwrap_err().contains("image/blob"));
     assert!(import_file(&vec![0; varos_import::MAX_BYTES + 1], Format::Pdf, options()).is_err());
 }
+
+#[test]
+fn pdf_page_rotation_and_scaled_dash_geometry() {
+    for (rotation, dimensions, first) in [
+        (90, (100., 200.), [0., 0.]),
+        (180, (200., 100.), [200., 0.]),
+        (270, (100., 200.), [100., 200.]),
+        (-90, (100., 200.), [100., 200.]),
+    ] {
+        // Keep xref offsets valid by inserting the page attribute in the fixture generator.
+        let bytes = pdf("[2 3] 1 d 2 0 0 2 -10 -20 cm 10 20 m 20 30 l S", "");
+        let source = String::from_utf8(bytes).unwrap();
+        let bytes = with_page_attribute(&source, &format!("/Rotate {rotation}"));
+        let (doc, _) = import_file(&bytes, Format::Pdf, ImportOptions::default()).unwrap();
+        assert_eq!((doc.artboards[0].w, doc.artboards[0].h), dimensions);
+        let path = &doc.paths[1];
+        assert_eq!(path.anchors[0].p, first);
+        assert_eq!(path.stroke_width, 2.);
+        assert_eq!(path.stroke_style.dash, [4., 6.]);
+        assert_eq!(path.stroke_style.dash_phase, 2.);
+    }
+}
+fn with_page_attribute(source: &str, attribute: &str) -> Vec<u8> {
+    let body = source
+        .split("xref\n")
+        .next()
+        .unwrap()
+        .replace("/Type /Page /Parent", &format!("/Type /Page {attribute} /Parent"));
+    let mut out = body.clone();
+    let offsets: Vec<_> = (1..=5).map(|i| body.find(&format!("{i} 0 obj")).unwrap()).collect();
+    out += "xref\n0 6\n0000000000 65535 f \n";
+    for offset in offsets {
+        out += &format!("{offset:010} 00000 n \n");
+    }
+    out += &format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n", body.len());
+    out.into_bytes()
+}
+#[test]
+fn dxf_width_count_and_visibility_do_not_silently_change_appearance() {
+    let bad_count = "0\nLWPOLYLINE\n90\n3\n10\n0\n20\n0\n10\n1\n20\n1\n";
+    let wide = "0\nPOLYLINE\n40\n2\n0\nVERTEX\n10\n0\n20\n0\n0\nVERTEX\n10\n1\n20\n1\n0\nSEQEND\n";
+    for entity in [bad_count, wide] {
+        assert!(import_file(&dxf(entity), Format::Dxf, options()).is_err());
+    }
+    let hidden = "0\nLINE\n60\n1\n10\n0\n20\n0\n11\n1\n21\n1\n";
+    let (doc, _) = import_file(&dxf(hidden), Format::Dxf, options()).unwrap();
+    let path_node = doc.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(_))).unwrap();
+    assert!(doc.node(path_node.parent.unwrap()).unwrap().hidden);
+}
+#[test]
+fn worker_observes_cancellation_during_dxf_conversion() {
+    let input = dxf(&"0\nLINE\n10\n0\n20\n0\n11\n1\n21\n1\n".repeat(20_000));
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let task = scope.spawn(|| varos_import::worker::isolated_import(&input, Format::Dxf, options(), &cancel));
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        cancel.store(true, std::sync::atomic::Ordering::Release);
+        assert!(task.join().unwrap().unwrap_err().contains("cancelled"));
+    });
+}
+#[test]
+fn dxf_multispan_quadratic_spline_has_exact_cubic_controls() {
+    let spline = "0\nSPLINE\n71\n2\n72\n7\n73\n4\n40\n0\n40\n0\n40\n0\n40\n1\n40\n2\n40\n2\n40\n2\n10\n0\n20\n0\n10\n1\n20\n2\n10\n3\n20\n2\n10\n4\n20\n0\n";
+    let (doc, report) =
+        import_file(&dxf(spline), Format::Dxf, ImportOptions { points_per_unit: Some(1.), ..options() }).unwrap();
+    let a = &doc.paths[0].anchors;
+    assert_eq!(a.len(), 3);
+    assert_eq!(a[1].p, [2., -2.]);
+    assert_eq!(a[2].p, [4., 0.]);
+    let control = a[0].hout.unwrap();
+    assert!((control[0] - 2. / 3.).abs() < 1e-6);
+    assert!((control[1] + 4. / 3.).abs() < 1e-6);
+    assert_eq!(a[1].hin.unwrap(), [4. / 3., -2.]);
+    assert_eq!(a[1].hout.unwrap(), [8. / 3., -2.]);
+    assert_eq!(report.loss_notes.len(), 1);
+    for bad in [spline.replace("72\n7", "72\n6"), spline.replace("71\n2", "71\n4"), format!("{spline}41\n0.5\n")] {
+        assert!(import_file(&dxf(&bad), Format::Dxf, options()).is_err());
+    }
+}
+
+#[test]
+fn pdf_evenodd_fill_implicitly_closes_subpaths_before_hole_detection() {
+    let input = pdf("20 30 m 100 30 l 100 100 l 20 100 l 40 40 m 80 40 l 80 80 l 40 80 l f*", "");
+    let (doc, _) = import_file(&input, Format::Pdf, ImportOptions::default()).unwrap();
+    assert_eq!(doc.paths.len(), 2);
+    assert!(doc.paths[1].closed);
+    assert_eq!(doc.paths[1].holes.len(), 1);
+    let combined = pdf("20 30 m 100 30 l 100 100 l 20 100 l 40 40 m 80 40 l 80 80 l 40 80 l B*", "");
+    assert!(import_file(&combined, Format::Pdf, options()).is_err());
+}

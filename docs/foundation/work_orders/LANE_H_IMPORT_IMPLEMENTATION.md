@@ -10,16 +10,16 @@ canvas drops retain named layers as groups and use the existing checked `PlaceAr
 
 Locally cached lopdf 0.43.0 (MIT) is used because hayro/hayro-interpret are absent. The supported
 PDF profile is classic xref, static DeviceRGB/Gray paths, transforms, fill/stroke styles, dashes,
-CropBox/MediaBox and representable clipping. One page is imported; multi-page input needs the typed
-one-based `page` option in CLI/Bridge. Rotation/UserUnit, compressed object/xref streams, encryption,
+CropBox/MediaBox, orthogonal page rotation and representable clipping. One page is imported; multi-page input needs the typed
+one-based `page` option in CLI/Bridge. UserUnit, compressed object/xref streams, encryption,
 nonzero compound fills/clips, Form XObjects, CMYK/ICC/spot/pattern/transparency operators refuse.
 Text has no verified glyph-outline API in lopdf: omission is reported and requires acceptance.
 PDF images are reported omissions because this checkout has no native image/blob node.
 Bitmap-only paste refuses with that prerequisite message; no vector-to-bitmap fallback or tracing.
 
 ASCII DXF supports LINE, ARC, CIRCLE, LWPOLYLINE bulges, POLYLINE/VERTEX/SEQEND and nonrational
-clamped cubic Bezier SPLINE. Layer names/basic colour/hidden/locked state and declared physical
-units survive. Unknown/unitless units require `points_per_unit`; general NURBS, 3D, INSERT,
+clamped degree 1–3 B-splines (multiple knot spans converted exactly to cubics). Layer names/basic colour/hidden/locked state and declared physical
+units survive. Unknown/unitless units require `points_per_unit`; rational/periodic or degree >3 splines, 3D, INSERT,
 text/hatches and unsupported line styles/colours refuse. Arc radial tolerance is 0.01 point.
 
 Clipboard preference is trusted current Varos bytes, SVG, PDF, then bitmap. Unknown/malformed
@@ -31,6 +31,15 @@ and list_verbs; native file scope and existing revision/idempotency receipts rem
 
 Desktop foreign Open/Place/drop uses the existing bounded IO worker. PDF/AI parsing re-enters the
 host executable with `--varos-import-worker` before GUI startup, with bounded pipes, cancellation
-and a hard ten-second process deadline. SVG/DXF use cooperative conversion checkpoints; desktop
+and a hard ten-second process deadline. SVG/DXF mirror host cancellation into cooperative conversion checkpoints; desktop
 clipboard and Bridge imports currently wait for staging synchronously (bounded), then publish.
 Native GUI/OS interoperability and complex visual oracles require integration and owner review.
+
+Resume hardening: CLI output publication uses a complete temporary file + no-replace hard link;
+existing destinations (including a concurrent creator) survive refusal. PDF similarity transforms
+scale dash lengths/phase together with width; page rotation is applied to geometry and clipping.
+DXF rejects authored polyline widths/count mismatches and preserves entity invisibility.
+No new native-format keys or version bump. Deferred representations remain explicit refusals/losses.
+Import completion bypasses generic gesture settlement: busy fields/previews/transactions refuse;
+cancellation/loss refusal retains the gesture, history and UI caches; successful publication alone
+refreshes document UI. The native-reader firewall and API 1.0/1.1 fixtures remain unchanged.

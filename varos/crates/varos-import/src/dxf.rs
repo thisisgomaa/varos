@@ -244,6 +244,19 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
             id
         };
         let colour = colour(e, base)?;
+        let invisible = num(e, 60, Some(0.))?;
+        if invisible != 0. && invisible != 1. {
+            return Err("Invalid DXF entity visibility".into());
+        }
+        let parent = if invisible == 1. || value(e, 62).is_some_and(|v| v.starts_with('-')) {
+            let group = crate::node(&mut doc, NodeKind::Group, parent, "Hidden DXF entity");
+            if let Some(n) = doc.nodes.iter_mut().find(|n| n.id == group) {
+                n.hidden = true;
+            }
+            group
+        } else {
+            parent
+        };
         match kind {
             "LINE" => {
                 let a = point(e, 10, 20, scale)?;
@@ -296,6 +309,9 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
                 if num(e, 43, Some(0.))? != 0. {
                     return Err("DXF polyline width unsupported".into());
                 }
+                if num(e, 90, None)? != v.len() as f32 {
+                    return Err("DXF polyline vertex count does not match group 90".into());
+                }
                 let a = polyline(&mut doc, &v, closed)?;
                 emit(&mut doc, parent, a, closed, colour);
                 if v.iter().any(|(_, b)| *b != 0.) {
@@ -304,7 +320,7 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
             }
             "POLYLINE" => {
                 let flags = num(e, 70, Some(0.))? as i32;
-                if flags & !1 != 0 {
+                if flags & !1 != 0 || num(e, 40, Some(0.))? != 0. || num(e, 41, Some(0.))? != 0. {
                     return Err("Unsupported DXF POLYLINE".into());
                 }
                 poly = Some((parent, colour, flags == 1, Vec::new()));
@@ -337,26 +353,27 @@ pub(crate) fn read(bytes: &[u8], options: ImportOptions) -> Result<(Document, Im
                 let xs = collect(10)?;
                 let ys = collect(20)?;
                 let knots = collect(40)?;
-                if num(e, 71, None)? != 3.
-                    || xs.len() != 4
-                    || ys.len() != 4
-                    || knots.len() != 8
-                    || knots[..4].iter().any(|k| *k != knots[0])
-                    || knots[4..].iter().any(|k| *k != knots[4])
-                    || knots[0] >= knots[4]
-                    || e.iter().any(|p| p.0 == 41 || p.0 == 11)
-                    || num(e, 70, Some(0.))? as i32 & !8 != 0
+                let degree = num(e, 71, None)?;
+                let flags = num(e, 70, Some(0.))?;
+                if degree.fract() != 0.
+                    || flags.fract() != 0.
+                    || flags as i32 & !8 != 0
+                    || xs.len() != ys.len()
+                    || e.iter().any(|p| p.0 == 11)
+                    || num(e, 72, Some(knots.len() as f32))? != knots.len() as f32
+                    || num(e, 73, Some(xs.len() as f32))? != xs.len() as f32
+                    || collect(41)?.iter().any(|w| *w != 1.)
                 {
-                    return Err("Only nonrational clamped cubic Bezier DXF splines supported".into());
+                    return Err("Only nonrational clamped 2D DXF splines supported".into());
                 }
                 if xs.iter().chain(&ys).chain(&knots).any(|v| !v.is_finite() || v.abs() > 1e8) {
                     return Err("Invalid DXF spline geometry".into());
                 }
-                let mut a = crate::anchor(&mut doc, [xs[0] * scale, -ys[0] * scale]);
-                a.hout = Some([xs[1] * scale, -ys[1] * scale]);
-                let mut b = crate::anchor(&mut doc, [xs[3] * scale, -ys[3] * scale]);
-                b.hin = Some([xs[2] * scale, -ys[2] * scale]);
-                emit(&mut doc, parent, vec![a, b], false, colour);
+                let points: Vec<_> =
+                    xs.iter().zip(&ys).map(|(x, y)| [*x as f64 * scale as f64, -*y as f64 * scale as f64]).collect();
+                let knots: Vec<_> = knots.iter().map(|v| *v as f64).collect();
+                let anchors = crate::dxf_spline::convert(&mut doc, &points, &knots, degree as usize)?;
+                emit(&mut doc, parent, anchors, false, colour);
                 report.loss("DXF spline programme converted to editable cubic path");
             }
             _ => return Err(format!("Unsupported DXF entity {kind}; no content omitted silently")),

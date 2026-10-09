@@ -14,6 +14,13 @@ fn foreign_import_cli_saves_native_and_refuses_native_source() {
         .output()
         .unwrap();
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+    let original_output = std::fs::read(&out).unwrap();
+    let retry = Command::new(env!("CARGO_BIN_EXE_varos-cli"))
+        .args(["import-dxf", src.to_str().unwrap(), "--out", out.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!retry.status.success());
+    assert_eq!(std::fs::read(&out).unwrap(), original_output);
     let doc = varos_pdf::load_vrs(&out).unwrap();
     assert_eq!(doc.paths.len(), 1);
     assert!((doc.paths[0].anchors[1].p[0] - 72.).abs() < 0.001);

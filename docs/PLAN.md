@@ -197,4 +197,4 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 1.9 OS clipboard out (lane E) | implemented (provisional UI, owner design review pending) | uncommitted worktree | Detached Varos flavour first, PDF/SVG/transparent 2x PNG; injectable NSPasteboard, Copy/Cut, API 1.2 + headless CLI bundle. Evidence: GAP_1 §C Copy to clipboard. Figma/Keynote paste test pending. |
 | 1.10 Autosave to file | implemented (provisional UI, owner design review pending) | uncommitted lane G | Offline gates recorded in lane report; independent publication review and owner native acceptance pending |
 
-| 7.2–7.5 Lane H | implemented (provisional UI, owner design review pending) | uncommitted | Bounded PDF/AI + ASCII DXF subset, clipboard vector input and canvas Place/drop; image/bitmap node prerequisite absent; restrictions in LANE_H_IMPORT_IMPLEMENTATION.md |
+| 7.2–7.5 Lane H | implemented (provisional UI, owner design review pending) | WIP `14db577` + uncommitted resume fixes | Bounded PDF/AI + ASCII DXF subset, clipboard vector input and canvas Place/drop; image/bitmap node prerequisite absent; restrictions in LANE_H_IMPORT_IMPLEMENTATION.md |
