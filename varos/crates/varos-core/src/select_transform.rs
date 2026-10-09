@@ -133,6 +133,7 @@ pub enum LayerAction {
 }
 #[derive(Clone, Default)]
 pub struct State {
+    pub scale_strokes: bool,
     pub isolation: Option<u32>,
     pub selection_requested: bool,
     pub options_requested: bool,
@@ -295,6 +296,17 @@ impl Editor {
                 s.shear *= r;
             }
             let path = &mut self.doc.paths[pi];
+            if self.select_transform.scale_strokes {
+                let scale = (s.scale[0] * s.scale[1]).abs().sqrt();
+                path.stroke_width *= scale;
+                for dash in &mut path.stroke_style.dash {
+                    *dash *= scale;
+                }
+                path.stroke_style.dash_phase *= scale;
+            }
+            if s.scale != [1., 1.] || s.shear != 0. {
+                *path = crate::live_corners::evaluated(path);
+            }
             for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
                 a.p = s.map(a.p, o);
                 a.hin = a.hin.map(|p| s.map(p, o));

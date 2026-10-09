@@ -27,6 +27,8 @@ pub enum Request {
     /// API 1.2 only; import source under the files scope, placed into board.
     ImportSvg(FileEffect),
     ExportSvg(FileEffect),
+    // ---- Lane C ----
+    #[serde(alias = "export_screens")]
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
     NewFromTemplate(FileEffect),
@@ -198,6 +200,29 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    // ---- Lane C ----
+    OutlineStroke {
+        ids: Vec<String>,
+    },
+    OffsetPath {
+        ids: Vec<String>,
+        delta: f32,
+        join: varos_core::stroke::StrokeJoin,
+        miter: f32,
+    },
+    Expand {
+        ids: Vec<String>,
+    },
+    LiveCorners {
+        ids: Vec<String>,
+        corners: Vec<varos_core::live_corners::CornerParam>,
+    },
+    ScaleStrokes {
+        enabled: bool,
+    },
+    NewDocument {
+        settings: varos_core::new_document::Settings,
+    },
     Pathfinder {
         ids: Vec<String>,
         operation: String,
@@ -512,10 +537,23 @@ pub enum Order {
     Back,
 }
 impl Operation {
+    pub fn lane_c(&self) -> bool {
+        matches!(
+            self,
+            Self::OutlineStroke { .. }
+                | Self::OffsetPath { .. }
+                | Self::Expand { .. }
+                | Self::LiveCorners { .. }
+                | Self::ScaleStrokes { .. }
+                | Self::NewDocument { .. }
+        )
+    }
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
-            Self::ToolOptions { .. }
+            Self::ScaleStrokes { .. }
+                | Self::NewDocument { .. }
+                | Self::ToolOptions { .. }
                 | Self::Transform { .. }
                 | Self::MagicWand { .. }
                 | Self::Eyedropper { .. }
@@ -526,7 +564,9 @@ impl Operation {
 
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::ToolOptions { .. }
+            Self::ScaleStrokes { .. }
+            | Self::NewDocument { .. }
+            | Self::ToolOptions { .. }
             | Self::TraceRgba { .. }
             | Self::DocumentSetup { .. }
             | Self::AddShape { .. }
@@ -540,7 +580,11 @@ impl Operation {
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
-            Self::Pathfinder { ids, .. }
+            Self::OutlineStroke { ids }
+            | Self::OffsetPath { ids, .. }
+            | Self::Expand { ids }
+            | Self::LiveCorners { ids, .. }
+            | Self::Pathfinder { ids, .. }
             | Self::ShapeBuilder { ids, .. }
             | Self::Scissors { ids, .. }
             | Self::Knife { ids, .. }

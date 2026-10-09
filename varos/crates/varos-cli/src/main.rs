@@ -1,5 +1,7 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
 mod document;
+// ---- Lane C ----
+mod lane_c;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -215,6 +217,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("expected a subcommand: {}", VERBS.join(", ")).into());
     }
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
+    if ["new-document", "export-screens"].contains(&verb.as_str()) {
+        return lane_c::run(&verb, args).map_err(Into::into);
+    }
     if ["document-info", "document-setup", "save-template", "new-from-template"].contains(&verb.as_str()) {
         return document::run(&verb, args).map_err(Into::into);
     }

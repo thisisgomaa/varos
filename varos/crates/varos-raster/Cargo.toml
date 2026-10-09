@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 varos-core = { path = "../varos-core" }
 tiny-skia = "=0.11.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
 
 [dev-dependencies]
+serde_json = "1"
 varos-pdf = { path = "../varos-pdf" }
 resvg = "0.45"

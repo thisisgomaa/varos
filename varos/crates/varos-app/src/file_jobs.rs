@@ -72,6 +72,9 @@ pub struct ScreenJob {
     pub collision_names: bool,
     /// Additional pages from an all-artboards Bridge request (sheet submits one job per card).
     pub additional: Vec<varos_raster::export::Asset>,
+    // ---- Lane C ----
+    pub svg_options: varos_core::svg::options::Options,
+    pub additional_jobs: Vec<ScreenJob>,
 }
 
 /// A shared cancel flag (one per export job). Two flags are equal only when they are the SAME flag.
@@ -505,7 +508,8 @@ pub fn durability_note(report: &mut varos_core::ExportReport, path: &Path, reaso
 /// Encode once through the shared library; honour cancellation through the durable commit boundary.
 fn execute_screen(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool) -> FileDone {
     let extra = std::mem::take(&mut screen.additional);
-    if extra.is_empty() {
+    let additional_jobs = std::mem::take(&mut screen.additional_jobs);
+    if extra.is_empty() && additional_jobs.is_empty() {
         return execute_screen_one(screen, disk, guarded);
     }
     let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -517,6 +521,7 @@ fn execute_screen(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool)
         page.asset = asset;
         jobs.push(page);
     }
+    jobs.extend(additional_jobs);
     let mut names = std::collections::HashSet::new();
     if jobs.iter().any(|j| !names.insert(j.job.dest.clone()) || disk.exists(&j.job.dest)) {
         return FileDone::Exported(ExportDone {
@@ -588,6 +593,14 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
         } else {
             varos_raster::export::encode(&screen.asset, &screen.options, screen.job.cancel.flag())
         };
+        // ---- Lane C ----
+        let encoded = encoded.and_then(|mut output| {
+            if screen.options.format == varos_raster::export::Format::Svg && screen.svg_options != Default::default() {
+                let svg = std::str::from_utf8(&output.bytes).map_err(|e| e.to_string())?;
+                output.bytes = screen.svg_options.apply(svg)?.into_bytes();
+            }
+            Ok(output)
+        });
         let output = match encoded {
             Ok(output) => output,
             Err(reason) => {
@@ -608,11 +621,11 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
                 }
             }
             let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
+            let stem = screen.job.dest.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let mut n = 1;
             while disk.exists(&screen.job.dest) {
                 n += 1;
-                screen.job.dest =
-                    parent.join(varos_raster::export::file_name(&screen.asset.name, "", screen.options.format, n));
+                screen.job.dest = parent.join(varos_raster::export::file_name(&stem, "", screen.options.format, n));
                 if n > 10000 {
                     return (ExportResult::Failed("Too many filename collisions.".into()), output.report);
                 }

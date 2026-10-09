@@ -27,6 +27,8 @@ fn construction_tools(api: &str) -> Value {
             let mut extra = serde_json::Map::new();
             let mut ops = Vec::new();
             crate::select_transform::schemas(&mut extra, &mut ops);
+            // ---- Lane C ----
+            crate::path_advanced::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -104,6 +106,10 @@ fn construction_tools(api: &str) -> Value {
 }
 
 pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
+    // ---- Lane C ----
+    if name == "export_screens" && (args["api"] != "1.2" || args["options"].get("screens").is_none()) {
+        return Err(Error::new("invalid_argument", "export_screens requires API 1.2 and options.screens"));
+    }
     if name == "edit" {
         let edit: Edit =
             serde_json::from_value(args.clone()).map_err(|e| Error::new("invalid_argument", e.to_string()))?;
@@ -528,7 +534,7 @@ pub fn serve<T: Transport>(
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
                         && name != "import_svg"
-                        && !["schema", "list_verbs"].contains(&name)
+                        && !["schema", "list_verbs", "export_screens"].contains(&name)
                         && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
                             .contains(&name)
@@ -643,6 +649,7 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
                 "import_svg",
                 "export_svg",
                 "export_raster",
+                "export_screens",
                 "save_template",
                 "new_from_template",
                 "window_memory",
@@ -898,6 +905,15 @@ pub fn tools_for(api: &str) -> Value {
     }
     let mut out = full_tools_for(api);
     if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows
+            .iter_mut()
+            .filter(|r| matches!(r["name"].as_str(), Some("export_svg" | "export_raster" | "export_screens")))
+        {
+            row["inputSchema"]["properties"]["options"] =
+                json!({"type":"object","description":"Call schema API 1.2 for SVG/screens options."});
+        }
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
         if let Some(edit) = rows.iter_mut().find(|row| row["name"] == "edit") {
             let root = edit["inputSchema"].clone();
             let mut alternatives = Vec::new();
@@ -1116,8 +1132,9 @@ pub fn stroke_style_schema() -> Value {
 
 fn append_export_tools(result: &mut Value) {
     let Some(list) = result.get_mut("tools").and_then(Value::as_array_mut) else { return };
-    for name in ["export_svg", "export_raster"] {
+    for name in ["export_svg", "export_raster", "export_screens"] {
         let mut properties = json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer","minimum":0},"path":{"type":"string"},"scope":{"type":"string","description":"all_visible_artboards, whole_board, artwork_bounds, selection or artboard:N"}});
+        properties["options"] = crate::path_advanced::export_schema(name);
         if name == "export_raster" {
             properties["format"] = json!({"enum":["png","jpeg","webp","tiff"],"default":"png"});
             properties["scale"] = json!({"type":"number","exclusiveMinimum":0,"maximum":64,"default":1});

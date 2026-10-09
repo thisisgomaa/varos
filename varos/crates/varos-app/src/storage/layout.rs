@@ -63,6 +63,8 @@ pub struct ExportPreferences {
     pub transparent: bool,
     pub quality: u8,
     pub advanced: bool,
+    // ---- Lane C ----
+    pub screen_settings: varos_raster::screens::Advanced,
 }
 impl Default for ExportPreferences {
     fn default() -> Self {
@@ -78,6 +80,7 @@ impl Default for ExportPreferences {
             transparent: true,
             quality: 90,
             advanced: false,
+            screen_settings: Default::default(),
         }
     }
 }

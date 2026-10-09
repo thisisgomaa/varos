@@ -910,6 +910,8 @@ fn command_rows(ui: &mut egui::Ui, id: SessionId, cmds: &mut Vec<AppCommand>) ->
                         MenuCmd::View(s) => Some(AppCommand::View(id, s)),
                         MenuCmd::Selection(s) => Some(AppCommand::Selection(id, s)),
                         MenuCmd::Object(s) => Some(AppCommand::Object(id, s)),
+                        // ---- Lane C ----
+                        MenuCmd::LaneC(name) => Some(AppCommand::PathMenu(id, name)),
                         MenuCmd::Key(k) => match (k.code, k.shift, k.alt) {
                             (K::KeyA, false, false) => Some(AppCommand::Selection(id, S::All)),
                             (K::KeyA, true, false) => Some(AppCommand::Selection(id, S::Deselect)),

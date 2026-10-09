@@ -193,6 +193,9 @@ pub(crate) fn write_pages_counted(
     model: Option<&str>,
     cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, usize), ExportError> {
+    // ---- Lane C ----
+    let resolved = varos_core::live_corners::document(doc);
+    let doc = &resolved;
     let mut stroke_budget = varos_core::stroke::evaluate::StrokeBudget::default();
     for p in &doc.paths {
         if !p.stroke_style.is_default() {

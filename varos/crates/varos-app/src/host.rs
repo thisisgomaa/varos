@@ -73,7 +73,7 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
         FileCmd::Print => AppCommand::Print(active?),
-        FileCmd::New => AppCommand::NewBoard,
+        FileCmd::New => AppCommand::ShowNewDocument,
         FileCmd::DocumentSetup => AppCommand::DocumentSetup(active?),
         FileCmd::DocumentInfo => AppCommand::DocumentInfo(active?),
         FileCmd::SaveTemplate => AppCommand::SaveTemplate(active?),
@@ -411,6 +411,7 @@ pub enum MenuRoute {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> {
     Some(match cmd {
+        MenuCmd::LaneC(name) => MenuRoute::App(AppCommand::PathMenu(active?, name)),
         MenuCmd::Slice4a(name) => MenuRoute::Slice4a(name),
         MenuCmd::View(s) => MenuRoute::App(AppCommand::View(active?, s)),
         MenuCmd::TogglePasteRemembersLayers => MenuRoute::App(AppCommand::TogglePasteRemembersLayers),
@@ -892,7 +893,7 @@ mod tests {
     #[test]
     fn to_app_command_targets_the_active_tab() {
         let a = Some(ID);
-        assert_eq!(to_app_command(FileCmd::New, a), Some(AppCommand::NewBoard));
+        assert_eq!(to_app_command(FileCmd::New, a), Some(AppCommand::ShowNewDocument));
         assert_eq!(to_app_command(FileCmd::Open, a), Some(AppCommand::OpenDialog));
         assert_eq!(to_app_command(FileCmd::Save, a), Some(AppCommand::Save(ID)));
         assert_eq!(to_app_command(FileCmd::SaveAs, a), Some(AppCommand::SaveAs(ID)));

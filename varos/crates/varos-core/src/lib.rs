@@ -17,6 +17,10 @@ pub mod model;
 pub mod planar;
 pub mod scene;
 pub mod stroke;
+// ---- Lane C ----
+pub mod live_corners;
+pub mod new_document;
+pub mod path_advanced;
 pub mod svg;
 pub mod tools;
 pub mod units;
