@@ -661,10 +661,13 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             if name == "describe" {
                 if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
                     fields.push(json!("stroke_style"));
+                    fields.push(json!("text"));
                 }
             }
             if name == "edit" {
                 let schema = &mut tool["inputSchema"];
+                // ---- Lane G ----
+                crate::text::register(schema);
                 schema["$defs"]["trace_rgba"] = object(
                     json!({"verb":{"const":"trace_rgba"},"rgba":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}},"width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1},"options":{"type":"object","description":"API 1.2 only: TraceOptions; mode BlackWhite, Grayscale, or {Color:{colors:1..255}}; fidelity/corners 0..100, threshold 0..255, noise_px, ignore_white"}}),
                     &["verb", "rgba", "width", "height"],
@@ -959,6 +962,8 @@ fn core_verb(verb: &str) -> bool {
 fn verb_description(verb: &str) -> String {
     match verb {
         "view" => "Outline, pixel preview/snap, Navigator, screen modes and canvas preferences".into(),
+        "add_text" => "Create editable point or area text with an exact font snapshot".into(),
+        "set_text" => "Replace text runs, frame or paragraph settings in one undo batch".into(),
         "clip" => "Create a clipping group".into(),
         "release_clip" => "Release a clipping group".into(),
         "pathfinder" => "Combine paths with a Boolean operation".into(),

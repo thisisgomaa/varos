@@ -228,6 +228,18 @@ pub enum Operation {
     DrawingOptions {
         options: varos_core::drawing::Options,
     },
+    // ---- Lane G ----
+    AddText {
+        text: varos_core::text::TextBox,
+        #[serde(default)]
+        parent: Option<String>,
+        #[serde(default)]
+        local: Option<String>,
+    },
+    SetText {
+        node: String,
+        text: varos_core::text::TextBox,
+    },
     Pathfinder {
         ids: Vec<String>,
         operation: String,
@@ -568,7 +580,9 @@ impl Operation {
 
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::ToolOptions { .. }
+            Self::AddText { .. }
+            | Self::SetText { .. }
+            | Self::ToolOptions { .. }
             | Self::TraceRgba { .. }
             | Self::DocumentSetup { .. }
             | Self::AddShape { .. }

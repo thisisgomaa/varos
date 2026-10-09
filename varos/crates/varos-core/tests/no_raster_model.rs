@@ -47,6 +47,7 @@ fn serde_document_node_path_have_no_byte_blobs() {
     let mut defs = HashMap::new();
     for source in [
         include_str!("../src/model.rs"),
+        include_str!("../src/text.rs"),
         include_str!("../src/geom.rs"),
         include_str!("../src/units.rs"),
         include_str!("../src/stroke.rs"),

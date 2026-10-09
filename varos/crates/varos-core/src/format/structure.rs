@@ -16,6 +16,12 @@ use std::collections::{HashMap, HashSet};
 /// required to be unique (R10) — they only feed the id headroom.
 pub fn check_structure(doc: &Document, limits: &Limits) -> Result<(), LoadError> {
     check_counts(doc, limits)?;
+    // ---- Lane G ----
+    crate::text::validate_document(doc).map_err(|reason| LoadError::Malformed {
+        line: 0,
+        column: 0,
+        detail: reason,
+    })?;
 
     // ── ids unique within each kind ──
     let mut path_ids: HashSet<u32> = HashSet::with_capacity(doc.paths.len());
@@ -228,6 +234,9 @@ pub(crate) fn max_used_id(doc: &Document) -> u32 {
         for a in p.anchors.iter().chain(p.holes.iter().flatten()) {
             m = m.max(a.id);
         }
+    }
+    for text in &doc.text_boxes {
+        m = m.max(text.id);
     }
     for n in &doc.nodes {
         m = m.max(n.id);

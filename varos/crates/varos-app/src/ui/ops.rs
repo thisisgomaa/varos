@@ -60,6 +60,7 @@ fn stroke_targets(ed: &mut Editor, change: impl Fn(&mut varos_core::stroke::Stro
 }
 
 pub(crate) enum Op {
+    Text(varos_core::text::TextBox),
     View(varos_core::editor::view_commands::ViewAction),
     Zoom(f32),
     DocumentSetup(EditCommand),
@@ -225,6 +226,7 @@ pub(crate) fn apply_picker_frame(
 pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
     for op in ops {
         match op {
+            Op::Text(text) => ed.execute_ui(EditCommand::SetText { id: text.id, text }),
             Op::View(action) => ed.execute_ui(EditCommand::View(action)),
             Op::Zoom(value) => ed.execute_ui(EditCommand::ZoomPercent(value)),
             Op::Tool(t) => ed.set_tool(t),

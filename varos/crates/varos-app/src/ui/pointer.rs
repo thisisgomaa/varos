@@ -1,6 +1,9 @@
 use super::Ui;
 
 impl Ui {
+    pub fn text_field_focused(&self) -> bool {
+        self.ctx.egui_wants_keyboard_input()
+    }
     /// The background box tree is chrome except for the Board's canvas hole.
     /// Floating layers (control bar, menus, cards) always own their area.
     pub fn wants_pointer(&self) -> bool {
