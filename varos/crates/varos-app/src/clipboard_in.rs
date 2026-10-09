@@ -48,6 +48,12 @@ pub fn capture(editor: &Editor, board: &mut dyn Pasteboard) -> Result<Option<Sna
         return Err("Clipboard changed during snapshot".into());
     }
     if let Some(bytes) = snapshot.find("org.varos.clipboard") {
+        // Our own Copy publishes `serde_json::to_vec(clipboard)`; compare those exact bytes first. A
+        // `Value` comparison alone rejects our own copy whenever an f32 is not exactly representable
+        // (f32 -> shortest decimal -> f64 differs from f32 -> f64), e.g. any 12.3 coordinate.
+        if serde_json::to_vec(editor.clipboard()).map_err(|e| e.to_string())? == bytes {
+            return Ok(None);
+        }
         let trusted = serde_json::to_value(editor.clipboard()).map_err(|e| e.to_string())?;
         let supplied: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         if supplied == trusted {
@@ -200,5 +206,48 @@ mod tests {
         assert!(stage(&editor, &mut fake, ImportOptions::default()).unwrap().is_none());
         fake.snapshot.flavours[0].1 = b"{}".to_vec();
         assert!(stage(&editor, &mut fake, ImportOptions::default()).is_err());
+    }
+    /// Own Copy of ordinary artwork (non-dyadic f32 coordinates/colours) must paste as the trusted clipboard.
+    #[test]
+    fn own_path_copy_with_fractional_coordinates_is_trusted() {
+        let mut editor = Editor::new();
+        editor
+            .try_execute(EditCommand::AddShape {
+                kind: varos_core::model::ShapeKind::Rect,
+                bounds: [10.1, 20.3, 40.7, 50.9],
+                parent: None,
+                fill: Some([0.2, 0.4, 0.6, 1.]),
+                stroke: None,
+                stroke_width: 1.,
+                opacity: 1.,
+                name: None,
+            })
+            .unwrap();
+        let id = editor.doc.paths[0].id;
+        editor.objsel.insert(id);
+        editor.try_execute(EditCommand::Copy).unwrap();
+        let flavours = crate::os_clipboard::build(&editor.doc, editor.clipboard()).unwrap();
+        let snapshot =
+            Snapshot { generation: 3, flavours: flavours.into_iter().map(|f| (f.kind.into(), f.bytes)).collect() };
+        let mut fake = Fake { snapshot, generation: 3 };
+        assert!(stage(&editor, &mut fake, ImportOptions::default()).unwrap().is_none());
+    }
+    /// Integration (w2 text x import): copying editable text (non-dyadic sizes/positions) publishes an
+    /// internal flavour that Paste recognises as this app's own clipboard, so the editable source pastes.
+    #[test]
+    fn own_text_copy_round_trips_as_trusted_internal_clipboard() {
+        let mut editor = Editor::new();
+        let mut text = varos_text_layout::default_text("Varos text", [12.3, 45.7]).unwrap();
+        text.runs[0].style.size = 13.7;
+        text.runs[0].style.letter_spacing = 0.1;
+        let id = editor.try_execute_created(EditCommand::AddText { text, parent: None }).unwrap();
+        editor.objsel.insert(id);
+        editor.try_execute(EditCommand::Copy).unwrap();
+        assert!(!editor.clipboard().is_empty());
+        let flavours = crate::os_clipboard::build(&editor.doc, editor.clipboard()).unwrap();
+        let snapshot =
+            Snapshot { generation: 3, flavours: flavours.into_iter().map(|f| (f.kind.into(), f.bytes)).collect() };
+        let mut fake = Fake { snapshot, generation: 3 };
+        assert!(stage(&editor, &mut fake, ImportOptions::default()).unwrap().is_none());
     }
 }
