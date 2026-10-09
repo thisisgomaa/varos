@@ -329,6 +329,8 @@ impl Lifecycle<'_> {
             // ---- Lane E ----
             AppCommand::SetCanvasColor(_)
             // ---- Lane F ----
+            // ---- Lane G ----
+            | AppCommand::Release(_)
             | AppCommand::Phase9(_) | AppCommand::ApplyPreferences(..) | AppCommand::ApplyShortcuts(..) | AppCommand::HistoryJump(..) | AppCommand::RecordAction(..) | AppCommand::CancelActionRecording(_) | AppCommand::ReplayAction(..) | AppCommand::SaveAction(_) | AppCommand::LoadAction | AppCommand::ReconcilePreferences
             | AppCommand::Selection(..)
             | AppCommand::Object(..)

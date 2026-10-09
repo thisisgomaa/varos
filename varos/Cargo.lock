@@ -4266,6 +4266,7 @@ dependencies = [
 name = "varos-app"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "chrono",
  "egui",
  "egui-wgpu",
@@ -4313,6 +4314,7 @@ dependencies = [
  "libc",
  "png 0.17.16",
  "proc-macro2",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.11.0",

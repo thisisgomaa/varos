@@ -546,6 +546,8 @@ pub fn serve<T: Transport>(
             "tools/call"
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
+                        // ---- Lane G ----
+                        && name != "release"
                         && name != "import_svg"
                         && name != "import_file"
                         && name != "import_clipboard"
@@ -1190,6 +1192,10 @@ fn prune_definitions(schema: &mut Value) {
 }
 
 pub fn schema(tool: &str, verb: Option<&str>) -> Result<Value, Error> {
+    // ---- Lane G: discovery-only; no inline tools/list bytes ----
+    if tool == "release" {
+        return crate::release::schema(verb);
+    }
     let table = full_tools_for("1.2");
     let root = table["tools"]
         .as_array()
@@ -1262,6 +1268,8 @@ pub fn list_verbs() -> Value {
             }
         }
     }
+    // ---- Lane G: progressive disclosure ----
+    tools.push(crate::release::discovery());
     json!({"api":"1.2","groups":[{"tool":"edit","group":"core","enabled":false,"disabled_reason":"needs_arguments","verbs":core},{"tool":"edit","group":"extended","enabled":false,"disabled_reason":"needs_arguments","verbs":extended},{"tool":"image_action","group":"images","verbs":crate::images::ACTIONS.iter().map(|name|json!({"name":name,"description":format!("Image operation {name}; call schema with tool image_action and verb {name}")})).collect::<Vec<_>>()},{"group":"tools","verbs":tools}]})
 }
 

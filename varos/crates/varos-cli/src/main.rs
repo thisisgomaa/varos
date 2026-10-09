@@ -1,10 +1,12 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
+// ---- Lane G ----
 mod colour;
 // ---- Lane A ----
 mod appearance;
 // ---- w3-cmyk ----
 mod colour_management;
 mod document;
+mod release;
 // ---- Lane E ----
 mod images;
 mod view_depth;
@@ -93,6 +95,12 @@ fn main() {
     }
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
+        // ---- Lane G ----
+        Some("verify-update") => {
+            let (value, code) = response(|| release::verify(args.collect()).map_err(Failure::from));
+            println!("{value}");
+            std::process::exit(code);
+        }
         Some("image") => {
             let (value, code) = response(|| images::run(args.collect()).map_err(Failure::from));
             println!("{value}");

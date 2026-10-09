@@ -258,6 +258,8 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
 
 /// The rows slice 0.6 added after the split; everything else is the pre-split table.
 const ADDED_AFTER_SPLIT: &[&str] = &[
+    // ---- Lane G: new application row is outside the historical pure-move fixture ----
+    "app.updates",
     "view.outline",
     "view.pixelpreview",
     "view.snappixel",

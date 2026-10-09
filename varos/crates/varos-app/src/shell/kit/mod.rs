@@ -207,6 +207,18 @@ fn paint_control(
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, c.selected, accessible_label.as_str())
         });
+        // ---- Lane G ----
+        super::accessibility::emit(
+            ui,
+            response.id,
+            if detail.is_some() { accesskit::Role::ListBoxOption } else { accesskit::Role::Button },
+            c.label,
+            detail,
+            enabled,
+        );
+        if detail.is_some() {
+            ui.ctx().accesskit_node_builder(response.id, |node| node.set_selected(c.selected));
+        }
         let activated = enabled && activation(ui, &response, c.pointer_only);
         let help = reason.unwrap_or(c.help);
         let response = if help.is_empty() {
@@ -242,7 +254,9 @@ fn activation(ui: &Ui, response: &Response, pointer_only: bool) -> bool {
     let pointer = response.clicked_by(PointerButton::Primary);
     let keyboard_or_accessibility =
         !pointer_only && ((response.has_focus() && first_press) || (!activation_key && response.clicked()));
-    pointer || keyboard_or_accessibility
+    // ---- Lane G: pointer-only hosts still accept assistive activation ----
+    let accessibility = ui.input(|i| i.has_accesskit_action_request(response.id, accesskit::Action::Click));
+    pointer || accessibility || keyboard_or_accessibility
 }
 
 /// How an icon button shows its state. Owner decision (UI_SYSTEM "on states"): a tool is an azure
@@ -331,6 +345,18 @@ pub fn icon_button_sized(
         }
         response
             .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, block || on, help.as_str()));
+        // ---- Lane G ----
+        let role = match state {
+            IconState::Toggle(_) => accesskit::Role::CheckBox,
+            IconState::Tool(_) => accesskit::Role::RadioButton,
+            _ => accesskit::Role::Button,
+        };
+        super::accessibility::emit(ui, response.id, role, tooltip, None, enabled);
+        ui.ctx().accesskit_node_builder(response.id, |node| {
+            if matches!(state, IconState::Toggle(_) | IconState::Tool(_)) {
+                node.set_toggled(if block || on { accesskit::Toggled::True } else { accesskit::Toggled::False });
+            }
+        });
         let activated = enabled && activation(ui, &response, false);
         let response = response
             .on_hover_ui(|ui| {
@@ -349,11 +375,31 @@ fn elided(ui: &Ui, value: &str, font: egui::FontId, _color: Color32, width: f32)
 }
 
 pub fn section_heading(ui: &mut Ui, label: &str) -> Response {
-    text::chrome_label(ui, label, TextStyle::Heading.resolve(ui.style()), t::TEXT)
+    let response = text::chrome_label(ui, label, TextStyle::Heading.resolve(ui.style()), t::TEXT);
+    // ---- Lane G (integration w3: spoken name = the catalog-resolved label the kit paints) ----
+    super::accessibility::emit(
+        ui,
+        response.id,
+        accesskit::Role::Heading,
+        &crate::i18n::translate(ui.ctx(), label),
+        None,
+        true,
+    );
+    response
 }
 
 pub fn notice(ui: &mut Ui, message: &str) -> Response {
-    text::chrome_label(ui, message, TextStyle::Body.resolve(ui.style()), t::MUTED)
+    let response = text::chrome_label(ui, message, TextStyle::Body.resolve(ui.style()), t::MUTED);
+    // ---- Lane G (integration w3: spoken name = the catalog-resolved label the kit paints) ----
+    super::accessibility::emit(
+        ui,
+        response.id,
+        accesskit::Role::Label,
+        &crate::i18n::translate(ui.ctx(), message),
+        None,
+        true,
+    );
+    response
 }
 
 /// A kit menu entry: a hand-painted row or a hairline separator.
@@ -517,6 +563,8 @@ pub fn menu_with(ctx: &egui::Context, owner: Id, entries: &[MenuEntry<'_>], look
         .fold(0.0, f32::max);
     let width = (widest + look.pad_x * 2.0).max(look.min_width);
     let area = egui::Area::new(menu_key()).order(egui::Order::Foreground).fixed_pos(state.pos).show(ctx, |ui| {
+        // ---- Lane G ----
+        super::accessibility::emit(ui, ui.id(), accesskit::Role::Menu, "Menu", None, true);
         egui::Frame::new()
             .fill(t::SURFACE)
             .stroke(Stroke::new(t::KIT_STROKE, t::LINE2))
@@ -600,7 +648,10 @@ fn menu_row_with(ui: &mut Ui, c: Control<'_>, look: &MenuLook) -> ControlRespons
     }
     let label = reason.map_or_else(|| c.label.to_string(), |r| format!("{} — {r}", c.label));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label.as_str()));
-    let activated = enabled && (response.clicked_by(PointerButton::Primary) || (!c.pointer_only && response.clicked()));
+    // ---- Lane G ----
+    super::accessibility::emit(ui, response.id, accesskit::Role::MenuItem, c.label, None, enabled);
+    // ---- Lane G ----
+    let activated = enabled && activation(ui, &response, c.pointer_only);
     ControlResponse { response, activated }
 }
 
@@ -629,6 +680,8 @@ pub fn text_dropdown(
     let enabled = !entries.is_empty();
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 26.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, value));
+    // ---- Lane G ----
+    super::accessibility::emit(ui, response.id, accesskit::Role::ComboBox, tooltip, Some(value), enabled);
     ui.painter().rect(
         rect,
         t::r_ctrl(),
@@ -657,5 +710,15 @@ pub fn text_dropdown(
 
 /// Informational text with explicit kit typography and ink.
 pub fn text(ui: &mut Ui, text: &str, font: egui::FontId, ink: Color32) -> Response {
-    self::text::chrome_label(ui, text, font, ink)
+    let response = self::text::chrome_label(ui, text, font, ink);
+    // ---- Lane G (integration w3: spoken name = the catalog-resolved label the kit paints) ----
+    super::accessibility::emit(
+        ui,
+        response.id,
+        accesskit::Role::Label,
+        &crate::i18n::translate(ui.ctx(), text),
+        None,
+        true,
+    );
+    response
 }

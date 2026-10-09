@@ -27,11 +27,22 @@ pub fn focus_ring(painter: &Painter, rect: Rect, radius: u8, gap: Color32) {
     painter.rect_stroke(ring, r, Stroke::new(t::KIT_FOCUS_STROKE, t::ACCENT), StrokeKind::Outside);
 }
 
+/// Chrome control: the accessible name is the catalog-resolved label, i.e. exactly what the Arabic
+/// kit text path paints (integration w3: one source for painted and spoken labels).
 fn interact(ui: &mut Ui, id: Id, rect: Rect, label: &str, enabled: bool) -> ControlResponse {
+    let name = crate::i18n::translate(ui.ctx(), label).into_owned();
+    interact_named(ui, id, rect, &name, enabled)
+}
+/// Authored names (board names, tags, template rows) are spoken literally, as they are painted.
+fn interact_named(ui: &mut Ui, id: Id, rect: Rect, label: &str, enabled: bool) -> ControlResponse {
     let sense = if enabled { Sense::CLICK } else { Sense::hover() };
     let response = ui.interact(rect, id, sense);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-    let activated = enabled && response.clicked_by(PointerButton::Primary);
+    // ---- Lane G ----
+    super::super::accessibility::emit(ui, id, accesskit::Role::Button, label, None, enabled);
+    let activated = enabled
+        && (response.clicked_by(PointerButton::Primary)
+            || ui.input(|i| i.has_accesskit_action_request(id, accesskit::Action::Click)));
     ControlResponse { response, activated }
 }
 
@@ -181,18 +192,24 @@ pub fn pill_width(label: &Galley, pad: f32) -> f32 {
 /// A tag pill (src.html `.tg`): SURFACE capsule, MUTED 11/500 text. Static.
 pub fn tag_pill(painter: &Painter, rect: Rect, label: Arc<Galley>) {
     painter.rect_filled(rect, t::RCAP, t::SURFACE);
+    // ---- Lane G ----
+    super::super::accessibility::painted_label(painter, rect, &label.job.text);
     painter.shaped_galley(rect.center() - label.size() / 2.0, label, t::MUTED);
 }
 
 /// The "Missing" pill (src.html `.pill-miss`): LINE2 capsule outline, MUTED text. Static.
 pub fn outline_pill(painter: &Painter, rect: Rect, label: Arc<Galley>) {
     painter.rect_stroke(rect, t::RCAP, Stroke::new(t::KIT_STROKE, t::LINE2), StrokeKind::Inside);
+    // ---- Lane G ----
+    super::super::accessibility::painted_label(painter, rect, &label.job.text);
     painter.shaped_galley(rect.center() - label.size() / 2.0, label, t::MUTED);
 }
 
 /// A key chip (src.html `kbd`): LINE2 outline, 3 px corners, TEXT mono label. Static.
 pub fn kbd(painter: &Painter, rect: Rect, label: Arc<Galley>) {
     painter.rect_stroke(rect, t::r_ctrl(), Stroke::new(t::KIT_STROKE, t::LINE2), StrokeKind::Inside);
+    // ---- Lane G ----
+    super::super::accessibility::painted_label(painter, rect, &label.job.text);
     painter.shaped_galley(rect.center() - label.size() / 2.0, label, t::TEXT);
 }
 
@@ -210,6 +227,9 @@ pub fn filter_tab(
     name: &str,
 ) -> ControlResponse {
     let r = interact(ui, id, rect, name, true);
+    // ---- Lane G ----
+    super::super::accessibility::emit(ui, id, accesskit::Role::Tab, name, Some(&count.job.text), true);
+    ui.ctx().accesskit_node_builder(id, |n| n.set_selected(selected));
     let hover = hovered(&r);
     let p = ui.painter();
     let ink = if selected || hover { t::TEXT } else { t::MUTED };
@@ -275,6 +295,19 @@ pub fn segmented_frame(
         let seg = Rect::from_min_size(egui::pos2(x, inner.top()), segment);
         let lift = ((t::KIT_MIN_TARGET - seg.height()) / 2.0).max(0.0);
         let r = interact(ui, id.with(i), seg.expand2(egui::vec2(0.0, lift)), name, true);
+        // ---- Lane G ----
+        super::super::accessibility::emit(
+            ui,
+            id.with(i),
+            accesskit::Role::RadioButton,
+            &crate::i18n::translate(ui.ctx(), name),
+            None,
+            true,
+        );
+        ui.ctx().accesskit_node_builder(id.with(i), |n| {
+            n.set_toggled(if i == selected { accesskit::Toggled::True } else { accesskit::Toggled::False })
+        });
+        let activated = r.activated;
         let is_hot = hovered(&r);
         if i == selected || is_hot {
             ui.painter().rect_filled(
@@ -283,8 +316,8 @@ pub fn segmented_frame(
                 if i == selected { t::TOGGLE_WELL } else { t::HOVER },
             );
         }
-        let response = help.map_or(r.response.clone(), |tips| r.response.shaped_hover_text(tips[i]));
-        if response.clicked_by(PointerButton::Primary) {
+        let _ = help.map_or(r.response.clone(), |tips| r.response.shaped_hover_text(tips[i]));
+        if activated {
             chosen = Some(i);
         }
         rects.push(seg);
@@ -396,7 +429,7 @@ pub struct CardState {
 /// anywhere over the card, including over its own "…" chip. Paints the frame and the well background (BG, top corners 7, LINE
 /// under it); the page paints the content. Returns the card response and whether the "…" chip shows.
 pub fn card(ui: &mut Ui, id: Id, rect: Rect, well: Rect, state: CardState, label: &str) -> (ControlResponse, bool) {
-    let r = interact(ui, id, rect, label, true);
+    let r = interact_named(ui, id, rect, label, true);
     let lit = r.response.contains_pointer() || r.response.is_pointer_button_down_on() || state.menu_open;
     let p = ui.painter();
     p.rect_filled(rect, t::r_box(), if lit { t::ROW_HOVER } else { t::PANEL });
@@ -432,7 +465,7 @@ pub fn more_chip(ui: &mut Ui, id: Id, rect: Rect, open: bool) -> ControlResponse
 
 /// One list-view table row (src.html `.tr.row`): LINE hairline under it, ROW_HOVER on hover/focus.
 pub fn table_row(ui: &mut Ui, id: Id, rect: Rect, focused: bool, label: &str) -> ControlResponse {
-    let r = interact(ui, id, rect, label, true);
+    let r = interact_named(ui, id, rect, label, true);
     let p = ui.painter();
     if hovered(&r) || focused {
         p.rect_filled(rect, CornerRadius::ZERO, t::ROW_HOVER);
@@ -455,7 +488,7 @@ pub fn tag_chip_width(label: &Galley) -> f32 {
 pub fn tag_chip(ui: &mut Ui, id: Id, rect: Rect, label: Arc<Galley>, name: &str) -> ControlResponse {
     let x_center = egui::pos2(rect.right() - t::SB_CHIP_PAD_R - t::SB_CHIP_X / 2.0, rect.center().y);
     // the × is drawn small; its hit target is the kit minimum square around it
-    let r = interact(ui, id, Rect::from_center_size(x_center, egui::Vec2::splat(t::KIT_MIN_TARGET)), name, true);
+    let r = interact_named(ui, id, Rect::from_center_size(x_center, egui::Vec2::splat(t::KIT_MIN_TARGET)), name, true);
     let hover = hovered(&r);
     let p = ui.painter();
     p.rect_filled(rect, t::RCAP, t::SURFACE);

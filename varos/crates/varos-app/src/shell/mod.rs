@@ -4,6 +4,8 @@
 //! [`ShellState::ui`] (they were prototyped in an eframe sandbox, now retired).
 pub mod boxtree;
 pub mod fonts;
+// ---- Lane G ----
+pub mod accessibility;
 pub mod kit;
 #[cfg(test)]
 mod ratchet_tests;

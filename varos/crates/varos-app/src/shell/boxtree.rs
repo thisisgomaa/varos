@@ -714,6 +714,8 @@ impl Behavior<PanelId> for ShellBehavior<'_> {
     }
 
     fn pane_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, pane: &mut PanelId) -> UiResponse {
+        // ---- Lane G ----
+        super::accessibility::emit(ui, ui.id(), accesskit::Role::Pane, pane.title(), None, true);
         let rect = ui.max_rect();
         if pane.is_board() {
             // hosted board = the REAL canvas hole (rulers + hands, wgpu scene showing through);

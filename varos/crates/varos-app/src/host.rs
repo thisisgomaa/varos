@@ -428,6 +428,8 @@ pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> 
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
         MenuCmd::Key(k) => MenuRoute::Key(k),
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
+        // ---- Lane G ----
+        MenuCmd::Release(a) => MenuRoute::App(AppCommand::Release(a)),
         MenuCmd::Phase9(a) => MenuRoute::App(AppCommand::Phase9(a)),
         MenuCmd::ResetLayout => MenuRoute::App(AppCommand::Window(WindowCmd::ResetLayout)),
         MenuCmd::ToggleRail => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleRail)),
