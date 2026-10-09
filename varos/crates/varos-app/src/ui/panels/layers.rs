@@ -123,8 +123,8 @@ pub(crate) fn thumb_key(ed: &Editor, pids_zorder: &[u32]) -> u64 {
         for hole in &path.holes {
             hole.len().hash(&mut state);
         }
-        path.fill.hash(&mut state);
-        path.stroke.hash(&mut state);
+        path.appearance().fill().hash(&mut state);
+        path.appearance().stroke().hash(&mut state);
         hash_f32(path.stroke_width, &mut state);
         hash_f32(path.opacity, &mut state);
         for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
@@ -356,7 +356,8 @@ pub(crate) fn thumb_shapes(ed: &Editor, pids_zorder: &[u32]) -> Vec<ThumbShape> 
                 y1 = y1.max(q[1]);
             }
         }
-        raw.push((rings, p.fill.solid(), p.stroke.solid())); // Paint → the UI snapshot's Option<Rgba>
+        raw.push((rings, p.appearance().fill().solid(), p.appearance().stroke().solid()));
+        // Paint → the UI snapshot's Option<Rgba>
     }
     if raw.is_empty() {
         return vec![];

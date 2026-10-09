@@ -1,3 +1,4 @@
+// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
 //! Provisional headless contracts. No file I/O, UI or renderer dependencies.
 //! Bridge API 0.x spellings are pinned in `EditCommand`'s serde table.
 use crate::{
@@ -779,7 +780,7 @@ pub fn elements(doc: &crate::model::Document, detail: bool) -> BTreeMap<String, 
         let id = format!("path:{}", p.id);
         let n = doc.node_of_path(p.id).and_then(|id| doc.node(id));
         let mut v = json!({"id":id,"kind":"path","name":p.name,"bounds":bounds(doc,&[p.id]),
-            "fill":p.fill,"stroke":{"paint":p.stroke,"width":p.stroke_width},"opacity":p.opacity,
+            "fill":p.appearance().fill(),"stroke":{"paint":p.appearance().stroke(),"width":p.stroke_width},"opacity":p.opacity,
             "hidden":doc.eff_hidden(p.id),"locked":doc.eff_locked(p.id),
             "parent":n.and_then(|n| n.parent).map(|id|format!("node:{id}"))});
         if detail {

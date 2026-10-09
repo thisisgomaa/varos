@@ -86,7 +86,7 @@ fn check_document(doc: &Document) -> Result<(), ExportError> {
             continue;
         }
         let b = control_bbox(doc, pi);
-        let pad = if p.stroke.solid().is_some() { crate::geom::painted_padding(p) } else { 0.0 };
+        let pad = if p.appearance().stroke().solid().is_some() { crate::geom::painted_padding(p) } else { 0.0 };
         let extent = [b.0 - pad, b.1 - pad, b.2 + pad, b.3 + pad];
         if extent.iter().any(|v| !v.is_finite())
             || !(extent[2] - extent[0]).is_finite()
@@ -227,8 +227,8 @@ fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Drawn<'a>> {
     if doc.eff_hidden(p.id) {
         return None;
     }
-    let fill = p.fill.solid().filter(|_| p.anchors.len() >= 3);
-    let stroke = p.stroke.solid().filter(|_| {
+    let fill = p.appearance().fill().solid().filter(|_| p.anchors.len() >= 3);
+    let stroke = p.appearance().stroke().solid().filter(|_| {
         (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty())) && p.stroke_width > 0.0
     });
     if fill.is_none() && stroke.is_none() {
