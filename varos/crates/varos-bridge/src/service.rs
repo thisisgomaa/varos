@@ -441,19 +441,28 @@ impl Service {
                                     if let Some(reference) = value["$ref"].as_str().and_then(|r| r.strip_prefix('#')) {
                                         if let Some(target) = root.pointer(reference) {
                                             let target = standalone(target, root);
-                                            let mut siblings = value.as_object().unwrap().clone();
+                                            let Some(mut siblings) = value.as_object().cloned() else {
+                                                // Preserve an unexpected schema shape without expanding it.
+                                                return value.clone();
+                                            };
                                             siblings.remove("$ref");
                                             if siblings.is_empty() {
                                                 return target;
                                             }
-                                            let mut expanded = standalone(&Value::Object(siblings), root);
-                                            let constraints = expanded
-                                                .as_object_mut()
-                                                .unwrap()
-                                                .entry("allOf")
-                                                .or_insert_with(|| json!([]));
-                                            constraints.as_array_mut().unwrap().push(target);
-                                            return expanded;
+                                            let Value::Object(mut expanded) =
+                                                standalone(&Value::Object(siblings), root)
+                                            else {
+                                                // Keep the reference if expansion cannot preserve its siblings.
+                                                return value.clone();
+                                            };
+                                            let Value::Array(constraints) =
+                                                expanded.entry("allOf").or_insert_with(|| json!([]))
+                                            else {
+                                                // A malformed allOf must remain visible, not be discarded.
+                                                return value.clone();
+                                            };
+                                            constraints.push(target);
+                                            return Value::Object(expanded);
                                         }
                                     }
                                     match value {
