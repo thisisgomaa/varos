@@ -12,3 +12,4 @@ varos-bridge = { path = "../varos-bridge" }
 varos-core = { path = "../varos-core" }
 varos-pdf = { path = "../varos-pdf" }
 varos-raster = { path = "../varos-raster" }
+image = { version = "0.25", default-features = false, features = ["png"] }

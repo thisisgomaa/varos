@@ -294,11 +294,11 @@ pub fn tools() -> Value {
         }
     }
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
-        "capabilities"=>"Negotiate Bridge API 1.0/1.1; export_pdf additionally supports 1.2 reports; local user trust grants every scope. Inspect limits and file mistake-guards.",
+        "capabilities"=>"Negotiate APIs 1.0/1.1/1.2; 1.2 edit adds tracing, export_pdf adds reports. Local user trust grants scopes. Inspect limits and file safeguards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
         "describe"=>"Summary first. fields compose board/object detail; ids scope objects; limit/cursor page objects; since adds net changes or resync_required.",
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
-        "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. API 1.1 supports creation tuples; use object operations if your client does not support prefixItems. Page verbs use persistent artboard:N ids.",
+        "edit"=>"Atomic explicit-target batch; one undo; human selection retained. API 1.1/1.2: defaults, IDs receipts, tuples, repeat; use object operations without prefixItems. API 1.2 trace_rgba: pixel paths/holes. Page IDs: artboard:N.",
         "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",
         "save"|"save_as"|"export_pdf"=>"Queue revision-pinned file work. Returns accepted and ticket; poll request_status. Allowed: fresh .vrs/.pdf names under passwd home, /Volumes/<volume>/, ~/Library/Mobile Documents (iCloud Drive), or ~/Library/CloudStorage/<provider>/ (Dropbox/Google Drive/OneDrive). Refused: /tmp, /private/var, other ~/Library, system roots, running app bundle, dot components and existing files. Network volumes unsupported. Parents must exist and canonical containment is rechecked. FAT32/exFAT use macOS exclusive-rename fallback after linkat; real volumes unverified.",
         "history"=>"One shared undo/redo entry. Local agents need no approval; revision and idempotency checks still apply.",
@@ -514,6 +514,14 @@ pub fn tools_for(api: &str) -> Value {
             }
             if name == "edit" {
                 let schema = &mut tool["inputSchema"];
+                schema["$defs"]["trace_rgba"] = object(
+                    json!({"verb":{"const":"trace_rgba"},"rgba":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}},"width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1},"options":{"type":"object","description":"API 1.2 only: TraceOptions; mode BlackWhite, Grayscale, or {Color:{colors:1..255}}; fidelity/corners 0..100, threshold 0..255, noise_px, ignore_white"}}),
+                    &["verb", "rgba", "width", "height"],
+                );
+                schema["$defs"]["operation"]["anyOf"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"$ref":"#/$defs/trace_rgba"}));
                 schema["$defs"]["stroke_style"] = style.clone();
                 schema["$defs"]["op_key"] = json!({"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}]});
                 let shared_ids = schema["$defs"]["move"]["properties"]["ids"].clone();
@@ -614,17 +622,17 @@ pub fn tools_for(api: &str) -> Value {
     if let Some(tools) = out["tools"].as_array_mut() {
         for tool in tools.iter_mut() {
             let description = match tool["name"].as_str() {
-                Some("capabilities") => Some("Negotiate APIs, limits and locally granted scopes."),
-                Some("list_boards") => Some("List authorized open boards."),
-                Some("describe") => Some("Inspect scoped, paged details or revision changes."),
-                Some("select") => Some("Replace selection without a document undo step."),
-                Some("history") => Some("Shared undo/redo with revision and idempotency checks."),
-                Some("request_status") => Some("Poll this client's retained request receipt."),
-                Some("snapshot") => Some("Revision-pinned board/page PNG; maximum 1024 pixels."),
-                Some("edit") => Some("Atomic explicit-target batch; one undo; retains selection. API 1.1 tuples or object operations; page verbs use persistent artboard:N IDs."),
-                Some("save") => Some("Queue revision-pinned work; returns accepted/ticket, poll request_status. Fresh .vrs/.pdf only under passwd home, /Volumes/<volume>/ or iCloud/CloudStorage providers. Reject /tmp, /private/var, other ~/Library, system roots, app bundle, dot components, existing files and network volumes. Existing parents and canonical containment required. FAT32/exFAT: exclusive-rename fallback after linkat; real volumes unverified."),
+                Some("capabilities") => Some("APIs, limits, local scopes."),
+                Some("list_boards") => Some("Authorized open boards."),
+                Some("describe") => Some("Scoped/paged details or revision changes."),
+                Some("select") => Some("Replace selection; no document undo."),
+                Some("history") => Some("Undo/redo; revision + idempotency checks."),
+                Some("request_status") => Some("Poll retained client receipt."),
+                Some("snapshot") => Some("Pinned board/page PNG; max 1024px."),
+                Some("edit") => Some("Atomic explicit-target batch; one undo; selection retained. Tuples/object ops, repeat, defaults, IDs receipts; trace_rgba uses pixel coordinates. Page IDs: artboard:N."),
+                Some("save") => Some("Queue revision-pinned work; accepted/ticket, poll request_status. Fresh .vrs/.pdf under passwd home, /Volumes/<volume>/, iCloud/CloudStorage only. Deny /tmp, /private/var, other ~/Library, system roots, app bundle, dot components, existing files, network volumes. Require existing parents + canonical containment. FAT32/exFAT: exclusive rename after linkat; real volumes unverified."),
                 Some("save_as" | "export_pdf") => {
-                    Some("Queue revision-pinned file work; poll request_status. All save safeguards apply.")
+                    Some("Pinned file work; poll request_status; save safeguards apply.")
                 }
                 _ => None,
             };
@@ -701,7 +709,7 @@ pub fn tools_for(api: &str) -> Value {
             count_constraints(schema, &mut counts);
             let mut next = 0;
             for (key, (count, original)) in counts {
-                let name = format!("merged{next}");
+                let name = format!("{next:x}");
                 let reference = json!({"$ref":format!("#/$defs/{name}")});
                 if count > 1 && count * key.len() > key.len() + name.len() + 5 + count * reference.to_string().len() {
                     share(schema, &original, &reference);

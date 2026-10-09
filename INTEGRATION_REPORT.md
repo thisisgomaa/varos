@@ -42,3 +42,19 @@
 - Merge-only repair in `varos/crates/varos-bridge/src/mcp.rs`: shared equivalent discriminator/type/repeat/property schemas and duplicate definitions, retaining definition aliases and every verb/constraint; compacted opt-in descriptions. API 1.2 tools/list is 23,979/24,000 bytes; all 218 references resolve. Canonical painted_extent and geom/kurbo.rs unchanged; no duplicate shortcut/command/setting/store/adapter introduced.
 - Validation: fmt and offline -j 3 workspace/all-targets build PASS; 16 targeted core/Bridge/app/CLI invocations cover both lanes plus geometry/stroke regressions: 201 passed, 0 failed, 4 existing ignored; markers absent, both-side report/PLAN/NOTICE lines retained, git diff --check PASS. Evidence: /tmp/g2-tools-build.log, /tmp/g2-tools-test-results.json, /tmp/g2-tools-*.log and /tmp/g2-tools-schema.json.
 - Deferred merge work: none. No Git write commands used; moderator owns staging and commit.
+
+## feat/p3-trace
+- `REPORT.md`: retained both complete lane reports, all findings, gates, limitations and historical notes.
+- `docs/PLAN.md`: retained every existing progress row and added Image Trace; no PLAN/GATE_LOG line dropped.
+- `varos/NOTICE`: retained all geometry/kurbo, stroke, planar/construction, transform and trace attribution rows.
+- `varos/crates/varos-bridge/src/design.rs`: retained transform/local resolution and target budgets; added checked trace insertion and affected-ID reporting to the same atomic batch path.
+- `varos/crates/varos-bridge/src/dto.rs`: one Operation enum retains construction/transform/stroke and TraceRgba; unified target-free routing for ToolOptions and TraceRgba.
+- `varos/crates/varos-bridge/src/economy.rs`: shared edit_enabled gate preserves 1.1/1.2 normalization; one explicit 1.2 verb gate includes stroke, construction, transform and trace; retained op aliases and repeat limits.
+- `varos/crates/varos-bridge/src/service.rs`: retained broad 1.2 support, v5/stroke schemas and construction/transform capabilities; advertised trace/repeat once, retained trace metadata, economy defaults, preflight and naming.
+- `varos/crates/varos-bridge/tests/contracts.rs`: reconstructed interleaved functions; every original test retained exactly once, including stroke and trace atomicity/rollback/economy regressions.
+- `varos/crates/varos-bridge/tests/export_reports.rs`: unified equivalent API advertisement tests into one superset assertion including select, edit, capabilities and export_pdf.
+- `varos/crates/varos-core/src/bridge.rs`: retained every stroke/construction/transform validation arm and added trace check_insert preflight.
+- `varos/crates/varos-core/src/command.rs`: retained every transform command and execution arm; added one InsertTracedPaths command with checked allocation/remapping and one undoable insertion.
+- `varos/crates/varos-core/src/lib.rs`: exported both select_transform and trace once. Canonical painted_extent and geom/kurbo.rs unchanged; no duplicate shortcut, command, setting, store or adapter introduced.
+- Merge-only support repair `varos/crates/varos-bridge/src/mcp.rs`: moved trace schema into the explicit 1.2 projection; retained every verb/constraint/public operation definition, removed a duplicate capability API assignment, shortened private shared references and descriptions; default and 1.2 size ratchets pass.
+- Validation: fmt + offline -j 3 workspace/all-targets build PASS; 15 targeted core/Bridge/CLI/app invocations PASS (240 passed, 0 failed, 4 existing ignored); markers absent, all report/PLAN/NOTICE rows and contract tests retained, git diff --check PASS. Evidence: /tmp/g2-trace-build.log, /tmp/g2-trace-test-results.json, /tmp/g2-trace-*.log. Deferred merge work: none. No Git write commands used; moderator owns staging/commit.

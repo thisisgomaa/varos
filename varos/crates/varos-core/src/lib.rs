@@ -32,3 +32,4 @@ pub mod export;
 pub use export::{ExportNote, ExportReport};
 
 pub mod select_transform;
+pub mod trace;

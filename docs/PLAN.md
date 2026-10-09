@@ -176,3 +176,4 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 4D cutting tools | implemented (provisional UI, owner design review pending) | uncommitted Lane K | Scissors C, Knife, Eraser Shift+E, Divide Objects Below; native hand test pending |
 
 | 4A select/transform (Lane I) | implemented (provisional UI, owner design review pending) | uncommitted `feat/p4-tools` | Reflect/Shear/Free Transform shear; preview + Copy sheets; Transform Each; Wand/Eyedropper options; isolation; Layers family; API 1.2 + CLI. Align/key object belongs to 0.8; distort/perspective deferred. Native hand test and independent moderator review pending. |
+| 3.8 Image Trace engine | implemented (engine only; owner design review pending) | uncommitted Lane M | Pure RGBA8 → filled paths/holes + report; PNG CLI and API 1.2 trace_rgba. Provisional UI/presets deferred: this lane is core engine only; image object/shared fitter absent at base. |

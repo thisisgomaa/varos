@@ -3244,3 +3244,118 @@ fn stroke_scene_failure_is_a_snapshot_error_for_board_and_page() {
         assert!(error.reason.contains("path"));
     }
 }
+
+#[test]
+fn trace_rgba_is_opt_in_atomic_and_preserves_holes() {
+    let rgba: Vec<u8> = (0..8)
+        .flat_map(|y| {
+            (0..8)
+                .flat_map(move |x| if (2..6).contains(&x) && (2..6).contains(&y) { [255u8; 4] } else { [0, 0, 0, 255] })
+        })
+        .collect();
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let before = serde_json::to_value(&h.editor.doc).unwrap();
+    for api in ["1.0", "1.1"] {
+        let rev = h.editor.rev;
+        let error = varos_bridge::mcp::decode_tool("edit",json!({"api":api,"request_id":format!("trace-{api}"),"board":"b1","expected_rev":rev,"ops":[{"verb":"trace_rgba","rgba":rgba,"width":8,"height":8}]})).unwrap_err();
+        assert_eq!(error.code, "unsupported");
+        assert_eq!(serde_json::to_value(&h.editor.doc).unwrap(), before);
+    }
+    let cap = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"}))).result.unwrap();
+    assert!(cap["edit_verbs"].as_array().unwrap().contains(&json!("trace_rgba")));
+    assert_eq!(cap["api_by_tool"]["edit"], json!(["1.0", "1.1", "1.2"]));
+    let rev = h.editor.rev;
+    let invalid = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r11","board":"b1","expected_rev":rev,"ops":[{"verb":"trace_rgba","rgba":rgba,"width":8,"height":8},{"verb":"trace_rgba","rgba":[],"width":8,"height":8}]}),
+        ),
+    );
+    assert!(!invalid.ok);
+    assert_eq!(invalid.error.as_ref().unwrap().op_index, Some(1));
+    assert_eq!(serde_json::to_value(&h.editor.doc).unwrap(), before);
+    let rev = h.editor.rev;
+    let reply = handle(
+        &mut s,
+        &mut h,
+        req(
+            "edit",
+            json!({"api":"1.2","request_id":"r12","board":"b1","expected_rev":rev,"ops":[{"verb":"trace_rgba","rgba":rgba,"width":8,"height":8}]}),
+        ),
+    );
+    assert!(reply.ok, "{}", serde_json::to_value(reply).unwrap());
+    assert_eq!(h.editor.doc.paths.len(), 3);
+    assert_eq!(h.editor.doc.paths[2].holes.len(), 1);
+    h.editor.execute(EditCommand::Undo);
+    assert_eq!(serde_json::to_value(&h.editor.doc).unwrap(), before);
+}
+
+#[test]
+fn trace_api12_inherits_economy_mixed_batch_names_receipts_and_rollback() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    let before = h.editor.doc.clone();
+    let rev = h.editor.rev;
+    let args = json!({"api":"1.2","board":"b1","request_id":"r31","expected_rev":rev,
+        "receipt":"ids","defaults":{"fill":"#112233FF","stroke":null},"ops":[
+        {"verb":"trace_rgba","rgba":[0,0,0,255],"width":1,"height":1,"options":{"noise_px":0}},
+        ["rect",[1,2,10,20],{"local":"$a"}],
+        {"verb":"repeat","count":2,"dx":20,"dy":0,"ops":[["ellipse",[0,0,10,10],{"local":"$e"}]]},
+        {"verb":"move","ids":["$e_1"],"delta":[0,5]}]});
+    let reply = handle(&mut s, &mut h, req("edit", args.clone()));
+    assert!(reply.ok, "{reply:?}");
+    let result = reply.result.as_ref().unwrap();
+    assert!(result["created"].as_array().unwrap().iter().all(Value::is_string));
+    assert_eq!(h.editor.doc.paths.len(), before.paths.len() + 4);
+    assert_eq!(result["created"].as_array().unwrap().len(), 4);
+    assert_eq!(reply.undo_steps, 1);
+    for (p, label) in h.editor.doc.paths[before.paths.len() + 1..].iter().zip(["Rect ", "Ellipse ", "Ellipse "]) {
+        assert_eq!(p.fill, Paint::Solid([17. / 255., 34. / 255., 51. / 255., 1.]));
+        assert!(p.name.as_ref().unwrap().starts_with(label));
+    }
+    assert_eq!(handle(&mut s, &mut h, req("edit", args.clone())), reply);
+    h.editor.undo();
+    assert_eq!(h.editor.doc, before);
+    h.editor.redo();
+    let after = h.editor.doc.clone();
+    let mut bad = args;
+    bad["request_id"] = json!("r32");
+    bad["expected_rev"] = json!(h.editor.rev);
+    bad["ops"].as_array_mut().unwrap().push(json!({"verb":"trace_rgba","rgba":[],"width":1,"height":1}));
+    let error = handle(&mut s, &mut h, req("edit", bad)).error.unwrap();
+    assert_eq!(error.op_index, Some(4));
+    assert_eq!(h.editor.doc, after);
+    let cap = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"}))).result.unwrap();
+    assert!(cap["edit_verbs"].as_array().unwrap().contains(&json!("repeat")));
+    assert!(cap["economy_hint"].as_str().unwrap().contains("defaults"));
+}
+
+#[test]
+fn trace_api12_preflights_expanded_targets_before_allocation() {
+    let mut h = FakeHost::new();
+    let mut s = Service::new("test-epoch".into());
+    // Each leaf names one layer: below the wire limit, above the expanded path limit.
+    let ops: Vec<_> = (0..99).map(|_| json!({"verb":"set_paint","ids":["node:1"],"fill":"#112233FF"})).collect();
+    let template = h.editor.doc.paths[0].clone();
+    for i in 0..10 {
+        let mut path = template.clone();
+        path.id = 1000 + i * 10;
+        for (j, anchor) in path.anchors.iter_mut().enumerate() {
+            anchor.id = path.id + j as u32 + 1;
+        }
+        h.editor.doc.paths.push(path);
+    }
+    h.editor.doc.ids = 1200;
+    h.editor.replace_doc(h.editor.doc.clone());
+    let before = h.editor.doc.clone();
+    let undo = h.editor.history_preview(false).cloned();
+    let args = json!({"api":"1.2","board":"b1","request_id":"r33","expected_rev":h.editor.rev,"ops":ops});
+    let error = handle(&mut s, &mut h, req("edit", args)).error.unwrap();
+    assert_eq!(error.code, "limit_exceeded");
+    assert!(error.op_index.is_some());
+    assert_eq!(h.editor.doc, before);
+    assert_eq!(h.editor.history_preview(false), undo.as_ref());
+}

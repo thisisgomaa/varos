@@ -35,6 +35,10 @@ pub enum EditCommand {
         action: crate::select_transform::LayerAction,
         nodes: Vec<u32>,
     },
+    /// Insert a pure trace result as one undoable edit; all IDs are remapped.
+    InsertTracedPaths {
+        paths: Vec<crate::model::Path>,
+    },
     /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
     AddShape {
         kind: crate::model::ShapeKind,
@@ -349,6 +353,25 @@ impl EditCommand {
             Self::Eyedropper { source, options, colour_only } => ed.sample_options(source, options, colour_only),
             Self::Isolate(n) => ed.isolate(n),
             Self::LayerFamily { action, nodes } => ed.layer_family(action, nodes),
+            Self::InsertTracedPaths { paths } => {
+                if paths.is_empty() {
+                    return;
+                }
+                if crate::trace::check_insert(ed, &paths).is_err() {
+                    return;
+                }
+                ed.begin();
+                for mut path in paths {
+                    path.id = ed.doc.nid();
+                    for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
+                        a.id = ed.doc.nid();
+                    }
+                    ed.doc.paths.push(path);
+                }
+                ed.doc.sync_tree();
+                ed.dirty = true;
+                ed.commit();
+            }
             Self::AddPath { .. } => {
                 let _ = ed.try_execute_created(self);
             }

@@ -467,7 +467,7 @@ impl Service {
                             v["edit_verbs"] = json!(crate::EDIT_VERBS
                                 .iter()
                                 .copied()
-                                .chain(["repeat", "set_stroke_style"])
+                                .chain(["repeat", "set_stroke_style", "trace_rgba"])
                                 .chain(crate::CONSTRUCTION_VERBS.iter().copied())
                                 .collect::<Vec<_>>());
                             v["api_by_tool"] = json!({"edit":["1.0","1.1","1.2"],"capabilities":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1","1.2"]});
@@ -482,6 +482,8 @@ impl Service {
                                         .map(|verb| json!(verb)),
                                 );
                             }
+                            v["economy_hint"] = json!("API 1.2 edit inherits 1.1 defaults, creation tuples, repeat, automatic names and IDs receipts; other tools retain the APIs listed in api_by_tool.");
+                            v["trace"] = json!({"input":"RGBA8 array; alpha below 128 omitted","coordinates":"input pixels, y down","max_pixels":varos_core::trace::MAX_PIXELS,"max_anchors":varos_core::trace::MAX_ANCHORS,"grayscale_levels":8,"request_bytes":crate::MAX_FRAME});
                         }
                     }
                     Ok(r)
@@ -571,8 +573,11 @@ impl Service {
                     if v.api != "1.2" && ops.iter().any(|op| op.slice4a()) {
                         return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
                     }
+                    if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::TraceRgba { .. })) {
+                        return Err(Error::new("unsupported", "trace_rgba requires API 1.2"));
+                    }
                     let a = host.access(&v.board)?;
-                    if matches!(v.api.as_str(), "1.1" | "1.2") {
+                    if crate::economy::edit_enabled(&v.api) {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.
@@ -609,7 +614,7 @@ impl Service {
                                 &|| cancelled.load(Ordering::Acquire),
                             )
                             .map_err(|e| leaves[index].error(e))?;
-                            if v.api == "1.1" {
+                            if crate::economy::edit_enabled(&v.api) {
                                 let label = match ops[index] {
                                     Operation::AddShape { kind, name: None, .. } => Some(match kind {
                                         ShapeKind::Rect => "Rect",

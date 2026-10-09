@@ -4,6 +4,10 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 const DEFAULT_KEYS: &[&str] = &["parent", "fill", "stroke", "stroke_width", "radius", "opacity"];
+/// API 1.2 edit inherits the API 1.1 wire economy without changing older tools.
+pub(crate) fn edit_enabled(api: &str) -> bool {
+    matches!(api, "1.1" | "1.2")
+}
 fn invalid(reason: impl Into<String>) -> Error {
     Error::new("invalid_argument", reason)
 }
@@ -94,9 +98,9 @@ struct Repeat {
 
 /// First normalize and bound all work, before accessing the allocator/staging editor.
 pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
-    let economy = ["1.1", "1.2"].contains(&edit.api.as_str());
+    let economy = edit_enabled(&edit.api);
     if !economy && (edit.defaults.is_some() || edit.receipt.is_some()) {
-        return Err(invalid("defaults and receipt require API 1.1"));
+        return Err(invalid("defaults and receipt require API 1.1 or 1.2"));
     }
     if edit.receipt.as_deref().is_some_and(|r| r != "ids") {
         return Err(invalid("receipt must be ids"));
@@ -186,7 +190,7 @@ fn walk(
     let result = (|| {
         if v.get("verb").and_then(Value::as_str) == Some("repeat") {
             if !economy {
-                return Err(Error::new("unsupported", "repeat requires API 1.1"));
+                return Err(Error::new("unsupported", "repeat requires API 1.1 or 1.2"));
             }
             let r: Repeat = serde_json::from_value(v.clone()).map_err(|e| invalid(e.to_string()))?;
             debug_assert_eq!(r.verb, "repeat");
@@ -224,7 +228,7 @@ fn walk(
             return Ok(());
         }
         if !economy && v.is_array() {
-            return Err(invalid("tuples require API 1.1"));
+            return Err(invalid("tuples require API 1.1 or 1.2"));
         }
         let mut normalized = tuple(v)?;
         let m = normalized.as_object_mut().ok_or_else(|| invalid("operation must be an object or creation tuple"))?;
@@ -255,7 +259,7 @@ fn walk(
         }
         if !crate::EDIT_VERBS.contains(&verb)
             && !(api == "1.2" && verb == "set_stroke_style")
-            && !(construction && crate::CONSTRUCTION_VERBS.contains(&verb))
+            && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"
                 && ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"].contains(&verb))
         {
