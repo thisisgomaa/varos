@@ -1,3 +1,85 @@
+# Wave 2 — stage 1 integration (`integ/w2`, 2026-10-09)
+
+Base: main `c852a55` (includes the stroke engine hotfix). Merged in order with `git merge --no-ff`, one commit per
+branch: `63336e5` tools-ui · `ee94919` view · `149e988` text · `b27fcf0` import, plus one separate, revertable fix
+`7391ea5` (pre-existing import-lane bug found during integration, see below). Nothing pushed; main untouched.
+Main's `geom/kurbo.rs`, `painted_extent` and `stroke/canvas.rs` are untouched by every resolution (canonical).
+
+## feat/w2-tools-ui (4B shapes + rail flyouts, 4C Pencil/Smooth/Path Eraser/Join/Curvature)
+- No textual conflicts against main. fmt clean; build PASS; core/app/bridge/cli tests 1,673 passed, 0 failed.
+
+## feat/w2-view (Outline, Pixel Preview + Snap to Pixel, Navigator, screen modes)
+- `REPORT.md`, `docs/PLAN.md`: both lane reports and both Progress rows retained.
+- `shell/tokens.rs`: Lane D drawing tokens and Lane E view tokens kept side by side (one token home).
+- `core/editor.rs`: staged drawing options AND staged view-depth/pan/zoom/canvas requests are both applied;
+  `pointer_move` returns in presentation mode first, then runs drawing movement (presentation = no editing).
+- `core/scene.rs`: main's hotfix `canvas = true` stroke-cache path is passed through Lane E's
+  `view_depth_scene::present` wrapper (`build_scene_impl(..., Some(style), true)`), so Outline/Pixel Preview use the
+  hotfix canvas cache and export keeps `build_scene_for_export`.
+- Tests: core/app/bridge/cli/render-wgpu 1,752 passed, 0 failed.
+
+## feat/w2-text (TextBox model, Type tool, Properties Type, outline export — format change)
+- 17 conflicted files, all resolved keeping both lanes:
+  - Core `EditCommand`: `Drawing(_)` + `AddText`/`SetText`; batch API gate lists all three as API 1.2-only;
+    `bridge::check` runs Drawing validation (early return) then text `check_change`; second dispatcher has both arms.
+  - `editor.rs` undo/redo: drawing gesture cancel kept AND selection pruning keeps text identities.
+  - Bridge: `Operation` carries drawing + text ops; `design.rs` applies drawing then text; `economy.rs` verb filter
+    admits drawing verbs (construction) and `set_stroke_style`/`add_text`/`set_text` (1.2); `lib.rs` keeps
+    `view_depth` + `text` modules; `mcp.rs` descriptions unioned; CLI verbs `view-depth`, `add-text`, `set-text`.
+  - App tables unioned: tokens (Lane D/E/G), icons (Draw* + Type), shortcut parity (Lane E + `T` Type).
+- Unification — tool rail: Lane D replaced the rail with kit flyout groups; Lane G had added a Type button to the
+  old rail. ONE rail kept (Lane D's); Type is its own flyout group after the Pen group (Illustrator order), with
+  `Icon::Type` and tool name "Type (T)".
+- Unification — keyboard capture: one predicate = numeric drawing sheet OR live text session OR export field.
+- `main.rs`: main's hotfix canvas hint (no canvas dialogs) kept on Lane G's text-preview scene.
+- Merge-caused fixes: (1) `text_product` tests built `SceneStyle` without Lane E's `outline`/`canvas` fields;
+  (2) the text preview renders from a per-frame `Editor` clone and `CanvasStrokeCache::clone` is empty by design,
+  which silently defeated the hotfix's cross-frame stroke cache in any document with text — `TextProduct` now owns
+  one cache and lends it to the preview (regression `text_preview_keeps_canvas_stroke_cache_across_frames`).
+- Format: kept SYMBOLIC. `TEXT_FORMAT_VERSION` (provisional value 6) with `FORMAT_VERSION = TEXT_FORMAT_VERSION`
+  and `migrate_to_text_boxes`. Stage 2 must renumber after images v6 → gradients v7 → text v8 (→ corners v9 if
+  separate) and re-run every migration/refusal fixture.
+- Tests: workspace 2,001 passed, 0 failed, 15 ignored.
+
+## feat/w2-import (PDF/AI/DXF import, OS clipboard in, drag-drop)
+- `REPORT.md`, `docs/PLAN.md`: retained. `varos/NOTICE`: Lane D Join row + Lane H DXF/VectorCraft and lopdf rows.
+- `varos-cli/src/main.rs`: both `text` and `import` modules.
+- Merge-caused fix: the combined API 1.2 tools/list reached 24,430 B (> 24,000 cap). Cap NOT raised; the
+  progressive-disclosure projection now omits generic "Apply <verb>" lines from the inline extended-verb summary
+  (enum and validation unchanged; `list_verbs` still lists every line, `schema` every parameter). 1.2 = 23,272 B.
+- Cross-lane checks: Cmd+V paste deferral (Lane H) is gated by `wants_keyboard`, so a live text session still gets
+  egui Paste; internal Varos copy (incl. text source) falls through to the in-app paste.
+- Separate fix `7391ea5` (NOT merge-caused; present on `feat/w2-import` alone): `clipboard_in::capture` compared
+  the published `org.varos.clipboard` flavour as `serde_json::Value`; any non-dyadic f32 (12.3, 0.1) round-trips
+  to a different f64, so Cmd+V refused the app's own copy of ordinary artwork/text as "Unknown/malformed".
+  Now compares exact serialised bytes first. Two regressions failed before, pass after. Revertable on its own.
+
+## Shortcuts
+New bindings, all Illustrator parity, no clashes, no losers: N Pencil · \ Line Segment · Shift+~ Curvature ·
+Cmd+Y Outline · Opt+Cmd+Y Pixel Preview · Shift+F Presentation Mode · T Type · Shift+Cmd+P Place.
+`bindings_are_unique_and_dispatch_requires_a_listed_chord` PASS.
+
+## Final gates (after `7391ea5`)
+- `cargo fmt --all --check` PASS · `python3 ../tools/check_dep_directions.py` PASS
+- `cargo test --offline --workspace -j 3 --no-fail-fast`: 125 suites, 2,031 passed, 0 failed, 15 ignored
+- clippy native and `--target x86_64-pc-windows-msvc`, `--workspace --all-targets -D warnings`: PASS, 0 warnings
+- Ratchets: shell 3/3 PASS; `ui.rs` 831/843 (no glue move needed); Bridge ratchets PASS
+- Bridge 1.0/1.1 tools/list byte-frozen fixtures PASS (23,993 B each, fixtures untouched); 1.2 = 23,272/24,000 B
+- `cargo check -p varos-text --target wasm32-unknown-unknown` PASS
+- `tools/check_vendor_patches.py`: cosmic-text PASS, egui_tiles SKIP (archive not cached)
+- `docs/PLAN.md` Progress table: 5 rows appended (4B, 4C, 8.1–8.4, Text P2–P4, 7.2–7.5), no row removed.
+
+## Deferred: none. Notes for stage 2
+- Images (v6) / gradients (v7): Lane E image-box outlines, Lane D blob state + appearance routing, Lane G
+  text/image/gradient export traversal, Lane H image-aware import all still need their stage-2 semantic merges.
+- Renumber the symbolic text format (see above).
+- Known consequence, unchanged: a text-engine failure during canvas preview lands in `Scene.errors`; main's hotfix
+  policy (no canvas dialogs) means it is not surfaced on canvas, and the text is not drawn (fallback scene has no text outlines).
+
+---
+
+# Previous integration report (wave g2), kept for history
+
 ## feat/p2-stroke
 - `REPORT.md`: retained both lane reports, including every finding, gate, limitation and historical scope note.
 - `docs/PLAN.md`: retained all geometry/fitter/shapes and StrokeStyle progress rows; no PLAN or GATE_LOG lines removed.

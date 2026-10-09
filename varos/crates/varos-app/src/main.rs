@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
-use varos_core::scene::{build_scene_in_view_styled, scene_signature, SceneStyle};
+use varos_core::scene::{scene_signature, SceneStyle};
+// ---- Lane G ----
+mod text_product;
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
@@ -59,10 +61,19 @@ mod recent_files;
 mod recovery_host;
 mod shortcuts;
 mod single_instance;
-mod svg_import;
+// ---- Lane H ----
+mod bridge_import;
+mod clipboard_in;
+mod foreign_import;
+mod import_drop;
+mod import_jobs;
+#[cfg(test)]
+mod import_jobs_tests;
 mod template_jobs;
 mod thumbs;
+// ---- Lane E ----
 mod ui;
+mod view_modes;
 mod workspace;
 use app_command::{AppCommand, OpenOrigin, SessionId, WindowCmd};
 use cursors::CK;
@@ -165,6 +176,7 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
     }
     let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
+        ToolKind::Text => CK::CrossRect,
         ToolKind::Object if !idle => CK::Select, // marquee / guide drag
         ToolKind::Object => match ed.transform_hit(world) {
             Some(TfHit::Scale(i)) => resize_ck(i, ed.obj_angle),
@@ -187,6 +199,19 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         ToolKind::Rect => CK::CrossRect,
         ToolKind::Ellipse => CK::CrossEllipse,
         ToolKind::Triangle => CK::CrossTriangle,
+        // ---- Lane D ----
+        ToolKind::RoundedRect
+        | ToolKind::Star
+        | ToolKind::Line
+        | ToolKind::Arc
+        | ToolKind::Spiral
+        | ToolKind::RectGrid
+        | ToolKind::PolarGrid
+        | ToolKind::Pencil
+        | ToolKind::Smooth
+        | ToolKind::PathEraser
+        | ToolKind::Join
+        | ToolKind::Curvature => CK::CrossRect,
         ToolKind::Polygon => CK::CrossPolygon,
         ToolKind::Hand => CK::Hand,
         ToolKind::Zoom => CK::Direct,
@@ -264,12 +289,25 @@ fn rotate_ck(corner: u8, angle: f32) -> CK {
 /// The control bar's idle label for the current tool (`ui.rs`).
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
+        ToolKind::Text => "Type (T)",
         ToolKind::Pen => "Pen (P)",
         ToolKind::Direct => "Direct Select (A)",
         ToolKind::Object => "Select (V)",
         ToolKind::Rect => "Rectangle (M)",
         ToolKind::Ellipse => "Ellipse (L)",
         ToolKind::Triangle => "Triangle",
+        ToolKind::RoundedRect
+        | ToolKind::Star
+        | ToolKind::Line
+        | ToolKind::Arc
+        | ToolKind::Spiral
+        | ToolKind::RectGrid
+        | ToolKind::PolarGrid
+        | ToolKind::Pencil
+        | ToolKind::Smooth
+        | ToolKind::PathEraser
+        | ToolKind::Join
+        | ToolKind::Curvature => ui::drawing_tool_name(t),
         ToolKind::Polygon => "Polygon",
         ToolKind::Convert => "Anchor Point (Shift+C)",
         ToolKind::Hand => "Hand (H)",
@@ -296,12 +334,21 @@ fn tool_name(t: ToolKind) -> &'static str {
 /// `canvas_centre` = the centre of the visible drawing area (physical px): the point the keyboard
 /// zooms (⌘= / ⌘− / ⌘1) keep fixed, so the view never jumps away from the work.
 fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ctrl: bool, shift: bool, alt: bool) {
+    // ---- Lane E ----
+    if crate::view_modes::presentation_key(ed, code, ctrl, shift, alt) {
+        return;
+    }
     if !shortcuts::parity::is_bound(code, ctrl, shift, alt) {
         return;
     }
     use varos_core::editor::wave::{ObjectAction as O, Selection as S};
     if ctrl {
         match code {
+            "KeyY" => ed.execute_ui(EditCommand::View(varos_core::editor::view_commands::ViewAction::Depth(if alt {
+                varos_core::view_depth::DepthAction::PixelPreview
+            } else {
+                varos_core::view_depth::DepthAction::Outline
+            }))),
             "Digit5" => ed.execute_ui(EditCommand::View(if alt {
                 varos_core::editor::view_commands::ViewAction::ReleaseGuides
             } else {
@@ -374,8 +421,13 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         }
         return;
     }
+    // ---- Lane D: Illustrator drawing shortcuts and gesture arrows ----
+    if ui::drawing_key(ed, code, shift, alt) {
+        return;
+    }
     let s = if shift { 10.0 } else { 1.0 };
     match code {
+        "KeyT" => ed.set_tool(ToolKind::Text),
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
         "KeyP" => ed.set_tool(ToolKind::Pen),
@@ -411,6 +463,12 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         }
         "KeyD" => ed.execute_ui(EditCommand::DefaultPaint),
         "Slash" => ed.execute_ui(EditCommand::ApplyPaint { target: ed.paint, color: None }),
+        "KeyF" if shift => ed.execute_ui(EditCommand::View(varos_core::editor::view_commands::ViewAction::Depth(
+            varos_core::view_depth::DepthAction::Presentation,
+        ))),
+        "Escape" if ed.view_depth.presentation => ed.execute_ui(EditCommand::View(
+            varos_core::editor::view_commands::ViewAction::Depth(varos_core::view_depth::DepthAction::ExitPresentation),
+        )),
         "Escape" | "Enter" => ed.escape(),
         "Delete" | "Backspace" => ed.execute_ui(EditCommand::DeleteSelected),
         "ArrowLeft" => ed.execute_ui(EditCommand::Nudge { x: -s, y: 0.0 }),
@@ -427,6 +485,7 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
 fn editor_check(ed: &Editor, c: chrome::Check) -> Option<bool> {
     use chrome::Check as C;
     Some(match c {
+        C::Depth(check) => check.read(ed),
         C::Grid => ed.doc.snap.show_grid,
         C::PasteRemembersLayers => ed.paste_remembers_layers,
         C::Rulers => ed.show_rulers,
@@ -714,6 +773,11 @@ fn fit_all_rect(ed: &Editor) -> (f32, f32, f32, f32) {
     bounds.map_or_else(|| fit_rect(ed), |b| (b.0, b.1, (b.2 - b.0).max(1.0), (b.3 - b.1).max(1.0)))
 }
 fn apply_view_request(ed: &mut Editor, view: &mut View, canvas: egui::Rect) {
+    // ---- Lane E ----
+    if let Some(center) = ed.requested_pan.take() {
+        let c = canvas.center();
+        view.pan = varos_core::geom::pan_for_anchor(center, [c.x, c.y], view.zoom);
+    }
     if let Some(percent) = ed.requested_zoom.take() {
         let c = canvas.center();
         gestures::zoom_to(view, [c.x, c.y], percent / 100.0);
@@ -896,6 +960,11 @@ fn run_action(
             host::Ran::default()
         }
         host::HostAction::App(cmd) => host::run_command(cmd, ws, ui, dialogs, store, keys, jobs),
+        // ---- Lane H: foreign paste conversion belongs to the file worker ----
+        host::HostAction::Doc(host::DocAction::Key(KeyCode::KeyV, m)) if m.ctrl && !m.alt => {
+            clipboard_in::queue(ws, ui, canvas, dialogs, jobs, m.shift)
+        }
+        // ---- End Lane H ----
         host::HostAction::Doc(a) => {
             if ws.on_home() {
                 return host::Ran::default();
@@ -986,12 +1055,18 @@ fn raise_doc(
     canvas: egui::Rect,
     ui: &mut dyn host::DocUi,
 ) {
-    if !(pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
+    // ---- Lane H: paste needs the owning host and its background file queue ----
+    let foreign_paste = matches!(a, host::DocAction::Key(KeyCode::KeyV, m) if m.ctrl && !m.alt);
+    if !(!foreign_paste && pending.doc_runs_now() && run_doc(a, ed, view, canvas, ui)) {
         pending.push(host::HostAction::Doc(a));
     }
 }
 
 fn main() {
+    // ---- Lane H: parser worker exits before any native UI startup ----
+    if varos_import::worker::worker_main() {
+        return;
+    }
     // The user-facing safety net (ENGINEERING_REVIEW §3.3 #4): ANY panic — including paths no table
     // ever enumerates — writes a crash log and shows a readable dialog instead of dying silently.
     // target/panic.txt stays as the dev breadcrumb.
@@ -1345,11 +1420,15 @@ fn main() {
             if initial_home {
                 renderer.render_ui(&Default::default(), view, &jobs, &tdelta, &screen);
             } else {
-                let world = build_scene_in_view_styled(
+                let world = gui.text_tool.scene(
                     ed,
                     view,
                     [sz0.width, sz0.height],
-                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                    SceneStyle {
+                        checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
+                        outline: varos_app::shell::tokens::OUTLINE_RGBA,
+                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color),
+                    },
                 );
                 renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
             }
@@ -1848,6 +1927,11 @@ fn main() {
                 #[cfg(target_os = "macos")] // the File ▸ Revert row's state (slice 0.6), read before the frame
                 let can_revert = lifecycle::can_revert(s);
                 let (ed, view) = (&mut s.editor, &mut s.view);
+                // ---- Lane G: egui receives text input, canvas tools do not receive it twice ----
+                if gui.text_tool.owns_native(&event, ed, *view, screen_cursor, over_panel, gui.text_field_focused()) {
+                    redraw!("text-input");
+                    return;
+                }
                 if egui_consumed {
                     redraw!("egui-consumed");
                 }
@@ -1874,6 +1958,15 @@ fn main() {
                     }
                     // red traffic light / OS close: the Quit transaction over every tab (Astra F01; S1
                     // has one window, so Close Window = Quit — work order §6 Q1)
+                    // ---- Lane H: Finder canvas drop is Place, never Open ----
+                    WindowEvent::DroppedFile(path)
+                        if import_drop::on_canvas(
+                            import_drop::position(&window, screen_cursor),
+                            canvas_px(&gui, &window),
+                        ) =>
+                    {
+                        pending.push(host::HostAction::App(AppCommand::PlaceFile(s.id, path)));
+                    }
                     WindowEvent::CloseRequested => pending.push(host::HostAction::App(AppCommand::Quit)),
                     WindowEvent::Resized(size) => {
                         if size.width == 0 || size.height == 0 {
@@ -2004,6 +2097,9 @@ fn main() {
                                         redraw!("field-commit");
                                         return;
                                     }
+                                    if ed.view_depth.presentation {
+                                        return;
+                                    }
                                     last_click = Some((now, screen_cursor));
                                     ed.ppu = view.zoom;
                                     apply_view_request(ed, view, canvas_px(&gui, &window));
@@ -2113,7 +2209,16 @@ fn main() {
                         // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
                         // The Color Picker is a floating palette: the canvas stays fully usable beside it,
                         // Esc goes to a hovered picker, focused field, menu or tab drag first.
-                        if gui.wants_keyboard() { /* typing into a field — keys go to egui */
+                        if ed.view_depth.presentation && event.state == ElementState::Pressed {
+                            crate::view_modes::presentation_key(
+                                ed,
+                                &format!("{code:?}"),
+                                keyboard.held().ctrl,
+                                keyboard.held().shift,
+                                keyboard.held().alt,
+                            );
+                            redraw!("presentation-key");
+                        } else if gui.wants_keyboard() { /* typing into a field — keys go to egui */
                         } else if (gui.picker_owns_escape() || gui.picking_screen() || gui.tab_drag_active())
                             && matches!(code, KeyCode::Escape)
                         {
@@ -2176,6 +2281,9 @@ fn main() {
                         let (jobs, tdelta, screen) =
                             gui.run(&window, ed, scale as f32, *view, cursors::is_maximized(hwnd));
                         apply_view_request(ed, view, canvas_px(&gui, &window));
+                        if let Some(rgb) = ed.requested_canvas.take() {
+                            host::DocUi::queue_app_command(&mut gui, AppCommand::SetCanvasColor(rgb));
+                        }
                         pace.frame();
                         if pace.enabled() {
                             pace.egui_causes(gui.repaint_causes());
@@ -2252,8 +2360,15 @@ fn main() {
                         }
                         if pace.enabled() {
                             // measurement only: would this frame repaint exactly the last one?
-                            let scene = (!home)
-                                .then(|| host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height])));
+                            let scene = (!home).then(|| {
+                                host::scene_key(
+                                    s.id,
+                                    crate::view_modes::signature(
+                                        scene_signature(ed, *view, [psz.width, psz.height]),
+                                        recovery.settings.canvas_color,
+                                    ),
+                                )
+                            });
                             let same = tdelta.set.is_empty()
                                 && tdelta.free.is_empty()
                                 && scene == debug_prev.1
@@ -2266,17 +2381,28 @@ fn main() {
                             renderer.render_ui(&Default::default(), *view, &jobs, &tdelta, &screen)
                         } else {
                             // keyed by WHICH tab too: equal signatures of two tabs must never share art
-                            let signature = host::scene_key(s.id, scene_signature(ed, *view, [psz.width, psz.height]));
+                            let signature = host::scene_key(
+                                s.id,
+                                crate::view_modes::signature(
+                                    scene_signature(ed, *view, [psz.width, psz.height]),
+                                    recovery.settings.canvas_color,
+                                ),
+                            );
                             let scene_start = Instant::now();
+                            let signature = signature.wrapping_add(gui.text_tool.generation.rotate_left(17));
                             let cache_hit = last_scene_signature == Some(signature);
                             let rendered = if cache_hit {
                                 renderer.render_ui_cached(&jobs, &tdelta, &screen)
                             } else {
-                                let world = build_scene_in_view_styled(
+                                let world = gui.text_tool.scene(
                                     ed,
                                     *view,
                                     [psz.width, psz.height],
-                                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                                    SceneStyle {
+                                        checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
+                                        outline: varos_app::shell::tokens::OUTLINE_RGBA,
+                                        canvas: crate::view_modes::canvas_rgba(recovery.settings.canvas_color),
+                                    },
                                 );
                                 if gui.canvas_hint.observe(s.id, ed.rev, &world.report) {
                                     gui.repaint_at = Some(Instant::now());

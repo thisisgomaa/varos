@@ -195,6 +195,8 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
     let want = [
         ("file.new", cmd(KeyCode::KeyN).unwrap(), FileCmd::New),
         ("file.open", cmd(KeyCode::KeyO).unwrap(), FileCmd::Open),
+        // ---- Lane H ----
+        ("file.place.svg", cmd_shift(KeyCode::KeyP).unwrap(), FileCmd::PlaceSvg),
         ("file.document-setup", cmd_alt(KeyCode::KeyP).unwrap(), FileCmd::DocumentSetup),
         ("file.close", cmd(KeyCode::KeyW).unwrap(), FileCmd::CloseTab),
         ("file.save", cmd(KeyCode::KeyS).unwrap(), FileCmd::Save),
@@ -256,6 +258,17 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
 
 /// The rows slice 0.6 added after the split; everything else is the pre-split table.
 const ADDED_AFTER_SPLIT: &[&str] = &[
+    "view.outline",
+    "view.pixelpreview",
+    "view.snappixel",
+    "view.movepixel",
+    "view.trim",
+    "view.presentation",
+    "view.transparency",
+    "view.canvas.dark",
+    "view.canvas.mid",
+    "view.canvas.light",
+    "win.panel.Navigator",
     "file.closeall",
     "file.savecopy",
     "file.revert",
@@ -370,6 +383,11 @@ fn only_function_keys_go_without_command() {
     for e in flat_items(&menus()) {
         if let Entry::Item { id, accel: Some(a), .. } = e {
             if !a.cmd {
+                if id == "view.presentation" {
+                    assert_eq!(a.code, KeyCode::KeyF);
+                    assert!(a.shift && !a.alt);
+                    continue;
+                }
                 assert!(matches!(a.code, KeyCode::F12), "{id}: a bare {:?} as a menu key", a.code);
                 assert!(!a.shift && !a.alt, "{id}");
             }
@@ -401,12 +419,17 @@ fn file_rows_enable_from_the_document_state() {
 }
 
 #[test]
-fn svg_place_row_is_namespaced_and_has_no_shortcut() {
+fn artwork_place_row_is_namespaced_and_uses_illustrator_shortcut() {
     let rows = super::file::rows();
     let row = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "file.place.svg"));
     assert!(matches!(
         row,
-        Some(Entry::Item { label: "Place SVG…", accel: None, cmd: MenuCmd::File(FileCmd::PlaceSvg), .. })
+        Some(Entry::Item {
+            label: "Place artwork…",
+            accel: Some(Accel { code: KeyCode::KeyP, shift: true, alt: false, cmd: true }),
+            cmd: MenuCmd::File(FileCmd::PlaceSvg),
+            ..
+        })
     ));
 }
 #[test]
@@ -467,5 +490,5 @@ fn redo_uses_only_shift_command_z_across_menu_mirrors() {
     let redo = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "edit.redo")).unwrap();
     let chord = cmd_shift(KeyCode::KeyZ).unwrap();
     assert!(matches!(redo, Entry::Item { accel: Some(a), cmd: MenuCmd::Key(k), .. } if *a == chord && *k == chord));
-    assert!(!rows.iter().any(|row| matches!(row, Entry::Item { accel: Some(a), .. } if a.code == KeyCode::KeyY && a.cmd && !a.shift && !a.alt)));
+    assert!(rows.iter().any(|row| matches!(row, Entry::Item { id, cmd: MenuCmd::View(_), accel: Some(a), .. } if id == "view.outline" && a.code == KeyCode::KeyY && a.cmd && !a.shift && !a.alt)));
 }

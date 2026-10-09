@@ -16,10 +16,15 @@ pub mod geom;
 pub mod model;
 pub mod planar;
 pub mod scene;
+// ---- Lane E ----
 pub mod stroke;
 pub mod svg;
 pub mod tools;
+// ---- Lane D: drawing tools ----
+pub mod drawing;
 pub mod units;
+pub mod view_depth;
+pub mod view_depth_scene;
 
 pub use boolean::BoolOp;
 pub use command::EditCommand;
@@ -38,3 +43,7 @@ pub mod document_setup;
 pub mod placement;
 pub mod select_transform;
 pub mod trace;
+
+// ---- Lane G ----
+pub mod text;
+pub mod text_format;

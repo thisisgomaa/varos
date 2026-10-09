@@ -201,6 +201,40 @@ pub(crate) fn apply_design_op(
     affected: &mut BTreeSet<String>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<u32>, Error> {
+    // ---- Lane D: resolve locals and cap expanded targets before drawing ----
+    if op.drawing() {
+        let targets = op
+            .ids()
+            .iter()
+            .map(|id| {
+                if id.starts_with('$') {
+                    locals.get(id).cloned().ok_or_else(|| Error::new("not_found", "unknown request-local target"))
+                } else {
+                    Ok(id.clone())
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let paths = crate::service::resolve(
+            &ed.doc,
+            &targets,
+            matches!(
+                op,
+                Operation::ShapeTool { .. }
+                    | Operation::Pencil { .. }
+                    | Operation::Curvature { .. }
+                    | Operation::DrawingOptions { .. }
+            ),
+        )?;
+        *expanded += paths.len();
+        if *expanded > MAX_TARGETS {
+            return Err(Error::new("limit_exceeded", "batch expanded targets exceed 1000"));
+        }
+        return crate::drawing::apply(ed, op, paths, affected);
+    }
+    // ---- Lane G ----
+    if crate::text::apply(ed, op, locals, affected)? {
+        return Ok(None);
+    }
     if op.slice4a() {
         let mut resolved = op.clone();
         let ids = match &mut resolved {

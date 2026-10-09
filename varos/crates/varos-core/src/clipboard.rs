@@ -23,6 +23,8 @@ use crate::model::{Anchor, Document, GroupRole, Node, NodeKind, Path};
 pub struct Clipboard {
     /// Copied paths, back → front (z order at copy time).
     paths: Vec<Path>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    texts: Vec<crate::text::TextBox>,
     /// Copied leaf + Group nodes. `parent` is `None` for a top-level item; `children` only list copied
     /// nodes; a clip group whose mask was not copied is demoted to a plain group.
     nodes: Vec<Node>,
@@ -37,15 +39,15 @@ pub struct Clipboard {
 impl Clipboard {
     /// Original path ids, for public clipboard export from the source snapshot.
     pub fn source_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.paths.iter().map(|p| p.id)
+        self.paths.iter().map(|p| p.id).chain(self.texts.iter().map(|t| t.id))
     }
     /// Nothing copied yet (Paste is then a no-op).
     pub fn is_empty(&self) -> bool {
-        self.paths.is_empty()
+        self.paths.is_empty() && self.texts.is_empty()
     }
     /// Number of copied paths.
     pub fn len(&self) -> usize {
-        self.paths.len()
+        self.paths.len() + self.texts.len()
     }
     /// World AABB of the copied art as it was when copied.
     pub fn bounds(&self) -> Option<(f32, f32, f32, f32)> {
@@ -59,20 +61,24 @@ impl Clipboard {
     /// Copy `pids` (whole paths) out of `doc` together with their Group ancestry. The document is only
     /// read. Paths that are not in the tree (not yet adopted by `sync_tree`) are copied as top-level items.
     pub fn capture(doc: &Document, pids: &[u32]) -> Clipboard {
+        Self::capture_objects(doc, pids, &[])
+    }
+    // ---- Lane G: one detached tree for mixed path/text selections. ----
+    pub fn capture_objects(doc: &Document, pids: &[u32], texts: &[u32]) -> Clipboard {
         // the copied paths, deduped, back → front
         let mut seen = HashSet::new();
         let mut sel: Vec<(usize, u32)> =
             pids.iter().copied().filter(|p| seen.insert(*p)).filter_map(|p| doc.pidx(p).map(|i| (i, p))).collect();
         sel.sort_by_key(|(i, _)| *i);
-        if sel.is_empty() {
+        if sel.is_empty() && texts.is_empty() {
             return Clipboard::default();
         }
         // the copied node set: each path's leaf + every Group ancestor up to (not incl.) its Layer
         let mut copied: Vec<u32> = vec![];
         let mut in_copy: HashSet<u32> = HashSet::new();
         let mut loose: Vec<u32> = vec![]; // paths with no leaf node yet
-        for &(_, pid) in &sel {
-            let Some(leaf) = doc.node_of_path(pid) else {
+        for pid in sel.iter().map(|(_, id)| *id).chain(texts.iter().copied()) {
+            let Some(leaf) = doc.node_of_path(pid).or_else(|| crate::text::node_id(doc, pid)) else {
                 loose.push(pid);
                 continue;
             };
@@ -126,6 +132,17 @@ impl Clipboard {
             roots.push((doc.pidx(pid).unwrap_or(0), spare));
         }
         roots.sort_by_key(|&(z, _)| std::cmp::Reverse(z));
+        if !texts.is_empty() {
+            let mut order = Vec::new();
+            let mut stack: Vec<_> = doc.roots.iter().rev().copied().collect();
+            while let Some(id) = stack.pop() {
+                order.push(id);
+                if let Some(n) = doc.node(id) {
+                    stack.extend(n.children.iter().rev().copied());
+                }
+            }
+            roots.sort_by_key(|(_, id)| order.iter().position(|n| n == id).unwrap_or(usize::MAX));
+        }
         // world bounds, live transforms composed (the same AABB the selection frame / align use)
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &(pi, _) in &sel {
@@ -137,6 +154,13 @@ impl Clipboard {
             y0 = y0.min(b);
             x1 = x1.max(c);
             y1 = y1.max(d);
+        }
+        for t in doc.text_boxes.iter().filter(|t| texts.contains(&t.id)) {
+            let [x, y] = t.frame;
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
         }
         let layers = roots
             .iter()
@@ -155,6 +179,7 @@ impl Clipboard {
             .collect();
         Clipboard {
             layers,
+            texts: doc.text_boxes.iter().filter(|t| texts.contains(&t.id)).cloned().collect(),
             paths: sel.iter().map(|&(pi, _)| doc.paths[pi].clone()).collect(),
             nodes,
             roots: roots.into_iter().map(|(_, id)| id).collect(),
@@ -232,6 +257,15 @@ impl Clipboard {
             pmap.insert(src.id, id);
             new_paths.push(Path { id, anchors, holes, ..src.clone() });
         }
+        let mut text_ids = Vec::new();
+        for src in &self.texts {
+            let mut text = src.clone();
+            text.id = doc.nid();
+            pmap.insert(src.id, text.id);
+            text_ids.push(text.id);
+            crate::text::translate(&mut text, offset);
+            doc.text_boxes.push(text);
+        }
         let mut nmap: HashMap<u32, u32> = HashMap::new();
         for n in &self.nodes {
             let id = doc.nid();
@@ -242,6 +276,10 @@ impl Clipboard {
                 NodeKind::Path(p) => match pmap.get(&p) {
                     Some(&np) => NodeKind::Path(np),
                     None => continue, // defensive: a leaf without its path is never pasted
+                },
+                NodeKind::Text(id) => match pmap.get(&id) {
+                    Some(id) => NodeKind::Text(*id),
+                    None => continue,
                 },
                 k => k,
             };
@@ -270,7 +308,7 @@ impl Clipboard {
                 *at += 1;
             }
         }
-        let ids: Vec<u32> = new_paths.iter().map(|p| p.id).collect();
+        let ids: Vec<u32> = new_paths.iter().map(|p| p.id).chain(text_ids).collect();
         doc.paths.extend(new_paths);
         doc.flatten();
         ids

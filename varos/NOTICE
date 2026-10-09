@@ -80,3 +80,15 @@ VectorCraft crates/engine/src/cmd/layer.rs:142 and menucmds.rs:150-155 @ a469568
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
 Document Setup, Document Info and folder-based Templates: ADAPT field/report and lifecycle conventions from ArtCraft VectorCraft engine cmd/docsetup.rs, docinfo.rs, fileio/save.rs and load.rs, revision a469568. Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors. Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft. Independent Varos implementation; no UI/assets copied.
+
+---- w2-tools-ui: Join brush endpoint restriction ----
+varos-core/src/drawing.rs join_touched adapts the already-attributed geom/edit.rs join mechanics,
+originally VectorCraft crates/pathops/src/edit.rs @ a469568 (MIT OR Apache-2.0).
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors. Endpoint filtering is Varos code.
+---- end w2-tools-ui ----
+
+varos-import/src/dxf.rs adapts ASCII entity/layer/unit mapping from
+VectorCraft crates/cad/src/{lib.rs,import.rs}.
+Copyright (c) 2026 ArtCraft Team and VectorCraft contributors. MIT OR Apache-2.0;
+see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+lopdf 0.43.0 — Copyright (c) lopdf contributors; MIT; used only in the foreign import firewall.

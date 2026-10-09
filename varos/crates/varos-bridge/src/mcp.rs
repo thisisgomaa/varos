@@ -26,7 +26,11 @@ fn construction_tools(api: &str) -> Value {
         if let Some(edit) = entries.iter_mut().find(|tool| tool["name"] == "edit") {
             let mut extra = serde_json::Map::new();
             let mut ops = Vec::new();
+            // ---- Lane E ----
+            crate::view_depth::extend_schema(&mut edit["inputSchema"]);
             crate::select_transform::schemas(&mut extra, &mut ops);
+            // ---- Lane D: schemas feed both list_verbs and progressive schema ----
+            crate::drawing::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -528,6 +532,8 @@ pub fn serve<T: Transport>(
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
                         && name != "import_svg"
+                        && name != "import_file"
+                        && name != "import_clipboard"
                         && !["schema", "list_verbs"].contains(&name)
                         && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
@@ -614,6 +620,13 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     if let Some(rows) = out["tools"].as_array_mut() {
         rows.push(json!({"name":"import_svg","description":"SVG/SVGZ; files scope; undo; losses.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}), &["api","board","request_id","expected_rev","path"])}));
     }
+    // ---- Lane H: API 1.2 only; legacy fixture table unchanged ----
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.push(json!({"name":"import_file","description":"Place external SVG/PDF-compatible AI/PDF/ASCII DXF atomically; explicit losses; files scope.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"},"options":{"type":"object","additionalProperties":false,"properties":{"loss_policy":{"enum":["refuse","allow_reported"],"default":"refuse"},"page":{"type":"integer","minimum":1,"maximum":100},"points_per_unit":{"type":"number","exclusiveMinimum":0}}}}), &["api","board","request_id","expected_rev","path"])}));
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.push(json!({"name":"import_clipboard","description":"Paste the highest supported OS artwork flavour; no silent bitmap fallback; one undo step.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"options":{"type":"object","additionalProperties":false,"properties":{"loss_policy":{"enum":["refuse","allow_reported"]},"page":{"type":"integer","minimum":1,"maximum":100}}}}), &["api","board","request_id","expected_rev"])}));
+    }
     append_export_tools(&mut out);
     append_document_tools(&mut out);
     if let Some(list) = out["tools"].as_array_mut() {
@@ -641,6 +654,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             let name = tool["name"].as_str().unwrap_or("").to_owned();
             if ![
                 "import_svg",
+                "import_file",
+                "import_clipboard",
                 "export_svg",
                 "export_raster",
                 "save_template",
@@ -657,10 +672,13 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             if name == "describe" {
                 if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
                     fields.push(json!("stroke_style"));
+                    fields.push(json!("text"));
                 }
             }
             if name == "edit" {
                 let schema = &mut tool["inputSchema"];
+                // ---- Lane G ----
+                crate::text::register(schema);
                 schema["$defs"]["trace_rgba"] = object(
                     json!({"verb":{"const":"trace_rgba"},"rgba":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}},"width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1},"options":{"type":"object","description":"API 1.2 only: TraceOptions; mode BlackWhite, Grayscale, or {Color:{colors:1..255}}; fidelity/corners 0..100, threshold 0..255, noise_px, ignore_white"}}),
                     &["verb", "rgba", "width", "height"],
@@ -913,9 +931,15 @@ pub fn tools_for(api: &str) -> Value {
                     }
                 }
             }
+            // Progressive disclosure: a generic "Apply <verb>" line adds nothing over the enum itself, so
+            // only verbs with a specific summary are described inline; list_verbs keeps every line and
+            // `schema` keeps every parameter (integration w2: keeps 1.2 tools/list within 24,000 B).
             let descriptions = extended
                 .iter()
-                .map(|verb| format!("{verb}: {}", verb_description(verb)))
+                .filter_map(|verb| {
+                    let description = verb_description(verb);
+                    (description != generic_verb_description(verb)).then(|| format!("{verb}: {description}"))
+                })
                 .collect::<Vec<_>>()
                 .join("; ");
             alternatives.push(json!({"type":"object","properties":{"verb":{"enum":extended},"op":{"enum":extended}},"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}],"description":descriptions}));
@@ -954,6 +978,9 @@ fn core_verb(verb: &str) -> bool {
 
 fn verb_description(verb: &str) -> String {
     match verb {
+        "view" => "Outline, pixel preview/snap, Navigator, screen modes and canvas preferences".into(),
+        "add_text" => "Create editable point or area text with an exact font snapshot".into(),
+        "set_text" => "Replace text runs, frame or paragraph settings in one undo batch".into(),
         "clip" => "Create a clipping group".into(),
         "release_clip" => "Release a clipping group".into(),
         "pathfinder" => "Combine paths with a Boolean operation".into(),
@@ -961,8 +988,12 @@ fn verb_description(verb: &str) -> String {
         "set_stroke_style" | "stroke_style" => "Set caps, joins, dashes and arrows".into(),
         "document_setup" => "Set units, PPI, bleed or transparency grid".into(),
         "repeat" => "Repeat creation operations with an offset".into(),
-        _ => format!("Apply {}", verb.replace('_', " ")),
+        _ => generic_verb_description(verb),
     }
+}
+
+fn generic_verb_description(verb: &str) -> String {
+    format!("Apply {}", verb.replace('_', " "))
 }
 
 /// Expand local references while preserving sibling validation constraints.

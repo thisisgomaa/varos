@@ -15,6 +15,10 @@ pub(crate) fn panel_properties(
     let full = std::ops::RangeInclusive::new(-1.0e6_f32, 1.0e6_f32);
     egui::ScrollArea::vertical().id_salt("props-body").auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+            if let Some(text) = &s.text {
+                type_section(ui, text, ops);
+                return;
+            }
             let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(PANEL_ITEM_GAP_X, 5.0);
             #[cfg(test)]

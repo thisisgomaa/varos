@@ -110,29 +110,6 @@ pub(crate) fn icon_ink(active: bool, hot: bool) -> Color32 {
     }
 }
 
-pub(crate) fn icon_button(ui: &mut egui::Ui, tex: &Option<egui::TextureHandle>, active: bool) -> egui::Response {
-    // 30px cells / 16px glyphs — the rail sits in the same size family as the top-bar buttons
-    // (Ahmed 07-07: "التول بار ضخم عن باقي البرنامج")
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
-    let painter = ui.painter();
-    let rounding = CornerRadius::same(R);
-    if active {
-        painter.rect_filled(rect, rounding, ACCENT);
-    } else if resp.hovered() {
-        painter.rect_filled(rect, rounding, HOVER);
-    }
-    if let Some(t) = tex {
-        let ir = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_MD));
-        painter.image(
-            t.id(),
-            ir,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            icon_ink(active, resp.hovered()),
-        );
-    }
-    resp
-}
-
 pub(crate) fn divider(ui: &mut egui::Ui) {
     ui.add_space(3.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 1.0), egui::Sense::hover());

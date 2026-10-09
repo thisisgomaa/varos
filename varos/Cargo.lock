@@ -4294,6 +4294,7 @@ dependencies = [
  "varos-raster",
  "varos-render-wgpu",
  "varos-text",
+ "varos-text-layout",
  "windows",
  "winit",
 ]
@@ -4327,6 +4328,7 @@ dependencies = [
  "varos-import",
  "varos-pdf",
  "varos-raster",
+ "varos-text-layout",
 ]
 
 [[package]]
@@ -4350,8 +4352,10 @@ name = "varos-import"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "lopdf",
  "roxmltree",
  "serde",
+ "serde_json",
  "usvg",
  "varos-core",
 ]
@@ -4367,6 +4371,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "varos-core",
+ "varos-text-layout",
 ]
 
 [[package]]
@@ -4378,6 +4383,7 @@ dependencies = [
  "tiny-skia",
  "varos-core",
  "varos-pdf",
+ "varos-text-layout",
 ]
 
 [[package]]
@@ -4387,6 +4393,7 @@ dependencies = [
  "bytemuck",
  "egui",
  "egui-wgpu",
+ "naga",
  "varos-core",
  "wgpu",
 ]
@@ -4404,6 +4411,16 @@ dependencies = [
  "unicode-linebreak",
  "unicode-script",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "varos-text-layout"
+version = "0.1.0"
+dependencies = [
+ "fontdb",
+ "i_overlay",
+ "varos-core",
+ "varos-text",
 ]
 
 [[package]]

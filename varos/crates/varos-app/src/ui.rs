@@ -25,10 +25,10 @@ use varos_app::shell::tokens::{
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
 use varos_app::shell::kit::field::Label as Lab;
 use varos_app::shell::kit::icons::{
-    legacy_texture, LEGACY_AL_B, LEGACY_AL_CH, LEGACY_AL_L, LEGACY_AL_M, LEGACY_AL_R, LEGACY_AL_T, LEGACY_ARTBOARD,
-    LEGACY_DIRECT, LEGACY_DIST_H, LEGACY_DIST_V, LEGACY_ELLIPSE, LEGACY_EYE, LEGACY_FIT, LEGACY_L_EYE, LEGACY_L_EYEOFF,
-    LEGACY_L_LOCK, LEGACY_L_SEARCH, LEGACY_L_UNLOCK, LEGACY_MENU, LEGACY_OPACITY, LEGACY_PEN, LEGACY_POLYGON,
-    LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
+    legacy_texture, LEGACY_AL_B, LEGACY_AL_CH, LEGACY_AL_L, LEGACY_AL_M, LEGACY_AL_R, LEGACY_AL_T, LEGACY_DIRECT,
+    LEGACY_DIST_H, LEGACY_DIST_V, LEGACY_ELLIPSE, LEGACY_EYE, LEGACY_FIT, LEGACY_L_EYE, LEGACY_L_EYEOFF, LEGACY_L_LOCK,
+    LEGACY_L_SEARCH, LEGACY_L_UNLOCK, LEGACY_MENU, LEGACY_OPACITY, LEGACY_PEN, LEGACY_RECT, LEGACY_ROTATE,
+    LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
 };
 use varos_app::shell::kit::{self, Icon};
 mod export;
@@ -48,6 +48,10 @@ mod panels;
 mod picker;
 mod pointer;
 mod rail;
+// ---- Lane D: provisional drawing UI ----
+mod drawing;
+mod rail_flyout;
+pub(crate) use drawing::{key as drawing_key, tool_name as drawing_tool_name};
 mod snap;
 mod style;
 #[cfg(test)]
@@ -67,7 +71,10 @@ use style::*;
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
 mod icon_actions;
 mod isolation;
+// ---- Lane E ----
+mod navigator;
 pub(crate) mod select_transform;
+mod view_modes;
 use icon_actions::*;
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction {
@@ -77,13 +84,9 @@ pub enum WinAction {
     /// The band's V mark (4b, macOS): the native About panel.
     About,
 }
-struct ToolBtn {
-    pub(crate) kind: ToolKind,
-    pub(crate) tip: &'static str,
-    pub(crate) tex: Option<egui::TextureHandle>,
-    pub(crate) group_end: bool,
-}
+
 pub struct Ui {
+    pub text_tool: crate::text_product::TextProduct,
     ctx: egui::Context,
     state: egui_winit::State,
     /// When egui wants its next pass (`now` + its repaint delay; `None` = it wants none). The host
@@ -100,9 +103,6 @@ pub struct Ui {
     panel_column: Option<egui::Rangef>,
     pub document_sheet: Option<crate::document_ui::Sheet>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
-    tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
-    shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
-    shape_active: ToolKind, // which shape the shapes slot currently represents
     ic_rotate: Option<egui::TextureHandle>,
     ic_opacity: Option<egui::TextureHandle>,
     ic_strokew: Option<egui::TextureHandle>,
@@ -206,24 +206,6 @@ impl Ui {
         install_fonts(&ctx);
         install_style(&ctx);
         disable_ui_keyboard_zoom(&ctx);
-        let tools = rail::tools(&ctx);
-        // shape tools collapse into ONE rail slot: left-click uses the current shape, right-click flyouts all four.
-        let shape_defs: [(ToolKind, &str, &str); 4] = [
-            (ToolKind::Rect, LEGACY_RECT, "Rectangle (M)"),
-            (ToolKind::Ellipse, LEGACY_ELLIPSE, "Ellipse (L)"),
-            (ToolKind::Triangle, LEGACY_TRIANGLE, "Triangle"),
-            (ToolKind::Polygon, LEGACY_POLYGON, "Polygon"),
-        ];
-        let shapes = shape_defs
-            .iter()
-            .enumerate()
-            .map(|(i, (kind, svg, tip))| ToolBtn {
-                kind: *kind,
-                tip,
-                tex: legacy_texture(&ctx, &format!("ic-shape{i}"), svg, false),
-                group_end: false,
-            })
-            .collect();
         let ic_rotate = legacy_texture(&ctx, "lbl-rot", LEGACY_ROTATE, false);
         let ic_opacity = legacy_texture(&ctx, "lbl-op", LEGACY_OPACITY, false);
         let ic_strokew = legacy_texture(&ctx, "lbl-sw", LEGACY_STROKEW, false);
@@ -249,6 +231,7 @@ impl Ui {
         };
         let state = egui_winit::State::new(ctx.clone(), egui::ViewportId::ROOT, window, None, None, None);
         Ui {
+            text_tool: Default::default(),
             ctx,
             state,
             repaint_at: None,
@@ -259,9 +242,6 @@ impl Ui {
             export_sheet: None,
             panel_column: None,
             export_scopes: Default::default(),
-            tools,
-            shapes,
-            shape_active: ToolKind::Rect,
             ic_rotate,
             ic_opacity,
             ic_strokew,
@@ -331,7 +311,8 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        export::wants_keyboard(self)
+        // ---- Lane D: numeric sheets own canvas shortcuts; Lane G: a live text session too ----
+        drawing::blocks_keyboard(&self.ctx) || self.text_tool.session.is_some() || export::wants_keyboard(self)
     }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.
@@ -376,6 +357,7 @@ impl Ui {
     pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
         if self.doc_active != active {
             self.picker_board_colors = Default::default();
+            self.text_tool = Default::default();
         }
         self.doc_tabs = tabs;
         self.doc_active = active;
@@ -409,6 +391,13 @@ impl Ui {
     /// K3: commit the open field into `ed` now (before a canvas press, which may change the selection
     /// the field edits). `false` = its text does not parse — it keeps the keyboard; drop the press.
     pub fn commit_fields(&mut self, ed: &mut Editor) -> bool {
+        if !fields::settle_text(&self.ctx, self.doc_active, &mut self.field_pending, &mut self.text_tool, ed) {
+            return false;
+        }
+        if let Err(error) = self.text_tool.commit(ed) {
+            self.text_tool.error = Some(error);
+            return false;
+        }
         crate::document_ui::settle(&mut self.document_sheet, ed);
         self.commit_picker_fields(ed)
     }
@@ -419,6 +408,7 @@ impl Ui {
     /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
     /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
     pub fn document_switched(&mut self) {
+        self.text_tool = Default::default();
         self.color_panel = None;
         self.layer_rows_cache = None;
         self.lay_drag = None;
@@ -508,6 +498,9 @@ impl Ui {
         if self.home {
             return self.run_home(window, maximized);
         }
+        if ed.view_depth.presentation {
+            return self.run_presentation(window);
+        }
         // host seed of egui's focus flag from winit (startup, activation, un-occlusion alike) — see
         // `egui_focus_seed`
         let raw = self.state.egui_input_mut();
@@ -524,7 +517,12 @@ impl Ui {
         );
         select_transform::prepare(self, ed);
         self.prepare_picker(ed);
+        self.text_tool.input(&self.ctx, &input, ed, view, ppp, self.board_hole);
         let mut snap = Snap::read(ed);
+        snap.text = self.text_tool.selected_text(ed);
+        if let Some(error) = self.text_tool.error.take() {
+            self.file_status = error;
+        }
         snap.board_colors = self.picker_board_colors.read(
             ed,
             self.color_panel.is_some() && self.picker_layout.drawer_open && self.picker_layout.drawer_tab == 1,
@@ -538,8 +536,6 @@ impl Ui {
         let ruler_reset = ed.doc.active_artboard().map(|a| [a.x, a.y]).unwrap_or([0.0, 0.0]);
         let ruler_grid = ed.adaptive_grid_step(); // tick on the SAME base-5 lattice as the dot grid
         let origin_preview = ed.origin_preview; // dashed crosshair while dragging the ruler zero-point
-        let tools = &self.tools;
-        let shapes = &self.shapes;
         let icons = DockIcons {
             rotate: &self.ic_rotate,
             opacity: &self.ic_opacity,
@@ -560,6 +556,7 @@ impl Ui {
             let rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search, filter, &mut self.layer_thumb_cache);
             layer_rows_cache = Some(LayerRowsCache { key: rows_key, rows });
         }
+        let navigator_canvas = self.board_hole.unwrap_or_else(|| self.ctx.content_rect());
         let layer_rows = &layer_rows_cache.as_ref().expect("layers cache is populated above").rows;
         let layer_icons = &self.layer_icons;
         let mut lay_search = std::mem::take(&mut self.lay_search);
@@ -574,7 +571,6 @@ impl Ui {
         let mut align_target = self.align_target;
         let mut ab_name_edit = std::mem::take(&mut self.ab_name_edit);
         let mut fit_request: Option<usize> = None;
-        let mut shape_active = self.shape_active;
         let mut win_action = None;
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
@@ -602,6 +598,7 @@ impl Ui {
             &self.recovery.status
         };
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
+        let text_tool = &mut self.text_tool;
         let out = self.ctx.run_ui(input, |root| {
             let ctx = root.ctx().clone();
             let ctx = &ctx;
@@ -650,7 +647,7 @@ impl Ui {
                             }
                             guide_field::show(ui, inner, view, ppp, ed, &mut ops);
                             if show_rail {
-                                board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
+                                board_rail(ui.ctx(), inner, &snap, &mut ops);
                             }
                             if show_dock {
                                 board_ctlbar(
@@ -699,6 +696,18 @@ impl Ui {
                             );
                             true
                         }
+                        P::Navigator => {
+                            navigator::draw(
+                                ui,
+                                ed,
+                                view,
+                                ppp,
+                                navigator_canvas,
+                                doc_active.map_or(0, |s| s.0),
+                                &mut ops,
+                            );
+                            true
+                        }
                         P::Align => {
                             panel_align(ui, &icons, &mut align_target, &mut ops);
                             true
@@ -715,6 +724,7 @@ impl Ui {
                 new_column = shell.side_column_span();
             }
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
+            drawing::draw(ctx, ed, hole, view, ppp);
             select_transform::draw(ctx, ed, hole);
             isolation::draw(ctx, ed, hole);
             build_ab_chrome(
@@ -730,6 +740,7 @@ impl Ui {
                 &mut ab_name_edit,
                 &mut fit_request,
             );
+            text_tool.paint(ctx, ed, view, ppp);
             paint_agent_presence(ctx, view, ppp, hole, &presence);
             build_snap_hud(ctx, view, ppp, hole, &snap_hud);
             build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
@@ -754,7 +765,6 @@ impl Ui {
         self.lay_drag = lay_drag;
         self.lay_anchor = lay_anchor;
         self.layer_rows_cache = layer_rows_cache;
-        self.shape_active = shape_active;
         if fit_request.is_some() {
             self.fit_request = fit_request;
         }
@@ -779,6 +789,7 @@ impl Ui {
             }
             true
         });
+        self.text_tool.finish_ops(ed, &mut ops);
         apply_picker_frame(ed, snap_cfg, ops, &mut self.color_panel);
         layout::sync_picker_open(&mut self.picker_layout, self.color_panel.as_ref());
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output

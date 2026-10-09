@@ -43,7 +43,10 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
             if envelope.api != "1.2"
                 && matches!(
                     command,
-                    EditCommand::SetWandOptions(_)
+                    EditCommand::Drawing(_)
+                        | EditCommand::AddText { .. }
+                        | EditCommand::SetText { .. }
+                        | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
                         | EditCommand::TransformBegin
@@ -66,6 +69,16 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
 /// Preconditions for the headless command path. Interactive callers retain `execute` unchanged.
 pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
+    // ---- Lane D: validate before staging ----
+    if let Drawing(action) = command {
+        return crate::drawing::check(ed, action);
+    }
+    // ---- Lane G ----
+    match command {
+        AddText { text, parent } => crate::text::check_change(ed, text, None, *parent)?,
+        SetText { id, text } => crate::text::check_change(ed, text, Some(*id), None)?,
+        _ => {}
+    }
     if matches!(
         command,
         InsertTracedPaths { .. }
@@ -133,7 +146,11 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     let artboard = |i: usize| ed.doc.artboards.get(i).map(|_| ()).ok_or_else(|| format!("unknown artboard index {i}"));
     let selection = || {
         for id in &ed.objsel {
-            path(*id)?;
+            if crate::text::node_id(&ed.doc, *id).is_some() {
+                crate::text::editable(ed, *id)?;
+            } else {
+                path(*id)?;
+            }
         }
         for id in &ed.selected {
             let pid = ed.doc.pid_of_anchor(*id).ok_or_else(|| format!("unknown anchor id {id}"))?;
@@ -149,6 +166,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        Drawing(action) => crate::drawing::check(ed, action),
+        AddText { .. } | SetText { .. } => Ok(()),
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());
@@ -212,6 +231,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
         DivideObjectsBelow => selection(),
         Transform(s) | TransformLive(s) => {
+            if !crate::text::selected_ids(ed).is_empty() && !crate::text::translation_only(*s) {
+                return Err("text objects currently support translation only".into());
+            }
             s.check()?;
             selection()
         }
@@ -273,6 +295,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         View(action) => {
             use crate::editor::view_commands::ViewAction as V;
             match action {
+                // ---- Lane E ----
+                V::Depth(action) => crate::view_depth::validate(ed, *action),
                 V::MakeGuides | V::ReleaseGuides => selection(),
                 V::ClearGuides | V::ToggleGrid => Ok(()),
                 V::Grid { spacing, subdivisions } => {
@@ -508,7 +532,11 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
         SelectPaths(ids) => {
             for id in ids {
-                path(*id)?;
+                if crate::text::node_id(&ed.doc, *id).is_some() {
+                    crate::text::editable(ed, *id)?;
+                } else {
+                    path(*id)?;
+                }
             }
             Ok(())
         }
@@ -797,6 +825,16 @@ pub fn elements(doc: &crate::model::Document, detail: bool) -> BTreeMap<String, 
         let mut v = json!({"id":id,"kind":if n.kind==NodeKind::Layer {"layer"} else {"group"},
             "name":n.name,"bounds":bounds(doc,&doc.node_paths(n.id)),"fill":null,"stroke":null,
             "hidden":n.hidden,"locked":n.locked,"parent":n.parent.map(|id|format!("node:{id}"))});
+        // ---- Lane G: describe source, no engine-derived bounds in core ----
+        if let NodeKind::Text(id) = n.kind {
+            v["kind"] = json!("text");
+            if let Some(text) = doc.text_boxes.iter().find(|t| t.id == id) {
+                v["text"] = json!(text);
+                if let crate::text::TextBoxKind::Area(rect) = text.box_kind {
+                    v["bounds"] = json!([rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]]);
+                }
+            }
+        }
         if detail {
             v["geometry"] = json!(n);
         }
@@ -1135,9 +1173,17 @@ impl Editor {
             batch.editor.doc.snap.grid_spacing,
             batch.editor.doc.snap.grid_subdivisions,
             batch.editor.doc.snap.show_grid,
+            batch.editor.doc.snap.force_pixel_align,
+            batch.editor.doc.snap.move_whole_px,
         );
         self.publish_batch(batch.editor, true);
-        (self.doc.snap.grid_spacing, self.doc.snap.grid_subdivisions, self.doc.snap.show_grid) = grid;
+        (
+            self.doc.snap.grid_spacing,
+            self.doc.snap.grid_subdivisions,
+            self.doc.snap.show_grid,
+            self.doc.snap.force_pixel_align,
+            self.doc.snap.move_whole_px,
+        ) = grid;
         // a set-active-only batch is no content change, so `publish_batch` kept this document: apply
         // the staged active index (same artboards, so the same index) as the navigation preference it is
         self.doc.active = active.min(self.doc.artboards.len().saturating_sub(1));

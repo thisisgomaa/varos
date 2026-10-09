@@ -12,18 +12,45 @@ use std::collections::{HashMap, HashSet};
 pub type Step = fn(Document, &Limits) -> Result<Document, LoadError>;
 
 /// The sequential table. Loading format N runs every step from N up to `FORMAT_VERSION`, in order.
-pub const MIGRATIONS: &[(u32, Step)] =
-    &[(1, migrate_v1_to_v2), (2, migrate_v2_to_v3), (3, migrate_v3_to_v4), (4, migrate_v4_to_v5)];
+pub const MIGRATIONS: &[(u32, Step)] = &[
+    (1, migrate_v1_to_v2),
+    (2, migrate_v2_to_v3),
+    (3, migrate_v3_to_v4),
+    (4, migrate_v4_to_v5),
+    // TEMPORARY (integration 2026-10-09): text was pinned to 8 before images (6) and gradients (7)
+    // landed, so this single identity step spans 5 → 8. Wave-2 stage 2 MUST split it into
+    // migrate_v5_to_v6 (images), migrate_v6_to_v7 (gradients) and migrate_v7_to_v8 (text, i.e.
+    // `crate::text_format::migrate_to_text_boxes`). A 6 or 7 file has no step here and is refused.
+    (5, migrate_v5_to_v8),
+];
 
 /// Run the migrations that take a format-`from` document to format `to`, in order.
 pub fn migrate(mut doc: Document, from: u32, to: u32, limits: &Limits) -> Result<Document, LoadError> {
-    for v in from..to {
+    let mut v = from;
+    while v < to {
         let Some(&(_, step)) = MIGRATIONS.iter().find(|(f, _)| *f == v) else {
             return Err(LoadError::MigrationFailed { from: v, reason: format!("no migration from format {v}") });
         };
         doc = step(doc, limits)?;
+        v = step_target(v);
     }
     Ok(doc)
+}
+
+/// The format a step starting at `from` produces. Every step is `N → N+1` except the temporary
+/// `migrate_v5_to_v8` (see `MIGRATIONS`), which stage 2 replaces with three single steps.
+fn step_target(from: u32) -> u32 {
+    if from == super::PRE_TEXT_FORMAT_VERSION {
+        super::TEXT_FORMAT_VERSION
+    } else {
+        from + 1
+    }
+}
+
+/// TEMPORARY v5 → v8 identity (formats 6 and 7 are reserved for images and gradients, not yet in this
+/// build). Text: legacy readers supplied the empty default; never fabricates source/fonts.
+pub fn migrate_v5_to_v8(doc: Document, limits: &Limits) -> Result<Document, LoadError> {
+    crate::text_format::migrate_to_text_boxes(doc, limits)
 }
 
 /// v1 → v2. The v2 model is the v1 model, so this only performs the documented v1 normalizations

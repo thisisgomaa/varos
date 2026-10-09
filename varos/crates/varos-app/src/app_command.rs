@@ -74,6 +74,8 @@ pub enum AppCommand {
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free
     /// canvas with ZERO artboards (`varos_core::board::new_board`).
+    // ---- Lane E ----
+    SetCanvasColor([u8; 3]),
     FitAll(SessionId),
     View(SessionId, varos_core::editor::view_commands::ViewAction),
     Selection(SessionId, varos_core::editor::wave::Selection),
@@ -111,6 +113,8 @@ pub enum AppCommand {
     OpenDialog,
     /// Provisional File ▸ Place SVG, existing native file-picker pattern.
     PlaceSvg(SessionId),
+    // ---- Lane H ----
+    PlaceFile(SessionId, PathBuf),
     /// Open these files (an already-open file is focused, never reloaded).
     OpenPaths(Vec<PathBuf>, OpenOrigin),
     /// ⌘S — save this tab (goes through Save As when it has no `.vrs` path yet).

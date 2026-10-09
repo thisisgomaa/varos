@@ -354,6 +354,9 @@ fn evict(root: &Path, limit: usize) {
     }
 }
 
+// ---- Lane E ----
+pub mod navigator;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -26,6 +26,9 @@ pub enum Request {
     ExportPdf(FileEffect),
     /// API 1.2 only; import source under the files scope, placed into board.
     ImportSvg(FileEffect),
+    // ---- Lane H ----
+    ImportFile(FileEffect),
+    ImportClipboard(FileEffect),
     ExportSvg(FileEffect),
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
@@ -198,6 +201,48 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    // ---- Lane D: API 1.2 drawing ----
+    ShapeTool {
+        spec: varos_core::drawing::ShapeSpec,
+    },
+    Pencil {
+        points: Vec<[f32; 2]>,
+        options: varos_core::drawing::Options,
+    },
+    SmoothPath {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+        options: varos_core::drawing::Options,
+    },
+    PathErase {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+        options: varos_core::drawing::Options,
+    },
+    JoinTool {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+        options: varos_core::drawing::Options,
+    },
+    Curvature {
+        points: Vec<[f32; 2]>,
+        closed: bool,
+    },
+    DrawingOptions {
+        options: varos_core::drawing::Options,
+    },
+    // ---- Lane G ----
+    AddText {
+        text: varos_core::text::TextBox,
+        #[serde(default)]
+        parent: Option<String>,
+        #[serde(default)]
+        local: Option<String>,
+    },
+    SetText {
+        node: String,
+        text: varos_core::text::TextBox,
+    },
     Pathfinder {
         ids: Vec<String>,
         operation: String,
@@ -512,6 +557,18 @@ pub enum Order {
     Back,
 }
 impl Operation {
+    pub fn drawing(&self) -> bool {
+        matches!(
+            self,
+            Self::ShapeTool { .. }
+                | Self::Pencil { .. }
+                | Self::SmoothPath { .. }
+                | Self::PathErase { .. }
+                | Self::JoinTool { .. }
+                | Self::Curvature { .. }
+                | Self::DrawingOptions { .. }
+        )
+    }
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
@@ -526,7 +583,9 @@ impl Operation {
 
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::ToolOptions { .. }
+            Self::AddText { .. }
+            | Self::SetText { .. }
+            | Self::ToolOptions { .. }
             | Self::TraceRgba { .. }
             | Self::DocumentSetup { .. }
             | Self::AddShape { .. }
@@ -539,8 +598,15 @@ impl Operation {
             | Self::DuplicateArtboard { .. }
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
-            | Self::SetActiveArtboard { .. } => &[],
-            Self::Pathfinder { ids, .. }
+            | Self::SetActiveArtboard { .. }
+            | Self::ShapeTool { .. }
+            | Self::Pencil { .. }
+            | Self::Curvature { .. }
+            | Self::DrawingOptions { .. } => &[],
+            Self::SmoothPath { ids, .. }
+            | Self::PathErase { ids, .. }
+            | Self::JoinTool { ids, .. }
+            | Self::Pathfinder { ids, .. }
             | Self::ShapeBuilder { ids, .. }
             | Self::Scissors { ids, .. }
             | Self::Knife { ids, .. }
@@ -611,7 +677,9 @@ impl Operation {
     pub fn destructive(&self) -> bool {
         matches!(
             self,
-            Self::Delete { .. }
+            Self::PathErase { .. }
+                | Self::JoinTool { .. }
+                | Self::Delete { .. }
                 | Self::Ungroup { .. }
                 | Self::DeleteArtboard { .. }
                 | Self::Pathfinder { .. }
@@ -814,6 +882,8 @@ impl Request {
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
             Self::ImportSvg(_) => "import_svg",
+            Self::ImportFile(_) => "import_file",
+            Self::ImportClipboard(_) => "import_clipboard",
             Self::ExportSvg(_) => "export_svg",
             Self::ExportRaster(_) => "export_raster",
             Self::SaveTemplate(_) => "save_template",
@@ -843,6 +913,8 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportClipboard(v)
+            | Self::ImportFile(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => &v.api,
         }
@@ -860,6 +932,8 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportClipboard(v)
+            | Self::ImportFile(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
@@ -882,6 +956,8 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportClipboard(v)
+            | Self::ImportFile(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,

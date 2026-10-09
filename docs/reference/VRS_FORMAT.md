@@ -7,6 +7,37 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
+## Format 8 — editable text (stamped 2026-10-09, `integ/w2`)
+
+Text is pinned to its FINAL number **8** (`TEXT_FORMAT_VERSION = FORMAT_VERSION = 8`) before images
+(**6**) and gradients (**7**) land, so files saved meanwhile stay valid; **9** is reserved for Live
+Corners (export-paths lane). JSON `varos:8` and PDF `/VAROS_SchemaVersion 8` always agree.
+Until wave-2 stage 2, `MIGRATIONS` holds one TEMPORARY identity step `migrate_v5_to_v8` (it runs
+`text_format::migrate_to_text_boxes`, creating no source, fonts or outlines); stage 2 splits it into
+v5→v6 (images), v6→v7 (gradients), v7→v8 (text). This build refuses a `varos:6`/`varos:7` file
+(`MigrationFailed`, no step). Forward contract: images/gradients keys are optional with defaults,
+so a v8 file without them reads on the stage-2 reader. A plain v5 file re-saves byte-identical
+apart from the stamp (`varos-core/tests/format_v8_pin.rs`).
+
+New optional `doc.text_boxes` stores TextBox records; each has `id`, `box_kind` (`Point` or
+`{"Area":[x,y,width,height]}`), baseline `frame:[x,y]`, `runs:[{text,style}]`, and `para`.
+`style` contains `font:{family,weight,hash}` (exact lowercase SHA-256 bytes identity), `size`,
+`letter_spacing`, and RGBA `fill`. `para` contains `align` (Left/Centre/Right/Justify),
+`direction` (Auto/Ltr/Rtl), `kashida` (Off/Minimal/Balanced/Display), and `line_height`.
+A leaf's new `NodeKind` is `{"Text":text_id}`. Every text record has exactly one childless leaf.
+No font bytes, machine paths, layout caches, or generated glyph paths are persisted.
+
+Load/save/edit enforce 4,096 boxes, 4,096 runs per box, 1 MiB source per box and 8 MiB total;
+finite frames, positive area dimensions, font size 0.1–4,096 pt, leading 1.3–20 em, and zero Arabic
+tracking. Runtime shaping additionally refuses frames above 64 KiB or 16,384 glyphs, and bounds
+outline vertices. Unknown/missing font snapshots fail explicitly when rendering/exporting.
+Omitted text storage remains omitted for plain-path files. Declaring a pre-text version while
+carrying either text key is refused. Frozen `fixtures/text_next/` includes mixed source and
+legacy-key, Arabic-tracking, future-JSON/PDF refusal cases, with SHA256SUMS (restamped 2026-10-09:
+`mixed.json` and `refuse_arabic_tracking.json` → 8; `refuse_newer.json`/`.pdf` → 9; `refuse_text_in_v5.json` stays 5).
+The PDF tests exercise the frozen v5 reader gate against current text output before typed decode.
+Native files retain editable source; PDF/SVG deliverables report **text exported as outlines**.
+
 ## Implementation status — Lane H format 5 (2026-10-09)
 
 The worktree writer stamps JSON `varos:5` and PDF `/VAROS_SchemaVersion 5`. First merged writer takes v5;
@@ -114,7 +145,11 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 | 3 | **legacy, readable through migration** (since 2026-10-07) | builds up to `a5f687b` | v2 plus three `doc` keys: `name` (string), `description` (string), `tags` (array of strings) — board metadata, bounded (§6b). A v1/v2 file carrying any of them is refused. |
 | 4 | **legacy, readable through identity migration** | builds through base `7b48f2c` | v3 plus one key on every artboard: `id` (u32 > 0, unique among artboards, from the document id counter) — stable artboard identity (§6c). `active` must name an artboard (or be 0 on a free canvas). A v1/v2/v3 file carrying an artboard `id` is refused. |
 
-| 5 | **Lane H writer, merge pending** | `feat/p2-stroke` | optional `doc.paths[].stroke_style`; exact keys and validation in §6d; default authored doc bytes unchanged. |
+| 5 | **legacy, readable through identity migration** | `feat/p2-stroke` builds through main `c852a55` | optional `doc.paths[].stroke_style`; exact keys and validation in §6d; default authored doc bytes unchanged. |
+| 6 | **reserved — images** (wave-2 stage 2, not stamped) | — | image objects + assets; refused by the 8 build until the real v5→v6 step lands. |
+| 7 | **reserved — gradients + swatches** (wave-2 stage 2, not stamped) | — | `Paint` gradients, swatch table; refused by the 8 build until v6→v7 lands. |
+| 8 | **current writer — STAMPED 2026-10-09** | `integ/w2` | optional `doc.text_boxes`, `NodeKind::Text` (section "Format 8" above). |
+| 9 | **reserved — Live Corners** (export-paths lane, not stamped) | — | per-corner params. |
 
 ## 6. Migration v1 → v2
 

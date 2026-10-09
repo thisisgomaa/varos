@@ -1,0 +1,9 @@
+[package]
+name = "varos-text-layout"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+varos-core = { path = "../varos-core" }
+varos-text = { path = "../varos-text" }
+i_overlay = "7.0.2"
+fontdb = { version = "=0.23.0", default-features = false }
