@@ -21,10 +21,23 @@ pub trait Tool {
 
 pub fn get(kind: ToolKind) -> &'static dyn Tool {
     match kind {
+        // ---- Lane D: handled before stateless tool dispatch ----
+        ToolKind::RoundedRect
+        | ToolKind::Star
+        | ToolKind::Line
+        | ToolKind::Arc
+        | ToolKind::Spiral
+        | ToolKind::RectGrid
+        | ToolKind::PolarGrid
+        | ToolKind::Pencil
+        | ToolKind::Smooth
+        | ToolKind::PathEraser
+        | ToolKind::Join
+        | ToolKind::Curvature => &object::Object,
         ToolKind::Pen => &pen::Pen,
         ToolKind::Direct => &direct::Direct,
         ToolKind::Object | ToolKind::FreeTransform => &object::Object,
-        ToolKind::Hand | ToolKind::Zoom => &object::Object, // view gestures are owned by the app
+        ToolKind::Text | ToolKind::Hand | ToolKind::Zoom => &object::Object, // view gestures are owned by the app
         ToolKind::Lasso => &anchor_edit::Lasso,
         ToolKind::AddAnchor => &anchor_edit::Add,
         ToolKind::DeleteAnchor => &anchor_edit::Delete,

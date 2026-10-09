@@ -3,10 +3,13 @@ use std::io::Read;
 use varos_core::model::{Anchor, Artboard, Document, GroupRole, Node, NodeKind, Path, Xform};
 
 pub const MAX_BYTES: usize = 16 * 1024 * 1024;
-#[derive(Clone, Debug, Default, serde::Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ImportReport {
     pub paths: usize,
     pub loss_notes: Vec<String>,
+    /// Host interchange metadata, never part of Document/native format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_flavour: Option<String>,
 }
 impl ImportReport {
     fn loss(&mut self, note: &str) {
@@ -150,6 +153,7 @@ fn walk(
     doc: &mut Document,
     report: &mut ImportReport,
 ) -> Result<(), String> {
+    crate::control::checkpoint()?;
     let opacity = opacity * group.opacity().get();
     if group.blend_mode() != usvg::BlendMode::Normal || group.isolate() {
         report.loss("Blend/isolation compositing omitted");
@@ -332,3 +336,17 @@ fn segments_touch(a: &[[f32; 2]], b: &[[f32; 2]]) -> bool {
     let opposite = |x: f64, y: f64| (x <= 0.0 && y >= 0.0) || (x >= 0.0 && y <= 0.0);
     opposite(side(a[0], a[1], b[0]), side(a[0], a[1], b[1])) && opposite(side(b[0], b[1], a[0]), side(b[0], b[1], a[1]))
 }
+
+// ---- Lane H: foreign adapters ----
+mod dxf;
+mod dxf_spline;
+pub mod interchange;
+mod pdf;
+pub use dxf::import_dxf;
+pub use interchange::{import_file, Format, ImportOptions, LossPolicy};
+pub use pdf::import_pdf;
+pub mod clipboard;
+mod control;
+pub use control::import_cancellable;
+
+pub mod worker;

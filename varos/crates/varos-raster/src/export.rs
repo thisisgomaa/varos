@@ -94,16 +94,19 @@ pub struct Output {
 }
 
 pub fn plan(doc: &Document, scope: &Scope) -> Result<Vec<Asset>, String> {
+    // ---- Lane G ----
+    let outlined = varos_text_layout::outline_document(doc)?;
+    let appearance = &outlined;
     let (snapshot, plan) = match scope {
         Scope::Selection(ids) => {
-            let (narrowed, mut plan) = svg::plan_selection_svg_export(doc, ids).map_err(|e| e.to_string())?;
+            let (narrowed, mut plan) = svg::plan_selection_svg_export(appearance, ids).map_err(|e| e.to_string())?;
             for page in &mut plan.pages {
                 page.name = "Selection".into();
             }
             (narrowed, plan)
         }
         _ => {
-            let mut snapshot = doc.clone();
+            let mut snapshot = appearance.clone();
             let scope = match scope {
                 Scope::AllArtboards => svg::ExportScope::AllVisibleArtboards,
                 Scope::WholeBoard => svg::ExportScope::WholeBoard,
@@ -117,7 +120,9 @@ pub fn plan(doc: &Document, scope: &Scope) -> Result<Vec<Asset>, String> {
             (snapshot, plan)
         }
     };
-    let doc = Arc::new(snapshot);
+    let mut authored = doc.clone();
+    authored.active = snapshot.active;
+    let doc = Arc::new(if matches!(scope, Scope::Selection(_)) { snapshot } else { authored });
     Ok(plan.pages.into_iter().map(|page| Asset { name: page.name.clone(), doc: doc.clone(), page }).collect())
 }
 
@@ -126,8 +131,12 @@ pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<O
     check_cancel(cancel)?;
     // Validate caller-supplied pages and documents before allocation or traversal.
     let plan = svg::ExportPlan { scope: svg::ExportScope::WholeBoard, pages: vec![asset.page.clone()] };
+    let outlined = varos_text_layout::outline_document(&asset.doc)?;
     let (svg_files, mut report) =
-        svg::export_svg_files_with_report(&asset.doc, &plan, cancel).map_err(|e| e.to_string())?;
+        svg::export_svg_files_with_report(&outlined, &plan, cancel).map_err(|e| e.to_string())?;
+    if !asset.doc.text_boxes.is_empty() {
+        report.notes.extend(varos_text_layout::export_notes(&asset.doc)?);
+    }
     let bytes = match options.format {
         Format::Svg => svg_files.into_iter().next().ok_or("No export page.")?.bytes,
         Format::Pdf => return Err("PDF encoding belongs to varos-pdf; the host uses the same page plan.".into()),

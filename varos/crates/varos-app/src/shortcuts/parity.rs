@@ -15,6 +15,11 @@ macro_rules! b {
     };
 }
 pub const BINDINGS: &[Binding] = &[
+    // ---- Lane E ----
+    b!("KeyY", true, false, false, "Outline"),
+    b!("KeyY", true, false, true, "Pixel Preview"),
+    b!("KeyF", false, true, false, "Presentation Mode"),
+    b!("KeyT", false, false, false, "Type"),
     b!("KeyN", true, false, false, "New"),
     b!("KeyO", true, false, false, "Open"),
     b!("KeyS", true, false, false, "Save"),
@@ -25,7 +30,13 @@ pub const BINDINGS: &[Binding] = &[
     b!("KeyW", true, false, true, "Close All"),
     b!("KeyQ", true, false, false, "Quit"),
     b!("KeyE", true, false, true, "Export"),
+    // ---- Lane D: Illustrator drawing bindings ----
+    b!("KeyN", false, false, false, "Pencil"),
+    b!("Backslash", false, false, false, "Line Segment"),
+    b!("Backquote", false, true, false, "Curvature"),
     b!("KeyP", true, false, false, "Print"),
+    // ---- Lane H ----
+    b!("KeyP", true, true, false, "Place artwork"),
     b!("KeyP", true, false, true, "Document Setup"),
     b!("KeyZ", true, false, false, "Undo"),
     b!("KeyZ", true, true, false, "Redo"),
@@ -163,7 +174,7 @@ mod tests {
             assert!(seen.insert((b.key, b.primary, b.shift, b.alt)));
             assert!(is_bound(b.key, b.primary, b.shift, b.alt));
         }
-        assert!(!is_bound("KeyY", true, false, false), "Command-Y is reserved for Outline");
+        assert!(is_bound("KeyY", true, false, false), "Command-Y toggles Outline");
         assert!(is_bound("KeyZ", true, true, false));
     }
 }

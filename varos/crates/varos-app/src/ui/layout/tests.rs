@@ -11,6 +11,7 @@ impl raw_window_handle::HasDisplayHandle for NoDisplay {
 fn headless_ui() -> Ui {
     let ctx = egui::Context::default();
     Ui {
+        text_tool: Default::default(),
         ctx: ctx.clone(),
         state: egui_winit::State::new(ctx, egui::ViewportId::ROOT, &NoDisplay, None, None, None),
         repaint_at: None,
@@ -21,9 +22,6 @@ fn headless_ui() -> Ui {
         export_sheet: None,
         panel_column: None,
         export_scopes: Default::default(),
-        tools: vec![],
-        shapes: vec![],
-        shape_active: ToolKind::Rect,
         ic_rotate: None,
         ic_opacity: None,
         ic_strokew: None,
@@ -131,4 +129,25 @@ fn window_colour_reports_big_panel_preference_while_mini_is_open() {
     ui.color_panel = None;
     ui.prepare_picker(&mut ed);
     assert!(ui.color_panel.is_none());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn canvas_text_owns_native_menu_shortcuts_and_settles_before_switch() {
+    let mut ui = headless_ui();
+    let mut ed = varos_core::Editor::new();
+    ui.text_tool.session =
+        Some(varos_text_layout::edit::EditSession::new(varos_text_layout::default_text("سلام", [20., 50.]).unwrap()));
+    assert!(ui.wants_keyboard());
+    ui.forward_shortcut(egui::Key::A, false, false);
+    ui.forward_shortcut(egui::Key::C, false, false);
+    let input = ui.state.egui_input_mut().clone();
+    ui.text_tool.input(&ui.ctx, &input, &mut ed, varos_core::geom::View::identity(), 1., None);
+    assert_eq!(ui.text_tool.session.as_ref().unwrap().copy(), "سلام");
+    assert!(ui.commit_fields(&mut ed));
+    assert_eq!(ed.doc.text_boxes[0].source(), "سلام");
+    assert_eq!(ed.rev, 1);
+    ui.document_switched();
+    assert!(ui.text_tool.session.is_none());
+    assert!(ui.text_tool.selected.is_none());
 }

@@ -24,10 +24,16 @@ pub fn check(ed: &Editor, source: &Document) -> Result<(), String> {
     }
     let layer =
         ed.doc.node(ed.doc.active_layer).filter(|n| n.kind == NodeKind::Layer).ok_or("active layer unavailable")?;
+    if layer.locked || layer.hidden {
+        return Err("cannot place artwork into a locked/hidden target layer".into());
+    }
     let mut target_depth = 1usize;
     let mut parent = layer.parent;
     while let Some(id) = parent {
         target_depth += 1;
+        if ed.doc.node(id).is_some_and(|n| n.locked || n.hidden) {
+            return Err("cannot place artwork under a locked/hidden ancestor".into());
+        }
         parent = ed.doc.node(id).and_then(|n| n.parent);
         if target_depth > limits.max_tree_depth {
             return Err("destination tree too deep".into());
@@ -35,7 +41,7 @@ pub fn check(ed: &Editor, source: &Document) -> Result<(), String> {
     }
     let mut stack: Vec<_> = source.roots.iter().map(|id| (*id, 1usize)).collect();
     while let Some((id, depth)) = stack.pop() {
-        if depth + target_depth > limits.max_tree_depth {
+        if depth + target_depth + 1 > limits.max_tree_depth {
             return Err("placed artwork exceeds tree depth".into());
         }
         if let Some(n) = source.node(id) {
@@ -79,17 +85,12 @@ pub fn place(ed: &mut Editor, source: Document) {
     }
     let group = ed.doc.nid();
     let layer = ed.doc.active_layer;
-    let children: Vec<u32> = source
-        .roots
-        .iter()
-        .filter_map(|id| source.node(*id))
-        .flat_map(|n| n.children.iter())
-        .filter_map(|id| ids.get(id).copied())
-        .collect();
+    // ---- Lane H: imported root layers become named groups, retaining hidden/locked state ----
+    let children: Vec<u32> = source.roots.iter().filter_map(|id| ids.get(id).copied()).collect();
     ed.doc.nodes.push(Node {
         id: group,
         kind: NodeKind::Group,
-        name: "Placed SVG".into(),
+        name: "Placed artwork".into(),
         parent: Some(layer),
         children,
         hidden: false,
@@ -112,10 +113,13 @@ pub fn place(ed: &mut Editor, source: Document) {
         ed.objsel.insert(path.id);
         ed.doc.paths.push(path);
     }
-    for mut n in source.nodes.into_iter().filter(|n| !source.roots.contains(&n.id)) {
+    for mut n in source.nodes {
+        let is_root = source.roots.contains(&n.id);
+        if is_root {
+            n.kind = NodeKind::Group;
+        }
         n.id = ids[&n.id];
-        n.parent =
-            Some(n.parent.filter(|p| !source.roots.contains(p)).and_then(|p| ids.get(&p).copied()).unwrap_or(group));
+        n.parent = Some(if is_root { group } else { n.parent.and_then(|p| ids.get(&p).copied()).unwrap_or(group) });
         n.children = n.children.iter().filter_map(|id| ids.get(id).copied()).collect();
         if let NodeKind::Path(p) = n.kind {
             n.kind = NodeKind::Path(ids[&p]);

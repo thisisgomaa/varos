@@ -71,8 +71,15 @@ pub fn expanded_ops(edit: &dto::Edit) -> Vec<dto::Operation> {
 }
 
 mod select_transform;
+// ---- Lane D ----
+mod drawing;
 pub mod storage_paths;
 
 pub mod templates;
 /// New host effects are explicitly opt-in; legacy capabilities retain their tool list.
 pub const TOOLS_12: &[&str] = &["print", "copy", "cut"];
+
+// ---- Lane E ----
+mod view_depth;
+// ---- Lane G ----
+mod text;

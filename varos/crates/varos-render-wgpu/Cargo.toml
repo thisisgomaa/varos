@@ -11,3 +11,6 @@ wgpu = "29"
 bytemuck = { version = "1", features = ["derive"] }
 egui = "0.35"
 egui-wgpu = "0.35"
+
+[dev-dependencies]
+naga = { version = "29", features = ["wgsl-in"] }

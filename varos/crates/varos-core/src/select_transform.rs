@@ -147,7 +147,7 @@ pub struct State {
 impl Editor {
     pub fn in_isolation(&self, pid: u32) -> bool {
         let Some(scope) = self.select_transform.isolation else { return true };
-        let mut at = self.doc.node_of_path(pid);
+        let mut at = self.doc.node_of_path(pid).or_else(|| crate::text::node_id(&self.doc, pid));
         for _ in 0..4096 {
             let Some(id) = at else { return false };
             if id == scope {
@@ -223,9 +223,16 @@ impl Editor {
             self.dirty = false;
             return;
         }
+        // ---- Lane G: translation preserves editable source and participates in this transaction. ----
+        if !crate::text::selected_ids(self).is_empty() && crate::text::translation_only(spec) {
+            self.dirty = crate::text::translate_objects(self, spec);
+            return;
+        }
         let mut ids: Vec<_> = self.selected_pids().into_iter().collect();
         ids.sort_unstable();
-        ids.retain(|p| self.in_isolation(*p) && !self.doc.eff_hidden(*p) && !self.doc.eff_locked(*p));
+        ids.retain(|p| {
+            self.doc.pidx(*p).is_some() && self.in_isolation(*p) && !self.doc.eff_hidden(*p) && !self.doc.eff_locked(*p)
+        });
         if ids.is_empty() {
             return;
         }
@@ -536,6 +543,10 @@ impl Editor {
     /// Bound peak output, including originals still alive while cumulative copies are built.
     /// Counts saturate so even hostile requests are refused before cloning or allocating ids.
     pub(crate) fn check_release_build(&self, nodes: &[u32], limits: crate::format::Limits) -> Result<(), String> {
+        // ---- Lane G: refuse destructive path-only build before opening history. ----
+        if nodes.iter().any(|root| crate::text::subtree_has_text(&self.doc, *root)) {
+            return Err("Release Build does not support text-containing targets".into());
+        }
         let targets: std::collections::BTreeSet<_> = nodes.iter().copied().collect();
         if targets.len() != nodes.len() {
             return Err("Release Build targets must be unique".into());

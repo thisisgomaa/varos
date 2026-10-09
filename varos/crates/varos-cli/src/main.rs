@@ -1,5 +1,7 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
 mod document;
+// ---- Lane E ----
+mod view_depth;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -15,9 +17,20 @@ use varos_core::{
 
 // The only CLI verb table. No desktop binary names or UI routing are changed.
 mod trace;
+// ---- Lane G ----
+mod text;
+// ---- Lane H ----
+mod import;
 const VERBS: &[&str] = &[
+    "view-depth",
+    "add-text",
+    "set-text",
     "trace",
     "import-svg",
+    "import",
+    "import-pdf",
+    "import-ai",
+    "import-dxf",
     "describe",
     "snapshot",
     "export-pdf",
@@ -59,6 +72,10 @@ fn response(action: impl FnOnce() -> Result<Value, Failure> + std::panic::Unwind
     }
 }
 fn main() {
+    // ---- Lane H ----
+    if varos_import::worker::worker_main() {
+        return;
+    }
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("bridge") => {
@@ -215,6 +232,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("expected a subcommand: {}", VERBS.join(", ")).into());
     }
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
+    if verb == "view-depth" {
+        return view_depth::run(args).map_err(Failure::from);
+    }
     if ["document-info", "document-setup", "save-template", "new-from-template"].contains(&verb.as_str()) {
         return document::run(&verb, args).map_err(Into::into);
     }
@@ -222,7 +242,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("unknown subcommand {verb}; expected {}", VERBS.join(", ")).into());
     }
     match verb.as_str() {
+        "add-text" | "set-text" => text::run(&verb, args).map_err(Into::into),
         "trace" => trace::run(args).map_err(Into::into),
+        "import" | "import-pdf" | "import-ai" | "import-dxf" => import::run(&verb, args).map_err(Into::into),
         "import-svg" => {
             let a = parse(args, &["--out"], 1)?;
             let out = required(a.out, "--out")?;
