@@ -261,6 +261,8 @@ fn draw_groups(groups: &[Group], dst: &mut Pixmap, xf: Transform) {
             Group::Composite { .. } => layer_scene::draw_composite(group, dst, xf),
             Group::Opaque(prims) => draw_prims(prims, dst, xf),
             Group::Knockout(prims) => draw_knockout(prims, dst, xf),
+            // ---- w3-cmyk (integration w3: overprint = a Multiply layer on the render lane's stack) ----
+            Group::Overprint { .. } => layer_scene::draw_composite(group, dst, xf),
             Group::Isolated { opacity, prims } => {
                 let mut layer = Pixmap::new(dst.width(), dst.height()).unwrap();
                 if gradient::isolated_knockout(prims) {
@@ -476,7 +478,10 @@ fn line_path(pts: &[[f32; 2]]) -> Option<tiny_skia::Path> {
 fn scene_bounds(groups: &[Group]) -> Option<[f32; 4]> {
     fn visit(group: &Group, out: &mut Option<[f32; 4]>) {
         let prims = match group {
-            Group::Opaque(p) | Group::Knockout(p) | Group::Isolated { prims: p, .. } => p,
+            Group::Opaque(p)
+            | Group::Knockout(p)
+            | Group::Overprint { prims: p, .. }
+            | Group::Isolated { prims: p, .. } => p,
             Group::Composite { members, .. } => {
                 members.iter().for_each(|g| visit(g, out));
                 return;
@@ -973,3 +978,21 @@ mod stroke_failure_tests {
 mod gradient_tests;
 // ---- Lane C ----
 pub mod screens;
+
+// ---- w3-cmyk ----
+#[test]
+fn overprint_preview_multiplies_overlap_without_gpu() {
+    let fill =
+        |x, colour| Prim::Fill { rings: vec![vec![[x, 0.], [x + 10., 0.], [x + 10., 10.], [x, 10.]]], color: colour };
+    let groups = [
+        Group::Overprint { opacity: 1., prims: vec![fill(0., [0., 1., 1., 1.])] },
+        Group::Overprint { opacity: 1., prims: vec![fill(5., [1., 0., 1., 1.])] },
+    ];
+    let mut pixmap = Pixmap::new(20, 20).unwrap();
+    pixmap.fill(tiny_skia::Color::WHITE);
+    draw_groups(&groups, &mut pixmap, Transform::identity());
+    assert_eq!(pixmap.pixel(2, 5).unwrap().red(), 0);
+    assert_eq!(pixmap.pixel(2, 5).unwrap().green(), 255);
+    let overlap = pixmap.pixel(7, 5).unwrap();
+    assert_eq!([overlap.red(), overlap.green(), overlap.blue()], [0, 0, 255]);
+}

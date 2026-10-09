@@ -13,7 +13,7 @@ fn surfaces(groups: &[Group]) -> u64 {
                 mask.as_ref().map_or(content, |m| content.max(2 + surfaces(m)))
             }
             Group::Clip { members, .. } => 2 + surfaces(members),
-            Group::Isolated { .. } => 1,
+            Group::Isolated { .. } | Group::Overprint { .. } => 1,
             _ => 0,
         })
         .max()

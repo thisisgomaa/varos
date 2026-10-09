@@ -64,7 +64,10 @@ mod appearance_keys;
 // ---- Lane B w3-effects ----
 /// 11 (2026-10-10, wave 3): live vector effects — `doc.paths[].effects`, `stroke_style.width_profile`.
 pub const EFFECTS_VERSION: u32 = 11;
-pub const FORMAT_VERSION: u32 = EFFECTS_VERSION;
+// ---- w3-cmyk ----
+/// 12 (2026-10-10, wave 3): explicit colour sources — managed paints, `colour_mode`, `output_profile`.
+pub const COLOUR_VERSION: u32 = 12;
+pub const FORMAT_VERSION: u32 = COLOUR_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -190,6 +193,8 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     // ---- w2-images ----
     crate::images::refuse_older_keys(json, version)?;
     crate::text_format::refuse_legacy_text(json, version)?;
+    // ---- w3-cmyk ----
+    crate::colour_format::refuse(json, version)?;
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let mut doc = file.doc;
     let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);

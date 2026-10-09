@@ -33,6 +33,8 @@ fn construction_tools(api: &str) -> Value {
             crate::drawing::schemas(&mut extra, &mut ops);
             // ---- w2-gradients ----
             crate::colour::schemas(&mut extra, &mut ops);
+            // ---- w3-cmyk ----
+            crate::colour_management::schemas(&mut extra, &mut ops);
             // ---- Lane C ----
             crate::path_advanced::schemas(&mut extra, &mut ops);
             // ---- Lane B w3-effects ----
@@ -1220,7 +1222,9 @@ pub fn list_verbs() -> Value {
                     for op in ops {
                         let expanded = expand_schema(op, root);
                         if let Some(verb) = schema_verb(&expanded) {
-                            let entry = json!({"name":verb,"id":varos_core::registry::edit_id(verb),"description":verb_description(verb),"enabled":false,"disabled_reason":"needs_arguments"});
+                            // integration w3: every edit verb needs arguments, so `enabled`/`disabled_reason`
+                            // are stated once per edit group (keeps the reply inside the 16 KiB page).
+                            let entry = json!({"name":verb,"id":varos_core::registry::edit_id(verb),"description":verb_description(verb)});
                             if core_verb(verb) {
                                 core.push(entry);
                             } else {
@@ -1235,7 +1239,7 @@ pub fn list_verbs() -> Value {
             }
         }
     }
-    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"tool":"image_action","group":"images","verbs":crate::images::ACTIONS.iter().map(|name|json!({"name":name,"description":format!("Image operation {name}; call schema with tool image_action and verb {name}")})).collect::<Vec<_>>()},{"group":"tools","verbs":tools}]})
+    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","enabled":false,"disabled_reason":"needs_arguments","verbs":core},{"tool":"edit","group":"extended","enabled":false,"disabled_reason":"needs_arguments","verbs":extended},{"tool":"image_action","group":"images","verbs":crate::images::ACTIONS.iter().map(|name|json!({"name":name,"description":format!("Image operation {name}; call schema with tool image_action and verb {name}")})).collect::<Vec<_>>()},{"group":"tools","verbs":tools}]})
 }
 
 pub fn stroke_style_schema() -> Value {

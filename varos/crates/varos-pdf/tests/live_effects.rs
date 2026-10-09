@@ -71,7 +71,10 @@ fn frozen_v11_embedded_pdf_and_old_reader_refusal() {
     .doc;
     let bytes = varos_pdf::write_pdf_checked(&d, &Limits::DEFAULT).unwrap();
     let loaded = varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap();
-    assert_eq!(loaded.source_version, 11);
+    // integration w3: the writer stamps the current format; the frozen fixture stays 11
+    let current = varos_core::format::FORMAT_VERSION;
+    assert_eq!(loaded.source_version, current);
+    let written = Err(varos_core::format::LoadError::NewerVersion { found: current, supported: 9 });
     let expected = Err(varos_core::format::LoadError::NewerVersion { found: 11, supported: 9 });
     let json = include_bytes!("../../varos-core/tests/fixtures/w3-effects/v11-effects.json");
     assert_eq!(frozen_v9_header_gate(json), expected);
@@ -79,9 +82,9 @@ fn frozen_v11_embedded_pdf_and_old_reader_refusal() {
     let pdf = lopdf::Document::load_mem(&bytes).unwrap();
     let catalog = pdf.catalog().unwrap();
     let version = catalog.get(b"VAROS_SchemaVersion").unwrap().as_i64().unwrap() as u32;
-    assert_eq!(frozen_v9_version_gate(version), expected);
+    assert_eq!(frozen_v9_version_gate(version), written);
     let (_, model) = pdf.dereference(catalog.get(b"VAROS_Model").unwrap()).unwrap();
-    assert_eq!(frozen_v9_header_gate(&model.as_stream().unwrap().content), expected);
+    assert_eq!(frozen_v9_header_gate(&model.as_stream().unwrap().content), written);
     assert_eq!(frozen_v9_header_gate(br#"{"varos":9,"doc":"invalid"}"#), Ok(9));
     assert_eq!(frozen_v9_version_gate(9), Ok(9));
 }

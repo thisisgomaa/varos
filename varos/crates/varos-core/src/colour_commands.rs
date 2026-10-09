@@ -38,9 +38,22 @@ pub fn check(ed: &Editor, c: &ColourCommand) -> Result<(), String> {
             check(ed, &ColourCommand::ImportSwatches { swatches: entries })
         }
         ColourCommand::Reduce { count } if !(1..=256).contains(count) => Err("recolor count must be in 1..256".into()),
-        ColourCommand::Paint { paint, .. } | ColourCommand::Live { paint, .. } => {
-            swatches::validate_paint(paint, &ed.doc)
+        // ---- w3-cmyk ----
+        ColourCommand::Paint { target, paint } | ColourCommand::Live { target, paint } => {
+            swatches::validate_paint(paint, &ed.doc)?;
+            let selected = ed.selected_pids();
+            let mut prospective = ed.doc.clone();
+            for p in &mut prospective.paths {
+                if selected.contains(&p.id) {
+                    match target {
+                        PaintTarget::Fill => p.fill = paint.clone(),
+                        PaintTarget::Stroke => p.stroke = paint.clone(),
+                    }
+                }
+            }
+            crate::colour_management::validate_document(&prospective)
         }
+        // ---- end w3-cmyk ----
         ColourCommand::UpsertSwatch { swatch } => {
             let mut d = ed.doc.clone();
             d.swatches.retain(|s| s.id != swatch.id);

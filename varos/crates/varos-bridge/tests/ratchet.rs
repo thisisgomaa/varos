@@ -86,3 +86,12 @@ fn align_key_object_is_advertised_in_every_api() {
     let pattern = align["properties"]["target"]["pattern"].as_str().expect("target pattern");
     assert!(pattern.contains("|key_object|"), "API 1.2: {pattern}");
 }
+
+/// Integration w3: the combined wave-3 verbs must still fit ONE list_verbs reply page (16 KiB text
+/// budget, `MAX_TEXT`); edit rows inherit `enabled`/`disabled_reason` from their group.
+#[test]
+fn list_verbs_fits_one_reply_page() {
+    let bytes = serde_json::to_vec(&varos_bridge::mcp::list_verbs()).expect("serialize list_verbs").len();
+    println!("API 1.2 list_verbs: {bytes} B");
+    assert!(bytes + 512 <= varos_bridge::MAX_TEXT, "list_verbs grew to {bytes} B (16 KiB page incl. envelope)");
+}

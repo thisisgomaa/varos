@@ -16,6 +16,7 @@ pub(super) fn paint_tree(
     knock_pool: &mut KnockGs,
     gradients: &mut crate::gradient::Pool,
     images: &[crate::image_write::DrawImage],
+    colours: &crate::colour_management::Resources,
     cancel: &AtomicBool,
 ) -> Result<Vec<(String, Ref)>, ExportError> {
     struct Builder<'a> {
@@ -28,6 +29,7 @@ pub(super) fn paint_tree(
         knock_pool: &'a mut KnockGs,
         gradients: &'a mut crate::gradient::Pool,
         images: &'a [crate::image_write::DrawImage],
+        colours: &'a crate::colour_management::Resources,
         cancel: &'a AtomicBool,
         forms: Vec<(String, Ref)>,
         states: Vec<(String, Ref)>,
@@ -52,8 +54,17 @@ pub(super) fn paint_tree(
                     let entries = if source.stack.is_empty() { vec![source.clone()] } else { paint_paths(source) };
                     for p in &entries {
                         let Some(d) = drawable(self.doc, pi, p) else { continue };
-                        if !crate::gradient::paint(self.doc, &d, &mut content, self.pdf, self.ids, self.gradients, &t) {
-                            paint(&mut content, self.gss, self.knocks, self.knock_pool, self.ids, &d, &t);
+                        if !crate::gradient::paint(
+                            self.doc,
+                            &d,
+                            &mut content,
+                            self.pdf,
+                            self.ids,
+                            self.gradients,
+                            self.colours,
+                            &t,
+                        ) {
+                            paint(&mut content, self.gss, self.knocks, self.knock_pool, self.ids, &d, &t, self.doc);
                         }
                     }
                     if !source.stack.is_empty() && source.opacity < 1. {
@@ -143,6 +154,13 @@ pub(super) fn paint_tree(
             form.group().transparency().isolated(isolated).knockout(knockout).color_space().device_rgb();
             {
                 let mut res = form.resources();
+                // integration w3: managed colour spaces are named at page level; forms must carry them too
+                if !self.colours.spaces.is_empty() {
+                    let mut spaces = res.color_spaces();
+                    for (name, r) in &self.colours.spaces {
+                        spaces.pair(Name(name.as_bytes()), *r);
+                    }
+                }
                 {
                     let mut xo = res.x_objects();
                     for (name, r) in &self.forms {
@@ -198,6 +216,7 @@ pub(super) fn paint_tree(
         knock_pool,
         gradients,
         images,
+        colours,
         cancel,
         forms: vec![],
         states: vec![],

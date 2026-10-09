@@ -35,6 +35,10 @@ pub(crate) fn label(command: &EditCommand) -> &'static str {
         Pathfinder(_) => "Pathfinder",
         InsertAnchor { .. } | AnchorType { .. } => "Edit anchors",
         LayerFamily { .. } => "Edit layers",
+        // ---- w3-cmyk ----
+        ColourManagement(crate::colour_management_commands::Command::Mode { .. }) => "Document colour mode",
+        ColourManagement(crate::colour_management_commands::Command::Profile { .. }) => "Assign ICC profile",
+        ColourManagement(crate::colour_management_commands::Command::Paint { .. }) => "Change source colour",
         _ => "Edit artwork",
     }
 }

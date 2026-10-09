@@ -264,6 +264,11 @@ pub enum Operation {
         text: varos_core::text::TextBox,
     },
     // ---- w2-gradients ----
+    // ---- w3-cmyk ----
+    ColourManagement {
+        ids: Vec<String>,
+        command: varos_core::colour_management_commands::Command,
+    },
     Colour {
         ids: Vec<String>,
         command: varos_core::colour_commands::ColourCommand,
@@ -651,7 +656,9 @@ impl Operation {
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
-            Self::Colour { .. }
+            // ---- w3-cmyk ----
+            Self::ColourManagement { .. }
+                | Self::Colour { .. }
                 | Self::ScaleStrokes { .. }
                 | Self::NewDocument { .. }
                 | Self::ToolOptions { .. }
@@ -695,6 +702,8 @@ impl Operation {
             Self::SmoothPath { ids, .. }
             | Self::PathErase { ids, .. }
             | Self::JoinTool { ids, .. }
+            // ---- w3-cmyk ----
+            | Self::ColourManagement { ids, .. }
             | Self::Colour { ids, .. }
             // ---- Lane B w3-effects ----
             | Self::LiveEffects { ids, .. }

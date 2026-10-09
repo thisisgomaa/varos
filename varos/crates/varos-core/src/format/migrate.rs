@@ -25,6 +25,8 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (9, migrate_v9_to_v10),
     // ---- Lane B w3-effects ----
     (10, migrate_v10_to_v11),
+    // ---- w3-cmyk ----
+    (11, migrate_v11_to_v12),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the
@@ -174,5 +176,10 @@ pub fn migrate_v9_to_v10(doc: Document, _limits: &Limits) -> Result<Document, Lo
 // ---- Lane B w3-effects ----
 /// v10 → v11: additive live effects and width profiles; the typed decode supplies empty/None defaults.
 pub fn migrate_v10_to_v11(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    Ok(doc)
+}
+// ---- w3-cmyk ----
+/// v11 → v12: optional colour fields default to RGB. No conversions occur during migration.
+pub fn migrate_v11_to_v12(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

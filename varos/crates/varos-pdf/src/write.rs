@@ -242,6 +242,9 @@ fn write_pages_impl(
     // ---- Lane C: page appearance uses resolved live corners (the embedded model keeps them live) ----
     let resolved = varos_core::live_corners::document(doc);
     let doc = &resolved;
+    // ---- w3-cmyk ----
+    let converted = crate::colour_management::prepared(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = converted.as_ref();
     // ---- w2-gradients ----
     crate::gradient::check_budget(doc, pages.len())?;
     let mut stroke_budget = varos_core::stroke::evaluate::StrokeBudget::default();
@@ -270,6 +273,8 @@ fn write_pages_impl(
         Vec::new()
     };
 
+    // ---- w3-cmyk ----
+    let colour_resources = crate::colour_management::resources(doc, &mut pdf, &mut ids);
     for ab in pages {
         if cancel.load(Ordering::Relaxed) {
             return Err(ExportError::Cancelled);
@@ -317,6 +322,8 @@ fn write_pages_impl(
                 &mut knock_pool,
                 &mut gradients,
                 &images,
+                // integration w3: managed (CMYK/Gray/Spot) paints inside appearance forms
+                &colour_resources,
                 cancel,
             )?
         } else {
@@ -363,7 +370,18 @@ fn write_pages_impl(
                     tick.check(cancel)?;
                     // integration w2: gradients (resolved through swatches) first, in image documents too
                     if let Item::Path(pd) = d {
-                        if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
+                        if crate::gradient::paint(
+                            doc,
+                            pd,
+                            &mut c,
+                            &mut pdf,
+                            &mut ids,
+                            &mut gradients,
+                            // ---- w3-cmyk ----
+                            &colour_resources,
+                            // ---- end w3-cmyk ----
+                            &t,
+                        ) {
                             continue;
                         }
                     }
@@ -392,7 +410,18 @@ fn write_pages_impl(
             for d in members {
                 tick.check(cancel)?;
                 if let Item::Path(pd) = d {
-                    if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
+                    if crate::gradient::paint(
+                        doc,
+                        pd,
+                        &mut c,
+                        &mut pdf,
+                        &mut ids,
+                        &mut gradients,
+                        // ---- w3-cmyk ----
+                        &colour_resources,
+                        // ---- end w3-cmyk ----
+                        &t,
+                    ) {
                         continue;
                     }
                 }
@@ -409,6 +438,13 @@ fn write_pages_impl(
         page.parent(tree_id).media_box(Rect::new(0.0, 0.0, ab_w, ab_h)).contents(cont_id);
         {
             let mut res = page.resources();
+            // ---- w3-cmyk ----
+            if !colour_resources.spaces.is_empty() {
+                let mut spaces = res.color_spaces();
+                for (name, r) in &colour_resources.spaces {
+                    spaces.pair(Name(name.as_bytes()), *r);
+                }
+            }
             if !gradients.is_empty() {
                 {
                     let mut sh = res.shadings();
@@ -471,7 +507,8 @@ fn write_pages_impl(
         // dictionary per (Gf, Gk) pair, so each XObject costs a few PDF tokens instead of ~40 and the
         // largest allowed document stays inside the reader's own budget. A single knockout keeps its
         // inline dictionaries (the pinned native bytes do not move).
-        let share = knocks.len() > 1;
+        // ---- w3-cmyk ----
+        let share = knocks.len() > 1 && colour_resources.spaces.is_empty();
         let group = share.then(|| {
             let r = ids.next();
             let mut g = pdf.indirect(r).dict();
@@ -505,7 +542,15 @@ fn write_pages_impl(
                 }
                 _ => {
                     x.group().transparency().isolated(true).knockout(true);
-                    x.resources().ext_g_states().pair(Name(b"Gf"), k.gs_fill.0).pair(Name(b"Gk"), k.gs_stroke.0);
+                    // ---- w3-cmyk ----
+                    let mut res = x.resources();
+                    res.ext_g_states().pair(Name(b"Gf"), k.gs_fill.0).pair(Name(b"Gk"), k.gs_stroke.0);
+                    if !colour_resources.spaces.is_empty() {
+                        let mut spaces = res.color_spaces();
+                        for (name, r) in &colour_resources.spaces {
+                            spaces.pair(Name(name.as_bytes()), *r);
+                        }
+                    }
                 }
             }
             x.finish();
@@ -544,6 +589,10 @@ fn write_pages_impl(
             };
             let mut cat = pdf.catalog(cat_id);
             cat.pages(tree_id);
+            // ---- w3-cmyk ----
+            if let Some(intent) = colour_resources.intent {
+                cat.insert(Name(b"OutputIntents")).array().item(intent);
+            }
             cat.names().embedded_files().names().insert(Str(MODEL_NAME), fs_id);
             cat.insert(Name(b"AF")).array().item(fs_id);
             cat.pair(Name(b"VAROS_Model"), emb_id);
@@ -562,7 +611,12 @@ fn write_pages_impl(
         }
         _ => {
             // the pure export: the page tree and nothing else
-            pdf.catalog(cat_id).pages(tree_id);
+            // ---- w3-cmyk ----
+            let mut cat = pdf.catalog(cat_id);
+            cat.pages(tree_id);
+            if let Some(intent) = colour_resources.intent {
+                cat.insert(Name(b"OutputIntents")).array().item(intent);
+            }
         }
     }
 
@@ -600,7 +654,8 @@ fn paint_item(
     doc: &Document,
 ) {
     match item {
-        Item::Path(d) => paint(c, gss, knocks, pool, ids, d, t),
+        // ---- w3-cmyk ----
+        Item::Path(d) => paint(c, gss, knocks, pool, ids, d, t, doc),
         Item::Image(im) => {
             c.save_state();
             if let Some(rects) = varos_core::images::board_clips(doc, im.id) {
@@ -639,6 +694,8 @@ impl Tick {
 }
 
 /// One path's paint ops (knockout XObject or in-place fill/stroke), appended to the page content.
+// ---- w3-cmyk ----
+#[allow(clippy::too_many_arguments)] // writer state plus explicit document colour context
 fn paint(
     c: &mut Content,
     gss: &mut Vec<Gs>,
@@ -647,6 +704,8 @@ fn paint(
     ids: &mut Alloc,
     d: &Drawn,
     t: &impl Fn([f32; 2]) -> (f32, f32),
+    // ---- w3-cmyk ----
+    doc: &Document,
 ) {
     let Drawn { p, xf, fill, stroke, fillable, strokable, bbox, .. } = *d;
     let baked = !native_stroke(p);
@@ -661,15 +720,18 @@ fn paint(
         ic.set_line_cap(LineCapStyle::RoundCap).set_line_join(LineJoinStyle::RoundJoin);
         let gf = knock_gs(knock_pool, ids, false, fill[3]);
         let gk = knock_gs(knock_pool, ids, true, stroke[3]);
-        ic.save_state().set_parameters(Name(b"Gf")).set_fill_rgb(fill[0], fill[1], fill[2]);
+        ic.save_state().set_parameters(Name(b"Gf"));
+        // ---- w3-cmyk ----
+        crate::colour_management::set(&mut ic, doc, &p.fill, fill, false);
         emit_rings(&mut ic, p, &xf, t);
         ic.fill_even_odd().restore_state();
-        ic.save_state()
-            .set_parameters(Name(b"Gk"))
-            .set_stroke_rgb(stroke[0], stroke[1], stroke[2])
-            .set_line_width(p.stroke_width);
+        ic.save_state().set_parameters(Name(b"Gk"));
+        // ---- w3-cmyk ----
+        crate::colour_management::set(&mut ic, doc, &p.stroke, stroke, true);
+        ic.set_line_width(p.stroke_width);
         if baked {
-            ic.set_fill_rgb(stroke[0], stroke[1], stroke[2]);
+            // ---- w3-cmyk ----
+            crate::colour_management::set(&mut ic, doc, &p.stroke, stroke, false);
             emit_coverage(&mut ic, p, &xf, t);
             ic.fill_even_odd();
         } else {
@@ -698,10 +760,12 @@ fn paint(
         let n = gs_name(gss, ids, fa, sa);
         c.set_parameters(Name(n.as_bytes()));
         if let (true, Some(f)) = (fillable, fill) {
-            c.set_fill_rgb(f[0], f[1], f[2]);
+            // ---- w3-cmyk ----
+            crate::colour_management::set(c, doc, &p.fill, f, false);
         }
         if let (true, Some(s)) = (strokable, stroke) {
-            c.set_stroke_rgb(s[0], s[1], s[2]);
+            // ---- w3-cmyk ----
+            crate::colour_management::set(c, doc, &p.stroke, s, true);
             c.set_line_width(p.stroke_width);
             set_stroke_style(c, p);
         }
@@ -712,7 +776,9 @@ fn paint(
             }
             if let Some(s) = stroke {
                 let n = gs_name(gss, ids, sa, sa);
-                c.set_parameters(Name(n.as_bytes())).set_fill_rgb(s[0], s[1], s[2]);
+                c.set_parameters(Name(n.as_bytes()));
+                // ---- w3-cmyk ----
+                crate::colour_management::set(c, doc, &p.stroke, s, false);
                 emit_coverage(c, p, &xf, t);
                 c.fill_even_odd();
             }
