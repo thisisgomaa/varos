@@ -123,9 +123,19 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
         return Ok(0);
     }
     if !crate::TOOLS.contains(&verb.as_str())
-        && verb != "import_svg"
         && verb != "import_file"
         && verb != "import_clipboard"
+        && ![
+            "help",
+            "import_svg",
+            "preferences",
+            "history_list",
+            "history_jump",
+            "actions",
+            "shortcuts",
+            "command_index",
+        ]
+        .contains(&verb.as_str())
         && !crate::TOOLS_12.contains(&verb.as_str())
         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
             .contains(&verb.as_str())

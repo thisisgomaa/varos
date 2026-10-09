@@ -21,7 +21,7 @@ The following is the complete proposed v2 field set, plus required integer `vers
 | `keyboard_increment_pt` | number / `1.0` | finite, 0.001–1296 points inclusive | General: length field with unit suffix | Next nudge after Apply; Shift ×10; point geometry independent of zoom |
 | `default_units` | string / `px` | `px`, `pt`, `pc`, `mm`, `cm`, `in` | General: Units dropdown | New blank documents only; explicit preset/template/import units win |
 | `gpu_preference` | string / `high_performance` | `auto`, `low_power`, `high_performance` | Performance: Graphics processor dropdown | Next launch; preserve baseline default; effective adapter shown separately |
-| `history_depth` | integer / `200` | 5–1000 | Performance: History steps number field | New editors immediately; existing editors at next settled history boundary |
+| `history_depth` | integer / `200` | 5–200 (higher values deferred until image-memory gate) | Performance: History steps number field | New editors immediately; existing editors at next settled history boundary |
 | `recovery_enabled` | boolean / `true` | Boolean only | Saving: Recovery copies switch | Shared existing recovery setting/scheduler; independent of file autosave |
 | `autosave_enabled` | boolean / `true` | Boolean only | Saving: Autosave to file switch | Applies when slice 1.10 writer gates are implemented; disable cancels pending attempts |
 | `autosave_interval_seconds` | integer / `120` | 30–1800 inclusive | Saving: After inactivity duration field | Retained when off; change/re-enable restarts each dirty tab's idle deadline |

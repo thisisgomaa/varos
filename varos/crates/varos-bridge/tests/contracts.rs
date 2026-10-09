@@ -3201,7 +3201,9 @@ fn api_12_discovery_is_opt_in_and_old_tables_stay_identical() {
     let table = varos_bridge::mcp::tools_for_api("1.2");
     let edit = table["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
     assert_eq!(edit["inputSchema"]["properties"]["api"]["enum"], json!(["1.0", "1.1", "1.2"]));
-    assert!(edit["inputSchema"]["$defs"]["operation"].to_string().contains("release_clip"));
+    // integration w2: extended verbs are one shared enum ($defs.extended_verbs) referenced by the operation
+    assert!(edit["inputSchema"]["$defs"]["operation"].to_string().contains("extended_verbs"));
+    assert!(edit["inputSchema"]["$defs"]["extended_verbs"].to_string().contains("release_clip"));
     let mut host = FakeHost::new();
     let mut service = Service::new("test-epoch".into());
     let reply = handle(&mut service, &mut host, req("capabilities", json!({"api":"1.2"})));
@@ -3512,7 +3514,9 @@ fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls(
     let old = varos_bridge::mcp::tools();
     assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
     let new = varos_bridge::mcp::tools_for_api("1.2");
-    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2);
+    // 11 base + 2 Lane H imports + 2 w2-images (add_image, image_action) + 1 Lane C (export_screens)
+    // + 7 Lane F (help, preferences, history_list, history_jump, actions, shortcuts, command_index)
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2 + 2 + 1 + 7);
 }
 
 #[test]
@@ -3577,7 +3581,7 @@ fn stroke_api_12_schemas_capabilities_and_limit_errors() {
     let mut h = FakeHost::new();
     let reply = handle(&mut s, &mut h, req("capabilities", json!({"api":"1.2"})));
     assert!(reply.ok, "{reply:?}");
-    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([5]));
+    assert_eq!(reply.result.as_ref().unwrap()["writable_vrs"], json!([varos_core::format::FORMAT_VERSION]));
     assert!(reply.result.as_ref().unwrap()["stroke_operations_schema"].is_object());
     h.editor.doc.paths[0].stroke = varos_core::model::Paint::Solid([0.0, 0.0, 0.0, 1.0]);
     let rev = h.editor.rev;
@@ -3619,8 +3623,14 @@ fn stroke_scene_failure_is_a_snapshot_error_for_board_and_page() {
     doc.set_node_xform(unit, Xform { rot: 0.7, piv: [0.0, 0.0] });
     doc.artboards = vec![Artboard { id: 100, w: 6000.0, h: 6000.0, clip: false, ..Default::default() }];
     for artboard in [None, Some(100)] {
-        let reply = varos_bridge::service::SnapshotJob { document: doc.clone(), rev: 1, size: [100, 100], artboard }
-            .render(&AtomicBool::new(false));
+        let reply = varos_bridge::service::SnapshotJob {
+            blobs: Default::default(),
+            document: doc.clone(),
+            rev: 1,
+            size: [100, 100],
+            artboard,
+        }
+        .render(&AtomicBool::new(false));
         assert!(!reply.ok);
         assert!(reply.result.is_none());
         let error = reply.error.unwrap();
@@ -3786,6 +3796,10 @@ fn progressive_discovery_resolves_every_12_verb_without_mutation() {
                 let params = reply.result.unwrap();
                 check_refs(&params, &params);
                 assert!(params.is_object());
+            } else if group["tool"] == "image_action" {
+                let params = varos_bridge::mcp::schema("image_action", Some(name)).unwrap();
+                check_refs(&params, &params);
+                assert_eq!(params["properties"]["action"]["const"], name);
             } else {
                 assert!(varos_bridge::mcp::schema(name, None).is_ok(), "{name}");
             }
@@ -3894,4 +3908,118 @@ fn bridge_stroke_content_change_re_evaluates_only_once() {
     assert_eq!(h.editor.canvas_stroke_cache.evaluations(), cold + 2);
     build_scene(&h.editor, 1.);
     assert_eq!(h.editor.canvas_stroke_cache.evaluations(), cold + 2);
+}
+// ---- Lane B gradients ----
+#[test]
+fn gradient_commands_discover_roundtrip_replay_and_refuse_older_apis() {
+    let mut host = FakeHost::new();
+    let mut service = Service::new("test-epoch".into());
+    service.observe(&mut host);
+    let paint =
+        serde_json::to_value(varos_core::model::Paint::Gradient(varos_core::gradient::Gradient::default())).unwrap();
+    let operation =
+        json!({"verb":"colour","ids":["path:10"],"command":{"action":"paint","target":"Fill","paint":paint}});
+    for api in ["1.0", "1.1"] {
+        assert_eq!(varos_bridge::mcp::decode_tool("edit",json!({"api":api,"board":"b1","request_id":"reject","expected_rev":host.editor.rev,"ops":[operation.clone()]})).unwrap_err().code,"unsupported");
+    }
+    let index = handle(&mut service, &mut host, req("list_verbs", json!({"api":"1.2"}))).result.unwrap();
+    assert!(index["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["verbs"].as_array().unwrap())
+        .any(|v| v["name"] == "colour"));
+    let schema = handle(&mut service, &mut host, req("schema", json!({"api":"1.2","tool":"edit","verb":"colour"})));
+    assert!(schema.ok, "{schema:?}");
+    assert!(schema.result.unwrap().to_string().contains("midpoint"));
+    let before = host.editor.doc.clone();
+    let rev = host.editor.rev;
+    let edit = json!({"api":"1.2","board":"b1","request_id":"r101","expected_rev":rev,"ops":[operation]});
+    let reply = handle(&mut service, &mut host, req("edit", edit.clone()));
+    assert!(reply.ok, "{reply:?}");
+    assert_eq!(reply.undo_steps, 1);
+    assert_eq!(reply, handle(&mut service, &mut host, req("edit", edit)));
+    let described = handle(
+        &mut service,
+        &mut host,
+        req("describe", json!({"api":"1.2","board":"b1","ids":["path:10"],"fields":["paint"]})),
+    );
+    assert!(described.ok, "{described:?}");
+    assert_eq!(described.result.unwrap()["objects"][0]["fill"], paint);
+    let legacy = handle(
+        &mut service,
+        &mut host,
+        req("describe", json!({"api":"1.1","board":"b1","ids":["path:10"],"fields":["paint"]})),
+    );
+    assert!(legacy.result.unwrap().to_string().contains("not-solid"));
+    host.editor.undo();
+    assert_eq!(host.editor.doc, before);
+}
+#[test]
+fn swatch_bridge_export_and_recolor_are_atomic_and_budgeted() {
+    let mut host = FakeHost::new();
+    let mut service = Service::new("test-epoch".into());
+    service.observe(&mut host);
+    let before = host.editor.doc.clone();
+    let ops = json!([
+        {"verb":"colour","ids":[],"command":{"action":"upsert_swatch","swatch":{"id":1,"name":"Ink","paint":[0,1,0,1],"global":true,"group":"Brand"}}},
+        {"verb":"colour","ids":["path:10"],"command":{"action":"paint","target":"Fill","paint":{"type":"swatch_ref","value":{"id":1}}}}
+    ]);
+    let rev = host.editor.rev;
+    let reply = handle(
+        &mut service,
+        &mut host,
+        req("edit", json!({"api":"1.2","board":"b1","request_id":"r102","expected_rev":rev,"ops":ops})),
+    );
+    assert!(reply.ok, "{reply:?}");
+    assert_eq!(reply.undo_steps, 1);
+    for field in ["swatches", "palette_ase", "palette_native"] {
+        let r = handle(
+            &mut service,
+            &mut host,
+            req("describe", json!({"api":"1.2","board":"b1","ids":[],"fields":[field]})),
+        );
+        assert!(r.ok, "{field}: {r:?}");
+        assert!(r.result.unwrap().get(field).is_some());
+    }
+    let accepted = host.editor.doc.clone();
+    let rev = host.editor.rev;
+    let reply = handle(
+        &mut service,
+        &mut host,
+        req(
+            "edit",
+            json!({"api":"1.2","board":"b1","request_id":"r103","expected_rev":rev,"ops":[{"verb":"colour","ids":["path:10"],"command":{"action":"recolor","palette":[[1,0,0,1]]}},{"verb":"colour","ids":["path:20"],"command":{"action":"paint","target":"Fill","paint":{"type":"swatch_ref","value":{"id":999}}}}]}),
+        ),
+    );
+    assert!(!reply.ok);
+    assert_eq!(host.editor.doc, accepted);
+    host.editor.undo();
+    assert_eq!(host.editor.doc, before);
+}
+
+/// Integration w2: every extended API 1.2 edit verb of every wave-2 lane (drawing, view, text,
+/// images, colour, Lane C) is discoverable through list_verbs AND has a schema; legacy lists stay frozen.
+#[test]
+fn wave_two_extended_verbs_are_all_listed_and_schematised() {
+    let table = varos_bridge::mcp::tools_for_api("1.2");
+    let edit = table["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    let extended: Vec<String> = edit["inputSchema"]["$defs"]["extended_verbs"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    for verb in ["shape_tool", "pencil", "view", "add_text", "set_text", "colour", "outline_stroke", "live_corners"] {
+        assert!(extended.iter().any(|v| v == verb), "{verb} missing from the 1.2 edit enum");
+    }
+    let listed = varos_bridge::mcp::list_verbs().to_string();
+    for verb in &extended {
+        assert!(listed.contains(&format!("\"{verb}\"")), "{verb} missing from list_verbs");
+        assert!(varos_bridge::mcp::schema("edit", Some(verb)).is_ok(), "{verb} has no schema");
+    }
+    for tool in ["add_image", "image_action", "import_file", "import_clipboard", "export_screens", "preferences"] {
+        assert!(table["tools"].as_array().unwrap().iter().any(|t| t["name"] == tool), "{tool} not listed");
+        assert!(varos_bridge::mcp::schema(tool, None).is_ok(), "{tool} has no schema");
+    }
 }

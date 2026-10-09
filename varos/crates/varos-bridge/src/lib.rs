@@ -70,9 +70,12 @@ pub fn expanded_ops(edit: &dto::Edit) -> Vec<dto::Operation> {
     }
 }
 
+pub mod images;
 mod select_transform;
 // ---- Lane D ----
 mod drawing;
+// ---- Lane C ----
+mod path_advanced;
 pub mod storage_paths;
 
 pub mod templates;
@@ -83,3 +86,10 @@ pub const TOOLS_12: &[&str] = &["print", "copy", "cut"];
 mod view_depth;
 // ---- Lane G ----
 mod text;
+// ---- w2-gradients ----
+mod colour;
+// ---- Lane F ----
+pub mod application;
+
+// ---- Lane F ----
+mod action_recording;

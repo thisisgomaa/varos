@@ -24,7 +24,7 @@ impl NavigatorThumb {
             self.camera = Some(camera);
             self.document = Some(ed.doc.clone());
             let size = varos_app::shell::tokens::NAVIGATOR_PROXY;
-            let raster = super::raster::rasterize_canvas(&ed.doc, size, camera.pan, camera.zoom);
+            let raster = super::raster::rasterize_canvas_with_images(&ed.doc, &ed.blobs, size, camera.pan, camera.zoom);
             self.texture = if raster.errors.is_empty() {
                 let image = egui::ColorImage::from_rgba_premultiplied(
                     [raster.width as usize, raster.height as usize],

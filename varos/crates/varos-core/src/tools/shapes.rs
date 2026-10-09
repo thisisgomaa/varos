@@ -13,7 +13,9 @@ impl Tool for Shapes {
         let id = ed.doc.nid();
         let (f, st, sw) = (ed.cur_fill, ed.cur_stroke, ed.cur_sw);
         let anchors = ed.doc.build_shape(kind, pos, pos);
-        ed.doc.paths.push(Path::new(id, anchors, true, f, st, sw));
+        let mut path = Path::new(id, anchors, true, f, st, sw);
+        ed.inherit_current_paints(&mut path);
+        ed.doc.paths.push(path);
         ed.dirty = true;
         ed.drag = Drag::Shape { start: pos, pid: id, kind };
     }

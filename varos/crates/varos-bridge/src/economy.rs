@@ -261,6 +261,10 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
+        // ---- w2-gradients ----
+        if api != "1.2" && verb == "colour" {
+            return Err(Error::new("unsupported", "colour requires explicit API 1.2"));
+        }
         if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
             return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
         }
@@ -270,7 +274,21 @@ fn walk(
             && !(api == "1.2" && ["set_stroke_style", "add_text", "set_text"].contains(&verb))
             && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"
-                && ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"].contains(&verb))
+                && [
+                    "transform",
+                    "magic_wand",
+                    "eyedropper",
+                    "isolation",
+                    "layers",
+                    "tool_options",
+                    "outline_stroke",
+                    "offset_path",
+                    "expand",
+                    "live_corners",
+                    "scale_strokes",
+                    "new_document",
+                ]
+                .contains(&verb))
             && ![
                 "document_setup",
                 "clip",
@@ -282,6 +300,7 @@ fn walk(
                 "anchor_type",
                 "insert_anchor",
                 "delete_anchor",
+                "colour",
             ]
             .contains(&verb)
         {

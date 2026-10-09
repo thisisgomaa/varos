@@ -948,3 +948,57 @@ fn import_svg_writes_editable_document_and_reports_losses() {
     assert_eq!(doc.paths.len(), 1);
     cli(&["import-svg".as_ref(), input.as_os_str(), "--out".as_ref(), input.as_os_str()], false);
 }
+
+#[test]
+fn palettes_cli_roundtrip_and_gradient_apply_without_overwrite() {
+    let dir = Scratch::new();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../varos-core/tests/fixtures/next_gradients/swatch.vrs");
+    let bytes = std::fs::read(&source).unwrap();
+    {
+        let ext = "json";
+        let palette = dir.path(&format!("library.{ext}"));
+        let exported = cli(&["palette-export".as_ref(), source.as_os_str(), palette.as_os_str()], true);
+        assert_eq!(exported["swatches"], 1);
+        let output = dir.path(&format!("import-{ext}.vrs"));
+        let imported =
+            cli(&["palette-import".as_ref(), source.as_os_str(), palette.as_os_str(), output.as_os_str()], true);
+        assert_eq!(imported["swatches"], 2);
+        assert_eq!(varos_pdf::load_vrs(&output).unwrap().swatches.len(), 2);
+        cli(&["palette-export".as_ref(), source.as_os_str(), palette.as_os_str()], false);
+    }
+    let doc = varos_pdf::load_vrs(&source).unwrap();
+    let refused = dir.path("gradient.ase");
+    cli(&["palette-export".as_ref(), source.as_os_str(), refused.as_os_str()], false);
+    assert!(!refused.exists());
+    let mut solid = doc.clone();
+    solid.swatches[0].paint = varos_core::model::Paint::Solid([1., 0., 0., 1.]);
+    solid.swatches[0].global = false;
+    let solid_source = dir.path("solid.vrs");
+    std::fs::write(&solid_source, varos_pdf::write_pdf(&solid).unwrap()).unwrap();
+    for ext in ["ase", "gpl"] {
+        let palette = dir.path(&format!("solid.{ext}"));
+        cli(&["palette-export".as_ref(), solid_source.as_os_str(), palette.as_os_str()], true);
+        let out = dir.path(&format!("solid-import-{ext}.vrs"));
+        cli(&["palette-import".as_ref(), solid_source.as_os_str(), palette.as_os_str(), out.as_os_str()], true);
+        assert_eq!(varos_pdf::load_vrs(&out).unwrap().swatches.len(), 2);
+    }
+    let id = doc.paths[0].id;
+    let paint =
+        serde_json::to_value(varos_core::model::Paint::Gradient(varos_core::gradient::Gradient::default())).unwrap();
+    let batch = dir.path("gradient.json");
+    std::fs::write(&batch,serde_json::json!({"api":"1.2","commands":[{"SelectPaths":[id]},{"Colour":{"action":"paint","target":"Fill","paint":paint}},{"Colour":{"action":"reduce","count":1}}]}).to_string()).unwrap();
+    let out = dir.path("gradient.vrs");
+    cli(
+        &[
+            "apply".as_ref(),
+            source.as_os_str(),
+            "--batch".as_ref(),
+            batch.as_os_str(),
+            "--out".as_ref(),
+            out.as_os_str(),
+        ],
+        true,
+    );
+    assert!(matches!(varos_pdf::load_vrs(&out).unwrap().paths[0].fill, varos_core::model::Paint::Gradient(_)));
+    assert_eq!(std::fs::read(source).unwrap(), bytes);
+}

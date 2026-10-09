@@ -20,6 +20,9 @@ pub const BINDINGS: &[Binding] = &[
     b!("KeyY", true, false, true, "Pixel Preview"),
     b!("KeyF", false, true, false, "Presentation Mode"),
     b!("KeyT", false, false, false, "Type"),
+    // ---- Lane F ----
+    b!("KeyK", true, false, false, "Preferences"),
+    b!("KeyK", true, true, true, "Keyboard Shortcuts"),
     b!("KeyN", true, false, false, "New"),
     b!("KeyO", true, false, false, "Open"),
     b!("KeyS", true, false, false, "Save"),
@@ -35,8 +38,8 @@ pub const BINDINGS: &[Binding] = &[
     b!("Backslash", false, false, false, "Line Segment"),
     b!("Backquote", false, true, false, "Curvature"),
     b!("KeyP", true, false, false, "Print"),
-    // ---- Lane H ----
-    b!("KeyP", true, true, false, "Place artwork"),
+    // ---- w2-images + Lane H (one Place…, integration w2) ----
+    b!("KeyP", true, true, false, "Place"),
     b!("KeyP", true, false, true, "Document Setup"),
     b!("KeyZ", true, false, false, "Undo"),
     b!("KeyZ", true, true, false, "Redo"),

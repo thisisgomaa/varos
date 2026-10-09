@@ -1,6 +1,7 @@
 //! wgpu renderer: a GPU canvas that draws a varos-core `Scene`. Stencil-then-cover fills,
 //! MSAA, non-sRGB surface, Mailbox present (low latency). Knows nothing about winit/tauri.
 
+pub mod images;
 pub mod perf;
 mod tess;
 use std::io::Write;
@@ -25,13 +26,22 @@ struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) color: vec4<f32>
 @fragment fn fs(in: VsOut) -> @location(0) vec4<f32> { return in.color; }
 "#;
 
+mod gradient;
+// ---- Lane F ----
+pub use wgpu::PowerPreference;
+
 pub mod health;
 pub struct Renderer {
+    // ---- Lane F ----
+    pasteboard: [f32; 4],
+    pub adapter_description: String,
     pub health: health::DeviceHealth,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    image_cache: images::ImageCache,
+    gradients: gradient::Gradients,
     pipe_main: wgpu::RenderPipeline,
     pipe_stencil: wgpu::RenderPipeline,
     pipe_cover: wgpu::RenderPipeline,
@@ -248,6 +258,18 @@ impl Renderer {
     /// surface) — so it returns a human-readable Err instead of panicking; the app shows it in a dialog
     /// (ENGINEERING_REVIEW §3.3: "GPU/Win32/external edges never panic; internal invariants may").
     pub async fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_power(target, width, height, wgpu::PowerPreference::HighPerformance).await
+    }
+    // ---- Lane F ----
+    pub fn set_pasteboard(&mut self, colour: [f32; 4]) {
+        self.pasteboard = colour;
+    }
+    pub async fn new_with_power(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+        power: wgpu::PowerPreference,
+    ) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -257,7 +279,7 @@ impl Renderer {
             .map_err(|e| format!("couldn't create a draw surface on the window: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: power,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
@@ -412,6 +434,15 @@ impl Renderer {
         let pipe_main =
             make_pipe(&device, &layout, &shader, config.format, samples, true, wgpu::StencilState::default());
         let pipe_stencil = make_pipe(&device, &layout, &shader, config.format, samples, false, st_fan);
+        let gradients = gradient::Gradients::new(
+            &device,
+            config.format,
+            samples,
+            st_cov.clone(),
+            st_cover_clip.clone(),
+            st_knock.clone(),
+            clipped_cover_state(false),
+        );
         let pipe_cover = make_pipe(&device, &layout, &shader, config.format, samples, true, st_cov);
         let pipe_smark = make_pipe(&device, &layout, &shader, config.format, samples, false, st_mark);
         let pipe_cover_knock = make_pipe(&device, &layout, &shader, config.format, samples, true, st_knock);
@@ -641,7 +672,12 @@ impl Renderer {
                 ..Default::default()
             },
         );
+        let image_cache = images::ImageCache::new(&device, config.format, samples);
         Ok(Renderer {
+            image_cache,
+            gradients,
+            adapter_description: format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend),
+            pasteboard: BG,
             health,
             surface,
             device,
@@ -777,6 +813,76 @@ impl Renderer {
     fn draw_steps<'a>(&'a self, rp: &mut wgpu::RenderPass<'a>, draws: &[Draw], clip: bool) {
         for d in draws {
             match d {
+                Draw::Image { key, range, scissor } => {
+                    if let Some(bind) = self.image_cache.bind(key) {
+                        rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                        if clip {
+                            rp.set_stencil_reference(2);
+                        }
+                        rp.set_pipeline(if clip { &self.image_cache.clipped } else { &self.image_cache.normal });
+                        rp.set_bind_group(0, bind, &[]);
+                        if let Some([x, y, w, h]) = scissor {
+                            rp.set_scissor_rect(*x, *y, *w, *h);
+                        }
+                        rp.draw(range.0..range.0 + range.1, 0..1);
+                        if scissor.is_some() {
+                            rp.set_scissor_rect(0, 0, self.config.width, self.config.height);
+                        }
+                    }
+                }
+                Draw::Gradient { fan, cover, key, mask, .. } => {
+                    if let Some(bg) = self.gradients.group(*key) {
+                        if let Some((band, _)) = mask {
+                            rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                            rp.set_pipeline(&self.pipe_smark);
+                            rp.set_stencil_reference(0x80);
+                            rp.draw(band.0..band.0 + band.1, 0..1);
+                            rp.set_stencil_reference(0);
+                        }
+                        rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                        rp.set_pipeline(&self.pipe_stencil);
+                        rp.draw(fan.0..fan.0 + fan.1, 0..1);
+                        if clip {
+                            rp.set_stencil_reference(0x03);
+                        }
+                        rp.set_pipeline(match (mask.is_some(), clip) {
+                            (true, true) => &self.gradients.knockout_clip,
+                            (true, false) => &self.gradients.knockout,
+                            (false, true) => &self.gradients.clipped,
+                            (false, false) => &self.gradients.normal,
+                        });
+                        rp.set_bind_group(0, bg, &[]);
+                        rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                        if let Some((_, clear)) = mask {
+                            rp.set_stencil_reference(0);
+                            rp.set_pipeline(&self.pipe_bits_clear);
+                            rp.draw(clear.0..clear.0 + clear.1, 0..1);
+                        }
+                        if clip {
+                            rp.set_stencil_reference(0);
+                            rp.set_pipeline(&self.pipe_fill_clear);
+                            rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                        }
+                    }
+                }
+                Draw::MaskedFill { fan, cover, band, clear } => {
+                    rp.set_vertex_buffer(0, self.fg_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_smark);
+                    rp.set_stencil_reference(0x80);
+                    rp.draw(band.0..band.0 + band.1, 0..1);
+                    rp.set_stencil_reference(0);
+                    rp.set_vertex_buffer(0, self.fill_buf.slice(..));
+                    rp.set_pipeline(&self.pipe_stencil);
+                    rp.draw(fan.0..fan.0 + fan.1, 0..1);
+                    if clip {
+                        rp.set_stencil_reference(0x03);
+                    }
+                    rp.set_pipeline(if clip { &self.pipe_cover_knock_clip } else { &self.pipe_cover_knock });
+                    rp.draw(cover.0..cover.0 + cover.1, 0..1);
+                    rp.set_stencil_reference(0);
+                    rp.set_pipeline(&self.pipe_bits_clear);
+                    rp.draw(clear.0..clear.0 + clear.1, 0..1);
+                }
                 Draw::Fill { fan, cover } => {
                     rp.set_vertex_buffer(0, self.fill_buf.slice(..));
                     rp.set_pipeline(&self.pipe_stencil);
@@ -895,7 +1001,9 @@ impl Renderer {
         canvas: Option<[f32; 4]>,
         pixelate: bool,
     ) {
-        let c = canvas.unwrap_or([BG[0], BG[1], BG[2], 1.0]);
+        // Integration w2: the scene's canvas colour (Lane E) and the pasteboard preference (Lane F)
+        // come from ONE setting; a scene without a canvas (Home/thumbnails) uses the pasteboard.
+        let c = canvas.unwrap_or(self.pasteboard);
         let clearc = wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: c[3] as f64 };
         // bg pass — clear the scene target and lay the dot grid
         {
@@ -1100,8 +1208,13 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&pixel_preview::parameters(world.pixel_preview, view, world.preview_color)),
         );
+        if let Err(reason) = self.image_cache.prepare(&self.device, &self.queue, &world.content) {
+            self.health.stop(reason);
+            return;
+        }
         let bg = build_bg(view, fw, fh, world.grid_step);
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+        self.gradients.prepare(&self.device, &self.queue, &metas);
         let ov_start = fgv.len() as u32;
         fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh)); // editing chrome: constant screen size
         fgv.extend(build_fg(ui, View::identity(), 1.0, fw, fh)); // toolbar: screen-fixed
@@ -1275,6 +1388,12 @@ impl Renderer {
         if !self.health.poll(&self.device) {
             return false;
         }
+        if let Some((world, _)) = scene {
+            if let Err(reason) = self.image_cache.prepare(&self.device, &self.queue, &world.content) {
+                self.health.stop(reason);
+                return false;
+            }
+        }
         let perf_start = std::time::Instant::now();
         // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
         // timeout, common on macOS) we return early, and a dropped full upload makes the next partial
@@ -1298,6 +1417,7 @@ impl Renderer {
             let bg = build_bg(view, fw, fh, world.grid_step);
             let content_start = std::time::Instant::now();
             let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+            self.gradients.prepare(&self.device, &self.queue, &metas);
             let content_elapsed = content_start.elapsed();
             let ov_start = fgv.len() as u32;
             fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh));

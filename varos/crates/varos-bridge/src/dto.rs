@@ -10,6 +10,14 @@ fn page() -> usize {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    // ---- Lane F ----
+    Help(crate::application::HelpRequest),
+    Preferences(crate::application::Preferences),
+    Shortcuts(crate::application::ShortcutsRequest),
+    CommandIndex(crate::application::CommandIndex),
+    HistoryList(crate::application::HistoryList),
+    HistoryJump(crate::application::HistoryJump),
+    Actions(crate::application::ActionsRequest),
     Capabilities(Capabilities),
     Schema(Schema),
     ListVerbs(Capabilities),
@@ -29,7 +37,12 @@ pub enum Request {
     // ---- Lane H ----
     ImportFile(FileEffect),
     ImportClipboard(FileEffect),
+    // ---- w2-images ----
+    AddImage(FileEffect),
+    ImageAction(FileEffect),
     ExportSvg(FileEffect),
+    // ---- Lane C ----
+    #[serde(alias = "export_screens")]
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
     NewFromTemplate(FileEffect),
@@ -242,6 +255,34 @@ pub enum Operation {
     SetText {
         node: String,
         text: varos_core::text::TextBox,
+    },
+    // ---- w2-gradients ----
+    Colour {
+        ids: Vec<String>,
+        command: varos_core::colour_commands::ColourCommand,
+    },
+    // ---- Lane C ----
+    OutlineStroke {
+        ids: Vec<String>,
+    },
+    OffsetPath {
+        ids: Vec<String>,
+        delta: f32,
+        join: varos_core::stroke::StrokeJoin,
+        miter: f32,
+    },
+    Expand {
+        ids: Vec<String>,
+    },
+    LiveCorners {
+        ids: Vec<String>,
+        corners: Vec<varos_core::live_corners::CornerParam>,
+    },
+    ScaleStrokes {
+        enabled: bool,
+    },
+    NewDocument {
+        settings: varos_core::new_document::Settings,
     },
     Pathfinder {
         ids: Vec<String>,
@@ -569,10 +610,24 @@ impl Operation {
                 | Self::DrawingOptions { .. }
         )
     }
+    pub fn lane_c(&self) -> bool {
+        matches!(
+            self,
+            Self::OutlineStroke { .. }
+                | Self::OffsetPath { .. }
+                | Self::Expand { .. }
+                | Self::LiveCorners { .. }
+                | Self::ScaleStrokes { .. }
+                | Self::NewDocument { .. }
+        )
+    }
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
-            Self::ToolOptions { .. }
+            Self::Colour { .. }
+                | Self::ScaleStrokes { .. }
+                | Self::NewDocument { .. }
+                | Self::ToolOptions { .. }
                 | Self::Transform { .. }
                 | Self::MagicWand { .. }
                 | Self::Eyedropper { .. }
@@ -585,6 +640,8 @@ impl Operation {
         match self {
             Self::AddText { .. }
             | Self::SetText { .. }
+            | Self::ScaleStrokes { .. }
+            | Self::NewDocument { .. }
             | Self::ToolOptions { .. }
             | Self::TraceRgba { .. }
             | Self::DocumentSetup { .. }
@@ -606,6 +663,11 @@ impl Operation {
             Self::SmoothPath { ids, .. }
             | Self::PathErase { ids, .. }
             | Self::JoinTool { ids, .. }
+            | Self::Colour { ids, .. }
+            | Self::OutlineStroke { ids }
+            | Self::OffsetPath { ids, .. }
+            | Self::Expand { ids }
+            | Self::LiveCorners { ids, .. }
             | Self::Pathfinder { ids, .. }
             | Self::ShapeBuilder { ids, .. }
             | Self::Scissors { ids, .. }
@@ -867,6 +929,13 @@ impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
         match self {
+            Self::Help(_) => "help",
+            Self::Preferences(_) => "preferences",
+            Self::Shortcuts(_) => "shortcuts",
+            Self::CommandIndex(_) => "command_index",
+            Self::HistoryList(_) => "history_list",
+            Self::HistoryJump(_) => "history_jump",
+            Self::Actions(_) => "actions",
             Self::Schema(_) => "schema",
             Self::ListVerbs(_) => "list_verbs",
             Self::Capabilities(_) => "capabilities",
@@ -884,6 +953,8 @@ impl Request {
             Self::ImportSvg(_) => "import_svg",
             Self::ImportFile(_) => "import_file",
             Self::ImportClipboard(_) => "import_clipboard",
+            Self::AddImage(_) => "add_image",
+            Self::ImageAction(_) => "image_action",
             Self::ExportSvg(_) => "export_svg",
             Self::ExportRaster(_) => "export_raster",
             Self::SaveTemplate(_) => "save_template",
@@ -896,6 +967,13 @@ impl Request {
     pub fn api(&self) -> &str {
         match self {
             Self::Capabilities(v) | Self::WindowMemory(v) | Self::ListVerbs(v) => &v.api,
+            Self::Help(v) => &v.api,
+            Self::Preferences(v) => &v.api,
+            Self::Shortcuts(v) => &v.api,
+            Self::CommandIndex(v) => &v.api,
+            Self::HistoryList(v) => &v.api,
+            Self::HistoryJump(v) => &v.api,
+            Self::Actions(v) => &v.api,
             Self::Schema(v) => &v.api,
             Self::ListBoards(v) => &v.api,
             Self::Describe(v) => &v.api,
@@ -915,12 +993,17 @@ impl Request {
             | Self::Copy(v)
             | Self::ImportClipboard(v)
             | Self::ImportFile(v)
+            | Self::AddImage(v)
+            | Self::ImageAction(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
+            Self::HistoryList(v) => Some(&v.board),
+            Self::HistoryJump(v) => Some(&v.board),
+            Self::Actions(v) => Some(&v.board),
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
             Self::Save(v)
@@ -934,6 +1017,8 @@ impl Request {
             | Self::Copy(v)
             | Self::ImportClipboard(v)
             | Self::ImportFile(v)
+            | Self::AddImage(v)
+            | Self::ImageAction(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
@@ -944,6 +1029,8 @@ impl Request {
     }
     pub fn mutation(&self) -> Option<(&str, u64)> {
         match self {
+            Self::HistoryJump(v) => Some((&v.request_id, v.expected_rev)),
+            Self::Actions(v) => Some((&v.request_id, v.expected_rev)),
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
@@ -958,6 +1045,8 @@ impl Request {
             | Self::Copy(v)
             | Self::ImportClipboard(v)
             | Self::ImportFile(v)
+            | Self::AddImage(v)
+            | Self::ImageAction(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,

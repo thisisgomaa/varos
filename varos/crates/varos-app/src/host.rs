@@ -49,10 +49,10 @@ pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Optio
         (KeyCode::KeyE, false, true) => FileCmd::Export,
         (KeyCode::KeyW, false, false) => FileCmd::CloseTab,
         (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
+        // ⇧⌘P: the ONE Place… (images + Lane H artwork, routed by file type; integration w2)
+        (KeyCode::KeyP, true, false) => FileCmd::Place,
         (KeyCode::KeyP, false, true) => FileCmd::DocumentSetup,
         (KeyCode::KeyP, false, false) => FileCmd::Print,
-        // ---- Lane H ----
-        (KeyCode::KeyP, true, false) => FileCmd::PlaceSvg,
         (KeyCode::KeyQ, false, false) => FileCmd::Quit,
         _ => return None,
     })
@@ -75,12 +75,14 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
         FileCmd::Print => AppCommand::Print(active?),
-        FileCmd::New => AppCommand::NewBoard,
+        FileCmd::New => AppCommand::ShowNewDocument,
         FileCmd::DocumentSetup => AppCommand::DocumentSetup(active?),
         FileCmd::DocumentInfo => AppCommand::DocumentInfo(active?),
         FileCmd::SaveTemplate => AppCommand::SaveTemplate(active?),
         FileCmd::NewTemplate => AppCommand::NewTemplate,
         FileCmd::Open => AppCommand::OpenDialog,
+        FileCmd::Place => AppCommand::PlaceDialog(active?),
+        FileCmd::Package => AppCommand::ImageWorkflow(active?, crate::image_workflows::Action::Package),
         FileCmd::PlaceSvg => AppCommand::PlaceSvg(active?),
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
@@ -413,12 +415,15 @@ pub enum MenuRoute {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> {
     Some(match cmd {
+        MenuCmd::ImageSheet(kind) => MenuRoute::App(AppCommand::ImageSheet(active?, kind)),
+        MenuCmd::LaneC(name) => MenuRoute::App(AppCommand::PathMenu(active?, name)),
         MenuCmd::Slice4a(name) => MenuRoute::Slice4a(name),
         MenuCmd::View(s) => MenuRoute::App(AppCommand::View(active?, s)),
         MenuCmd::TogglePasteRemembersLayers => MenuRoute::App(AppCommand::TogglePasteRemembersLayers),
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
         MenuCmd::Key(k) => MenuRoute::Key(k),
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
+        MenuCmd::Phase9(a) => MenuRoute::App(AppCommand::Phase9(a)),
         MenuCmd::ResetLayout => MenuRoute::App(AppCommand::Window(WindowCmd::ResetLayout)),
         MenuCmd::ToggleRail => MenuRoute::App(AppCommand::Window(WindowCmd::ToggleRail)),
         MenuCmd::TogglePicker => MenuRoute::App(AppCommand::Window(WindowCmd::TogglePicker)),
@@ -472,6 +477,9 @@ pub fn route_left_release(pressed_on_canvas: bool, panning: bool, over_panel: bo
 
 /// The Ui side of a lifecycle command (the real `ui::Ui`; a recorder in tests).
 pub trait DocUi {
+    fn image_sheet(&mut self, _sid: SessionId, _kind: crate::image_ui::SheetKind) -> bool {
+        false
+    }
     fn queue_app_command(&mut self, _cmd: AppCommand) -> bool {
         false
     }
@@ -547,6 +555,18 @@ pub fn run_lifecycle(
     jobs: Option<&mut Vec<FileJob>>,
 ) -> Ran {
     debug_assert!(!matches!(cmd, AppCommand::Window(_)), "window commands are the host's");
+    match &cmd {
+        AppCommand::PlaceDialog(sid) => {
+            if ui.image_sheet(*sid, crate::image_ui::SheetKind::Place) {
+                return Ran::default();
+            }
+        }
+        AppCommand::ImageSheet(sid, kind) => {
+            ui.image_sheet(*sid, *kind);
+            return Ran::default();
+        }
+        _ => {}
+    }
     if ws.on_home()
         && matches!(
             cmd,
@@ -663,6 +683,19 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
 /// owns the one I/O worker; tests use a scripted fake). Results never block the UI thread: they
 /// arrive through the event loop as `AppCommand::FileDone`.
 pub trait FileJobs {
+    fn shortcuts(
+        &mut self,
+        _v: &varos_bridge::application::ShortcutsRequest,
+    ) -> Result<varos_bridge::Reply, varos_bridge::Error> {
+        Err(varos_bridge::Error::new("unsupported", "No shortcut writer"))
+    }
+    // ---- Lane F ----
+    fn preferences(
+        &mut self,
+        _v: &varos_bridge::application::Preferences,
+    ) -> Result<varos_bridge::Reply, varos_bridge::Error> {
+        Err(varos_bridge::Error::new("unsupported", "No preferences writer"))
+    }
     /// Queue `job` on the worker. `Err(job)` = no worker: the caller runs it inline.
     fn submit(&mut self, job: FileJob) -> Result<(), FileJob>;
     /// The wait of the command currently held back by an in-flight save (one at a time: FIFO).
@@ -902,7 +935,7 @@ mod tests {
     #[test]
     fn to_app_command_targets_the_active_tab() {
         let a = Some(ID);
-        assert_eq!(to_app_command(FileCmd::New, a), Some(AppCommand::NewBoard));
+        assert_eq!(to_app_command(FileCmd::New, a), Some(AppCommand::ShowNewDocument));
         assert_eq!(to_app_command(FileCmd::Open, a), Some(AppCommand::OpenDialog));
         assert_eq!(to_app_command(FileCmd::Save, a), Some(AppCommand::Save(ID)));
         assert_eq!(to_app_command(FileCmd::SaveAs, a), Some(AppCommand::SaveAs(ID)));
@@ -1155,6 +1188,7 @@ mod tests {
         ed.pointer_down([0.0, 0.0]);
         ed.pointer_move([80.0, 60.0]);
         let copy = crate::workspace::RecoveredDocument {
+            blobs: Default::default(),
             doc: Document::default(),
             rid: "claim".into(),
             source: crate::workspace::RecoveredSource {
@@ -1792,6 +1826,7 @@ mod background_tests {
         };
         let done = || {
             let job = ExportJob {
+                blobs: Default::default(),
                 pdf_options: Default::default(),
                 sid: a,
                 dest: PathBuf::from("/out/a.pdf"),

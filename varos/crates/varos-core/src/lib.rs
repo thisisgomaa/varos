@@ -8,6 +8,7 @@ mod clipping;
 pub mod command;
 mod construction;
 pub mod guard;
+pub mod images;
 pub use guard::EngineError;
 pub mod editor;
 pub mod flatten;
@@ -18,6 +19,10 @@ pub mod planar;
 pub mod scene;
 // ---- Lane E ----
 pub mod stroke;
+// ---- Lane C ----
+pub mod live_corners;
+pub mod new_document;
+pub mod path_advanced;
 pub mod svg;
 pub mod tools;
 // ---- Lane D: drawing tools ----
@@ -47,3 +52,24 @@ pub mod trace;
 // ---- Lane G ----
 pub mod text;
 pub mod text_format;
+// ---- Lane B: appearance and gradient mathematics ----
+pub mod appearance;
+mod current_paint;
+pub mod gradient;
+mod gradient_canvas;
+
+// ---- w2-gradients ----
+pub mod colour_commands;
+pub mod colour_guide;
+pub mod palette_io;
+pub mod recolor;
+pub mod swatches;
+
+pub mod colour_lab;
+
+mod gradient_scene;
+mod gradient_transform;
+// ---- Lane F ----
+pub mod actions;
+mod command_labels;
+pub mod registry;

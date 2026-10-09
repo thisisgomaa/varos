@@ -426,6 +426,10 @@ pub(crate) fn settle(
 pub(crate) mod tests;
 
 impl crate::host::DocUi for crate::ui::Ui {
+    fn image_sheet(&mut self, sid: crate::app_command::SessionId, kind: crate::image_ui::SheetKind) -> bool {
+        crate::image_ui::open(&self.ctx, sid, kind);
+        true
+    }
     fn queue_app_command(&mut self, cmd: crate::app_command::AppCommand) -> bool {
         self.app_cmds.push(cmd);
         true
@@ -460,5 +464,11 @@ impl crate::host::DocUi for crate::ui::Ui {
     }
     fn export_event(&mut self, event: &crate::file_jobs::ExportEvent) -> bool {
         crate::export_ui::on_event(&mut self.export_sheet, event)
+    }
+}
+
+impl crate::ui::Ui {
+    pub fn image_sheet_open(&self) -> bool {
+        crate::image_ui::is_open(&self.ctx)
     }
 }

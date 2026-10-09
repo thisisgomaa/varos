@@ -21,6 +21,13 @@ serde_json = "1"
 # volume-name keys. Pure Rust, already in the workspace lock (varos-app uses it).
 unicode-normalization = "0.1.25"
 
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "tiff", "bmp"] }
+sha2 = "0.11"
+gif = "=0.13.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # SVG parsing/raster validation only; the exporter uses std and the existing core model.
 resvg = { version = "0.45", default-features = false }

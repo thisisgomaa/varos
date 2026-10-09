@@ -565,7 +565,7 @@ fn alt_drag_and_transform_again_carry_a_locked_clip_mask() {
     ed.layer_select_set(&[clip]);
     let mask_leaf = ed.doc.node_of_path(11).unwrap();
     ed.execute_ui(EditCommand::ToggleNodeLocked(mask_leaf));
-    let mask_fill = ed.doc.paths[ed.doc.pidx(11).unwrap()].fill;
+    let mask_fill = ed.doc.paths[ed.doc.pidx(11).unwrap()].fill.clone();
     ed.mods.alt = true;
     ed.pointer_down([5.0, 5.0]);
     ed.pointer_move([65.0, 5.0]);
@@ -629,7 +629,7 @@ fn scale_copy_and_transform_again_carry_inert_clip_masks_without_selecting_them(
         } else {
             ed.execute_ui(EditCommand::ToggleNodeHidden(mask_leaf));
         }
-        let mask_fill = ed.doc.paths[ed.doc.pidx(11).unwrap()].fill;
+        let mask_fill = ed.doc.paths[ed.doc.pidx(11).unwrap()].fill.clone();
         ed.set_tool(ToolKind::Scale);
         ed.mods.alt = true;
         ed.pointer_down([40.0, 40.0]);

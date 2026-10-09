@@ -64,6 +64,9 @@ pub trait Dialogs {
     }
     /// The Open dialog (multi-select). Empty = cancelled.
     fn pick_open(&mut self) -> Vec<PathBuf>;
+    fn pick_image(&mut self) -> Option<PathBuf> {
+        self.pick_open().into_iter().next()
+    }
     fn pick_place_svg(&mut self) -> Option<PathBuf> {
         None
     }
@@ -119,6 +122,39 @@ pub trait DocStore {
     /// Additive notice seam; existing stores need not produce migration notices.
     fn load_with_notice(&mut self, path: &Path) -> Result<(Document, Option<&'static str>), String> {
         self.load(path).map(|doc| (doc, None))
+    }
+    // ---- w2-images ----
+    fn load_resources(
+        &mut self,
+        path: &Path,
+    ) -> Result<(Document, varos_core::images::BlobStore, Option<&'static str>), String> {
+        self.load_with_notice(path).map(|(doc, notice)| (doc, Default::default(), notice))
+    }
+    fn save_resources_published(
+        &mut self,
+        doc: &Document,
+        blobs: &varos_core::images::BlobStore,
+        path: &Path,
+    ) -> Result<(SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), String> {
+        let _ = blobs;
+        if !doc.images.is_empty() {
+            return Err("This store cannot save image resources".into());
+        }
+        self.save_published(doc, path)
+    }
+    fn save_resources_guarded(
+        &mut self,
+        doc: &Document,
+        blobs: &varos_core::images::BlobStore,
+        path: &Path,
+        expected: Option<&varos_app::storage::durable::Fingerprint>,
+        fresh: bool,
+    ) -> Result<(SaveOutcome, Option<varos_app::storage::durable::Fingerprint>), varos_bridge::Error> {
+        let _ = blobs;
+        if !doc.images.is_empty() {
+            return Err(varos_bridge::Error::new("unsupported", "This store cannot save image resources"));
+        }
+        self.save_guarded(doc, path, expected, fresh)
     }
     fn save(&mut self, doc: &Document, path: &Path) -> Result<SaveOutcome, String>;
     fn save_published(
@@ -182,6 +218,10 @@ pub trait DocStore {
     /// UI thread. Opening a board, or the synchronous save path, renders nothing: its thumbnail comes
     /// with the next background save. Default: none.
     fn rendered(&mut self, _path: &Path, _snapshot: Arc<Document>) {}
+    // ---- w2-images ----
+    fn rendered_resources(&mut self, path: &Path, snapshot: Arc<Document>, _blobs: Arc<varos_core::images::BlobStore>) {
+        self.rendered(path, snapshot);
+    }
     /// Replace `path` with the exported PDF `bytes`, durably. An export is never a Recent entry.
     /// Slice 0.6: `cancel` (the Export sheet's Cancel) is honoured up to the final rename — the commit
     /// boundary: `Cancelled` = nothing was replaced and no temp is left; `Written` = the file is there.
@@ -243,8 +283,53 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
+            // ---- w2-images ----
+            AppCommand::ImageSheet(..)=>{}
+            // Integration w2: ONE Place… — vector artwork goes to Lane H's import job, rasters to the image job.
+            AppCommand::ChooseImage(sid, options) => {
+                if let Some(path) = self.dialogs.pick_image() {
+                    if crate::import_drop::is_artwork(&path) {
+                        self.place_foreign(sid, path);
+                    } else {
+                        return self.run(AppCommand::PlaceImage { sid, path, options });
+                    }
+                }
+            }
+            AppCommand::PlaceDialog(sid) => {
+                if let Some(path) = self.dialogs.pick_image() {
+                    if crate::import_drop::is_artwork(&path) {
+                        self.place_foreign(sid, path);
+                    } else {
+                        return self.run(AppCommand::PlaceImage { sid, path, options: Default::default() });
+                    }
+                }
+            }
+            AppCommand::ImageWorkflow(sid, action) => {
+                if let Some(s)=self.ws.get_mut(sid) {
+                    if matches!(action, crate::image_workflows::Action::Relink(_) | crate::image_workflows::Action::Update(_)) {
+                        let (id, chosen) = match action {
+                            crate::image_workflows::Action::Relink(id) => (id, self.dialogs.pick_image()),
+                            crate::image_workflows::Action::Update(id) => (id, s.editor.doc.images.iter().find(|i|i.id == id).and_then(|i|varos_core::images::links::update_path(i,&s.editor.blobs).ok())),
+                            _ => unreachable!(),
+                        };
+                        if let Some(path) = chosen {
+                            let mode = s.editor.doc.images.iter().find(|i| i.id==id).map(|i|i.placement).unwrap_or_default();
+                            let job = crate::image_jobs::Job { sid, ticket:file_jobs::next_ticket(), expected_rev:s.editor.rev, path, replace:Some(id), bytes:None, options:crate::image_jobs::Options { mode, ..Default::default() }, bridge:false, cancel:Default::default() };
+                            let _=self.queue(FileJob::Image(Box::new(job)));
+                        }
+                    } else if let Err(reason)=crate::image_workflows::run(&mut s.editor,action) {self.dialogs.notice("Image",&reason);}
+                }
+            }
+            AppCommand::PasteBitmap {sid,bytes,at} => {
+                if let Some(s)=self.ws.get(sid) { let job=crate::image_jobs::Job {sid,ticket:file_jobs::next_ticket(),expected_rev:s.editor.rev,path:Default::default(),replace:None,bytes:Some(bytes),options:crate::image_jobs::Options {at,..Default::default()},bridge:false,cancel:Default::default()}; let _=self.queue(FileJob::Image(Box::new(job))); }
+            }
+            AppCommand::PlaceImage {sid,path,options} => {
+                if let Some(s)=self.ws.get(sid) {let job=crate::image_jobs::Job {sid,ticket:file_jobs::next_ticket(),expected_rev:s.editor.rev,path,replace:None,bytes:None,options,bridge:false,cancel:Default::default()};let _=self.queue(FileJob::Image(Box::new(job)));}
+            }
             // ---- Lane E ----
             AppCommand::SetCanvasColor(_)
+            // ---- Lane F ----
+            | AppCommand::Phase9(_) | AppCommand::ApplyPreferences(..) | AppCommand::ApplyShortcuts(..) | AppCommand::HistoryJump(..) | AppCommand::RecordAction(..) | AppCommand::CancelActionRecording(_) | AppCommand::ReplayAction(..) | AppCommand::SaveAction(_) | AppCommand::LoadAction | AppCommand::ReconcilePreferences
             | AppCommand::Selection(..)
             | AppCommand::Object(..)
             | AppCommand::View(..)
@@ -271,6 +356,14 @@ impl Lifecycle<'_> {
             AppCommand::LocateRecent(path) => self.locate(path),
             AppCommand::RemoveRecent(path) => self.store.remove_recent(&path),
             AppCommand::ClearRecent => self.store.clear_recent(),
+            // ---- Lane C ----
+            AppCommand::ShowNewDocument | AppCommand::PathMenu(..) => {},
+            AppCommand::CreateDocument(settings) => {
+                match settings.document() {
+                    Ok(doc) => {self.ws.new_untitled_with(doc);},
+                    Err(reason) => self.dialogs.notice("New Document", &reason),
+                }
+            }
             AppCommand::NewBoard => {
                 // `Editor::new()` holds `board::new_board()`: a free canvas with zero artboards
                 self.ws.new_untitled();
@@ -314,7 +407,8 @@ impl Lifecycle<'_> {
             AppCommand::Revert(id) => self.revert(id),
             AppCommand::ShowExport(_) | AppCommand::ShowExportPdfPreset(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
             AppCommand::ExportPdf(id, scope, ticket) => return self.export(id, scope, ticket, Default::default()),
-            AppCommand::ExportScreens(id, jobs) => {
+            AppCommand::ExportScreens(id, mut jobs) => {
+                if let Some(s)=self.ws.get(id){for j in &mut jobs {j.job.blobs=std::sync::Arc::new(s.editor.blobs.clone());}}
                 let Some(s) = self.ws.get_mut(id) else { return Effect::default() };
                 if !s.exports.is_empty() {
                     return Effect::default();
@@ -470,12 +564,13 @@ impl Lifecycle<'_> {
             self.store.remember(&key.path, old, None);
             return;
         }
-        match self.store.load_with_notice(&path) {
-            Ok((doc, notice)) => {
+        match self.store.load_resources(&path) {
+            Ok((doc, blobs, notice)) => {
                 let board = BoardSummary::of(&doc);
                 let at = key.path.clone();
                 let id = self.ws.add_loaded(doc, at.clone(), key);
                 if let Some(s) = self.ws.get_mut(id) {
+                    s.editor.blobs = blobs;
                     s.source_fingerprint = self.store.fingerprint(&at);
                     // A4: the released-mask repair changed the content → the tab opens dirty.
                     s.repaired_on_open = notice == Some(varos_core::format::RELEASED_MASKS_NOTICE);
@@ -602,13 +697,15 @@ impl Lifecycle<'_> {
         let doc = Arc::new(s.editor.doc.clone());
         let ticket = file_jobs::next_ticket();
         s.saving = Some(SaveInFlight {
+            blobs: Arc::new(s.editor.blobs.clone()),
             ticket,
             dest: dest.clone(),
             doc: doc.clone(),
             follow_up: false,
             started: std::time::Instant::now(),
         });
-        let _ = self.queue(FileJob::Save(SaveJob { sid: id, ticket, dest, doc }));
+        let blobs = s.editor.blobs.clone();
+        let _ = self.queue(FileJob::Save(SaveJob { blobs: std::sync::Arc::new(blobs), sid: id, ticket, dest, doc }));
     }
 
     /// Hand `job` to the host's worker. Inline mode (no worker) runs it here and applies its result
@@ -627,6 +724,24 @@ impl Lifecycle<'_> {
         match done {
             FileDone::Import(done) => {
                 crate::import_jobs::complete(done, self.ws, &mut *self.dialogs);
+                Effect::default()
+            }
+            // ---- w2-images ----
+            FileDone::Image(done) => {
+                let ticket = done.job.ticket;
+                let bridge = done.job.bridge;
+                let reply = match crate::image_jobs::complete(*done, self.ws) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        if !bridge {
+                            self.dialogs.notice("Couldn’t place image", &e);
+                        }
+                        varos_bridge::Reply::failure(varos_bridge::Error::new("invalid_argument", e))
+                    }
+                };
+                if bridge {
+                    crate::bridge_host::file_completed(ticket, reply);
+                }
                 Effect::default()
             }
             FileDone::Template(done) => {
@@ -664,7 +779,8 @@ impl Lifecycle<'_> {
                         | FileDone::Bridge { .. }
                         | FileDone::CopySaved(_)
                         | FileDone::Template(_)
-                        | FileDone::Import(_) => unreachable!(),
+                        | FileDone::Import(_)
+                        | FileDone::Image(_) => unreachable!(),
                     }
                 } else {
                     let ids: Vec<_> = self.ws.sessions().iter().map(|s| s.id).collect();
@@ -711,7 +827,7 @@ impl Lifecycle<'_> {
                     }
                 }
                 self.store.remember(&dest, None, Some(&board));
-                self.store.rendered(&dest, written);
+                self.store.rendered_resources(&dest, written, flight.blobs);
             }
             Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => {
                 let mut key = self.store.key(&dest);
@@ -764,8 +880,17 @@ impl Lifecycle<'_> {
         let doc = Arc::new(s.editor.doc.clone());
         let ticket = file_jobs::next_ticket();
         let started = std::time::Instant::now();
-        s.saving = Some(SaveInFlight { ticket, dest: dest.clone(), doc: doc.clone(), follow_up: false, started });
-        let _ = self.queue(FileJob::SaveCopy(SaveJob { sid: id, ticket, dest, doc }));
+        s.saving = Some(SaveInFlight {
+            blobs: Arc::new(s.editor.blobs.clone()),
+            ticket,
+            dest: dest.clone(),
+            doc: doc.clone(),
+            follow_up: false,
+            started,
+        });
+        let blobs = s.editor.blobs.clone();
+        let _ =
+            self.queue(FileJob::SaveCopy(SaveJob { blobs: std::sync::Arc::new(blobs), sid: id, ticket, dest, doc }));
     }
 
     /// A copy (File ▸ Save a Copy… or the Bridge's `save_as`) landed: free the tab's save slot and
@@ -824,12 +949,13 @@ impl Lifecycle<'_> {
         if !self.dialogs.confirm_revert(&s.display_name()) {
             return;
         }
-        match self.store.load_with_notice(&path) {
-            Ok((doc, notice)) => {
+        match self.store.load_resources(&path) {
+            Ok((doc, blobs, notice)) => {
                 let key = self.store.key(&path);
                 let fingerprint = self.store.fingerprint(&path);
                 if let Some(s) = self.ws.get_mut(id) {
                     s.revert_to(doc, key, fingerprint, notice == Some(varos_core::format::RELEASED_MASKS_NOTICE));
+                    s.editor.blobs = blobs;
                 }
             }
             Err(reason) => self.dialogs.open_failed(&file_name(&path), &reason),
@@ -899,6 +1025,7 @@ impl Lifecycle<'_> {
         let cancel = CancelFlag::default();
         let started = ExportEvent::Started { sid: id, ticket, cancel: cancel.clone() };
         let job = ExportJob {
+            blobs: std::sync::Arc::new(self.ws.get(id).map(|s| s.editor.blobs.clone()).unwrap_or_default()),
             pdf_options: Box::new(options),
             sid: id,
             ticket,
@@ -1033,7 +1160,7 @@ impl Lifecycle<'_> {
     /// file's inode).
     fn write(&mut self, id: SessionId, dest: &Path) -> Result<SaveOutcome, String> {
         let s = self.ws.get(id).ok_or_else(|| "The document is no longer open.".to_string())?;
-        let (outcome, published) = self.store.save_published(&s.editor.doc, dest)?;
+        let (outcome, published) = self.store.save_resources_published(&s.editor.doc, &s.editor.blobs, dest)?;
         let board = BoardSummary::of(&s.editor.doc);
         let mut key = self.store.key(dest);
         if let Some(fp) = published {
@@ -1507,6 +1634,7 @@ mod tests {
             let dest = p("/d/copy.vrs");
             let doc = Arc::new(r.get(id).editor.doc.clone());
             r.ws.get_mut(id).unwrap().saving = Some(SaveInFlight {
+                blobs: Default::default(),
                 ticket: 7,
                 dest: dest.clone(),
                 doc: doc.clone(),
@@ -2656,13 +2784,20 @@ mod tests {
             let ticket = 42;
             let doc = Arc::new(r.get(id).editor.doc.clone());
             r.ws.get_mut(id).unwrap().saving = Some(crate::file_jobs::SaveInFlight {
+                blobs: Default::default(),
                 ticket,
                 dest: path.clone(),
                 doc: doc.clone(),
                 follow_up: false,
                 started: std::time::Instant::now(),
             });
-            let mut job = FileJob::Save(crate::file_jobs::SaveJob { sid: id, ticket, dest: path.clone(), doc });
+            let mut job = FileJob::Save(crate::file_jobs::SaveJob {
+                blobs: Default::default(),
+                sid: id,
+                ticket,
+                dest: path.clone(),
+                doc,
+            });
             if bridge {
                 job = FileJob::Bridge(Box::new(crate::file_jobs::BridgeFileJob {
                     ticket,
@@ -2880,6 +3015,7 @@ mod tests {
                 .enumerate()
         {
             let job = ExportJob {
+                blobs: Default::default(),
                 pdf_options: Default::default(),
                 sid,
                 ticket,
@@ -3200,6 +3336,7 @@ mod tests {
         let b = r.active();
         let doc = Arc::new(r.get(b).editor.doc.clone());
         r.ws.get_mut(b).unwrap().saving = Some(SaveInFlight {
+            blobs: Default::default(),
             ticket: 1,
             dest: p("/out/claimed.pdf"),
             doc,

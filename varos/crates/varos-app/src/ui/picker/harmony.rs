@@ -59,4 +59,25 @@ pub(super) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
             ops.push(Op::PickerSet(m.target, color));
         }
     }
+    let variations = harmony_rules::variations(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]);
+    for (row_index, row) in variations.chunks(5).enumerate() {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(t::PICKER_W, t::COLOUR_GUIDE_ROW_H), egui::Sense::hover());
+        for (i, c) in row.iter().enumerate() {
+            let rgb = hsv_to_rgb(c[0], c[1], c[2]);
+            let colour = [rgb[0], rgb[1], rgb[2], m.hsva[3]];
+            let r = egui::Rect::from_min_size(
+                rect.min + egui::vec2(t::PICKER_PAD + i as f32 * (t::PICKER_HARMONY_SWATCH + t::PICKER_SWATCH_GAP), 0.),
+                egui::Vec2::splat(t::PICKER_HARMONY_SWATCH),
+            );
+            ui.painter().rect_filled(r, t::r_ctrl(), rgba_c32a(colour));
+            if ui
+                .interact(r, ui.id().with(("guide", row_index, i)), egui::Sense::click())
+                .on_hover_text(hex_of(colour))
+                .clicked()
+                && !kit::field::blocked(ui.ctx())
+            {
+                ops.push(Op::PickerSet(m.target, colour));
+            }
+        }
+    }
 }

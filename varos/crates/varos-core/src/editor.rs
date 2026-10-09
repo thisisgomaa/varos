@@ -1,5 +1,10 @@
+// ---- w2-gradients: Appearance routing and next-format paint integration ----
 //! The editor: transient interaction state + shared operations + the drag/undo engine.
 //! Tools (see `tools/`) define what a *press* does; the shared move/up engine handles the drag.
+
+// ---- Lane F ----
+#[path = "history.rs"]
+pub mod history;
 
 use crate::boolean::{run_boolean_curves, BoolOp, ResultShape, Seg};
 use crate::clipboard::Clipboard;
@@ -27,7 +32,7 @@ pub struct Mods {
     pub ctrl: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PaintTarget {
     #[serde(rename = "Fill")]
     Fill,
@@ -39,6 +44,8 @@ pub enum PaintTarget {
 pub enum ToolKind {
     // ---- Lane G ----
     Text,
+    // ---- w2-gradients ----
+    Gradient,
     Object,
     Direct,
     Pen,
@@ -439,9 +446,15 @@ struct SelectionState {
 
 #[derive(Clone)]
 pub struct Editor {
+    // Transient gradient gestures never enter the document.
+    pub gradient_tool: crate::tools::gradient::State,
+    pub colour_error: Option<String>,
     pub select_transform: crate::select_transform::State,
     pub drawing: crate::drawing::State,
     pub last_error: Option<crate::guard::EngineError>,
+    // ---- w2-images ----
+    pub blobs: crate::images::BlobStore,
+    image_drag: Option<crate::images::input::Gesture>,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
@@ -491,6 +504,9 @@ pub struct Editor {
     /// Space key; it only bites when a placement drag is live, so it never fights Space-pan (which arms on a
     /// fresh press, and no fresh press happens during a drag).
     pub space: bool,
+    // ---- w2-gradients: owned drawing defaults (legacy colour channels remain compatible) ----
+    pub(crate) current_paints: crate::current_paint::CurrentPaints,
+    // ---- end w2-gradients ----
     pub cur_fill: Option<Rgba>,
     pub cur_stroke: Option<Rgba>,
     /// Transient checked stroke-edit diagnostic; never persisted or part of undo.
@@ -512,6 +528,14 @@ pub struct Editor {
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
     clipboard: Clipboard,
     id_high_water: u32,
+    pub keyboard_increment_pt: f32,
+    pub(crate) action_recording: Option<Vec<crate::actions::Step>>,
+    pub(crate) action_recording_warning: Option<String>,
+    // ---- Lane F: recording coverage at every document commit ----
+    pub(crate) action_recording_targets: Vec<u32>,
+    pub(crate) action_commit_step: Option<crate::actions::Step>,
+    pub(crate) action_batch_covered: bool,
+    history_log: history::Log,
     undo: Vec<std::sync::Arc<Document>>,
     redo: Vec<std::sync::Arc<Document>>,
     pending: Option<std::sync::Arc<Document>>,
@@ -527,9 +551,13 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            gradient_tool: Default::default(),
+            colour_error: None,
             select_transform: Default::default(),
             drawing: Default::default(),
             last_error: None,
+            blobs: crate::images::BlobStore::default(),
+            image_drag: None,
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
@@ -569,6 +597,7 @@ impl Editor {
             mods: Mods::default(),
             constrain_wh: false,
             space: false,
+            current_paints: Default::default(),
             cur_fill: Some(DEFAULT_FILL),
             cur_stroke: Some(DEFAULT_STROKE),
             stroke_error: None,
@@ -583,6 +612,13 @@ impl Editor {
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
             id_high_water: 0,
+            keyboard_increment_pt: 1.0,
+            action_recording: None,
+            action_recording_warning: None,
+            action_recording_targets: vec![],
+            action_commit_step: None,
+            action_batch_covered: false,
+            history_log: history::Log { limit: 200, ..history::Log::default() },
             undo: vec![],
             redo: vec![],
             pending: None,
@@ -675,7 +711,8 @@ impl Editor {
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
             let p = &self.doc.paths[pi];
             if !self.doc.guide_paths.contains(&id) && !p.stroke_style.is_default() {
-                let in_fill = p.fill.solid().is_some() && self.doc.point_in_path(pi, lp);
+                let in_fill =
+                    p.appearance().fill().resolved_ref(&self.doc).is_painted() && self.doc.point_in_path(pi, lp);
                 let in_stroke = crate::stroke::evaluate(p, 0.25 / f64::from(self.ppu.max(0.0001)), &|| false)
                     .is_ok_and(|c| crate::stroke::evaluate::contains(&c.rings, lp, edge_r));
                 if (in_fill || in_stroke)
@@ -691,7 +728,9 @@ impl Editor {
                 continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
             }
             let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
-            let in_fill = !guide && self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
+            let in_fill = !guide
+                && self.doc.paths[pi].appearance().fill().resolved_ref(&self.doc).is_painted()
+                && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
             }
@@ -765,6 +804,15 @@ impl Editor {
         }
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
+            // ---- w2-images: shared mixed-leaf frame ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                for q in crate::images::world_corners(&self.doc, image) {
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 // A7 seam: transform each unit's outline to WORLD before the AABB. Identity ⇒ today's box.
                 let xf = self.doc.unit_xform(pid);
@@ -800,6 +848,16 @@ impl Editor {
         let th = -self.obj_angle;
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for &pid in &self.objsel {
+            // ---- w2-images: shared mixed-leaf frame ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                for q in crate::images::world_corners(&self.doc, image) {
+                    let q = rotate_about(q, [0., 0.], -self.obj_angle);
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 let xf = self.doc.unit_xform(pid);
                 for q in self.doc.outline(pi, 8) {
@@ -944,7 +1002,7 @@ impl Editor {
                             .collect(),
                     )
                 });
-            let fill = p.fill.solid().is_some()
+            let fill = p.appearance().fill().resolved_ref(&self.doc).is_painted()
                 && touches(
                     std::iter::once(self.doc.world_outline_px(pi, self.ppu))
                         .chain(p.holes.iter().map(|h| self.doc.world_ring_px(h, pi, self.ppu)))
@@ -976,7 +1034,7 @@ impl Editor {
         }
         // (b) centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
         let c = xf.inverse_apply([(x0 + x1) * 0.5, (y0 + y1) * 0.5]);
-        p.fill.solid().is_some() && self.doc.point_in_path(pi, c)
+        p.appearance().fill().resolved_ref(&self.doc).is_painted() && self.doc.point_in_path(pi, c)
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
@@ -1045,6 +1103,8 @@ impl Editor {
         }
     }
     fn translate_path(&mut self, pi: usize, d: Pt) {
+        let pid = self.doc.paths[pi].id;
+        crate::gradient_transform::map(&mut self.doc, pid, |p| add(p, d));
         for a in &mut self.doc.paths[pi].anchors {
             a.p = add(a.p, d);
             a.hin = a.hin.map(|h| add(h, d));
@@ -1097,17 +1157,46 @@ impl Editor {
     /// path in the unit's subtree, then reset the xform to identity. This IS the old `Drag::Rotate` bake,
     /// reused. World geometry is unchanged; only the split between stored-anchors and stored-transform moves.
     fn bake_unit(&mut self, unit: u32) -> bool {
+        // ---- Lane C ----
+        for pid in self.doc.node_paths(unit) {
+            if let Some(pi) = self.doc.pidx(pid) {
+                if !self.doc.paths[pi].corners.is_empty() {
+                    let mut path = crate::live_corners::evaluated(&self.doc.paths[pi]);
+                    for a in &mut path.anchors {
+                        if a.id == 0 {
+                            a.id = self.doc.nid();
+                        }
+                    }
+                    self.doc.paths[pi] = path;
+                }
+            }
+        }
         let xf = self.doc.node_xform(unit);
         if xf.is_identity() {
             return false;
         }
         for pid in self.doc.node_paths(unit) {
+            if let Some(image) = self.doc.images.iter_mut().find(|i| i.id == pid) {
+                let a = image.xform;
+                let p = xf.apply([a.e, a.f]);
+                let x = xf.apply([a.e + a.a, a.f + a.b]);
+                let y = xf.apply([a.e + a.c, a.f + a.d]);
+                image.xform = crate::images::ImageAffine {
+                    a: x[0] - p[0],
+                    b: x[1] - p[1],
+                    c: y[0] - p[0],
+                    d: y[1] - p[1],
+                    e: p[0],
+                    f: p[1],
+                };
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 for a in &mut self.doc.paths[pi].anchors {
                     a.p = xf.apply(a.p);
                     a.hin = a.hin.map(|h| xf.apply(h));
                     a.hout = a.hout.map(|h| xf.apply(h));
                 }
+                crate::gradient_transform::map(&mut self.doc, pid, |p| xf.apply(p));
                 for h in &mut self.doc.paths[pi].holes {
                     for a in h {
                         a.p = xf.apply(a.p);
@@ -1200,6 +1289,19 @@ impl Editor {
             a.p = xf.inverse_apply(wp);
             a.hin = whin.map(|h| xf.inverse_apply(h));
             a.hout = whout.map(|h| xf.inverse_apply(h));
+        }
+    }
+    // ---- w2-images: distinct corner base, never encoded as anchor IDs ----
+    fn transform_image_base(&mut self, map: impl Fn(Pt) -> Pt) {
+        let Some(before) = self.pending.clone() else { return };
+        let images: Vec<_> = before
+            .images
+            .iter()
+            .filter(|i| self.objsel.contains(&i.id))
+            .map(|i| (i.id, crate::images::world_corners(&before, i)))
+            .collect();
+        for (id, c) in images {
+            crate::images::input::write_world_corners(&mut self.doc, id, [map(c[0]), map(c[1]), map(c[3])]);
         }
     }
     /// WORLD anchors of the object selection (each mapped through its unit transform) — the base for
@@ -1406,6 +1508,15 @@ impl Editor {
     fn unit_local_bbox(&self, unit: u32) -> Option<(f32, f32, f32, f32)> {
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for pid in self.doc.node_paths(unit) {
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                let xf = self.doc.node_xform(unit);
+                for q in crate::images::world_corners(&self.doc, image).map(|q| xf.inverse_apply(q)) {
+                    x0 = x0.min(q[0]);
+                    y0 = y0.min(q[1]);
+                    x1 = x1.max(q[0]);
+                    y1 = y1.max(q[1]);
+                }
+            }
             if let Some(pi) = self.doc.pidx(pid) {
                 for q in self.doc.outline(pi, 8) {
                     x0 = x0.min(q[0]);
@@ -1499,8 +1610,8 @@ impl Editor {
         if sel.len() < 2 {
             return;
         }
-        let bot = &self.doc.paths[sel[0]];
-        let (fill, stroke, sw) = (bot.fill.solid(), bot.stroke.solid(), bot.stroke_width); // result inherits bottom-most paint
+        let bot = crate::gradient_transform::world_path(&self.doc, &self.doc.paths[sel[0]]);
+        let (fill, stroke, sw) = (bot.appearance().fill().clone(), bot.appearance().stroke().clone(), bot.stroke_width); // result inherits bottom-most paint
         let shapes: Vec<Vec<Vec<Seg>>> =
             sel.iter().map(|&pi| self.path_to_segs(pi)).filter(|s| !s.is_empty()).collect();
         if shapes.len() < 2 {
@@ -1528,7 +1639,12 @@ impl Editor {
                 }
             }
             let id = self.doc.nid();
-            self.doc.paths.push(Path { holes, ..Path::new(id, anchors, true, fill, stroke, sw) });
+            self.doc.paths.push(Path {
+                holes,
+                fill: fill.clone(),
+                stroke: stroke.clone(),
+                ..Path::new(id, anchors, true, None, None, sw)
+            });
             new_ids.push(id);
         }
         self.objsel = new_ids.into_iter().chain(ignored).collect();
@@ -1895,6 +2011,10 @@ impl Editor {
         let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
         let base = self.objsel_base();
         let tf = |p: Pt| if horizontal { [2.0 * cx - p[0], p[1]] } else { [p[0], 2.0 * cy - p[1]] };
+        self.transform_image_base(tf);
+        for pid in self.objsel.iter().copied().collect::<Vec<_>>() {
+            crate::gradient_transform::map(&mut self.doc, pid, tf);
+        }
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -1958,7 +2078,12 @@ impl Editor {
             return;
         }
         let base = self.objsel_base();
+        crate::path_advanced::scale_selected_strokes(self, sx, sy);
         let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
+        self.transform_image_base(tf);
+        for pid in self.objsel.iter().copied().collect::<Vec<_>>() {
+            crate::gradient_transform::map(&mut self.doc, pid, tf);
+        }
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -2031,9 +2156,16 @@ impl Editor {
             return;
         }
         self.begin();
+        let xf = self.doc.node_xform(unit);
+        self.transform_image_base(|p| {
+            let p = xf.apply(scale_local(xf.inverse_apply(p)));
+            [p[0] + tx, p[1] + ty]
+        });
         if !no_scale {
+            crate::path_advanced::scale_selected_strokes(self, sx, sy);
             for pid in self.doc.node_paths(unit) {
                 if let Some(pi) = self.doc.pidx(pid) {
+                    crate::gradient_transform::map(&mut self.doc, pid, scale_local);
                     let apply = |a: &mut Anchor| {
                         a.p = scale_local(a.p);
                         a.hin = a.hin.map(scale_local);
@@ -2090,6 +2222,10 @@ impl Editor {
     }
 
     // ---------- grouping (Ctrl+G / Ctrl+Shift+G) ----------
+    // ---- w2-images ----
+    pub fn selected_image_groups(&self) -> impl Iterator<Item = u32> + '_ {
+        self.group_sel.iter().copied()
+    }
     pub fn group_selection(&mut self) {
         self.group_selection_with_clip(None);
     }
@@ -2479,6 +2615,14 @@ impl Editor {
                         ab.y = by + d[1];
                     }
                 }
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    false,
+                    |p| add(p, d),
+                );
                 for (aid, p0, hin0, hout0) in &art {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
                         a.p = add(*p0, d);
@@ -3553,6 +3697,7 @@ impl Editor {
                 .map_err(|reason| crate::bridge::BatchError { index, reason })?;
             // The staging host never undoes individual entries. Retaining their snapshots would
             // multiply document memory by up to 200 for a large batch; only the published step lives.
+            staged.history_log.clear();
             staged.undo.clear();
             staged.redo.clear();
         }
@@ -3585,6 +3730,8 @@ impl Editor {
         staged.requested_zoom = self.requested_zoom;
         staged.requested_canvas = self.requested_canvas;
         staged.paste_remembers_layers = self.paste_remembers_layers;
+        staged.blobs = self.blobs.clone();
+        staged.current_paints = self.current_paints.clone();
         staged.cur_fill = self.cur_fill;
         staged.cur_stroke = self.cur_stroke;
         staged.cur_sw = self.cur_sw;
@@ -3607,6 +3754,7 @@ impl Editor {
             staged.doc != self.doc
         } {
             self.begin();
+            self.blobs = staged.blobs;
             self.doc = staged.doc;
             self.dirty = true;
             self.commit();
@@ -3646,6 +3794,7 @@ impl Editor {
         self.group_sel = staged.group_sel;
         self.dsel_path = staged.dsel_path;
         self.absel = staged.absel;
+        self.current_paints = staged.current_paints;
         self.cur_fill = staged.cur_fill;
         self.cur_stroke = staged.cur_stroke;
         self.cur_sw = staged.cur_sw;
@@ -3658,8 +3807,18 @@ impl Editor {
         self.id_high_water.max(self.doc.ids)
     }
     pub(crate) fn clear_batch_history(&mut self) {
+        self.history_log.clear();
         self.undo.clear();
         self.redo.clear();
+    }
+    // ---- w2-images ----
+    pub fn image_pins(&self) -> std::collections::HashSet<crate::images::BlobKey> {
+        std::iter::once(&self.doc)
+            .chain(self.undo.iter().map(std::sync::Arc::as_ref))
+            .chain(self.redo.iter().map(std::sync::Arc::as_ref))
+            .chain(self.pending.iter().map(std::sync::Arc::as_ref))
+            .flat_map(|d| d.images.iter().map(|i| i.blob.clone()))
+            .collect()
     }
     pub fn history_preview(&self, redo: bool) -> Option<&Document> {
         if redo { self.redo.last() } else { self.undo.last() }.map(std::sync::Arc::as_ref)
@@ -3691,12 +3850,21 @@ impl Editor {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
             if let Some(p) = self.pending.take() {
+                // Retire only dropped history keys; staged batch resources stay admitted (w2-images).
+                let retired: std::collections::HashSet<_> =
+                    self.redo.iter().flat_map(|d| d.images.iter().map(|i| i.blob.clone())).collect();
+                self.history_log.push(self.rev + 1, &p, &self.doc);
                 self.undo.push(p);
-                if self.undo.len() > 200 {
-                    self.undo.remove(0);
-                }
+                self.trim_history(); // Lane F's configurable ceiling; retires what it drops
                 self.redo.clear();
+                let pins = self.image_pins();
+                self.blobs.retire(&retired, &pins);
+                let before_rev = self.rev;
                 self.rev += 1;
+                // ---- Lane F: a direct gesture cannot silently disappear from Actions ----
+                if !self.action_batch_covered {
+                    self.record_step(self.action_commit_step.clone(), before_rev);
+                }
             }
         }
         self.pending = None;
@@ -3711,6 +3879,9 @@ impl Editor {
     }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
+            if let Some(entry) = self.history_log.undo.pop() {
+                self.history_log.redo.push(entry);
+            }
             self.redo.push(std::sync::Arc::new(self.doc.clone()));
             self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
@@ -3719,6 +3890,9 @@ impl Editor {
     }
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
+            if let Some(entry) = self.history_log.redo.pop() {
+                self.history_log.undo.push(entry);
+            }
             self.undo.push(std::sync::Arc::new(self.doc.clone()));
             self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
@@ -3732,6 +3906,8 @@ impl Editor {
     /// `active` / `active_layer` stay history-restored (pinned by tests); units and move-art are real
     /// undo steps and stay restored too.
     fn restore_keeping_prefs(&mut self, mut snapshot: Document) {
+        // ---- Lane F: direct undo/redo cannot leave a silently incomplete recording ----
+        self.refuse_action_recording();
         snapshot.snap = self.doc.snap;
         snapshot.guides_locked = self.doc.guides_locked;
         snapshot.ruler_origin = self.doc.ruler_origin;
@@ -3744,6 +3920,7 @@ impl Editor {
         self.pending.is_some()
     }
     fn clear_transient(&mut self) {
+        self.gradient_tool = Default::default();
         self.selected.clear();
         self.objsel.clear();
         self.group_sel.clear();
@@ -3764,7 +3941,12 @@ impl Editor {
             self.dirty = false;
         }
         // ---- end w2-tools-ui ----
-        self.objsel.retain(|&p| self.doc.pidx(p).is_some() || crate::text::node_id(&self.doc, p).is_some());
+        self.objsel.retain(|&p| {
+            self.doc.pidx(p).is_some()
+                || self.doc.images.iter().any(|i| i.id == p)
+                || crate::text::node_id(&self.doc, p).is_some()
+        });
+        self.gradient_tool = Default::default();
         self.selected.retain(|&a| self.doc.anchor_address(a).is_some());
         self.absel.retain(|&i| i < self.doc.artboards.len());
         if self.dsel_path.is_some_and(|p| self.doc.pidx(p).is_none()) {
@@ -3780,13 +3962,17 @@ impl Editor {
     /// Enforce the selection invariant after any visibility/lock mutation: hidden or locked paths
     /// cannot remain selected through either object selection, Direct path selection, or grabbed anchors.
     pub(crate) fn prune_inert_selection(&mut self) {
-        let allowed = self.select_transform.isolation.map(|n| self.doc.node_paths(n));
+        let allowed = self.select_transform.isolation.map(|n| {
+            let mut ids = self.doc.node_paths(n);
+            ids.extend(self.doc.images.iter().filter(|i| self.in_isolation(i.id)).map(|i| i.id));
+            ids
+        });
         // ---- Lane G ----
         let texts = crate::text::selected_ids(self);
         let doc = &self.doc;
         self.objsel.retain(|&pid| {
             texts.contains(&pid)
-                || doc.pidx(pid).is_some()
+                || (doc.pidx(pid).is_some() || doc.images.iter().any(|i| i.id == pid))
                     && allowed.as_ref().is_none_or(|a| a.contains(&pid))
                     && !doc.eff_hidden(pid)
                     && !doc.eff_locked(pid)
@@ -3818,7 +4004,13 @@ impl Editor {
         self.requested_pan = None;
         self.requested_zoom = None;
         self.requested_canvas = None;
+        self.image_drag = None;
+        // ---- Lane F ----
+        self.action_recording = None;
+        self.action_recording_warning = None;
         self.stroke_error = None;
+        self.gradient_tool = Default::default();
+        self.colour_error = None;
         self.select_transform = Default::default();
         self.drawing = Default::default();
         self.reselect.clear();
@@ -3828,6 +4020,7 @@ impl Editor {
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
         self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
         self.id_high_water = self.doc.ids;
+        self.history_log.clear();
         self.undo.clear();
         self.redo.clear();
         self.pending = None;
@@ -4178,6 +4371,26 @@ impl Editor {
         if self.view_depth.presentation {
             return;
         }
+        self.gradient_tool.geometry.clear();
+        if self.tool == ToolKind::Object {
+            if let Some(hit) = self.transform_hit(pos) {
+                self.begin();
+                self.start_transform(hit, pos);
+                return;
+            }
+        }
+        if let Some(g) = crate::images::input::gesture(self, pos) {
+            if !self.mods.shift && !self.objsel.contains(&g.id) {
+                self.objsel.clear();
+                self.selected.clear();
+                self.group_sel.clear();
+            }
+            self.objsel.extend(self.doc.group_members(g.id));
+            self.refresh_obj_angle();
+            self.begin();
+            self.image_drag = Some(g);
+            return;
+        }
         self.cursor = pos;
         self.begin();
         self.gesture_copy = false;
@@ -4189,6 +4402,9 @@ impl Editor {
         self.prune_inert_selection();
         // ---- Lane D: gesture routing ----
         if crate::drawing::down(self, pos) {
+            return;
+        }
+        if crate::tools::gradient::down(self, pos) {
             return;
         }
         if crate::tools::select_transform::down(self, pos) {
@@ -4225,7 +4441,15 @@ impl Editor {
         }
     }
     pub fn pointer_up(&mut self) {
+        self.gradient_tool.geometry.clear();
+        if self.image_drag.take().is_some() {
+            self.commit_wave();
+            return;
+        }
         if crate::drawing::up(self) {
+            return;
+        }
+        if crate::tools::gradient::up(self) {
             return;
         }
         if crate::tools::select_transform::up(self) {
@@ -4296,6 +4520,7 @@ impl Editor {
                 let anchors = self.shape_anchors(kind, start, self.cursor);
                 if let Some(pi) = self.doc.pidx(pid) {
                     self.doc.paths[pi].anchors = anchors;
+                    self.refresh_drawing_paints(pi);
                 }
                 self.drag = Drag::Shape { start, pid, kind };
                 true
@@ -4319,7 +4544,22 @@ impl Editor {
         if self.view_depth.presentation {
             return;
         }
+        if let Some(g) = self.image_drag.clone() {
+            if let Some(before) = self.pending.clone() {
+                self.doc = (*before).clone();
+                self.transform_geometry(crate::select_transform::Transform {
+                    movement: sub(pos, g.start),
+                    ..Default::default()
+                });
+            }
+            self.cursor = pos;
+            return;
+        }
         if crate::drawing::movement(self, pos) {
+            self.cursor = pos;
+            return;
+        }
+        if crate::tools::gradient::movement(self, pos) {
             self.cursor = pos;
             return;
         }
@@ -4497,6 +4737,7 @@ impl Editor {
                 self.snap_hud = self.doc.snap.smart.then(|| crate::view_depth::drawing_readout(start, pos));
                 if let Some(pi) = self.doc.pidx(pid) {
                     self.doc.paths[pi].anchors = anchors;
+                    self.refresh_drawing_paints(pi);
                 }
                 self.drag = Drag::Shape { start, pid, kind };
                 self.dirty = true;
@@ -4589,6 +4830,15 @@ impl Editor {
                         }
                     }
                 }
+                for image in &self.doc.images {
+                    if !self.in_isolation(image.id) || self.doc.eff_hidden(image.id) || self.doc.eff_locked(image.id) {
+                        continue;
+                    }
+                    let q = crate::images::corner_rect(crate::images::world_corners(&self.doc, image));
+                    if q.0 <= x1 && q.2 >= x0 && q.1 <= y1 && q.3 >= y0 {
+                        self.objsel.insert(image.id);
+                    }
+                }
                 // a marquee that catches any group member selects the whole group
                 let expanded: Vec<u32> = self.objsel.iter().flat_map(|&p| self.doc.group_members(p)).collect();
                 self.objsel.extend(expanded);
@@ -4657,6 +4907,15 @@ impl Editor {
                 }
                 let d = q;
                 self.gesture_delta = d;
+                let pids = self.objsel.iter().copied().collect::<Vec<_>>();
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    false,
+                    |p| add(p, d),
+                );
                 // translate the LOCAL anchors by d …
                 for (aid, p0, hin0, hout0) in &base {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
@@ -4670,6 +4929,7 @@ impl Editor {
                 for (unit, base_xf) in &piv_base {
                     self.doc.set_node_xform(*unit, base_xf.translated(d));
                 }
+                self.transform_image_base(|p| add(p, d));
                 self.drag = Drag::Object { down, base, base_world, piv_base };
                 self.dirty = true;
             }
@@ -4713,8 +4973,18 @@ impl Editor {
                     let q2 = [pivot[0] + (q[0] - pivot[0]) * sx, pivot[1] + (q[1] - pivot[1]) * sy];
                     rotate_about(q2, [0.0, 0.0], angle)
                 };
+                let pids = self.objsel.iter().copied().collect::<Vec<_>>();
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    true,
+                    tf,
+                );
                 // A7: base is WORLD; write the scaled world point back THROUGH each unit's transform so a
                 // rotated object stays rotated (θ preserved) and the panel W/H tracks the true local dims.
+                self.transform_image_base(tf);
                 for (aid, p0, hin0, hout0) in &base {
                     self.write_anchor_world(*aid, tf(*p0), hin0.map(tf), hout0.map(tf));
                 }
@@ -4799,7 +5069,17 @@ impl Editor {
                     sy = s;
                 }
                 let sc = |p: Pt| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy];
+                let pids = self.objsel.iter().copied().collect::<Vec<_>>();
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    true,
+                    sc,
+                );
                 // A7: base is WORLD; write back through each unit's transform so θ is preserved.
+                self.transform_image_base(sc);
                 for (aid, p0, hin0, hout0) in &base {
                     self.write_anchor_world(*aid, sc(*p0), hin0.map(sc), hout0.map(sc));
                 }
@@ -4830,6 +5110,9 @@ impl Editor {
     pub fn set_tool(&mut self, t: ToolKind) {
         if self.tool != t {
             crate::drawing::finish(self, false);
+        }
+        if self.gradient_tool.drag.take().is_some() {
+            self.finish_document_setup();
         }
         if t == ToolKind::Object {
             // promote anchor-selection to object-selection (Illustrator A→V), then drop anchor sel
@@ -4883,7 +5166,17 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        if self.image_drag.take().is_some() {
+            if let Some(before) = self.pending.take() {
+                self.doc = std::sync::Arc::unwrap_or_clone(before);
+            }
+            self.dirty = false;
+        }
         crate::drawing::finish(self, true);
+        if self.gradient_tool.drag.take().is_some() {
+            self.picker_cancel();
+        }
+        self.gradient_tool.geometry.clear();
         if self.select_transform.preview.is_some() {
             self.transform_end(true);
             self.select_transform.down = None;
@@ -4936,6 +5229,17 @@ impl Editor {
                 self.selected.extend(p.anchors.iter().chain(p.holes.iter().flatten()).map(|a| a.id));
             }
         } else {
+            // ---- w2-images: select visible, unlocked image leaves and their mixed groups ----
+            let image_ids: Vec<_> = self
+                .doc
+                .images
+                .iter()
+                .map(|i| i.id)
+                .filter(|&id| self.in_isolation(id) && !self.doc.eff_hidden(id) && !self.doc.eff_locked(id))
+                .collect();
+            for id in image_ids {
+                self.objsel.extend(self.doc.group_members(id));
+            }
             for pi in pickable {
                 let members = self.doc.group_members(self.doc.paths[pi].id);
                 if let Some(group) = self.doc.top_group_of_path(self.doc.paths[pi].id) {
@@ -4978,6 +5282,23 @@ impl Editor {
         self.commit();
     }
     pub fn delete_selected(&mut self) {
+        let images: Vec<_> = self.doc.images.iter().filter(|i| self.objsel.contains(&i.id)).map(|i| i.id).collect();
+        if !images.is_empty() {
+            let mut staged = self.clone();
+            staged.objsel.retain(|id| staged.doc.pidx(*id).is_some());
+            let mut ops: Vec<_> = images
+                .into_iter()
+                .map(|id| crate::EditCommand::Image(crate::images::ImageEdit::Delete { id }))
+                .collect();
+            if !staged.objsel.is_empty() || !staged.selected.is_empty() || staged.dsel_path.is_some() {
+                ops.push(crate::EditCommand::DeleteSelected);
+            }
+            if staged.execute_batch(ops).is_ok() {
+                self.publish_batch(staged, true);
+            }
+            return;
+        }
+
         if self.tool == ToolKind::Artboard {
             self.ab_delete(self.doc.active);
             return;
@@ -5080,12 +5401,24 @@ impl Editor {
         {
             included.insert(pid);
         }
-        self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect()
+        let mut ids: Vec<_> =
+            self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect();
+        ids.extend(
+            self.doc
+                .images
+                .iter()
+                .filter(|i| self.objsel.contains(&i.id) && !self.doc.eff_hidden(i.id) && !self.doc.eff_locked(i.id))
+                .map(|i| i.id),
+        );
+        ids
     }
     /// Fresh detached payload using the same source rules as Copy/Cut. No editor mutation.
     /// Desktop adapters can publish it before a destructive Cut; anchors alone capture nothing.
     pub fn capture_selection_clipboard(&self, cut: bool) -> Clipboard {
-        Clipboard::capture_objects(&self.doc, &self.clipboard_sources(!cut), &crate::text::selected_ids(self))
+        let mut copy =
+            Clipboard::capture_objects(&self.doc, &self.clipboard_sources(!cut), &crate::text::selected_ids(self));
+        copy.pin_images(&self.blobs);
+        copy
     }
     /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
     /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
@@ -5107,6 +5440,8 @@ impl Editor {
         let gone: HashSet<u32> = pids.into_iter().collect();
         self.begin();
         self.doc.paths.retain(|p| !gone.contains(&p.id));
+        self.doc.images.retain(|i| !gone.contains(&i.id));
+        self.doc.assets.retain(|a| self.doc.images.iter().any(|i| i.blob == a.key));
         crate::text::remove(&mut self.doc, &texts);
         self.objsel.clear();
         self.group_sel.clear();
@@ -5128,7 +5463,12 @@ impl Editor {
         if self.clipboard.is_empty() {
             return;
         }
+        let mut resources = self.blobs.clone();
+        if self.clipboard.admit_images(&mut resources).is_err() {
+            return;
+        }
         self.begin();
+        self.blobs = resources;
         let new = self.clipboard.paste_into_remembering_layers(
             &mut self.doc,
             offset.unwrap_or([0.0, 0.0]),
@@ -5208,10 +5548,7 @@ impl Editor {
         self.paint = if self.paint == PaintTarget::Fill { PaintTarget::Stroke } else { PaintTarget::Fill };
     }
     pub fn apply_paint(&mut self, color: Option<Rgba>) {
-        match self.paint {
-            PaintTarget::Fill => self.cur_fill = color,
-            PaintTarget::Stroke => self.cur_stroke = color,
-        }
+        self.set_current_paint(self.paint, Paint::from_opt(color));
         let pids = self.selected_pids();
         if pids.is_empty() {
             return;
@@ -5257,7 +5594,7 @@ impl Editor {
                     PaintTarget::Stroke => &mut self.doc.paths[pi].stroke,
                 };
                 if *current != paint {
-                    *current = paint;
+                    *current = paint.clone();
                     self.dirty = true;
                 }
             }
@@ -5284,8 +5621,8 @@ impl Editor {
             }
         }
         match cur {
-            Some(PaintTarget::Fill) => self.cur_fill = Some(color),
-            Some(PaintTarget::Stroke) => self.cur_stroke = Some(color),
+            Some(PaintTarget::Fill) => self.set_current_paint(PaintTarget::Fill, Paint::Solid(color)),
+            Some(PaintTarget::Stroke) => self.set_current_paint(PaintTarget::Stroke, Paint::Solid(color)),
             None => {}
         }
         self.commit();
@@ -5315,7 +5652,13 @@ impl Editor {
             if active_only && !self.doc.path_boards(pi).contains(&self.doc.active) {
                 continue;
             }
-            for c in [p.fill.solid(), p.stroke.solid()].into_iter().flatten() {
+            for c in [
+                p.appearance().fill().resolved(&self.doc).representative(),
+                p.appearance().stroke().resolved(&self.doc).representative(),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 if !out.iter().any(|r| same(r, &c)) {
                     out.push(c);
                     if out.len() >= 36 {
@@ -5352,7 +5695,7 @@ impl Editor {
             .next()
     }
     fn apply_current(&mut self) {
-        let (f, st) = (self.cur_fill, self.cur_stroke);
+        let (f, st) = (self.current_paint(PaintTarget::Fill), self.current_paint(PaintTarget::Stroke));
         let pids = self.selected_pids();
         if pids.is_empty() {
             return;
@@ -5360,20 +5703,23 @@ impl Editor {
         self.begin();
         for q in pids {
             if let Some(pi) = self.doc.pidx(q) {
-                self.doc.paths[pi].fill = Paint::from_opt(f);
-                self.doc.paths[pi].stroke = Paint::from_opt(st);
+                self.doc.paths[pi].fill = f.clone();
+                self.doc.paths[pi].stroke = st.clone();
             }
         }
         self.dirty = true;
         self.commit();
     }
     pub fn swap_colors(&mut self) {
-        std::mem::swap(&mut self.cur_fill, &mut self.cur_stroke);
+        let f = self.current_paint(PaintTarget::Fill);
+        let st = self.current_paint(PaintTarget::Stroke);
+        self.set_current_paint(PaintTarget::Fill, st);
+        self.set_current_paint(PaintTarget::Stroke, f);
         self.apply_current();
     }
     pub fn default_paint(&mut self) {
-        self.cur_fill = Some(DEFAULT_FILL);
-        self.cur_stroke = Some(DEFAULT_STROKE);
+        self.set_current_paint(PaintTarget::Fill, Paint::Solid(DEFAULT_FILL));
+        self.set_current_paint(PaintTarget::Stroke, Paint::Solid(DEFAULT_STROKE));
         self.apply_current();
     }
     pub fn bump_stroke(&mut self, delta: f32) {
@@ -5550,7 +5896,7 @@ impl Editor {
             if matches!(self.doc.node(nid).map(|n| &n.kind), Some(NodeKind::Group)) {
                 self.group_sel.insert(nid);
             }
-            for p in self.doc.node_paths(nid) {
+            for p in crate::images::node_items(&self.doc, nid) {
                 if !self.doc.eff_locked(p) && !self.doc.eff_hidden(p) {
                     self.objsel.insert(p);
                 }
@@ -5566,9 +5912,7 @@ impl Editor {
     /// objsel, so requiring them too made deselect unreachable for mixed-lock rows (07-04 review bug #1).
     pub fn layer_toggle(&mut self, nid: u32) {
         self.tool = ToolKind::Object;
-        let paths: Vec<u32> = self
-            .doc
-            .node_paths(nid)
+        let paths: Vec<u32> = crate::images::node_items(&self.doc, nid)
             .into_iter()
             .filter(|&p| !self.doc.eff_locked(p) && !self.doc.eff_hidden(p))
             .collect();
@@ -5584,12 +5928,12 @@ impl Editor {
             }
             if matches!(self.doc.node(nid).map(|n| &n.kind), Some(NodeKind::Group)) {
                 self.group_sel.insert(nid);
-            } else if let Some(descendant) = self.doc.node_paths(nid).first().copied() {
+            } else if let Some(descendant) = crate::images::node_items(&self.doc, nid).first().copied() {
                 let ancestors: Vec<u32> = self
                     .group_sel
                     .iter()
                     .copied()
-                    .filter(|&group| self.doc.node_paths(group).contains(&descendant))
+                    .filter(|&group| crate::images::node_items(&self.doc, group).contains(&descendant))
                     .collect();
                 for group in ancestors {
                     self.group_sel.remove(&group);
@@ -5771,12 +6115,13 @@ impl Editor {
     pub fn eyedrop(&mut self, pid: u32) {
         let (f, st, sw) = if let Some(pi) = self.doc.pidx(pid) {
             let p = &self.doc.paths[pi];
-            (p.fill.solid(), p.stroke.solid(), p.stroke_width)
+            (p.appearance().fill().clone(), p.appearance().stroke().clone(), p.stroke_width)
         } else {
             return;
         };
-        self.cur_fill = f;
-        self.cur_stroke = st;
+        let Some(source) = self.doc.pidx(pid).map(|i| self.doc.paths[i].clone()) else { return };
+        self.set_sampled_paint(PaintTarget::Fill, f.clone(), &source);
+        self.set_sampled_paint(PaintTarget::Stroke, st.clone(), &source);
         self.cur_sw = sw;
         let pids = self.selected_pids();
         if pids.is_empty() {
@@ -5785,8 +6130,10 @@ impl Editor {
         self.begin();
         for q in pids {
             if let Some(pi) = self.doc.pidx(q) {
-                self.doc.paths[pi].fill = Paint::from_opt(f);
-                self.doc.paths[pi].stroke = Paint::from_opt(st);
+                self.doc.paths[pi].fill =
+                    crate::current_paint::fit(f.clone(), crate::current_paint::bounds(&source), &self.doc.paths[pi]);
+                self.doc.paths[pi].stroke =
+                    crate::current_paint::fit(st.clone(), crate::current_paint::bounds(&source), &self.doc.paths[pi]);
                 self.doc.paths[pi].stroke_width = sw;
             }
         }

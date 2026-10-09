@@ -22,7 +22,22 @@ fn bound(kind: LimitKind, found: usize, max: usize) -> Result<(), LoadError> {
 }
 
 pub fn load_vrs_checked(path: &Path, limits: &Limits) -> Result<Loaded, LoadError> {
-    load_vrs_bytes(&read_bounded(path, limits)?, limits)
+    let mut loaded = load_vrs_bytes(&read_bounded(path, limits)?, limits)?;
+    loaded.blobs.document_dir = path.parent().map(Path::to_path_buf);
+    for image in &loaded.doc.images {
+        if image.placement == varos_core::images::PlacementMode::Link {
+            if let Ok(source) = varos_core::images::links::resolve(image, path.parent(), None) {
+                if let Ok(bytes) = varos_core::images::links::read_original(&source) {
+                    if let Ok(decoded) = varos_core::images::codec::decode(&bytes) {
+                        if loaded.doc.assets.contains(&decoded.blob.meta) {
+                            let _ = loaded.blobs.insert(decoded.blob);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(loaded)
 }
 pub fn load_vrs_bytes(bytes: &[u8], limits: &Limits) -> Result<Loaded, LoadError> {
     if bytes.len() as u64 > limits.max_file_bytes {
@@ -44,6 +59,13 @@ pub fn load_vrs_bytes(bytes: &[u8], limits: &Limits) -> Result<Loaded, LoadError
             _ => return Err(LoadError::InvalidVersion("PDF catalog".into())),
         },
     };
+    // ---- Lane F: preview keys are versioned even when optional ----
+    if catalog.has(b"VAROS_Preview") || catalog.has(b"VAROS_PreviewVersion") {
+        if version.is_none_or(|v| v < varos_core::format::PREVIEW_FORMAT_VERSION) {
+            return Err(unsupported("preview keys require native format 9"));
+        }
+        crate::quicklook::preview(bytes).map_err(|e| unsupported(&e))?;
+    }
     let model = if let Ok(o) = catalog.get(b"VAROS_Model") { o } else { find_model(&pdf, catalog, limits)? };
     let stream = resolve(&pdf, model)?.as_stream().map_err(|_| malformed("editable model is not a stream"))?;
     if stream.dict.has(b"Filter") {
@@ -51,7 +73,10 @@ pub fn load_vrs_bytes(bytes: &[u8], limits: &Limits) -> Result<Loaded, LoadError
     }
     bound(LimitKind::ModelBytes, stream.content.len(), limits.max_model_bytes)?;
     bound(LimitKind::DecodedStreams, stream.content.len(), limits.max_decoded_stream_bytes)?;
-    decode_model(&stream.content, version, limits)
+    // ---- w2-images ----
+    let mut loaded = decode_model(&stream.content, version, limits)?;
+    crate::images::load_assets(&pdf, catalog, &mut loaded, limits)?;
+    Ok(loaded)
 }
 
 fn resolve<'a>(pdf: &'a Document, o: &'a Object) -> Result<&'a Object, LoadError> {
@@ -114,7 +139,7 @@ fn find_model<'a>(pdf: &'a Document, catalog: &'a Dictionary, limits: &Limits) -
     found.ok_or(LoadError::NoEmbeddedModel)
 }
 
-fn parse_pdf(bytes: &[u8], limits: &Limits) -> Result<Document, LoadError> {
+pub(crate) fn parse_pdf(bytes: &[u8], limits: &Limits) -> Result<Document, LoadError> {
     preflight(bytes, limits)?;
     let pdf = Document::load_mem_with_options(
         bytes,

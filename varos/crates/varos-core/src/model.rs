@@ -1,7 +1,11 @@
+// ---- w2-gradients: Appearance routing and next-format paint integration ----
 //! The document data model: anchors, paths, the document. Plus pure geometry queries.
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
 use crate::geom::*;
+// ---- w2-images ----
+use crate::images::{AssetMeta, ImageObject};
+use crate::live_corners::CornerParam;
 pub use crate::stroke::{ArrowAlign, ArrowHead, StrokeAlign, StrokeArrows, StrokeCap, StrokeJoin, StrokeStyle};
 use crate::text::TextBox;
 use crate::units::DocUnits;
@@ -134,16 +138,29 @@ pub fn compose_is_degenerate(rot: f32, dtheta: f32) -> bool {
 ///
 /// `Copy` holds only while every variant is `Copy` (`Rgba` is). A future `Gradient(Vec<..>)` variant
 /// will drop `Copy`; the handful of `p.fill` copy sites get revisited then.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum Paint {
     #[default]
     None,
     Solid(Rgba),
+    Gradient(crate::gradient::Gradient),
+    SwatchRef {
+        id: u32,
+    },
+}
+// Tagged paints retain the legacy null/array encoding.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case", deny_unknown_fields)]
+enum TaggedPaint {
+    Gradient(crate::gradient::Gradient),
+    SwatchRef { id: u32 },
 }
 impl std::hash::Hash for Paint {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
+            Self::Gradient(g) => g.hash(state),
+            Self::SwatchRef { id } => id.hash(state),
             Self::None => {}
             Self::Solid(c) => {
                 for v in c {
@@ -158,6 +175,23 @@ impl std::hash::Hash for Paint {
     }
 }
 impl Paint {
+    // ---- w2-gradients: resolved-paint readers ----
+    /// Representative UI colour; callers resolve document references first.
+    pub fn representative(&self) -> Option<Rgba> {
+        match self {
+            Self::Solid(c) => Some(*c),
+            Self::Gradient(g) => Some(g.sample(0.5)),
+            _ => None,
+        }
+    }
+    /// Geometry recipe placeholder for gradients; never turn no-paint into white artwork.
+    pub fn drawable_colour(&self) -> Option<Rgba> {
+        match self {
+            Self::Gradient(_) => Some([1.; 4]),
+            _ => self.solid(),
+        }
+    }
+    // ---- end w2-gradients ----
     /// From the legacy optional-colour shape: `None ⇒ Paint::None`, `Some(c) ⇒ Paint::Solid(c)`.
     pub fn from_opt(c: Option<Rgba>) -> Self {
         match c {
@@ -165,19 +199,20 @@ impl Paint {
             None => Paint::None,
         }
     }
-    /// The drawable solid colour if this paint resolves to one today — `None` for `Paint::None` (and,
-    /// once they exist, for gradients / unresolved swatch-refs: callers treat those as "nothing solid
-    /// to draw" until the render path grows a branch for them).
-    pub fn solid(self) -> Option<Rgba> {
+    /// Solid colour only. Resolve references first; gradient readers use their own paint branch
+    /// or `representative` for a colour chip. `None` here does not mean unpainted.
+    pub fn solid(&self) -> Option<Rgba> {
         match self {
-            Paint::Solid(c) => Some(c),
-            Paint::None => None,
+            Paint::Solid(c) => Some(*c),
+            _ => None,
         }
     }
 }
 impl Serialize for Paint {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
+            Paint::Gradient(g) => TaggedPaint::Gradient(g.clone()).serialize(s),
+            Paint::SwatchRef { id } => TaggedPaint::SwatchRef { id: *id }.serialize(s),
             Paint::None => s.serialize_none(), // ⇒ JSON null  (old Option::None)
             Paint::Solid(c) => c.serialize(s), // ⇒ [r,g,b,a]  (old Option::Some)
         }
@@ -192,6 +227,13 @@ impl<'de> Deserialize<'de> for Paint {
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 f.write_str("null or an [r,g,b,a] colour array")
             }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Paint, A::Error> {
+                let tagged = TaggedPaint::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(match tagged {
+                    TaggedPaint::Gradient(g) => Paint::Gradient(g),
+                    TaggedPaint::SwatchRef { id } => Paint::SwatchRef { id },
+                })
+            }
             fn visit_unit<E: Error>(self) -> Result<Paint, E> {
                 Ok(Paint::None) // JSON null
             }
@@ -199,6 +241,9 @@ impl<'de> Deserialize<'de> for Paint {
                 let mut c = [0.0f32; 4];
                 for (i, ch) in c.iter_mut().enumerate() {
                     *ch = seq.next_element()?.ok_or_else(|| A::Error::invalid_length(i, &self))?;
+                }
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(A::Error::invalid_length(5, &self));
                 }
                 Ok(Paint::Solid(c))
             }
@@ -220,6 +265,9 @@ pub struct Path {
     pub stroke_width: f32,
     #[serde(default, skip_serializing_if = "StrokeStyle::is_default")]
     pub stroke_style: StrokeStyle,
+    // ---- Lane C ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corners: Vec<CornerParam>,
     /// extra hole contours (editable bezier anchors) — e.g. from boolean ops. A compound path: the
     /// outer `anchors` plus these inner rings, filled even-odd so holes cut through. Normally empty.
     pub holes: Vec<Vec<Anchor>>,
@@ -250,6 +298,7 @@ impl Path {
             stroke: Paint::from_opt(stroke),
             stroke_width,
             stroke_style: StrokeStyle::default(),
+            corners: vec![],
             holes: vec![],
             opacity: 1.0,
             hidden: false,
@@ -283,6 +332,8 @@ pub enum NodeKind {
     Layer,
     Group,
     Path(u32),
+    // ---- w2-images ----
+    Image(u32),
     // ---- Lane G: text data ----
     Text(u32),
 }
@@ -597,6 +648,19 @@ pub struct Document {
     /// Tags: clean, case-insensitively unique, order kept (`board::normalize_tags`).
     #[serde(default)]
     pub tags: Vec<String>,
+    // ---- w2-images ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImageObject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<AssetMeta>,
+    #[serde(
+        default = "crate::images::default_effects_ppi",
+        skip_serializing_if = "crate::images::is_default_effects_ppi"
+    )]
+    pub raster_effects_ppi: f32,
+    // ---- w2-gradients (format 7) ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub swatches: Vec<crate::swatches::Swatch>,
     // ---- Lane G: text data ----
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_boxes: Vec<TextBox>,
@@ -663,6 +727,10 @@ impl Default for Document {
             name: String::new(),
             description: String::new(),
             tags: vec![],
+            images: vec![],
+            assets: vec![],
+            raster_effects_ppi: crate::images::default_effects_ppi(),
+            swatches: vec![],
             text_boxes: vec![],
             paths: vec![],
             groups: vec![],
@@ -733,6 +801,10 @@ impl Document {
             name,
             description,
             tags,
+            images,
+            assets,
+            raster_effects_ppi,
+            swatches,
             paths,
             text_boxes,
             groups,
@@ -755,11 +827,15 @@ impl Document {
         // the unit settings split in two: ppi is content, the display unit a preference
         let DocUnits { ppi, display: _ } = *units;
         // cheap, discriminating fields first
-        text_boxes == &other.text_boxes
+        images == &other.images
+            && assets == &other.assets
+            && raster_effects_ppi == &other.raster_effects_ppi
+            && text_boxes == &other.text_boxes
             && paths.len() == other.paths.len()
             && nodes.len() == other.nodes.len()
             && name == &other.name
             && description == &other.description
+            && swatches == &other.swatches
             && tags == &other.tags
             && transparency_grid == &other.transparency_grid
             && ppi == other.units.ppi
@@ -912,6 +988,10 @@ impl Document {
                 for bi in self.path_boards(pi) {
                     on[bi] = true;
                 }
+            } else if let Some(image) = self.images.iter().find(|i| i.id == pid) {
+                for bi in crate::images::image_boards(self, image) {
+                    on[bi] = true;
+                }
             }
         }
         on.iter().enumerate().filter(|(_, &v)| v).map(|(i, _)| i).collect()
@@ -1051,11 +1131,13 @@ impl Document {
 
     /// Outer outline of a path (steps per segment).
     pub fn outline(&self, pi: usize, steps: usize) -> Vec<Pt> {
-        Self::ring(&self.paths[pi].anchors, self.paths[pi].closed, steps)
+        let path = crate::live_corners::evaluated(&self.paths[pi]);
+        Self::ring(&path.anchors, path.closed, steps)
     }
     /// Resolution-independent outer outline (`ppu` = view zoom) — smooth at any zoom.
     pub fn outline_px(&self, pi: usize, ppu: f32) -> Vec<Pt> {
-        Self::ring_px(&self.paths[pi].anchors, self.paths[pi].closed, ppu)
+        let path = crate::live_corners::evaluated(&self.paths[pi]);
+        Self::ring_px(&path.anchors, path.closed, ppu)
     }
     /// WORLD-space outer outline (the A7 render seam): `outline_px` mapped through the path's unit
     /// transform. Identity ⇒ returns the local polyline UNTOUCHED (byte-for-byte today's geometry).
@@ -1200,8 +1282,10 @@ impl Document {
             .collect();
         Path {
             holes,
-            fill: src.fill, // preserve the paint EXACTLY (future gradients too), not a solid snapshot
-            stroke: src.stroke,
+            corners: src.corners.clone(),
+            stroke_style: src.stroke_style.clone(),
+            fill: src.appearance().fill().resolved(self), // preserve the paint EXACTLY (future gradients too), not a solid snapshot
+            stroke: src.appearance().stroke().resolved(self),
             opacity: src.opacity,
             hidden: src.hidden,
             locked: src.locked,
@@ -1223,7 +1307,7 @@ impl Document {
     }
     /// The leaf node representing a path.
     pub fn node_of_path(&self, pid: u32) -> Option<u32> {
-        self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(p) if p == pid)).map(|n| n.id)
+        self.nodes.iter().find(|n| matches!(n.kind, NodeKind::Path(p) | NodeKind::Image(p) if p == pid)).map(|n| n.id)
     }
     /// The HIGHEST Group ancestor of a path's leaf (stops at the Layer). None = ungrouped.
     pub fn top_group_of_path(&self, pid: u32) -> Option<u32> {
@@ -1262,7 +1346,7 @@ impl Document {
     /// All path ids in `nid`'s subtree, front-first (traversal order).
     fn collect_paths(&self, nid: u32, out: &mut Vec<u32>) {
         if let Some(n) = self.node(nid) {
-            if let NodeKind::Path(p) = n.kind {
+            if let NodeKind::Path(p) | NodeKind::Image(p) = n.kind {
                 out.push(p);
             }
             for &c in &n.children {
@@ -1318,6 +1402,10 @@ impl Document {
     }
     /// Effective visibility: the path's own flag OR any ancestor container's (the panel eye cascade).
     pub fn eff_hidden(&self, pid: u32) -> bool {
+        // ---- w2-images ----
+        if self.images.iter().any(|i| i.id == pid) {
+            return crate::images::image_hidden(self, pid);
+        }
         let Some(pi) = self.pidx(pid) else { return true };
         if self.paths[pi].hidden {
             return true;
@@ -1337,6 +1425,10 @@ impl Document {
     }
     /// Effective lock: the path's own flag OR any ancestor container's (cascade).
     pub fn eff_locked(&self, pid: u32) -> bool {
+        // ---- w2-images ----
+        if self.images.iter().any(|i| i.id == pid) {
+            return crate::images::image_locked(self, pid);
+        }
         let Some(pi) = self.pidx(pid) else { return false };
         if self.paths[pi].locked {
             return true;
@@ -1483,6 +1575,14 @@ impl Document {
         let mut pmap: HashMap<u32, u32> = HashMap::new();
         let mut new_pids = vec![];
         for &s in srcs {
+            // ---- w2-images: duplicate metadata only, retaining the immutable resource key ----
+            if let Some(mut image) = self.images.iter().find(|i| i.id == s).cloned() {
+                image.id = self.nid();
+                pmap.insert(s, image.id);
+                new_pids.push(image.id);
+                self.images.push(image);
+                continue;
+            }
             if self.pidx(s).is_none() {
                 continue;
             }
@@ -1538,7 +1638,11 @@ impl Document {
                 let (hidden, locked) = self.node(old_leaf).map(|n| (n.hidden, n.locked)).unwrap_or_default();
                 self.nodes.push(Node {
                     id: nl,
-                    kind: NodeKind::Path(new_p),
+                    kind: if self.images.iter().any(|i| i.id == new_p) {
+                        NodeKind::Image(new_p)
+                    } else {
+                        NodeKind::Path(new_p)
+                    },
                     name: String::new(),
                     parent: None,
                     children: vec![],

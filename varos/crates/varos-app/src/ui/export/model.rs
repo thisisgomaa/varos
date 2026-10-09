@@ -87,9 +87,13 @@ pub struct Minimal {
     pub remaining: usize,
     pub destinations: Vec<PathBuf>,
     pub report: varos_core::ExportReport,
+    pub blobs: Arc<varos_core::images::BlobStore>,
     pub preview_id: u64,
     pub previews: super::previews::Previews,
     pub preferences_dirty: bool,
+    pub advanced: bool,
+    pub revealed_folder: bool,
+    pub screen_settings: varos_raster::screens::Advanced,
 }
 impl Minimal {
     pub fn new(doc: &Document, selection: &HashSet<u32>, selection_tab: bool) -> Self {
@@ -98,19 +102,19 @@ impl Minimal {
         let mut seen = HashSet::new();
         let mut assets = vec![];
         let mut selection_ids = vec![];
-        for path in &doc.paths {
-            if !selection.contains(&path.id) {
+        for pid in doc.paths.iter().map(|p| p.id).chain(doc.images.iter().map(|i| i.id)) {
+            if !selection.contains(&pid) {
                 continue;
             }
-            let unit = doc.unit_of(path.id).unwrap_or(path.id);
+            let unit = doc.unit_of(pid).unwrap_or(pid);
             if !seen.insert(unit) {
                 continue;
             }
             let members: HashSet<_> = doc
-                .group_members(path.id)
+                .group_members(pid)
                 .into_iter()
                 .filter(|id| selection.contains(id))
-                .chain(std::iter::once(path.id))
+                .chain(std::iter::once(pid))
                 .collect();
             if let Ok(mut planned) = export::plan(doc, &Scope::Selection(members)) {
                 if let Some(mut asset) = planned.pop() {
@@ -153,9 +157,13 @@ impl Minimal {
             remaining: 0,
             destinations: vec![],
             report: Default::default(),
+            blobs: Default::default(),
             preview_id: hasher.finish(),
             previews: Default::default(),
             preferences_dirty: false,
+            advanced: false,
+            revealed_folder: false,
+            screen_settings: Default::default(),
         }
     }
     pub fn cards(&self) -> &Cards {
@@ -191,7 +199,8 @@ impl Minimal {
             scale: self.options.scale,
             transparent: self.options.transparent,
             quality: self.options.quality,
-            advanced: false,
+            advanced: self.advanced,
+            screen_settings: self.screen_settings.clone(),
         };
         PREFERENCES.with(|prefs| prefs.borrow_mut().insert(self.key.clone(), p));
     }
@@ -200,6 +209,8 @@ impl Minimal {
         let p = PREFERENCES.with(|prefs| prefs.borrow().get(&self.key).cloned());
         if let Some(p) = p {
             self.selection_tab = p.selection_tab && self.selection_reason().is_none();
+            self.advanced = p.advanced;
+            self.screen_settings = p.screen_settings;
             self.list = p.list;
             self.folder = p.folder;
             self.boards.restore_checks(&p.artboard_cards);
@@ -213,6 +224,43 @@ impl Minimal {
         }
     }
     pub fn jobs(&self, sid: SessionId, ticket: u64, cancel: CancelFlag) -> Vec<ScreenJob> {
+        if self.advanced {
+            let range = if self.selection_tab || self.screen_settings.whole_board {
+                vec![true; self.cards().assets.len()]
+            } else {
+                match self.screen_settings.checks(self.boards.assets.len()) {
+                    Ok(range) => range,
+                    Err(_) => return vec![],
+                }
+            };
+            let assets: Vec<_> = if self.screen_settings.whole_board && !self.selection_tab {
+                self.cards()
+                    .assets
+                    .first()
+                    .and_then(|a| export::plan(&a.doc, &Scope::WholeBoard).ok())
+                    .unwrap_or_default()
+            } else {
+                self.cards()
+                    .assets
+                    .iter()
+                    .zip(&self.cards().checked)
+                    .zip(range)
+                    .filter_map(|((a, on), ranged)| (*on && ranged).then_some(a.clone()))
+                    .collect()
+            };
+            let mut settings = self.screen_settings.clone();
+            // Range refers to the original artboard grid, before checkbox filtering.
+            settings.range.clear();
+            if self.selection_tab {
+                settings.pdf_single = false;
+            }
+            return settings
+                .expand(&assets, &self.options)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| planned_screen_job(sid, ticket, p, PathBuf::from(&self.folder), cancel.clone(), true))
+                .collect();
+        }
         self.cards()
             .assets
             .iter()
@@ -231,6 +279,38 @@ impl Minimal {
             })
             .collect()
     }
+}
+/// Advanced expansion already resolved colour and bleed into each page rectangle.
+/// Keep PDF bleed metadata empty so Press options cannot expand the same bleed twice.
+pub fn planned_screen_job(
+    sid: SessionId,
+    ticket: u64,
+    p: varos_raster::screens::Planned,
+    folder: PathBuf,
+    cancel: CancelFlag,
+    collision_names: bool,
+) -> ScreenJob {
+    let mut job = screen_job(sid, ticket, p.asset, p.options, folder.join(p.relative), cancel, collision_names);
+    job.svg_options = p.svg;
+    job.folder_root = Some(folder);
+    if !p.pages.is_empty() {
+        job.job.plan.pages = p
+            .pages
+            .iter()
+            .map(|a| varos_pdf::PageSpec {
+                rect: a.page.rect,
+                background: a.page.background,
+                bleed: 0.,
+                bleed_edges: [0.; 4],
+            })
+            .collect();
+    } else {
+        for page in &mut job.job.plan.pages {
+            page.bleed = 0.;
+            page.bleed_edges = [0.; 4];
+        }
+    }
+    job
 }
 pub fn screen_job(
     sid: SessionId,
@@ -256,6 +336,7 @@ pub fn screen_job(
     };
     ScreenJob {
         job: ExportJob {
+            blobs: Default::default(),
             pdf_options: Default::default(),
             sid,
             ticket,
@@ -269,11 +350,31 @@ pub fn screen_job(
         options,
         collision_names,
         additional: vec![],
+        svg_options: Default::default(),
+        additional_jobs: vec![],
+        folder_root: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selected_image_has_a_real_export_card() {
+        let mut ed = varos_core::Editor::new();
+        let bytes = varos_core::images::codec::encode_png(&varos_core::images::Pixels {
+            budget: None,
+            width: 2,
+            height: 2,
+            rgba: std::sync::Arc::from([255, 0, 0, 255].repeat(4)),
+        })
+        .unwrap();
+        let id =
+            varos_core::images::links::place_bytes(&mut ed, &bytes, [0.; 2], None, Default::default(), None).unwrap().0;
+        let model = super::Minimal::new(&ed.doc, &std::collections::HashSet::from([id]), true);
+        assert!(model.selection_tab);
+        assert_eq!(model.selection.assets.len(), 1);
+    }
+
     use super::*;
     #[test]
     fn toggles_range_double_and_disable() {
@@ -329,8 +430,13 @@ mod integration_tests {
             model.folder = dir.to_string_lossy().into_owned();
             model.options.format = format;
             let jobs = model.jobs(SessionId(1), 42, Default::default());
-            let output =
-                export::encode(&jobs[0].asset, &jobs[0].options, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+            let output = export::encode_with_svg_options(
+                &jobs[0].asset,
+                &jobs[0].options,
+                &std::sync::atomic::AtomicBool::new(false),
+                &jobs[0].svg_options,
+            )
+            .unwrap();
             let dest = jobs[0].job.dest.clone();
             let done = crate::file_jobs::execute(
                 crate::file_jobs::FileJob::Screen(Box::new(jobs[0].clone())),
@@ -357,9 +463,14 @@ mod integration_tests {
             )
             .unwrap();
             assert_eq!(
-                export::encode(&bridge.asset, &bridge.options, &std::sync::atomic::AtomicBool::new(false))
-                    .unwrap()
-                    .bytes,
+                export::encode_with_svg_options(
+                    &bridge.asset,
+                    &bridge.options,
+                    &std::sync::atomic::AtomicBool::new(false),
+                    &bridge.svg_options
+                )
+                .unwrap()
+                .bytes,
                 output.bytes
             );
             let done = crate::file_jobs::execute(
@@ -440,5 +551,180 @@ mod fix_round_tests {
         model.preferences_dirty = true;
         model.remember();
         assert_eq!(preferences()["dirty-export-fix"].folder, "/tmp/unmarked");
+    }
+}
+#[cfg(test)]
+mod lane_c_tests {
+    use super::*;
+    #[test]
+    fn advanced_preferences_and_card_row_jobs_roundtrip() {
+        let settings = varos_core::new_document::Settings { count: 2, bleed: 3., ..Default::default() };
+        let doc = settings.document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.restore("lane-c-job".into());
+        m.advanced = true;
+        m.screen_settings.preset(2);
+        m.screen_settings.prefix = "brand-".into();
+        m.screen_settings.subfolders = varos_raster::screens::Subfolders::Format;
+        m.preferences_dirty = true;
+        m.remember();
+        let mut back = Minimal::new(&doc, &HashSet::new(), false);
+        back.restore("lane-c-job".into());
+        assert!(back.advanced);
+        assert_eq!(back.screen_settings, m.screen_settings);
+        let jobs = back.jobs(SessionId(1), 42, Default::default());
+        assert_eq!(jobs.len(), 6);
+        assert!(jobs[2].job.dest.ends_with("png/brand-Artboard 1@2x.png"));
+        back.screen_settings.rows = vec![varos_raster::screens::Row { format: "pdf".into(), ..Default::default() }];
+        back.screen_settings.pdf_single = true;
+        let jobs = back.jobs(SessionId(1), 43, Default::default());
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job.plan.pages.len(), 2);
+    }
+    #[test]
+    fn selection_single_pdf_setting_exports_each_snapshot_separately() {
+        let mut editor = varos_core::Editor::new();
+        for x in [0., 40.] {
+            editor
+                .try_execute(varos_core::EditCommand::AddShape {
+                    kind: varos_core::model::ShapeKind::Rect,
+                    bounds: [x, 0., x + 20., 20.],
+                    parent: None,
+                    fill: Some([1., 0., 0., 1.]),
+                    stroke: None,
+                    stroke_width: 0.,
+                    opacity: 1.,
+                    name: None,
+                })
+                .unwrap();
+        }
+        let selected = editor.doc.paths.iter().map(|p| p.id).collect();
+        let mut m = Minimal::new(&editor.doc, &selected, true);
+        m.advanced = true;
+        m.screen_settings.pdf_single = true;
+        m.screen_settings.rows = vec![varos_raster::screens::Row { format: "pdf".into(), ..Default::default() }];
+        let jobs = m.jobs(SessionId(1), 42, Default::default());
+        assert_eq!(jobs.len(), 2);
+        for job in jobs {
+            assert_eq!(job.job.plan.pages.len(), 1);
+            let (bytes, _) = varos_pdf::export_pdf_with_options(
+                &job.job.doc,
+                &job.job.plan,
+                &job.job.pdf_options,
+                job.job.cancel.flag(),
+            )
+            .unwrap();
+            assert!(bytes.starts_with(b"%PDF"));
+            assert_eq!(job.job.doc.paths.iter().filter(|p| !p.hidden).count(), 1);
+        }
+    }
+    #[test]
+    fn advanced_worker_keeps_prefix_suffix_and_numbers_collisions() {
+        let doc = varos_core::new_document::Settings::category(3).document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.advanced = true;
+        m.screen_settings.prefix = "icon-".into();
+        m.screen_settings.rows[0].format = "svg".into();
+        m.screen_settings.rows[0].suffix = "@2x".into();
+        let dir = std::env::temp_dir().join(format!("lane-c-names-{}", varos_app::storage::checksum::new_nonce()));
+        m.folder = dir.to_string_lossy().into_owned();
+        for n in 1..=2 {
+            let job = m.jobs(SessionId(1), n, Default::default()).remove(0);
+            let expected = varos_raster::export::encode_with_svg_options(
+                &job.asset,
+                &job.options,
+                job.job.cancel.flag(),
+                &job.svg_options,
+            )
+            .unwrap()
+            .bytes;
+            let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({
+                "api":"1.2", "board":"b1", "request_id":"svg", "expected_rev":0,
+                "path":"/tmp/shared.svg", "scope":"all_visible_artboards", "options":{"screens":m.screen_settings}
+            }))
+            .unwrap();
+            let bridge = crate::export_ui::bridge_job(
+                SessionId(1),
+                n,
+                &doc,
+                &HashSet::new(),
+                "/tmp/shared.svg".into(),
+                &request,
+                "export_svg",
+            )
+            .unwrap();
+            assert_eq!(
+                expected,
+                varos_raster::export::encode_with_svg_options(
+                    &bridge.asset,
+                    &bridge.options,
+                    bridge.job.cancel.flag(),
+                    &bridge.svg_options,
+                )
+                .unwrap()
+                .bytes
+            );
+            let done = crate::file_jobs::execute(
+                crate::file_jobs::FileJob::Screen(Box::new(job)),
+                &mut crate::file_ports::DiskStore,
+            );
+            let crate::file_jobs::FileDone::Exported(done) = done else { panic!("Expected export") };
+            assert!(matches!(done.result, crate::file_jobs::ExportResult::Exported));
+            assert_eq!(std::fs::read(&done.job.dest).unwrap(), expected);
+            assert_eq!(
+                done.job.dest.file_name().unwrap().to_string_lossy(),
+                if n == 1 { "icon-Artboard 1@2x.svg" } else { "icon-Artboard 1@2x 2.svg" }
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    #[test]
+    fn restored_range_applies_to_grid_before_checklist_filtering() {
+        let doc = varos_core::new_document::Settings { count: 3, ..Default::default() }.document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.advanced = true;
+        m.screen_settings.range = "2-3".into();
+        m.boards.checked[1] = false;
+        let jobs = m.jobs(SessionId(1), 1, Default::default());
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].asset.name, "Artboard 3");
+    }
+    #[test]
+    fn advanced_pdf_resolves_bleed_once_and_invalid_range_cannot_export() {
+        let doc = varos_core::new_document::Settings { count: 2, bleed: 3., ..Default::default() }.document().unwrap();
+        let mut m = Minimal::new(&doc, &HashSet::new(), false);
+        m.advanced = true;
+        m.screen_settings.rows[0].format = "pdf".into();
+        for bleed in [false, true] {
+            m.screen_settings.include_bleed = bleed;
+            let jobs = m.jobs(SessionId(1), 1, Default::default());
+            let page = &jobs[0].job.plan.pages[0];
+            assert_eq!(page.bleed_edges, [0.; 4]);
+            let expected = doc.artboards[0].w + if bleed { 2. * doc.artboards[0].bleed } else { 0. };
+            assert!((page.rect[2] - expected).abs() < 0.001);
+            let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({
+                "api":"1.2", "board":"b1", "request_id":"r1", "expected_rev":0,
+                "path":"/tmp/export.pdf", "scope":"all_visible_artboards", "options":{"screens":m.screen_settings}
+            }))
+            .unwrap();
+            let bridge = crate::export_ui::bridge_job(
+                SessionId(1),
+                1,
+                &doc,
+                &HashSet::new(),
+                "/tmp/export.pdf".into(),
+                &request,
+                "export_raster",
+            )
+            .unwrap();
+            assert_eq!(bridge.job.plan.pages, jobs[0].job.plan.pages);
+        }
+        m.screen_settings.range = "999".into();
+        assert!(m.jobs(SessionId(1), 1, Default::default()).is_empty());
     }
 }

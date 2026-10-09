@@ -235,10 +235,15 @@ pub(crate) fn apply_design_op(
     if crate::text::apply(ed, op, locals, affected)? {
         return Ok(None);
     }
+    // ---- Lane C ----
+    if op.lane_c() {
+        return crate::path_advanced::apply(ed, op, locals, affected, expanded);
+    }
     if op.slice4a() {
         let mut resolved = op.clone();
         let ids = match &mut resolved {
-            Operation::Transform { ids, .. }
+            Operation::Colour { ids, .. }
+            | Operation::Transform { ids, .. }
             | Operation::MagicWand { ids, .. }
             | Operation::Eyedropper { ids, .. }
             | Operation::Isolation { ids, .. }
@@ -583,6 +588,12 @@ pub(crate) fn apply_design_op(
         Operation::Move { delta, .. } => {
             ed.apply_targeted_op(&TargetEdit::Move { paths, delta: *delta }, 0).map_err(super::service::target_error)?
         }
+        Operation::OutlineStroke { .. }
+        | Operation::OffsetPath { .. }
+        | Operation::Expand { .. }
+        | Operation::LiveCorners { .. }
+        | Operation::ScaleStrokes { .. }
+        | Operation::NewDocument { .. } => return Err(fail("Lane C dispatch error")),
         Operation::SetStrokeStyle { stroke_style, .. } => {
             ed.try_execute(EditCommand::SetStrokeStyle { ids: paths, style: stroke_style.clone() }).map_err(fail)?;
         }

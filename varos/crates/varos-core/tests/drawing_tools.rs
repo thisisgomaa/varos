@@ -541,3 +541,19 @@ fn eraser_refuses_default_path_cap_without_document_or_history_changes() {
     assert_eq!(e.rev, rev);
     assert!(!e.transaction_open());
 }
+
+/// Integration w2 (Lane D × gradients): a drawing tool shape inherits a current gradient fill.
+#[test]
+fn drawing_tools_inherit_current_gradient_paint() {
+    use varos_core::{editor::PaintTarget, model::Paint};
+    let mut ed = Editor::new();
+    ed.set_current_paint(PaintTarget::Fill, Paint::Gradient(varos_core::gradient::Gradient::default()));
+    let before = ed.doc.paths.len();
+    ed.try_execute(EditCommand::Drawing(varos_core::drawing::Action::Curvature {
+        points: vec![[0., 0.], [50., 0.], [50., 50.], [0., 50.]],
+        closed: true,
+    }))
+    .unwrap();
+    assert_eq!(ed.doc.paths.len(), before + 1);
+    assert!(matches!(ed.doc.paths.last().unwrap().fill, Paint::Gradient(_)));
+}

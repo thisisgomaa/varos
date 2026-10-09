@@ -1,7 +1,11 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
+mod colour;
 mod document;
 // ---- Lane E ----
+mod images;
 mod view_depth;
+// ---- Lane C ----
+mod lane_c;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -25,6 +29,8 @@ const VERBS: &[&str] = &[
     "view-depth",
     "add-text",
     "set-text",
+    "new-document",
+    "export-screens",
     "trace",
     "import-svg",
     "import",
@@ -40,6 +46,8 @@ const VERBS: &[&str] = &[
     "clipboard-out",
     "save-as",
     "apply",
+    "palette-import",
+    "palette-export",
     "new",
     "diff",
 ];
@@ -78,6 +86,11 @@ fn main() {
     }
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
+        Some("image") => {
+            let (value, code) = response(|| images::run(args.collect()).map_err(Failure::from));
+            println!("{value}");
+            std::process::exit(code);
+        }
         Some("bridge") => {
             let rest: Vec<String> = args.collect();
             // ADR-0011 owner commands (pair/agents/hosts/register) vs attached tool calls.
@@ -235,6 +248,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
     if verb == "view-depth" {
         return view_depth::run(args).map_err(Failure::from);
     }
+    if ["new-document", "export-screens"].contains(&verb.as_str()) {
+        return lane_c::run(&verb, args).map_err(Into::into);
+    }
     if ["document-info", "document-setup", "save-template", "new-from-template"].contains(&verb.as_str()) {
         return document::run(&verb, args).map_err(Into::into);
     }
@@ -243,6 +259,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
     }
     match verb.as_str() {
         "add-text" | "set-text" => text::run(&verb, args).map_err(Into::into),
+        "palette-import" | "palette-export" => colour::run(&verb, args).map_err(Into::into),
         "trace" => trace::run(args).map_err(Into::into),
         "import" | "import-pdf" | "import-ai" | "import-dxf" => import::run(&verb, args).map_err(Into::into),
         "import-svg" => {
@@ -271,8 +288,12 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             let a = parse(args, &["--out", "--size"], 1)?;
             let out = required(a.out, "--out")?;
             let size = a.size.unwrap_or(400);
-            let doc = varos_pdf::load_vrs(&a.positional[0])?;
-            let png = varos_raster::rasterize(Arc::new(doc), [size, size]).encode_png()?;
+            let loaded = varos_pdf::load_vrs_checked(&a.positional[0], &Limits::DEFAULT).map_err(|e| e.to_string())?;
+            let png = if loaded.doc.images.is_empty() {
+                varos_raster::rasterize(Arc::new(loaded.doc), [size, size]).encode_png()?
+            } else {
+                varos_raster::images::fitted(&loaded.doc, &loaded.blobs, [size, size], None)?.encode_png()?
+            };
             write_output(&out, &png)?;
             Ok(json!({"out":out.to_string_lossy(),"width":size,"height":size,"bytes":png.len()}))
         }
@@ -294,7 +315,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             if a.scale.is_some() && a.ppi.is_some() {
                 return Err("Choose scale or ppi, not both.".to_owned().into());
             }
-            let doc = varos_pdf::load_vrs(&a.positional[0])?;
+            let loaded = varos_pdf::load_vrs_checked(&a.positional[0], &Limits::DEFAULT).map_err(|e| e.to_string())?;
+            let doc = loaded.doc;
+            let blobs = loaded.blobs;
             let scope = match a.artboard.as_deref() {
                 Some("all") => Scope::AllArtboards,
                 Some("whole") => Scope::WholeBoard,
@@ -325,7 +348,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             }
             let mut files = vec![];
             for asset in assets {
-                let output = export::encode(&asset, &options, &AtomicBool::new(false))?;
+                let output = export::encode_with_images(&asset, &options, &blobs, &AtomicBool::new(false))?;
                 let path = if out.is_dir() { out.join(&output.name) } else { out.clone() };
                 // Deliverables never silently overwrite a prior export.
                 if path.exists() {
@@ -349,15 +372,31 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
                 .split(',')
                 .map(|v| {
                     v.strip_prefix("path:")
+                        .or_else(|| v.strip_prefix("image:"))
                         .unwrap_or(v)
                         .parse::<u32>()
                         .map_err(|_| "ids must be comma-separated path:N".to_owned())
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let doc = varos_pdf::load_vrs(&a.positional[0])?;
-            let clipboard = varos_core::clipboard::Clipboard::capture(&doc, &ids);
+            let loaded = varos_pdf::load_vrs_checked(&a.positional[0], &Limits::DEFAULT).map_err(|e| e.to_string())?;
+            let doc = loaded.doc;
+            let mut clipboard = varos_core::clipboard::Clipboard::capture(&doc, &ids);
+            clipboard.pin_images(&loaded.blobs);
             let vectors = varos_pdf::clipboard_vectors(&doc, &clipboard)?;
-            let png = varos_raster::clipboard_png(vectors.document, vectors.rect)?;
+            let [x, y, w, h] = vectors.rect;
+            let png = if vectors.document.images.is_empty() {
+                varos_raster::clipboard_png(vectors.document.clone(), vectors.rect)?
+            } else {
+                varos_raster::images::rasterize_with_images(
+                    &vectors.document,
+                    &clipboard.resources,
+                    [(w * 2.).ceil() as u32, (h * 2.).ceil() as u32],
+                    [-x * 2., -y * 2.],
+                    2.,
+                    None,
+                )?
+                .encode_png()?
+            };
             std::fs::create_dir(&out).map_err(|e| e.to_string())?;
             for (name, bytes) in [
                 ("selection.varos.json", vectors.internal),
@@ -390,7 +429,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
                     .to_owned()
                     .into());
             }
-            let mut doc = varos_pdf::load_vrs(&a.positional[0])?;
+            let loaded = varos_pdf::load_vrs_checked(&a.positional[0], &Limits::DEFAULT).map_err(|e| e.to_string())?;
+            let blobs = loaded.blobs;
+            let mut doc = loaded.doc;
             let mut export_report = None;
             let show_report =
                 verb == "print" || a.preset.is_some() || a.ppi.is_some() || a.marks.is_some() || a.bleed.is_some();
@@ -443,7 +484,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
                         }
                     }
                     let (bytes, report) =
-                        varos_pdf::export_pdf_with_options(&doc, &plan, &options, &AtomicBool::new(false))
+                        varos_pdf::images::export_with_options(&doc, &blobs, &plan, &options, &AtomicBool::new(false))
                             .map_err(|e| e.to_string())?;
                     if show_report {
                         export_report = Some(report);
@@ -451,7 +492,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
                     bytes
                 }
             } else {
-                varos_pdf::write_pdf_checked(&doc, &Limits::DEFAULT)?
+                varos_pdf::images::write_vrs(&doc, &blobs, &Limits::DEFAULT)?
             };
             write_output(&out, &pdf)?;
             let mut result = json!({"out":out.to_string_lossy(),"bytes":pdf.len()});
@@ -461,7 +502,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             Ok(result)
         }
         "apply" => {
-            let a = parse(args, &["--batch", "--out", "--in-place"], 1)?;
+            let a = parse(args, &["--batch", "--out", "--in-place", "--ids"], 1)?;
             let out = match a.out {
                 Some(out) => out,
                 None if a.in_place => a.positional[0].clone(),
@@ -490,13 +531,31 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
             if bytes.len() > 1_048_576 {
                 return Err("batch exceeds 1 MiB".to_owned().into());
             }
-            let commands = bridge::parse_batch(&bytes)?;
-            let count = commands.len();
+            let action = serde_json::from_slice::<Value>(&bytes).ok().is_some_and(|v| v.get("version").is_some());
+            let count;
             let mut editor = Editor::new();
-            editor.replace_doc(varos_pdf::load_vrs(&a.positional[0])?);
+            let loaded = varos_pdf::load_vrs_checked(&a.positional[0], &Limits::DEFAULT).map_err(|e| e.to_string())?;
+            editor.replace_doc(loaded.doc);
+            editor.blobs = loaded.blobs;
             let before_rev = editor.rev;
-            editor.execute_batch(commands)?;
-            let pdf = varos_pdf::write_pdf_checked(&editor.doc, &Limits::DEFAULT)?;
+            if action {
+                if let Some(ids) = a.ids.as_deref() {
+                    let ids = ids
+                        .split(',')
+                        .map(|id| id.parse::<u32>().map_err(|_| "--ids must be comma-separated path IDs".to_string()))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    editor.try_execute(varos_core::EditCommand::SelectPaths(ids))?;
+                }
+                let actions = varos_core::actions::Actions::decode(&bytes)?;
+                count = actions.steps.len();
+                actions.replay(&mut editor)?;
+            } else {
+                let commands = bridge::parse_batch(&bytes)?;
+                count = commands.len();
+                editor.execute_batch(commands)?;
+            }
+            // w2-images: the native writer carries placed-image resources
+            let pdf = varos_pdf::images::write_vrs(&editor.doc, &editor.blobs, &Limits::DEFAULT)?;
             write_output(&out, &pdf)?;
             Ok(json!({"out":out.to_string_lossy(),"commands":count,"changed":editor.rev>before_rev}))
         }

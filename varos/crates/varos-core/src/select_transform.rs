@@ -133,6 +133,7 @@ pub enum LayerAction {
 }
 #[derive(Clone, Default)]
 pub struct State {
+    pub scale_strokes: bool,
     pub isolation: Option<u32>,
     pub selection_requested: bool,
     pub options_requested: bool,
@@ -212,7 +213,7 @@ impl Editor {
         self.transform_geometry(spec);
         self.commit();
     }
-    fn transform_geometry(&mut self, spec: Transform) {
+    pub(super) fn transform_geometry(&mut self, spec: Transform) {
         if !spec.copy
             && spec.scale == [1., 1.]
             && spec.movement == [0., 0.]
@@ -230,8 +231,13 @@ impl Editor {
         }
         let mut ids: Vec<_> = self.selected_pids().into_iter().collect();
         ids.sort_unstable();
+        // Lane G excludes text identities here (text moves through `translate_objects`); w2-images
+        // leaves are transformed by the same unit pipeline (integration w2: both).
         ids.retain(|p| {
-            self.doc.pidx(*p).is_some() && self.in_isolation(*p) && !self.doc.eff_hidden(*p) && !self.doc.eff_locked(*p)
+            (self.doc.pidx(*p).is_some() || self.doc.images.iter().any(|i| i.id == *p))
+                && self.in_isolation(*p)
+                && !self.doc.eff_hidden(*p)
+                && !self.doc.eff_locked(*p)
         });
         if ids.is_empty() {
             return;
@@ -252,6 +258,9 @@ impl Editor {
             for pid in &members {
                 if let Some(i) = self.doc.pidx(*pid) {
                     let q = self.doc.outline_bbox(i);
+                    b = (b.0.min(q.0), b.1.min(q.1), b.2.max(q.2), b.3.max(q.3));
+                } else if let Some(image) = self.doc.images.iter().find(|i| i.id == *pid) {
+                    let q = crate::images::corner_rect(crate::images::world_corners(&self.doc, image));
                     b = (b.0.min(q.0), b.1.min(q.1), b.2.max(q.2), b.3.max(q.3));
                 }
             }
@@ -291,7 +300,6 @@ impl Editor {
             }
         }
         for pid in ids {
-            let Some(pi) = self.doc.pidx(pid) else { continue };
             let o = if spec.each { origins.get(&pid).copied().unwrap_or(origin) } else { origin };
             let mut s = spec;
             if spec.random {
@@ -301,7 +309,30 @@ impl Editor {
                 s.angle *= r;
                 s.shear *= r;
             }
+            // ---- w2-images: same affine map for image and path leaves ----
+            if let Some(image) = self.doc.images.iter().find(|i| i.id == pid) {
+                let c = crate::images::world_corners(&self.doc, image);
+                crate::images::input::write_world_corners(
+                    &mut self.doc,
+                    pid,
+                    [s.map(c[0], o), s.map(c[1], o), s.map(c[3], o)],
+                );
+                continue;
+            }
+            let Some(pi) = self.doc.pidx(pid) else { continue };
+            crate::gradient_transform::map(&mut self.doc, pid, |p| s.map(p, o));
             let path = &mut self.doc.paths[pi];
+            if self.select_transform.scale_strokes {
+                let scale = (s.scale[0] * s.scale[1]).abs().sqrt();
+                path.stroke_width *= scale;
+                for dash in &mut path.stroke_style.dash {
+                    *dash *= scale;
+                }
+                path.stroke_style.dash_phase *= scale;
+            }
+            if s.scale != [1., 1.] || s.shear != 0. {
+                *path = crate::live_corners::evaluated(path);
+            }
             for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
                 a.p = s.map(a.p, o);
                 a.hin = a.hin.map(|p| s.map(p, o));
@@ -313,11 +344,13 @@ impl Editor {
     }
     pub fn magic_wand(&mut self, source: u32, options: WandOptions, mode: SelectMode) {
         let Some(p) = self.doc.paths.iter().find(|p| p.id == source) else { return };
-        let close = |a: crate::model::Paint, b: crate::model::Paint| match (a.solid(), b.solid()) {
-            (None, None) => true,
-            (Some(a), Some(b)) => a.iter().zip(b).all(|(x, y)| (*x - y).abs() <= options.colour),
-            _ => false,
-        };
+        let close =
+            |a: crate::model::Paint, b: crate::model::Paint| match (a.resolved(&self.doc), b.resolved(&self.doc)) {
+                (crate::model::Paint::Solid(a), crate::model::Paint::Solid(b)) => {
+                    a.iter().zip(b).all(|(x, y)| (*x - y).abs() <= options.colour)
+                }
+                (a, b) => a == b,
+            };
         let ids: Vec<_> = self
             .doc
             .paths
@@ -326,8 +359,8 @@ impl Editor {
                 self.in_isolation(q.id)
                     && !self.doc.eff_hidden(q.id)
                     && !self.doc.eff_locked(q.id)
-                    && (!options.pick.fill || close(p.fill, q.fill))
-                    && (!options.pick.stroke || close(p.stroke, q.stroke))
+                    && (!options.pick.fill || close(p.appearance().fill().clone(), q.appearance().fill().clone()))
+                    && (!options.pick.stroke || close(p.appearance().stroke().clone(), q.appearance().stroke().clone()))
                     && (!options.pick.weight || (p.stroke_width - q.stroke_width).abs() <= options.weight)
                     && (!options.pick.opacity || (p.opacity - q.opacity).abs() <= options.opacity)
             })
@@ -350,23 +383,34 @@ impl Editor {
         let Some(p) = self.doc.paths.iter().find(|p| p.id == source).cloned() else { return };
         let ids = self.selected_pids();
         if colour_only {
-            let colour = p.fill.solid().or(p.stroke.solid());
-            self.apply_paint(colour);
+            let paint = if p.fill.is_painted() { p.fill } else { p.stroke };
+            self.execute_ui(crate::EditCommand::Colour(crate::colour_commands::ColourCommand::Paint {
+                target: self.paint,
+                paint,
+            }));
             return;
         }
         if pick.fill {
-            self.cur_fill = p.fill.solid();
+            self.set_sampled_paint(crate::editor::PaintTarget::Fill, p.appearance().fill().clone(), &p);
         }
         if pick.stroke {
-            self.cur_stroke = p.stroke.solid();
+            self.set_sampled_paint(crate::editor::PaintTarget::Stroke, p.appearance().stroke().clone(), &p);
         }
         if pick.weight {
             self.cur_sw = p.stroke_width;
         }
         let changed = ids.iter().filter_map(|id| self.doc.pidx(*id)).any(|i| {
             let q = &self.doc.paths[i];
-            (pick.fill && q.fill != p.fill)
-                || (pick.stroke && q.stroke != p.stroke)
+            (pick.fill
+                && q.appearance().fill().clone()
+                    != crate::current_paint::fit(p.appearance().fill().clone(), crate::current_paint::bounds(&p), q))
+                || (pick.stroke
+                    && q.appearance().stroke().clone()
+                        != crate::current_paint::fit(
+                            p.appearance().stroke().clone(),
+                            crate::current_paint::bounds(&p),
+                            q,
+                        ))
                 || (pick.weight && q.stroke_width != p.stroke_width)
                 || (pick.opacity && q.opacity != p.opacity)
         });
@@ -381,10 +425,12 @@ impl Editor {
             if let Some(i) = self.doc.pidx(id) {
                 let q = &mut self.doc.paths[i];
                 if pick.fill {
-                    q.fill = p.fill;
+                    q.fill =
+                        crate::current_paint::fit(p.appearance().fill().clone(), crate::current_paint::bounds(&p), q);
                 }
                 if pick.stroke {
-                    q.stroke = p.stroke;
+                    q.stroke =
+                        crate::current_paint::fit(p.appearance().stroke().clone(), crate::current_paint::bounds(&p), q);
                 }
                 if pick.weight {
                     q.stroke_width = p.stroke_width;

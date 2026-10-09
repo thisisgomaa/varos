@@ -20,6 +20,8 @@ pub(crate) const GROUPS: &[&[ToolKind]] = &[
     FREEHAND,
     &[ToolKind::Rotate, ToolKind::Reflect],
     &[ToolKind::Scale, ToolKind::Shear, ToolKind::FreeTransform],
+    // w2-gradients: the Gradient tool (G) in the kit rail (integration w2: the old construction strip is gone)
+    &[ToolKind::Gradient],
     &[ToolKind::Eyedropper, ToolKind::MagicWand],
     &[ToolKind::ShapeBuilder],
     &[ToolKind::Scissors, ToolKind::Knife, ToolKind::Eraser],
@@ -75,6 +77,7 @@ fn icon(tool: ToolKind) -> Icon {
         ToolKind::PathEraser | ToolKind::Eraser => Icon::PathEraser,
         ToolKind::Join => Icon::Link,
         ToolKind::Text => Icon::Type,
+        ToolKind::Gradient => Icon::PickerGradient,
         ToolKind::Hand => Icon::Hand,
         ToolKind::Zoom => Icon::ZoomIn,
         ToolKind::Lasso => Icon::Lasso,
