@@ -40,6 +40,19 @@ impl IconAction {
     pub(super) fn show(&self, ui: &mut egui::Ui, state: kit::IconState<'_>) -> bool {
         self.show_response(ui, state).activated
     }
+    pub(super) fn show_sized(
+        &self,
+        ui: &mut egui::Ui,
+        state: kit::IconState<'_>,
+        size: egui::Vec2,
+        glyph: f32,
+    ) -> bool {
+        let id = ui.make_persistent_id(("icon-action", self.key));
+        let r = kit::icon_button_sized(ui, id, self.icon, &self.tooltip(), state, size, glyph);
+        #[cfg(test)]
+        tests::icon_action_tests::PROBE.with(|p| p.borrow_mut().push((self.key, id, r.response.rect)));
+        r.activated
+    }
     pub(super) fn show_response(&self, ui: &mut egui::Ui, state: kit::IconState<'_>) -> kit::ControlResponse {
         let id = ui.make_persistent_id(("icon-action", self.key));
         let r = kit::icon_button(ui, id, self.icon, &self.tooltip(), state);

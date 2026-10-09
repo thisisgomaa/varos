@@ -141,6 +141,7 @@ impl Snap {
 
 /// Read-only snapshot of the ACTIVE artboard for the artboard property panel.
 pub(crate) struct AbSnap {
+    pub(crate) id: u32,
     pub(crate) count: usize,
     pub(crate) active: usize,
     pub(crate) name: String,
@@ -158,6 +159,7 @@ impl AbSnap {
         let active = if count == 0 { 0 } else { ed.doc.active.min(count - 1) };
         let ab = ed.doc.active_artboard();
         AbSnap {
+            id: ab.map_or(0, |a| a.id),
             count,
             active,
             name: ab.map(|a| a.name.clone()).unwrap_or_default(),

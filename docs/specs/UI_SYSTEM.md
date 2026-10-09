@@ -58,7 +58,7 @@ Window menu “Reset layout” and `VAROS_RESET_LAYOUT=1` restore the standard s
 | 2 | Home / Start — `StartModel` | Tab/⇧Tab, ↑↓ in lists, Enter/Space, Delete + Backspace on a Recent row | `start.rs:93+`; native-menu keys dropped on Home (`main.rs:1050-1051`) | All document shortcuts yield. |
 | 3 | Open kit menu — `kit::menu` | ↑↓ move, Enter/Space choose, Esc close; also consumes Tab | `shell/kit/mod.rs:291-335` | Everything behind it yields. |
 | 4 | Focused text/number field — `gui.wants_keyboard()` | All non-command keys (text undo/copy/paste/select-all go to the field) | `main.rs:1449`; native ⌘-rows forwarded to egui (`main.rs:1052-1056`); Plain rows (Edit ▸ Delete) never while typing (`main.rs:1066-1067`) | Canvas shortcuts yield. |
-| 5 | Colour picker (floating modal) | Esc = Cancel, Enter = OK only | `main.rs:1450-1453` | Only Esc/Enter yield; canvas stays live. |
+| 5 | Colour picker v3 (modeless) | Esc over the panel closes; armed Esc reverts the sample and disarms (second Esc closes); Enter commits the focused K3 field | `ui/picker/mod.rs`, `main.rs` | Canvas/tools remain live; armed canvas Esc only cancels sampling; otherwise canvas Esc deselects; focused fields, popovers and tab drags consume Esc first. |
 | 6 | Live tab drag | Esc = cancel drag (nothing committed) | `main.rs:1454`; `ui.rs:3318-3345` | Esc does not also deselect. |
 | 7 | Canvas — `DocAction::Key` | Space = pan/reposition (`main.rs:1456-1462`); other presses → `raise_doc` (`main.rs:1463-1466`) | S1 router in `main.rs` until U5 | — |
 | 8 | Native menu (Mac) — `host::menu_route` | `App` → queue; `Key` → rows 2/4/7 above; `Plain` → canvas only; `Snap` → view | `host.rs:357`; `main.rs:1040-1075` | Same precedence as the keyboard path. |
@@ -210,12 +210,31 @@ raising a ceiling is a review failure):
 | Menu row | none, TEXT | HOVER full-bleed | ✓ mark | MUTED/FAINT + reason | kit ✓ / legacy ✗ | h 32 kit · 26 legacy | legacy ✗ | `kit::menu_row` `kit/mod.rs:392`; legacy `menu_row` `ui.rs:3238-3313` · both |
 | Numeric field | SURFACE, value 13 centred, label FAINT 11.5 ✗ | — (✗ none) | editing: INPUT_WELL + 1 px ACCENT | ✗ none | ACCENT border | h 25 | label ✗ (FAINT) | `num_field` `ui.rs:1762` · ad hoc |
 | Text field | SURFACE + LINE | ✗ none | editing: ACCENT border | ✗ none | ACCENT border | h 26 | ✓ text | `name_field` `ui.rs:5342`; search/rename/hex vary · ad hoc |
+| Colour picker v3 (modeless) | PANEL + LINE, cached angular ring and rotating HSV triangle | live per-gesture preview | TOGGLE_WELL tabs; ACCENT focused target only | Gradient tab: engine pending; Harmony: Soon | K3 field focus ring | 240 pt Board hand; 32 pt header, 28 pt swatch row | Owner native hand test pending; compact glyph hits retain Figma sizing | `ui/picker/{mod,wheel,sliders,modes,cluster,fields,drawer}.rs`; kit fields/icons, L7 layout |
 | Colour swatch | colour + LINE2 | white border | ACCENT ring (active target) | — | ✗ | 15-17 ✗ (< 24 hit) | ✗ target | `swatch_strip` `ui.rs:2122`, `ctl_chip` `ui.rs:4095` · ad hoc |
 | Section heading / panel header | MUTED micro 10 `.strong()` | — | — | — | — | — | MUTED ✓; size → 10.5 | `kit::section_heading`; inline `ui.rs:4950,5051,5061` · both |
 | Scrollbar | invisible until body hover | 6→8 px handle | — | — | — | 24 min handle | egui | `tokens.rs:94-97` · egui |
 | Notice / strip | MUTED text; strip on SEAM | — | — | — | — | — | ✓ | `kit::notice` `kit/mod.rs:232`; recovery strip `ui.rs:3740` |
 | Agent presence | none without an edit session | — | 1.5-pt page outline + title-style label; staggered fading 1-pt object bounds, AGENT | — | human azure wins | canvas-only, no hit target | full-strength UI contrast ≥ 3:1; headless clock/pacing tests | `agent_presence.rs`, `ui/canvas_overlay.rs` · host overlay |
 | Native dialogs (Open/Save/Save changes?/errors) | **native by law** (rfd + OS sheets) | OS | OS | OS | OS | OS | OS | `file_ports.rs`, `main.rs` · native, never re-drawn in egui |
+
+Colour picker v3 slices 1–3: Sliders persists its mode in the additive `picker.mode`
+layout preference (serde default HSB). HSB/HSL/RGB conversions are exact; CMYK is naive
+subtractive sRGB and Lab uses sRGB linearisation and XYZ D65, with no colour management,
+ICC profiles or gamut mapping. Gradients vary one channel at the current other channel
+values and cache meshes per mode/colour. Web uses R/G/B tracks stepped to 00/33/66/99/CC/FF;
+editing a channel snaps that channel to its nearest web-safe value. Switching modes is
+read-only, so a non-web-safe colour remains intact until edited. Wheel readout follows the
+chosen mode (Web shows hex). Numeric fields reuse K3 including ↑/↓ ±1 and Shift ±10;
+steps that snap to an unchanged Web value produce no undo step.
+
+Only an accepting canvas click commits an eyedropper preview. Disarm, close, Esc,
+field/target focus, panel press, selection change, document keys and Bridge mutations
+cancel unaccepted samples via `PickerCancel`, with no history/default/recent change.
+Completed drags remain committed. Page-colour targets resolve stable artboard IDs;
+a missing ID cancels and falls back to the current Paint target. Idle and armed idle
+request no repaint timer. Existing older builds reject this branch's additive layout
+fields and quarantine `layout.json` as `.bad`; compatibility behaviour is retained.
 
 **State rules**: precedence disabled > on > pressed > hover > rest; focus-visible is an overlay drawn on top of any state (also on ACCENT: ring outside the block). Text on HOVER or ACCENT_TINT is TEXT. Every disabled control says why in its tooltip. A row marked ✗ is closed when it moves into kit (U3-K), not by local patching.
 
@@ -290,7 +309,7 @@ Target: `varos-app/src/ui/` (binary crate first; moving to lib needs U1 types). 
 | `ui/menus.rs` | legacy dropdown 1636-1714, menu rows 3229-3313 (later replaced by `kit::menu`) |
 | `ui/controls.rs` | `Lab`, `doc_id`, `mini_btn`, `refpoint`, `icon_toggle`, `icon_btn`, `hsep` 1716-2030; `info_row/action_row/seg_btn` 5126-5192; `toggle_row/pill_btn` 5378-5420 |
 | `ui/fields.rs` | `settle_field_edits` 1746-1755, `num_field` 1762-1939, `dim_field` 4077, `name_field` 5342-5376 |
-| `ui/picker.rs` | `MTarget/Chan/MTab/Harmony/ColorModal` 161-256, HSV + swatches + modal 2031-3003 |
+| `ui/picker/{mod,wheel,sliders,modes,cluster,fields,drawer}.rs` | Colour picker v3: modeless hand/lifetime, cached wheel math, target cluster/paint mirrors, K3 fields, swatch drawer |
 | `ui/rail.rs` | `icon_button/divider` 3006-3034, `board_rail` 3851-3900 |
 | `ui/topbar.rs` (tab strip) | caption buttons 3039-3228, focus seed + `TabDrag` 3315-3421, `build_topbar` 3422-3685, void/recovery/status 3692-3850 |
 | `ui/ctlbar.rs` | `board_ctlbar` 3901-4076, chips/fill-stroke/shape slot 4089-4342 |

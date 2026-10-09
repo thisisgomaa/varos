@@ -255,6 +255,18 @@ pub fn icon_tooltip(tooltip: &str, state: IconState<'_>) -> String {
 /// ring for keyboard focus only, and a tooltip that is never empty. Activation is the same single
 /// event as [`action`]: pointer release, the first Enter/Space while focused, or an accessibility click.
 pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconState<'_>) -> ControlResponse {
+    icon_button_sized(ui, id, icon, tooltip, state, egui::vec2(t::ICON_BTN_W, t::ICON_BTN_H), t::ICON_LG)
+}
+/// Compact variants share activation, focus and state paint; only token geometry differs.
+pub fn icon_button_sized(
+    ui: &mut Ui,
+    id: Id,
+    icon: Icon,
+    tooltip: &str,
+    state: IconState<'_>,
+    size: egui::Vec2,
+    glyph: f32,
+) -> ControlResponse {
     debug_assert!(!tooltip.is_empty(), "an icon button carries its old text label as a tooltip");
     let keyboard = keyboard_visible(ui);
     let disabled = matches!(state, IconState::Disabled(_) | IconState::DisabledReason(_));
@@ -263,7 +275,7 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
     ui.add_enabled_ui(!disabled, |ui| {
         ui.set_opacity(opacity); // we own the disabled colours; keep any ghosted ancestor's opacity
         let enabled = ui.is_enabled();
-        let (_, rect) = ui.allocate_space(egui::vec2(t::ICON_BTN_W, t::ICON_BTN_H));
+        let (_, rect) = ui.allocate_space(size);
         let response = ui.interact(rect, id, Sense::click());
         let hover = enabled && (response.hovered() || response.is_pointer_button_down_on());
         let (block, on) = match state {
@@ -286,7 +298,7 @@ pub fn icon_button(ui: &mut Ui, id: Id, icon: Icon, tooltip: &str, state: IconSt
         } else {
             t::MUTED
         };
-        icon.paint(&painter, rect.center(), t::ICON_LG, ink);
+        icon.paint(&painter, rect.center(), glyph, ink);
         if response.has_focus() && keyboard {
             // K5: focus-visible is the same overlay in every state — an azure ring OUTSIDE the target,
             // separated from it by a 1 px panel-colour gap so it still reads against an azure block.
@@ -606,4 +618,12 @@ pub fn text_dropdown(
     }
     response.on_hover_text(tooltip);
     chosen
+}
+
+/// Informational text with explicit kit typography and ink.
+pub fn text(ui: &mut Ui, text: &str, font: egui::FontId, ink: Color32) -> Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, ink);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
+    ui.painter().galley(rect.min, galley, ink);
+    response
 }

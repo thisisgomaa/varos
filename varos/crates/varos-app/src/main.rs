@@ -366,7 +366,7 @@ fn editor_check(ed: &Editor, c: chrome::Check) -> Option<bool> {
         C::SnapPoint => ed.doc.snap.key_points,
         C::AlignGuides => ed.doc.snap.alignment_guides,
         C::GeomGuides => ed.doc.snap.object_geometry,
-        C::Rail | C::Dock | C::Panel(_) => return None,
+        C::Rail | C::Dock | C::Picker | C::Panel(_) => return None,
     })
 }
 
@@ -677,7 +677,9 @@ fn dispatch(
             // no longer drawn (`kit::field::end_frame`), so nothing stays held
             if !matches!(w, WindowCmd::Minimize | WindowCmd::ToggleMaximize | WindowCmd::About) && !ws.on_home() {
                 if let Some(s) = ws.active_mut() {
-                    let _ = gui.commit_fields(&mut s.editor);
+                    if !gui.commit_fields(&mut s.editor) && w == WindowCmd::TogglePicker {
+                        return host::Ran { held: true, ..host::Ran::default() };
+                    }
                 }
             }
             match w {
@@ -688,6 +690,11 @@ fn dispatch(
                 WindowCmd::About => {
                     #[cfg(target_os = "macos")]
                     mac_menu::show_about();
+                }
+                WindowCmd::TogglePicker => {
+                    if let Some(s) = ws.active_mut() {
+                        gui.toggle_picker(&mut s.editor);
+                    }
                 }
                 #[cfg(target_os = "macos")]
                 WindowCmd::ToggleRail => gui.toggle_rail(),
@@ -1750,12 +1757,18 @@ fn main() {
                         // Only skip canvas shortcuts when a text field is actually focused — NOT on egui's
                         // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
                         // The Color Picker is a floating palette: the canvas stays fully usable beside it,
-                        // but Esc/Enter belong to the dialog while it is open (Cancel / OK).
+                        // Esc goes to a hovered picker, focused field, menu or tab drag first.
                         if gui.wants_keyboard() { /* typing into a field — keys go to egui */
-                        } else if gui.modal_open()
-                            && matches!(code, KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter)
+                        } else if (gui.picker_owns_escape() || gui.picking_screen() || gui.tab_drag_active())
+                            && matches!(code, KeyCode::Escape)
                         {
-                            /* the dialog owns these */
+                            /* the panel owns Esc */
+                        } else if gui.picker_open()
+                            && plain_picker_i(code, keyboard.held())
+                            && event.state == ElementState::Pressed
+                        {
+                            gui.arm_picker(ed);
+                            redraw!("picker-eyedropper");
                         } else if gui.tab_drag_active() && code == KeyCode::Escape {
                             /* P16: Esc cancels the tab drag (the strip reads it) — not also a canvas deselect */
                         } else if code == KeyCode::Space {
@@ -1818,6 +1831,7 @@ fn main() {
                             menu.sync(|c| {
                                 editor_check(ed, c).unwrap_or_else(|| match c {
                                     C::Rail => gui.rail_shown(),
+                                    C::Picker => gui.picker_open(),
                                     C::Dock => gui.dock_shown(),
                                     C::Panel(p) => gui.panel_open(p),
                                     _ => false,
@@ -3043,5 +3057,45 @@ mod select_all_key_tests {
         assert_eq!(ed.rev, 1, "one undoable edit, exactly as the Delete key");
         apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyZ", true, false, false);
         assert_eq!(ed.doc.paths.len(), 2, "⌘Z brings it back");
+    }
+}
+
+fn plain_picker_i(code: KeyCode, m: Mods) -> bool {
+    code == KeyCode::KeyI && !m.ctrl && !m.shift && !m.alt
+}
+
+#[cfg(test)]
+mod picker_shortcut_tests {
+    use super::*;
+    use varos_core::editor::PaintTarget;
+    #[test]
+    fn picker_i_requires_no_modifiers() {
+        for ctrl in [false, true] {
+            for shift in [false, true] {
+                for alt in [false, true] {
+                    assert_eq!(plain_picker_i(KeyCode::KeyI, Mods { ctrl, shift, alt }), !ctrl && !shift && !alt);
+                }
+            }
+        }
+        assert!(!plain_picker_i(KeyCode::KeyD, Mods { ctrl: false, shift: false, alt: false }));
+    }
+    #[test]
+    fn existing_routes_cover_x_shift_x_d_none_and_i() {
+        let mut ed = Editor::new();
+        let mut view = View { pan: [0.0, 0.0], zoom: 1.0 };
+        ed.cur_fill = Some([1.0, 0.0, 0.0, 1.0]);
+        ed.cur_stroke = Some([0.0, 0.0, 1.0, 1.0]);
+        let focus = ed.paint;
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyX", false, false, false);
+        assert!(ed.paint != focus);
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyX", false, true, false);
+        assert_eq!(ed.cur_fill, Some([0.0, 0.0, 1.0, 1.0]));
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyD", false, false, false);
+        assert_eq!(ed.cur_fill, Some(varos_core::editor::DEFAULT_FILL));
+        assert_eq!(ed.cur_stroke, Some(varos_core::editor::DEFAULT_STROKE));
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "Slash", false, false, false);
+        assert!(if ed.paint == PaintTarget::Fill { ed.cur_fill.is_none() } else { ed.cur_stroke.is_none() });
+        apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyI", false, false, false);
+        assert!(ed.tool == ToolKind::Eyedropper);
     }
 }

@@ -459,19 +459,6 @@ pub fn screen_color_at_cursor() -> Option<[f32; 4]> {
     None
 }
 
-/// True while the physical left mouse button is down — polled globally (no hook), so the eyedropper
-/// can commit a pick with a click over ANY window, not just ours.
-#[cfg(windows)]
-pub fn left_button_down() -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-    // SAFETY: GetAsyncKeyState is a pure read of global key state; the high bit = currently down.
-    unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0 }
-}
-#[cfg(not(windows))]
-pub fn left_button_down() -> bool {
-    false
-}
-
 // winit owns WM_SETCURSOR (it resets the cursor on every move), so we subclass the canvas window
 // to intercept WM_SETCURSOR over the client area and set OUR current cursor instead. We ALSO set
 // the window-class cursor + call SetCursor immediately as belt-and-suspenders.
