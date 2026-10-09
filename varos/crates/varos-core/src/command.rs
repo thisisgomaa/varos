@@ -13,6 +13,8 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    /// Insert a pure trace result as one undoable edit; all IDs are remapped.
+    InsertTracedPaths { paths: Vec<crate::model::Path> },
     /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
     AddShape {
         kind: crate::model::ShapeKind,
@@ -281,6 +283,25 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::InsertTracedPaths { paths } => {
+                if paths.is_empty() {
+                    return;
+                }
+                if crate::trace::check_insert(ed, &paths).is_err() {
+                    return;
+                }
+                ed.begin();
+                for mut path in paths {
+                    path.id = ed.doc.nid();
+                    for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
+                        a.id = ed.doc.nid();
+                    }
+                    ed.doc.paths.push(path);
+                }
+                ed.doc.sync_tree();
+                ed.dirty = true;
+                ed.commit();
+            }
             Self::AddPath { .. } => {
                 let _ = ed.try_execute_created(self);
             }

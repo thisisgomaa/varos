@@ -91,6 +91,7 @@ pub fn tools() -> Value {
         ),
     ];
     let point = json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}});
+    operation_schemas.push(object(json!({"verb":{"const":"trace_rgba"},"rgba":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}},"width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1},"options":{"type":"object","description":"API 1.2 only: TraceOptions; mode BlackWhite, Grayscale, or {Color:{colors:1..255}}; fidelity/corners 0..100, threshold 0..255, noise_px, ignore_white"}}), &["verb","rgba","width","height"]));
     operation_schemas.push(object(json!({"verb":{"const":"add_path"},"anchors":{"type":"array","minItems":2,"maxItems":1000,"items":object(json!({"p":point,"hin":{"anyOf":[point,{"type":"null"}]},"hout":{"anyOf":[point,{"type":"null"}]},"smooth":{"type":"boolean","default":false}}),&["p"])},"closed":{"type":"boolean"},"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"local":local,"name":name,"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),&["verb","anchors","closed"]));
     for verb in ["delete", "ungroup"] {
         operation_schemas.push(object(json!({"verb":{"const":verb},"ids":edit_ids}), &["verb", "ids"]));
@@ -192,7 +193,7 @@ pub fn tools() -> Value {
     all_ops.push(json!({"$ref":"#/$defs/repeat0"}));
     definitions.insert("operation".into(), json!({"anyOf":all_ops}));
     let edit = schemas.get_mut("edit").unwrap();
-    edit["properties"]["api"] = json!({"enum":["1.0","1.1"]});
+    edit["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"]});
     edit["properties"]["ops"]["items"] = json!({"$ref":"#/$defs/operation"});
     edit["properties"]["defaults"] = object(
         json!({"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"radius":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
@@ -212,13 +213,16 @@ pub fn tools() -> Value {
     for tool in ["capabilities", "list_boards", "select", "history", "save", "save_as", "export_pdf"] {
         schemas.get_mut(tool).unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1"],"default":"1.0"});
     }
+    if let Some(schema) = schemas.get_mut("capabilities") {
+        schema["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+    }
     schemas.get_mut("export_pdf").unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
-        "capabilities"=>"Negotiate Bridge API 1.0/1.1; export_pdf additionally supports 1.2 reports; local user trust grants every scope. Inspect limits and file mistake-guards.",
+        "capabilities"=>"Negotiate Bridge API 1.0/1.1/1.2; API 1.2 edit adds tracing and export_pdf adds reports; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
         "describe"=>"Summary first. fields compose board/object detail; ids scope objects; limit/cursor page objects; since adds net changes or resync_required.",
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
-        "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. API 1.1 supports creation tuples; use object operations if your client does not support prefixItems. Page verbs use persistent artboard:N ids.",
+        "edit"=>"API 1.2 adds trace_rgba (pixel coordinates, filled paths with holes). Atomic design batch with explicit targets; one human undo step. Retains human selection. API 1.1/1.2 edit supports defaults, IDs receipts, creation tuples and repeat; use object operations if your client does not support prefixItems. Page verbs use persistent artboard:N ids.",
         "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",
         "save"|"save_as"|"export_pdf"=>"Queue revision-pinned file work. Returns accepted and ticket; poll request_status. Allowed: fresh .vrs/.pdf names under passwd home, /Volumes/<volume>/, ~/Library/Mobile Documents (iCloud Drive), or ~/Library/CloudStorage/<provider>/ (Dropbox/Google Drive/OneDrive). Refused: /tmp, /private/var, other ~/Library, system roots, running app bundle, dot components and existing files. Network volumes unsupported. Parents must exist and canonical containment is rechecked. FAT32/exFAT use macOS exclusive-rename fallback after linkat; real volumes unverified.",
         "history"=>"One shared undo/redo entry. Local agents need no approval; revision and idempotency checks still apply.",

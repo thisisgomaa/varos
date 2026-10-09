@@ -311,10 +311,13 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+        if ![API, "1.1"].contains(&req.api())
+            && !(req.api() == "1.2"
+                && matches!(req, Request::ExportPdf(_) | Request::Edit(_) | Request::Capabilities(_)))
+        {
             return Reply::failure(Error::new(
                 "unsupported",
-                "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
+                "Bridge API must be 1.0 or 1.1 (edit and export_pdf also support 1.2)",
             ));
         }
         if ctx.epoch != self.epoch {
@@ -392,6 +395,19 @@ impl Service {
                         v["api_by_tool"] = json!({"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
                         v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
+                    }
+                    if req.api() == "1.2" {
+                        if let Some(v) = r.result.as_mut() {
+                            v["api"] = json!("1.2");
+                            v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
+                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
+                            if let Some(verbs) = v["edit_verbs"].as_array_mut() {
+                                verbs.push(json!("repeat"));
+                                verbs.push(json!("trace_rgba"));
+                            }
+                            v["economy_hint"] = json!("API 1.2 edit inherits 1.1 defaults, creation tuples, repeat, automatic names and IDs receipts; other tools retain the APIs listed in api_by_tool.");
+                            v["trace"] = json!({"input":"RGBA8 array; alpha below 128 omitted","coordinates":"input pixels, y down","max_pixels":varos_core::trace::MAX_PIXELS,"max_anchors":varos_core::trace::MAX_ANCHORS,"grayscale_levels":8,"request_bytes":crate::MAX_FRAME});
+                        }
                     }
                     Ok(r)
                 }
@@ -477,8 +493,11 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
+                    if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::TraceRgba { .. })) {
+                        return Err(Error::new("unsupported", "trace_rgba requires API 1.2"));
+                    }
                     let a = host.access(&v.board)?;
-                    if v.api == "1.1" {
+                    if crate::economy::edit_enabled(&v.api) {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.
@@ -514,7 +533,7 @@ impl Service {
                                 &mut affected,
                             )
                             .map_err(|e| leaves[index].error(e))?;
-                            if v.api == "1.1" {
+                            if crate::economy::edit_enabled(&v.api) {
                                 let label = match ops[index] {
                                     Operation::AddShape { kind, name: None, .. } => Some(match kind {
                                         ShapeKind::Rect => "Rect",
