@@ -148,6 +148,8 @@ pub fn draw(
                         kit::notice(ui, "Links: —");
                         kit::notice(ui, "Fonts: —");
                     } else {
+                        // ---- w3-cmyk ----
+                        crate::ui::colour_management::setup(ui, ed, ops);
                         let units = varos_core::Unit::ALL.map(|u| u.suffix());
                         if let Some(i) = kit::text_dropdown(
                             ui,

@@ -4322,6 +4322,7 @@ name = "varos-cli"
 version = "0.1.0"
 dependencies = [
  "image",
+ "serde",
  "serde_json",
  "varos-bridge",
  "varos-core",
@@ -4341,6 +4342,7 @@ dependencies = [
  "image",
  "kurbo 0.13.1",
  "libc",
+ "moxcms",
  "proc-macro2",
  "resvg",
  "roxmltree",
@@ -4370,6 +4372,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "lopdf",
+ "moxcms",
  "pdf-writer",
  "resvg",
  "serde",
@@ -4384,6 +4387,7 @@ name = "varos-raster"
 version = "0.1.0"
 dependencies = [
  "image",
+ "lopdf",
  "resvg",
  "serde",
  "serde_json",

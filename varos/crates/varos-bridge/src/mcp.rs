@@ -33,6 +33,8 @@ fn construction_tools(api: &str) -> Value {
             crate::drawing::schemas(&mut extra, &mut ops);
             // ---- w2-gradients ----
             crate::colour::schemas(&mut extra, &mut ops);
+            // ---- w3-cmyk ----
+            crate::colour_management::schemas(&mut extra, &mut ops);
             // ---- Lane C ----
             crate::path_advanced::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {

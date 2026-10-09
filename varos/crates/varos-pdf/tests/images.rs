@@ -1,3 +1,5 @@
+#[path = "common/colour_era.rs"]
+mod colour_era;
 use std::sync::{atomic::AtomicBool, Arc};
 use varos_core::{
     format::Limits,
@@ -94,7 +96,7 @@ fn frozen_image_container_and_svg_are_stable() {
     let current = varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap();
     assert_eq!(
         restamp(&current, varos_core::format::FORMAT_VERSION, 6),
-        include_bytes!("fixtures/image-fixed-writer.vrs")
+        colour_era::stamp(include_bytes!("fixtures/image-fixed-writer.vrs"), 6)
     );
     let plan = varos_core::svg::plan_svg_export(&loaded.doc, varos_core::svg::ExportScope::WholeBoard).unwrap();
     assert_eq!(
@@ -155,15 +157,6 @@ fn image_selection_export_excludes_neighbor_resources() {
 }
 
 /// Replace the JSON (`"varos":N`) and catalog (`/VAROS_SchemaVersion N`) stamps, each exactly once.
-fn restamp(bytes: &[u8], from: u32, to: u32) -> Vec<u8> {
-    let mut out = bytes.to_vec();
-    for (a, b) in [
-        (format!("\"varos\":{from}"), format!("\"varos\":{to}")),
-        (format!("/VAROS_SchemaVersion {from}"), format!("/VAROS_SchemaVersion {to}")),
-    ] {
-        assert_eq!(a.len(), b.len());
-        let at = out.windows(a.len()).position(|w| w == a.as_bytes()).expect("version stamp");
-        out[at..at + a.len()].copy_from_slice(b.as_bytes());
-    }
-    out
+fn restamp(bytes: &[u8], _from: u32, to: u32) -> Vec<u8> {
+    colour_era::stamp(bytes, to)
 }

@@ -39,6 +39,8 @@ fn reduced(ed: &Editor, count: usize) -> Vec<Rgba> {
     varos_core::recolor::reduced(&varos_core::recolor::selected_colours(ed), count)
 }
 pub(crate) fn panel(ui: &mut egui::Ui, ed: &Editor, ops: &mut Vec<Op>) {
+    // ---- w3-cmyk ----
+    super::colour_management::panel(ui, ed, ops);
     let key = egui::Id::new("lane-b-swatches").with(&ed.doc.name);
     let mut state = ui.ctx().data(|d| d.get_temp::<State>(key)).unwrap_or_default();
     ui.horizontal(|ui| {

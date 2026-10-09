@@ -1,3 +1,5 @@
+#[path = "common/colour_era.rs"]
+mod colour_era;
 use std::sync::Arc;
 use varos_core::{
     format::{decode_model, encode_model, Limits},
@@ -268,8 +270,9 @@ fn named_next_migration_and_refusal_fixtures_are_frozen() {
         matches!(decode_model(include_bytes!("fixtures/v6-images/refused-unknown-pixels.json"),None,&limits),Err(LoadError::Malformed{detail,..}) if detail.contains("unknown field `pixels`"))
     );
     assert_eq!(
-        decode_model(include_bytes!("fixtures/v6-images/refused-future.json"), None, &limits).unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: FORMAT_VERSION }
+        decode_model(&colour_era::future(include_bytes!("fixtures/v6-images/refused-future.json")), None, &limits)
+            .unwrap_err(),
+        LoadError::NewerVersion { found: varos_core::format::FORMAT_VERSION + 1, supported: FORMAT_VERSION }
     );
     let old = include_str!("fixtures/v5/cap_Butt.json");
     let migrated = decode_model(old.as_bytes(), None, &limits).unwrap();

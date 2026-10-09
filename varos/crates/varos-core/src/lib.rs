@@ -73,3 +73,12 @@ mod gradient_transform;
 pub mod actions;
 mod command_labels;
 pub mod registry;
+
+// ---- w3-cmyk ----
+pub mod colour_management;
+pub mod colour_management_commands;
+
+// ---- w3-cmyk ----
+mod colour_format;
+
+pub mod colour_preview;

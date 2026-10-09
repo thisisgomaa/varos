@@ -48,6 +48,8 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                         | EditCommand::AddText { .. }
                         | EditCommand::SetText { .. }
                         | EditCommand::Image(_)
+                        // ---- w3-cmyk ----
+                        | EditCommand::ColourManagement(_)
                         | EditCommand::Colour(_)
                         | EditCommand::PathAdvanced(_)
                         | EditCommand::SetCorners { .. }
@@ -108,6 +110,10 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         return Ok(());
     }
     // ---- w2-gradients ----
+    // ---- w3-cmyk ----
+    if let ColourManagement(c) = command {
+        return crate::colour_management_commands::check(ed, c);
+    }
     if let Colour(c) = command {
         return crate::colour_commands::check(ed, c);
     }
@@ -204,6 +210,8 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     match command {
         Drawing(action) => crate::drawing::check(ed, action),
         AddText { .. } | SetText { .. } => Ok(()),
+        // ---- w3-cmyk ----
+        ColourManagement(c) => crate::colour_management_commands::check(ed, c),
         Colour(c) => crate::colour_commands::check(ed, c),
         // ---- Lane C ----
         PathAdvanced(action) => crate::path_advanced::check(ed, *action),

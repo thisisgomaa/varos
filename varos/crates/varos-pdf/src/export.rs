@@ -211,6 +211,8 @@ pub fn export_pdf_bytes_with_report(
     }
     let bytes = write_pages(doc, &plan.pages, None, cancel)?;
     let mut report = varos_core::ExportReport::default();
+    // ---- w3-cmyk ----
+    report.notes.extend(crate::colour_management::notes(doc));
     // ---- Lane G ----
     if !doc.text_boxes.is_empty() {
         report.notes.extend(varos_text_layout::export_notes(doc).map_err(ExportError::InvalidDocument)?);
@@ -275,6 +277,8 @@ enum Reach {
 fn paints_nothing(p: &varos_core::model::Path) -> bool {
     let alpha = |paint: &Paint| match paint {
         Paint::None => 0.0,
+        // ---- w3-cmyk ----
+        Paint::Managed(c) => c.alpha,
         Paint::Solid(c) => c[3],
         Paint::Gradient(g) => g.stops.iter().map(|s| s.colour[3] * s.opacity).fold(0., f32::max),
         Paint::SwatchRef { .. } => 1.,

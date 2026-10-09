@@ -468,6 +468,8 @@ pub struct Editor {
     pub paste_remembers_layers: bool,
     // ---- Lane E ----
     pub view_depth: crate::view_depth::ViewDepth,
+    // ---- w3-cmyk ----
+    pub colour_preview: crate::colour_preview::State,
     pub requested_canvas: Option<[u8; 3]>,
     pub requested_pan: Option<Pt>,
     pub requested_zoom: Option<f32>,
@@ -571,6 +573,8 @@ impl Editor {
             paste_remembers_layers: false,
             // ---- Lane E ----
             view_depth: Default::default(),
+            // ---- w3-cmyk ----
+            colour_preview: Default::default(),
             requested_canvas: None,
             requested_pan: None,
             requested_zoom: None,
@@ -3725,6 +3729,9 @@ impl Editor {
         staged.key_object = self.key_object;
         staged.distribute_gap = self.distribute_gap;
         // ---- Lane E ----
+        // ---- w3-cmyk ----
+        staged.colour_preview = self.colour_preview;
+        // ---- end w3-cmyk ----
         staged.view_depth = self.view_depth.clone();
         staged.requested_pan = self.requested_pan;
         staged.requested_zoom = self.requested_zoom;
@@ -3763,6 +3770,9 @@ impl Editor {
             self.drawing.options = staged.drawing.options;
         }
         // ---- Lane E ----
+        // ---- w3-cmyk ----
+        self.colour_preview = staged.colour_preview;
+        // ---- end w3-cmyk ----
         self.view_depth = staged.view_depth;
         self.requested_pan = staged.requested_pan;
         self.requested_zoom = staged.requested_zoom;

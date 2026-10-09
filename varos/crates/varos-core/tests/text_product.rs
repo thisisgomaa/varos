@@ -1,3 +1,5 @@
+#[path = "common/colour_era.rs"]
+mod colour_era;
 use varos_core::{
     format::{self, Limits},
     text::*,
@@ -49,9 +51,13 @@ fn refuses_legacy_keys_bad_tracking_and_newer_before_decode() {
         "{tracking:?}"
     );
     assert_eq!(
-        format::decode_model(include_bytes!("fixtures/text_next/refuse_newer.json"), None, &Limits::DEFAULT)
-            .unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: format::FORMAT_VERSION }
+        format::decode_model(
+            &colour_era::future(include_bytes!("fixtures/text_next/refuse_newer.json")),
+            None,
+            &Limits::DEFAULT
+        )
+        .unwrap_err(),
+        LoadError::NewerVersion { found: varos_core::format::FORMAT_VERSION + 1, supported: format::FORMAT_VERSION }
     );
     let mut d = fixture();
     d.nodes.iter_mut().find(|n| matches!(n.kind, varos_core::model::NodeKind::Text(_))).unwrap().children.push(1);

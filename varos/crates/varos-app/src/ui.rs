@@ -43,6 +43,8 @@ mod bar;
 mod canvas_overlay;
 mod clipping;
 mod colour_tools;
+// ---- w3-cmyk ----
+pub(crate) mod colour_management;
 mod control_bar;
 mod controls;
 mod home;

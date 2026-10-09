@@ -93,3 +93,6 @@ pub mod application;
 
 // ---- Lane F ----
 mod action_recording;
+
+// ---- w3-cmyk ----
+mod colour_management;

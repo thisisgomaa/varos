@@ -196,6 +196,8 @@ fn export_svg_files_precise(
         return Err(ExportError::NothingToExport);
     }
     let mut report = crate::ExportReport::default();
+    // ---- w3-cmyk ----
+    report.notes.extend(crate::colour_management::screen_export_notes(doc, "SVG"));
     let mut stroke_budget = crate::stroke::evaluate::StrokeBudget::default();
     let paint_elements: usize = doc
         .paths
