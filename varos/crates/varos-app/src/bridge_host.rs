@@ -105,17 +105,44 @@ impl Host for Desktop<'_> {
         request: &varos_bridge::dto::FileEffect,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<varos_bridge::Reply, Error> {
-        crate::bridge_import::perform(self.ws, verb, request, cancel)
+        if cancel.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(Error::new("cancelled", "Import cancelled"));
+        }
+        if FILE_PENDING.with(|r| r.borrow().len() >= 8) {
+            return Err(Error::new("busy", "eight file jobs are already pending"));
+        }
+        let Some(mut job) = crate::bridge_import::stage(self.ws, verb, request)? else {
+            let s = self.ws.get_mut(session(&request.board)?).ok_or_else(|| Error::new("not_found", "board closed"))?;
+            if s.editor.clipboard().is_empty() {
+                return Err(Error::new("not_found", "Clipboard is empty"));
+            }
+            s.editor
+                .try_execute(varos_core::EditCommand::Paste { offset: None })
+                .map_err(|e| Error::new("invalid_argument", e))?;
+            return Ok(varos_bridge::Reply::success(
+                serde_json::json!({"rev":s.editor.rev,"report":varos_import::ImportReport::default()}),
+            ));
+        };
+        let ticket = crate::file_jobs::next_ticket();
+        job.ticket = Some(ticket);
+        job.cancel = crate::file_jobs::CancelFlag::from_shared(self.cancel.clone());
+        self.files
+            .as_deref_mut()
+            .ok_or_else(|| Error::new("busy", "file worker unavailable"))?
+            .submit(crate::file_jobs::FileJob::Import(job))
+            .map_err(|_| Error::new("busy", "file worker unavailable"))?;
+        FILE_PENDING.with(|r| r.borrow_mut().insert(ticket));
+        if let Some(audit) = self.audit.clone() {
+            FILE_AUDIT.with(|r| r.borrow_mut().insert(ticket, audit));
+        }
+        Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true,"ticket":ticket})))
     }
+    // ---- End Lane H ----
     fn file_effect(
         &mut self,
         verb: &str,
         request: &varos_bridge::dto::FileEffect,
     ) -> Result<varos_bridge::Reply, Error> {
-        // ---- Lane H ----
-        if matches!(verb, "import_svg" | "import_file" | "import_clipboard") {
-            return crate::bridge_import::perform(self.ws, verb, request, &std::sync::atomic::AtomicBool::new(false));
-        }
         if ["save_template", "new_from_template"].contains(&verb) {
             let name =
                 request.path.as_deref().ok_or_else(|| Error::new("invalid_argument", "template name required"))?;
@@ -834,5 +861,41 @@ mod template_queue_tests {
         assert_eq!(job.document.as_ref().unwrap().units.ppi, 300.0);
         cancel.store(true, std::sync::atomic::Ordering::Release);
         assert_eq!(crate::template_jobs::execute(job).result.unwrap_err().code, "cancelled");
+    }
+    #[test]
+    fn import_host_queues_without_reading_and_returns_cancellable_ticket() {
+        initialize("epoch".into());
+        let mut ws = Workspace::new();
+        let id = ws.active_id().unwrap();
+        let before = ws.get(id).unwrap().editor.doc.clone();
+        let mut jobs = Jobs::default();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let request: varos_bridge::dto::FileEffect = serde_json::from_value(serde_json::json!({"api":"1.2","request_id":"import","board":format!("b{}",id.0),"expected_rev":0,"path":"/no-such-import.pdf","options":{"page":2}})).unwrap();
+        let mut host = Desktop {
+            ws: &mut ws,
+            ui: None,
+            snapshot: None,
+            files: Some(&mut jobs),
+            cancel: cancel.clone(),
+            audit: None,
+        };
+        let reply = host.import_effect("import_file", &request, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+        assert_eq!(reply.result.as_ref().unwrap()["accepted"], true);
+        let ticket = reply.result.unwrap()["ticket"].as_u64().unwrap();
+        assert!(host.file_pending(ticket));
+        assert_eq!(host.ws.get(id).unwrap().editor.doc, before);
+        let crate::file_jobs::FileJob::Import(job) = jobs.queued.pop().unwrap() else { panic!("import job") };
+        assert_eq!(job.options.page, Some(2));
+        assert_eq!(job.target, crate::import_jobs::Target::Place { sid: id, rev: 0 });
+        cancel.store(true, std::sync::atomic::Ordering::Release);
+        let done = crate::import_jobs::execute(job);
+        assert!(done.result.as_ref().unwrap_err().contains("cancelled"));
+        let mut dialogs = crate::file_ports::RfdDialogs;
+        assert!(!crate::import_jobs::complete(done, &mut ws, &mut dialogs));
+        assert_eq!(
+            FILE_RESULTS.with(|r| r.borrow().back().unwrap().1.error.as_ref().unwrap().code.clone()),
+            "cancelled"
+        );
+        assert!(!FILE_PENDING.with(|r| r.borrow().contains(&ticket)));
     }
 }

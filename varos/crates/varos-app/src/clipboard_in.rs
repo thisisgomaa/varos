@@ -1,13 +1,8 @@
 //! NSPasteboard input; snapshots, generation guard, staged losses and one checked undo step.
-use varos_core::{
-    editor::Editor,
-    geom::{Pt, View},
-    EditCommand,
-};
-use varos_import::{
-    clipboard::{Pasteboard, Snapshot},
-    ImportOptions, LossPolicy,
-};
+use varos_core::{editor::Editor, geom::Pt};
+use varos_import::clipboard::{Pasteboard, Snapshot};
+#[cfg(test)]
+use varos_import::ImportOptions;
 pub struct SystemPasteboard;
 #[cfg(all(target_os = "macos", not(test)))]
 impl Pasteboard for SystemPasteboard {
@@ -43,12 +38,8 @@ impl Pasteboard for SystemPasteboard {
         0
     }
 }
-/// None keeps the trusted in-app clipboard. A foreign preferred flavour failure never falls back.
-pub fn stage(
-    editor: &Editor,
-    board: &mut dyn Pasteboard,
-    options: ImportOptions,
-) -> Result<Option<(varos_core::model::Document, varos_import::ImportReport, i64)>, String> {
+/// Only bounded snapshotting and internal-flavour validation happen on the UI thread.
+pub fn capture(editor: &Editor, board: &mut dyn Pasteboard) -> Result<Option<Snapshot>, String> {
     let snapshot = board.snapshot()?;
     if snapshot.flavours.iter().any(|(_, b)| b.len() > varos_import::MAX_BYTES) {
         return Err("Clipboard exceeds byte limit".into());
@@ -67,6 +58,16 @@ pub fn stage(
     if snapshot.flavours.is_empty() {
         return Ok(None);
     }
+    Ok(Some(snapshot))
+}
+/// None keeps the trusted in-app clipboard. A foreign preferred flavour failure never falls back.
+#[cfg(test)]
+pub fn stage(
+    editor: &Editor,
+    board: &mut dyn Pasteboard,
+    options: ImportOptions,
+) -> Result<Option<(varos_core::model::Document, varos_import::ImportReport, i64)>, String> {
+    let Some(snapshot) = capture(editor, board)? else { return Ok(None) };
     let (doc, report, _) = varos_import::clipboard::stage(&snapshot, options)?;
     varos_core::placement::check(editor, &doc)?;
     if board.generation() != snapshot.generation {
@@ -74,47 +75,81 @@ pub fn stage(
     }
     Ok(Some((doc, report, snapshot.generation)))
 }
-pub fn paste(editor: &mut Editor, view: &View, centre: Pt, in_place: bool) -> Result<bool, String> {
-    let mut board = SystemPasteboard;
-    let options = ImportOptions { loss_policy: LossPolicy::AllowReported, ..Default::default() };
-    let Some((mut doc, report, generation)) = stage(editor, &mut board, options)? else { return Ok(false) };
-    if !report.loss_notes.is_empty() && !crate::foreign_import::accept_losses(&report.loss_notes) {
-        return Ok(true);
-    }
-    if board.generation() != generation {
-        return Err("Clipboard changed before paste".into());
-    }
-    if !in_place {
-        if let Some(bounds) = doc
-            .paths
-            .iter()
-            .flat_map(|p| varos_core::model::Document::ring(&p.anchors, p.closed, 24))
-            .fold(None, |b: Option<[f32; 4]>, p| {
+pub fn centre(doc: &mut varos_core::model::Document, target: Pt) {
+    if let Some(bounds) =
+        doc.paths.iter().flat_map(|p| varos_core::model::Document::ring(&p.anchors, p.closed, 24)).fold(
+            None,
+            |b: Option<[f32; 4]>, p| {
                 Some(b.map_or([p[0], p[1], p[0], p[1]], |b| {
                     [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
                 }))
-            })
-        {
-            let target = view.s2w(centre);
-            let offset = [target[0] - (bounds[0] + bounds[2]) / 2., target[1] - (bounds[1] + bounds[3]) / 2.];
-            for p in &mut doc.paths {
-                for a in p.anchors.iter_mut().chain(p.holes.iter_mut().flatten()) {
-                    for pt in std::iter::once(&mut a.p).chain(a.hin.iter_mut()).chain(a.hout.iter_mut()) {
-                        pt[0] += offset[0];
-                        pt[1] += offset[1];
-                    }
+            },
+        )
+    {
+        let offset = [target[0] - (bounds[0] + bounds[2]) / 2., target[1] - (bounds[1] + bounds[3]) / 2.];
+        for p in &mut doc.paths {
+            for a in p.anchors.iter_mut().chain(p.holes.iter_mut().flatten()) {
+                for pt in std::iter::once(&mut a.p).chain(a.hin.iter_mut()).chain(a.hout.iter_mut()) {
+                    pt[0] += offset[0];
+                    pt[1] += offset[1];
                 }
             }
         }
     }
-    varos_core::placement::check(editor, &doc)?;
-    editor.try_execute(EditCommand::PlaceArtwork(Box::new(doc))).map_err(|e| e.to_string())?;
-    Ok(true)
+}
+
+/// Keyboard/menu entry: own the source bytes now, submit conversion, leave the editor untouched.
+pub fn queue(
+    ws: &mut crate::workspace::Workspace,
+    ui: &mut dyn crate::host::DocUi,
+    canvas: egui::Rect,
+    dialogs: &mut dyn crate::lifecycle::Dialogs,
+    jobs: &mut dyn crate::host::FileJobs,
+    in_place: bool,
+) -> crate::host::Ran {
+    if ws.on_home() {
+        return crate::host::Ran::default();
+    }
+    if let Some(s) = ws.active_mut() {
+        if !ui.settle_fields(&mut s.editor) {
+            return crate::host::Ran { held: true, ..Default::default() };
+        }
+        match crate::clipboard_in::capture(&s.editor, &mut crate::clipboard_in::SystemPasteboard) {
+            Ok(Some(snapshot)) => {
+                let mut job = crate::import_jobs::Job::new(
+                    "Clipboard".into(),
+                    crate::import_jobs::Target::Place { sid: s.id, rev: s.editor.rev },
+                );
+                let Some(options) = dialogs.import_options(std::path::Path::new(
+                    if snapshot.find("com.adobe.pdf").is_some() || snapshot.find("application/pdf").is_some() {
+                        "Clipboard.pdf"
+                    } else {
+                        "Clipboard.svg"
+                    },
+                )) else {
+                    return crate::host::Ran::default();
+                };
+                job.options = options;
+                job.clipboard = Some(Box::new(snapshot));
+                if !in_place {
+                    let c = canvas.center();
+                    job.centre = Some(s.view.s2w([c.x, c.y]));
+                }
+                if jobs.submit(crate::file_jobs::FileJob::Import(job)).is_err() {
+                    dialogs.open_failed("Clipboard", "Import worker unavailable");
+                }
+            }
+            Ok(None) => crate::paste_key(&mut s.editor, &s.view, [canvas.center().x, canvas.center().y], in_place),
+            Err(e) => dialogs.open_failed("Clipboard", &e),
+        }
+    }
+    crate::host::Ran::default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use varos_core::EditCommand;
     struct Fake {
         snapshot: Snapshot,
         generation: i64,

@@ -50,6 +50,9 @@ pub enum ExternalChoice {
 
 pub trait Dialogs {
     // ---- Lane H ----
+    fn import_options(&mut self, _path: &Path) -> Option<varos_import::ImportOptions> {
+        Some(varos_import::ImportOptions { loss_policy: varos_import::LossPolicy::AllowReported, ..Default::default() })
+    }
     fn accept_import_losses(&mut self, _notes: &[String]) -> bool {
         false
     }
@@ -410,8 +413,12 @@ impl Lifecycle<'_> {
     fn place_foreign(&mut self, id: SessionId, path: PathBuf) {
         if self.jobs.is_some() {
             if let Some(s) = self.ws.get(id) {
+                let Some(options) = self.dialogs.import_options(&path) else { return };
                 let target = crate::import_jobs::Target::Place { sid: id, rev: s.editor.rev };
-                self.queue(FileJob::Import(crate::import_jobs::Job { path, target, cancel: Default::default() }));
+                self.queue(FileJob::Import(crate::import_jobs::Job {
+                    options,
+                    ..crate::import_jobs::Job::new(path, target)
+                }));
             }
             return;
         }
@@ -434,10 +441,10 @@ impl Lifecycle<'_> {
     fn open_one(&mut self, path: PathBuf, old: Option<&Path>) {
         if crate::foreign_import::is_foreign(&path) {
             if self.jobs.is_some() {
+                let Some(options) = self.dialogs.import_options(&path) else { return };
                 self.queue(FileJob::Import(crate::import_jobs::Job {
-                    path,
-                    target: crate::import_jobs::Target::Open,
-                    cancel: Default::default(),
+                    options,
+                    ..crate::import_jobs::Job::new(path, crate::import_jobs::Target::Open)
                 }));
                 return;
             }

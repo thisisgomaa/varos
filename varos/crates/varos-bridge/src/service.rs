@@ -674,7 +674,7 @@ impl Service {
                     }
                     let from = self.boards[&v.board].rev;
                     let imported = host.import_effect(req.tool(), v, cancelled)?;
-                    if !imported.ok {
+                    if !imported.ok || imported.result.as_ref().is_some_and(|r| r["accepted"] == true) {
                         return Ok(imported);
                     }
                     self.observe(host);
@@ -721,7 +721,7 @@ impl Service {
                         }
                         _ => {}
                     }
-                    let mut reply = host.import_effect(req.tool(), v, cancelled)?;
+                    let mut reply = host.file_effect(req.tool(), v)?;
                     self.observe(host);
                     self.observe_selection(host, &v.board);
                     // Reports originate in the export worker. Preserve them for 1.2;
@@ -950,7 +950,9 @@ impl Service {
                                 }
                             }
                             done.board = r.board.clone();
-                            done.rev = r.rev;
+                            if done.rev.is_none() {
+                                done.rev = r.rev;
+                            }
                             done.request_id = Some(v.request_id.clone());
                             return Ok(Reply::success(json!({"status":"completed","ticket":ticket,"receipt":done})));
                         }
@@ -984,7 +986,7 @@ impl Service {
                     hash: payload,
                     reply: reply.clone(),
                     ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
-                    export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) if v.api == "1.2"),
+                    export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) | Request::ImportSvg(v) | Request::ImportFile(v) | Request::ImportClipboard(v) if v.api == "1.2"),
                     stroke_fields: req.api() == "1.2",
                 });
                 while client.receipts.len() > 128 {
