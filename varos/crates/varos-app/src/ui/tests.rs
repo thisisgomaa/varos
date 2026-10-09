@@ -579,6 +579,24 @@ mod layer_rename_tests {
         }
     }
 
+    // ---- Arabic UI fix round ----
+    #[test]
+    fn arabic_layers_empty_states_are_translated_in_production_paint() {
+        let mut panel = Panel::new(vec![]);
+        varos_app::i18n::set(&panel.ctx, varos_app::i18n::Locale::Ar);
+        kit::text::enable_trace(&panel.ctx);
+        for (search, english) in [("", "No layers yet"), ("missing", "No matching layers")] {
+            panel.search = search.into();
+            panel.frame(vec![]);
+            let records = kit::text::paint_records(&panel.ctx);
+            let arabic = varos_app::i18n::translate(&panel.ctx, english);
+            assert_ne!(arabic, english);
+            assert!(records.iter().any(|r| r.text == arabic), "missing {arabic}: {records:?}");
+            assert!(!records.iter().any(|r| r.text == english));
+        }
+    }
+    // ---- end Arabic UI fix round ----
+
     fn no_icons() -> LayerIcons {
         LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None }
     }
@@ -3822,3 +3840,45 @@ fn menu_owner_absent_for_one_frame_releases_keyboard_and_closes_menu() {
     assert!(!super::wants_keyboard(&ctx));
     assert!(!kit::is_menu_open(&ctx, owner));
 }
+
+// ---- Arabic UI fix round ----
+#[test]
+fn arabic_artboard_chrome_preserves_authored_catalog_key() {
+    let ctx = egui::Context::default();
+    varos_app::shell::fonts::install(&ctx);
+    varos_app::i18n::set(&ctx, varos_app::i18n::Locale::Ar);
+    varos_app::shell::kit::text::enable_trace(&ctx);
+    let hole = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 400.0));
+    let boards = [AbInfo {
+        i: 0,
+        name: "Delete".into(),
+        x: 60.0,
+        y: 100.0,
+        w: 200.0,
+        h: 200.0,
+        transparent: false,
+        clip: true,
+        hidden: false,
+    }];
+    for _ in 0..2 {
+        let _ = ctx.run_ui(egui::RawInput { screen_rect: Some(hole), ..Default::default() }, |ui| {
+            build_ab_chrome(
+                ui.ctx(),
+                varos_core::geom::View::identity(),
+                1.0,
+                hole,
+                &boards,
+                0,
+                false,
+                1,
+                &mut vec![],
+                &mut None,
+                &mut None,
+            );
+        });
+    }
+    let records = varos_app::shell::kit::text::paint_records(&ctx);
+    assert!(records.iter().any(|r| r.text == "Delete"), "{records:?}");
+    assert!(!records.iter().any(|r| r.text == "حذف"));
+}
+// ---- end Arabic UI fix round ----

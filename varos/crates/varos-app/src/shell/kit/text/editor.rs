@@ -115,7 +115,9 @@ pub fn show(
         0.0
     };
     let mut origin = rect.min + egui::vec2(rtl_offset, 0.0) - state.scroll;
-    if response.clicked() || response.dragged() {
+    let pointer_down =
+        response.is_pointer_button_down_on() && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+    if pointer_down || response.clicked() || response.dragged() {
         response.request_focus();
         if let Some(pos) = response.interact_pointer_pos() {
             let line = shaped
@@ -125,7 +127,7 @@ pub fn show(
                 .position(|l| pos.y - origin.y <= l.baseline + l.descent)
                 .unwrap_or(shaped.layout.lines.len().saturating_sub(1));
             if let Some(c) = shaped.layout.hit(line, pos.x - origin.x).first() {
-                state.move_to(c, response.dragged() || ui.input(|i| i.modifiers.shift));
+                state.move_to(c, (!pointer_down && response.dragged()) || ui.input(|i| i.modifiers.shift));
                 if response.double_clicked() {
                     if let Some((start, word)) = text
                         .split_word_bound_indices()
@@ -240,12 +242,17 @@ pub fn show(
         state.preedit.clear();
     }
     if focused {
-        if let Some(c) = state.caret(&shaped.layout) {
+        if let Some(c) = state.caret(&shaped.layout).cloned() {
             if c.x - state.scroll.x > rect.width() - t::KIT_STROKE {
                 state.scroll.x = (c.x - rect.width() + t::FIELD_INSET_X).max(0.0);
             }
             if c.x < state.scroll.x {
                 state.scroll.x = c.x;
+            }
+            if let Some(line) = shaped.layout.lines.get(c.line) {
+                let top = line.baseline - line.ascent;
+                let bottom = line.baseline + line.descent;
+                state.scroll.y = state.scroll.y.max(bottom - rect.height()).min(top).max(0.0);
             }
         }
     }
@@ -393,5 +400,91 @@ mod event_tests {
         select_all(&ctx, Id::new("field"), &text);
         frame(&ctx, &mut text, vec![Event::Paste("لوحة — Café logo".into())]);
         assert_eq!(text, "لوحة — Café logo");
+    }
+}
+
+#[cfg(test)]
+mod fix_tests {
+    use super::*;
+    fn run(ctx: &egui::Context, text: &mut String, events: Vec<Event>, multiline: bool) -> egui::FullOutput {
+        ctx.run_ui(
+            egui::RawInput {
+                events,
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 200.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show(
+                    ui,
+                    Id::new("fix-field"),
+                    Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 54.0)),
+                    text,
+                    t::small(),
+                    "",
+                    multiline,
+                );
+            },
+        )
+    }
+    #[test]
+    fn drag_selection_starts_at_pointer_down_and_replaces_only_selection() {
+        let ctx = egui::Context::default();
+        let mut text = "abcdefghij".to_owned();
+        run(&ctx, &mut text, vec![], false);
+        let shaped = layout(&ctx, &text, &t::small(), None, false).unwrap();
+        let pos = |byte| egui::pos2(10.0 + shaped.layout.carets.iter().find(|c| c.byte == byte).unwrap().x, 20.0);
+        run(
+            &ctx,
+            &mut text,
+            vec![
+                Event::PointerMoved(pos(3)),
+                Event::PointerButton {
+                    pos: pos(3),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            false,
+        );
+        run(&ctx, &mut text, vec![Event::PointerMoved(pos(7))], false);
+        run(
+            &ctx,
+            &mut text,
+            vec![Event::PointerButton {
+                pos: pos(7),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+            false,
+        );
+        let out = run(&ctx, &mut text, vec![Event::Copy], false);
+        assert!(out
+            .platform_output
+            .commands
+            .iter()
+            .any(|c| matches!(c, egui::OutputCommand::CopyText(s) if s == "defg")));
+        run(&ctx, &mut text, vec![Event::Text("X".into())], false);
+        assert_eq!(text, "abcXhij");
+    }
+    #[test]
+    fn multiline_arabic_scroll_keeps_caret_and_ime_in_field() {
+        let ctx = egui::Context::default();
+        let mut text = String::new();
+        run(&ctx, &mut text, vec![], true);
+        ctx.memory_mut(|m| m.request_focus(Id::new("fix-field")));
+        let out = run(&ctx, &mut text, vec![Event::Paste("وصف عربي طويل ".repeat(20))], true);
+        let ime = out.platform_output.ime.unwrap();
+        assert!(ime.rect.contains_rect(ime.cursor_rect), "{ime:?}");
+        let state = ctx.data(|d| d.get_temp::<State>(key(Id::new("fix-field")))).unwrap();
+        assert!(state.scroll.y > 0.0);
+        ctx.data_mut(|d| {
+            d.insert_temp(key(Id::new("fix-field")), State { scroll: state.scroll, ..Default::default() })
+        });
+        let out = run(&ctx, &mut text, vec![], true);
+        let ime = out.platform_output.ime.unwrap();
+        assert!(ime.rect.contains_rect(ime.cursor_rect));
+        assert_eq!(ctx.data(|d| d.get_temp::<State>(key(Id::new("fix-field")))).unwrap().scroll.y, 0.0);
     }
 }

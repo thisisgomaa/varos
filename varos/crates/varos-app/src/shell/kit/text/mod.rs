@@ -237,6 +237,34 @@ pub fn layout(ctx: &egui::Context, text: &str, font: &FontId, width: Option<f32>
     }
     Some(label)
 }
+/// Preserve legacy row budgets while eliding only at logical grapheme boundaries.
+fn layout_rows(ctx: &egui::Context, text: &str, font: &FontId, width: f32, rows: usize) -> Option<Label> {
+    if rows == 0 {
+        return None;
+    }
+    let mut result = layout(ctx, text, font, Some(width), rows == 1)?;
+    if result.layout.lines.len() <= rows {
+        return Some(result);
+    }
+    let boundaries: Vec<_> = result.layout.source.grapheme_indices(true).map(|(i, _)| i).collect();
+    let source = result.layout.source.clone();
+    let (mut low, mut high) = (0, boundaries.len());
+    while low < high {
+        let mid = (low + high) / 2;
+        let candidate = layout(ctx, &format!("{}…", &source[..boundaries[mid]]), font, Some(width), false)?;
+        if candidate.layout.lines.len() <= rows && candidate.size().x <= width + t::UI_TEXT_WIDTH_EPSILON {
+            result = candidate;
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    if result.layout.lines.len() > rows {
+        result = layout(ctx, "…", font, Some(width), true)?;
+    }
+    result.logical = Arc::from(text);
+    Some(result)
+}
 impl System {
     fn reset(&mut self, ctx: &egui::Context, ppp: f32, options: egui::epaint::text::TextOptions) {
         self.ppp = ppp;
@@ -343,9 +371,13 @@ pub fn paint(painter: &Painter, pos: Pos2, label: &Label, ink: Color32) {
     }
     painter.add(egui::Shape::mesh(mesh));
 }
+pub fn chrome_label(ui: &mut egui::Ui, text: &str, font: FontId, ink: Color32) -> egui::Response {
+    let translated = crate::i18n::translate(ui.ctx(), text);
+    label(ui, &translated, font, ink)
+}
+/// Paint authored UTF-8 literally, including strings that coincide with catalog keys.
 pub fn label(ui: &mut egui::Ui, text: &str, font: FontId, ink: Color32) -> egui::Response {
-    let text = crate::i18n::translate(ui.ctx(), text);
-    let shaped = layout(ui.ctx(), &text, &font, Some(ui.available_width()), false);
+    let shaped = layout(ui.ctx(), text, &font, Some(ui.available_width()), false);
     let measured = shaped.as_ref().map_or(Vec2::ZERO, Label::size);
     // Preserve the kit's existing box advance. The shared Latin/Arabic baseline is centred
     // within that cell; ink and field line metrics remain the shaper's, never char-count metrics.
@@ -356,7 +388,7 @@ pub fn label(ui: &mut egui::Ui, text: &str, font: FontId, ink: Color32) -> egui:
     if let Some(shaped) = shaped {
         paint(ui.painter(), rect.min + egui::vec2(0.0, (rect.height() - shaped.size().y) / 2.0), &shaped, ink);
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text.as_ref()));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), text));
     response
 }
 
@@ -383,3 +415,6 @@ pub fn paint_records(ctx: &egui::Context) -> Vec<PaintRecord> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pixel_tests;

@@ -76,7 +76,7 @@ pub fn panel(ui: &mut egui::Ui, ed: &Editor, sid: Option<SessionId>, commands: &
     for i in &ed.doc.images {
         ui.push_id((sid.0, i.id), |ui| {
             let name = i.link.as_ref().map(|l| l.absolute.as_str()).unwrap_or("Embedded bitmap");
-            ui.shaped_label(name);
+            ui.shaped_authored_label(name);
             let status_key = ui.id().with("link-status");
             if button(ui, "Check source status") {
                 let status = varos_core::images::links::status(i, &ed.blobs);

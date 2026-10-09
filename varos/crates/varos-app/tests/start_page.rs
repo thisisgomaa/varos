@@ -1145,3 +1145,19 @@ fn recovery_status_paints_the_current_host_footer_instead_of_a_fixed_claim() {
         }
     }
 }
+
+#[test]
+fn arabic_table_headings_are_translated_in_production_paint() {
+    let mut page = Page::new(1.0, egui::vec2(W, H));
+    varos_app::i18n::set(&page.ctx, varos_app::i18n::Locale::Ar);
+    let mut model = recent_model();
+    model.apply(&StartAction::SetView(StartView::List));
+    page.frame(&model, vec![]);
+    let records = kit::text::paint_records(&page.ctx);
+    for english in ["Name", "Tags", "Folder", "Modified"] {
+        let arabic = varos_app::i18n::translate(&page.ctx, english);
+        assert_ne!(arabic, english);
+        assert!(records.iter().any(|r| r.text == arabic), "missing {arabic}: {records:?}");
+        assert!(!records.iter().any(|r| r.text == english));
+    }
+}
