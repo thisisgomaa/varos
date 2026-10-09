@@ -208,6 +208,9 @@ pub fn check(ed: &Editor, action: &Action) -> Result<(), String> {
     {
         return Err("path eraser and join cannot replace mask sources".into());
     }
+    if let Action::PathErase { points, options } = action {
+        erase_plan(ed, points, options.brush_radius, crate::format::Limits::DEFAULT)?;
+    }
     allocation_check(ed)
 }
 fn check_insert(ed: &Editor, paths: &[Path]) -> Result<(), String> {
@@ -384,50 +387,100 @@ pub fn apply(ed: &mut Editor, action: Action) {
         Action::Join { points, options } => {
             let candidates: Vec<_> = selected(ed)
                 .into_iter()
-                .filter(|id| {
-                    let Some(i) = ed.doc.pidx(*id) else { return false };
+                .filter_map(|id| {
+                    let i = ed.doc.pidx(id)?;
                     let p = &ed.doc.paths[i];
-                    let xf = ed.doc.unit_xform(*id);
-                    !p.closed
-                        && ed.in_isolation(p.id)
-                        && p.holes.is_empty()
-                        && p.anchors.first().zip(p.anchors.last()).is_some_and(|(a, b)| {
-                            near_walk(xf.apply(a.p), &points, options.brush_radius)
-                                || near_walk(xf.apply(b.p), &points, options.brush_radius)
-                        })
+                    if p.closed || !p.holes.is_empty() || p.anchors.len() < 2 {
+                        return None;
+                    }
+                    let xf = ed.doc.unit_xform(id);
+                    let touched = [
+                        near_walk(xf.apply(p.anchors[0].p), &points, options.brush_radius),
+                        near_walk(xf.apply(p.anchors[p.anchors.len() - 1].p), &points, options.brush_radius),
+                    ];
+                    touched.iter().any(|t| *t).then_some((id, touched))
                 })
                 .collect();
-            let close_single = candidates.len() == 1
-                && candidates.first().and_then(|id| ed.doc.pidx(*id)).is_some_and(|i| {
-                    let p = &ed.doc.paths[i];
-                    let xf = ed.doc.unit_xform(p.id);
-                    p.anchors.first().zip(p.anchors.last()).is_some_and(|(a, b)| {
-                        near_walk(xf.apply(a.p), &points, options.brush_radius)
-                            && near_walk(xf.apply(b.p), &points, options.brush_radius)
-                    })
-                });
-            if candidates.len() > 1 || close_single {
-                for id in &candidates {
+            if candidates.len() > 1 || candidates.first().is_some_and(|(_, touched)| *touched == [true, true]) {
+                for (id, _) in &candidates {
                     ed.bake_unit_of(*id);
                 }
-                let paths: Vec<_> =
-                    candidates.iter().filter_map(|id| ed.doc.pidx(*id)).map(|i| ed.doc.paths[i].clone()).collect();
-                let joined = geom::edit::join_open_paths(&paths, options.endpoint_distance);
-                ed.doc.paths.retain(|p| !candidates.contains(&p.id));
-                for mut p in joined {
-                    for a in &mut p.anchors {
-                        if a.id == 0 {
-                            a.id = ed.doc.nid();
-                        }
-                    }
-                    ed.doc.paths.push(p);
-                }
+                let paths: Vec<_> = candidates
+                    .iter()
+                    .filter_map(|(id, touched)| ed.doc.pidx(*id).map(|i| (ed.doc.paths[i].clone(), *touched)))
+                    .collect();
+                let joined = join_touched(paths, options.endpoint_distance);
+                ed.doc.paths.retain(|p| !candidates.iter().any(|(id, _)| *id == p.id));
+                ed.doc.paths.extend(joined);
             }
         }
         Action::Options { .. } => {}
     }
     ed.dirty = true;
     ed.finish_document_setup();
+}
+// Join mechanics adapted from geom/edit.rs, originally VectorCraft crates/pathops/src/edit.rs
+// @ a469568 (MIT OR Apache-2.0), ArtCraft Team 2026. Endpoint filtering is Varos code.
+// Endpoint eligibility travels with each merge; a consumed brush endpoint cannot
+// make the untouched endpoint at the other end eligible.
+fn join_touched(mut paths: Vec<(Path, [bool; 2])>, tolerance: f32) -> Vec<Path> {
+    if paths.len() == 1 {
+        return geom::edit::join_open_paths(&[paths.remove(0).0], tolerance);
+    }
+    loop {
+        let mut best = None;
+        let mut distance = f32::INFINITY;
+        for i in 0..paths.len() {
+            for j in i + 1..paths.len() {
+                for ei in 0..2 {
+                    for ej in 0..2 {
+                        if paths[i].1[ei] && paths[j].1[ej] {
+                            let a = &paths[i].0.anchors;
+                            let b = &paths[j].0.anchors;
+                            let d = geom::dist(
+                                a[if ei == 0 { 0 } else { a.len() - 1 }].p,
+                                b[if ej == 0 { 0 } else { b.len() - 1 }].p,
+                            );
+                            if d < distance {
+                                distance = d;
+                                best = Some((i, j, ei, ej));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let Some((i, j, ei, ej)) = best else { break };
+        let (mut b, bt) = paths.remove(j);
+        let (a, at) = &mut paths[i];
+        for (p, reverse) in [(&mut *a, ei == 0), (&mut b, ej == 1)] {
+            if reverse {
+                p.anchors.reverse();
+                for anchor in &mut p.anchors {
+                    std::mem::swap(&mut anchor.hin, &mut anchor.hout);
+                }
+            }
+        }
+        if distance <= tolerance {
+            let first = b.anchors.remove(0);
+            if let Some(last) = a.anchors.last_mut() {
+                last.hout = first.hout.map(|h| geom::add(h, geom::sub(last.p, first.p)));
+                last.smooth = false;
+            }
+        } else {
+            if let Some(last) = a.anchors.last_mut() {
+                last.hout = None;
+                last.smooth = false;
+            }
+            if let Some(first) = b.anchors.first_mut() {
+                first.hin = None;
+                first.smooth = false;
+            }
+        }
+        a.anchors.extend(b.anchors);
+        *at = [at[1 - ei], bt[1 - ej]];
+    }
+    paths.into_iter().map(|(p, _)| p).collect()
 }
 fn walk_distance(p: Pt, points: &[Pt]) -> f32 {
     points
@@ -440,27 +493,53 @@ fn walk_distance(p: Pt, points: &[Pt]) -> f32 {
         })
         .fold(f32::INFINITY, f32::min)
 }
-fn clip_curve(c: kurbo::CubicBez, points: &[Pt], radius: f32, depth: usize, out: &mut Vec<Option<kurbo::CubicBez>>) {
+fn clip_curve(
+    c: kurbo::CubicBez,
+    points: &[Pt],
+    radius: f32,
+    depth: usize,
+    out: &mut Vec<Option<kurbo::CubicBez>>,
+    budget: usize,
+) -> Result<(), String> {
+    if out.len() >= budget {
+        return Err("path eraser exceeds document anchor limit".into());
+    }
     use kurbo::ParamCurve;
     let mid = c.eval(0.5);
     let distance = walk_distance([mid.x as f32, mid.y as f32], points) as f64;
     let bound = [c.p0, c.p1, c.p2, c.p3].iter().map(|p| p.distance(mid)).fold(0., f64::max);
     if distance - bound > radius as f64 {
         out.push(Some(c));
-        return;
+        return Ok(());
     }
     if distance + bound < radius as f64 {
         out.push(None);
-        return;
+        return Ok(());
     }
     if depth >= 16 || bound < 0.001 {
         out.push((distance >= radius as f64).then_some(c));
-        return;
+        return Ok(());
     }
-    clip_curve(c.subsegment(0. ..0.5), points, radius, depth + 1, out);
-    clip_curve(c.subsegment(0.5..1.), points, radius, depth + 1, out);
+    clip_curve(c.subsegment(0. ..0.5), points, radius, depth + 1, out, budget)?;
+    clip_curve(c.subsegment(0.5..1.), points, radius, depth + 1, out, budget)
 }
-fn erase(ed: &mut Editor, points: &[Pt], radius: f32) {
+struct EraseReplacement {
+    id: u32,
+    source_node: Option<u32>,
+    xf: crate::model::Xform,
+    paths: Vec<Path>,
+}
+fn erase_plan(
+    ed: &Editor,
+    points: &[Pt],
+    radius: f32,
+    limits: crate::format::Limits,
+) -> Result<Vec<EraseReplacement>, String> {
+    let mut plan = Vec::new();
+    let mut path_count = ed.doc.paths.len();
+    let mut node_count = ed.doc.nodes.len();
+    let mut anchor_count: usize =
+        ed.doc.paths.iter().map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>()).sum();
     for id in selected(ed) {
         let Some(i) = ed.doc.pidx(id) else { continue };
         let source = ed.doc.paths[i].clone();
@@ -469,7 +548,7 @@ fn erase(ed: &mut Editor, points: &[Pt], radius: f32) {
         let local: Vec<_> = points.iter().map(|p| xf.inverse_apply(*p)).collect();
         let mut pieces = vec![];
         for c in geom::edit::curves(&source.anchors, source.closed) {
-            clip_curve(c, &local, radius, 0, &mut pieces);
+            clip_curve(c, &local, radius, 0, &mut pieces, crate::format::Limits::DEFAULT.max_anchors)?;
         }
         let mut removed = pieces.iter().any(Option::is_none);
         // Compound paths retain their separate rings; erase them into independent stroke remnants.
@@ -477,7 +556,7 @@ fn erase(ed: &mut Editor, points: &[Pt], radius: f32) {
             let start = pieces.len();
             pieces.push(None);
             for c in geom::edit::curves(ring, true) {
-                clip_curve(c, &local, radius, 0, &mut pieces);
+                clip_curve(c, &local, radius, 0, &mut pieces, crate::format::Limits::DEFAULT.max_anchors)?;
             }
             removed |= pieces[start + 1..].iter().any(Option::is_none);
         }
@@ -501,20 +580,45 @@ fn erase(ed: &mut Editor, points: &[Pt], radius: f32) {
                 runs.insert(0, last);
             }
         }
-        ed.doc.paths.remove(i);
-        let mut first = true;
+        let mut replacements = Vec::new();
         for run in runs.into_iter().filter(|r| !r.is_empty()) {
             let mut p = source.clone();
             p.anchors = geom::fit::cubics_to_path(&run).anchors;
             p.holes.clear();
             p.closed = false;
             p.fill = crate::model::Paint::None;
-            // Drop intermediate subdivision boundaries on straight runs only in future Simplify.
+            replacements.push(p);
+        }
+        path_count = path_count - 1 + replacements.len();
+        node_count = node_count - usize::from(source_node.is_some()) + replacements.len();
+        anchor_count = anchor_count - source.anchors.len() - source.holes.iter().map(Vec::len).sum::<usize>()
+            + replacements.iter().map(|p| p.anchors.len()).sum::<usize>();
+        if path_count > limits.max_paths || node_count > limits.max_nodes || anchor_count > limits.max_anchors {
+            return Err("path eraser exceeds document path/node/anchor limit".into());
+        }
+        plan.push(EraseReplacement { id, source_node, xf, paths: replacements });
+    }
+    Ok(plan)
+}
+fn erase(ed: &mut Editor, points: &[Pt], radius: f32) {
+    // Plan all replacements before allocating IDs or publishing any geometry.
+    let plan = match erase_plan(ed, points, radius, crate::format::Limits::DEFAULT) {
+        Ok(plan) => plan,
+        Err(e) => {
+            ed.stroke_error = Some(e);
+            return;
+        }
+    };
+    for replacement in plan {
+        let EraseReplacement { id, source_node, xf, paths } = replacement;
+        ed.doc.paths.retain(|p| p.id != id);
+        let mut first = true;
+        for mut p in paths {
             for a in &mut p.anchors {
                 a.id = ed.doc.nid();
             }
             if first {
-                p.id = source.id;
+                p.id = id;
                 first = false;
                 ed.doc.paths.push(p);
             } else {
@@ -530,6 +634,7 @@ fn erase(ed: &mut Editor, points: &[Pt], radius: f32) {
         }
     }
 }
+
 pub fn down(ed: &mut Editor, pos: Pt) -> bool {
     if !owns(ed.gesture) {
         return false;
@@ -620,6 +725,11 @@ pub fn up(ed: &mut Editor) -> bool {
         if matches!(ed.gesture, ToolKind::Rect | ToolKind::Ellipse) {
             if let Drag::Shape { start, .. } = ed.drag {
                 if geom::dist(start, ed.cursor) * ed.ppu < 3. {
+                    // The numeric sheet replaces the provisional drag at every zoom.
+                    ed.picker_cancel();
+                    ed.drag = Drag::None;
+                    ed.snap_guides.clear();
+                    ed.snap_hud = None;
                     ed.drawing.dialog = Some(ShapeSpec {
                         kind: shape_kind(ed.gesture).unwrap_or(Shape::Rectangle),
                         origin: start,
@@ -676,6 +786,16 @@ fn points_are_stationary(action: &Action) -> bool {
         _ => false,
     }
 }
+pub(crate) fn clear_gesture(ed: &mut Editor) -> bool {
+    let active = ed.drawing.start.is_some() || !ed.drawing.curvature.is_empty();
+    ed.drawing.start = None;
+    ed.drawing.star_outer = None;
+    ed.drawing.samples.clear();
+    ed.drawing.preview.clear();
+    ed.drawing.curvature.clear();
+    ed.drawing.dialog = None;
+    active
+}
 pub fn finish(ed: &mut Editor, cancel: bool) {
     // Never commit another tool's pending transaction.
     if ed.drawing.curvature.is_empty() && ed.drawing.start.is_none() && ed.drawing.dialog.is_none() {
@@ -722,5 +842,70 @@ pub fn arrow(ed: &mut Editor, up: bool) -> bool {
 pub fn refresh(ed: &mut Editor) {
     if ed.drawing.start.is_some() && shape_kind(ed.gesture).is_some() {
         ed.drawing.preview = shape_paths(drag_spec(ed, ed.cursor));
+    }
+}
+
+#[cfg(test)]
+mod erase_limit_tests {
+    use super::*;
+
+    #[test]
+    fn replacement_plan_checks_paths_nodes_and_anchors_without_allocating_ids() {
+        let mut ed = Editor::new();
+        ed.try_execute(EditCommand::Drawing(Action::Shape {
+            spec: ShapeSpec { kind: Shape::Line, size: [100., 0.], ..Default::default() },
+        }))
+        .unwrap();
+        let before = ed.doc.clone();
+        let points = [[50., -10.], [50., 10.]];
+        let plan = erase_plan(&ed, &points, 5., crate::format::Limits::DEFAULT).unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].paths.len(), 2);
+        assert!(plan[0].paths.iter().flat_map(|p| &p.anchors).all(|a| a.id == 0));
+        let anchors: usize = plan[0].paths.iter().map(|p| p.anchors.len()).sum();
+        for limits in [
+            crate::format::Limits { max_paths: 1, ..Default::default() },
+            crate::format::Limits { max_nodes: ed.doc.nodes.len(), ..Default::default() },
+            crate::format::Limits { max_anchors: anchors - 1, ..Default::default() },
+        ] {
+            assert!(erase_plan(&ed, &points, 5., limits).is_err());
+            assert_eq!(ed.doc, before);
+            assert_eq!(ed.rev, 1);
+            assert!(!ed.transaction_open());
+        }
+        assert!(erase_plan(
+            &ed,
+            &points,
+            5.,
+            crate::format::Limits {
+                max_paths: 2,
+                max_nodes: ed.doc.nodes.len() + 1,
+                max_anchors: anchors,
+                ..Default::default()
+            }
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn late_replacement_refusal_does_not_publish_earlier_path_changes() {
+        let mut ed = Editor::new();
+        for y in [0., 20.] {
+            ed.try_execute(EditCommand::Drawing(Action::Shape {
+                spec: ShapeSpec { kind: Shape::Line, origin: [0., y], size: [100., 0.], ..Default::default() },
+            }))
+            .unwrap();
+        }
+        ed.objsel.extend(ed.doc.paths.iter().map(|p| p.id));
+        let before = ed.doc.clone();
+        assert!(erase_plan(
+            &ed,
+            &[[50., -10.], [50., 30.]],
+            5.,
+            crate::format::Limits { max_paths: 3, ..Default::default() }
+        )
+        .is_err());
+        assert_eq!(ed.doc, before);
+        assert_eq!(ed.rev, 2);
     }
 }

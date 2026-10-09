@@ -3717,6 +3717,12 @@ impl Editor {
     /// what still exists in the restored document (a selected path/anchor that the undo removed is dropped,
     /// never left dangling).
     fn clear_transient_keep_selection(&mut self) {
+        // ---- w2-tools-ui: history cancels drawing gestures, preserving preferences ----
+        if crate::drawing::clear_gesture(self) {
+            self.pending = None;
+            self.dirty = false;
+        }
+        // ---- end w2-tools-ui ----
         self.objsel.retain(|&p| self.doc.pidx(p).is_some());
         self.selected.retain(|&a| self.doc.anchor_address(a).is_some());
         self.absel.retain(|&i| i < self.doc.artboards.len());
