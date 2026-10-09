@@ -79,6 +79,7 @@ pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppComm
         FileCmd::SaveTemplate => AppCommand::SaveTemplate(active?),
         FileCmd::NewTemplate => AppCommand::NewTemplate,
         FileCmd::Open => AppCommand::OpenDialog,
+        FileCmd::PlaceSvg => AppCommand::PlaceSvg(active?),
         FileCmd::Save => AppCommand::Save(active?),
         FileCmd::SaveAs => AppCommand::SaveAs(active?),
         FileCmd::SaveCopy => AppCommand::SaveCopy(active?),
@@ -243,6 +244,8 @@ pub enum HostAction {
 /// A document action a key or a menu row raises (not a lifecycle command).
 #[derive(Clone, Copy)]
 pub enum DocAction {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Slice4a(&'static str),
     FitAll,
     View(varos_core::editor::view_commands::ViewAction),
     Selection(varos_core::editor::wave::Selection),
@@ -391,6 +394,7 @@ pub fn open_paths_command(paths: Vec<PathBuf>, origin: OpenOrigin) -> Option<App
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuRoute {
+    Slice4a(&'static str),
     Selection(varos_core::editor::wave::Selection),
     Object(varos_core::editor::wave::ObjectAction),
     /// A command for the one dispatch (File rows, Quit, the Window rows).
@@ -407,6 +411,7 @@ pub enum MenuRoute {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> {
     Some(match cmd {
+        MenuCmd::Slice4a(name) => MenuRoute::Slice4a(name),
         MenuCmd::View(s) => MenuRoute::App(AppCommand::View(active?, s)),
         MenuCmd::TogglePasteRemembersLayers => MenuRoute::App(AppCommand::TogglePasteRemembersLayers),
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
@@ -1291,6 +1296,7 @@ mod tests {
                 HostAction::App(c) => format!("{c:?}"),
                 HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
                 HostAction::Doc(DocAction::Snap(row)) => format!("Snap({row:?})"),
+                HostAction::Doc(DocAction::Slice4a(name)) => format!("Slice4a({name})"),
                 HostAction::Doc(DocAction::Selection(s)) => format!("Selection({s:?})"),
                 HostAction::Doc(DocAction::FitAll) => "FitAll".into(),
                 HostAction::Doc(DocAction::View(s)) => format!("View({s:?})"),

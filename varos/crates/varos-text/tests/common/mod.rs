@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 use varos_text::*;
 /// Original bundled OFL bytes, never copied or discovered from the host.
-pub const INTER: &[u8] = include_bytes!("../../../varos-app/assets/fonts/Inter-Regular.ttf");
-pub const PLEX: &[u8] = include_bytes!("../../../varos-app/assets/fonts/IBMPlexSansArabic-Regular.ttf");
+pub const INTER: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
+pub const PLEX: &[u8] = include_bytes!("../../assets/fonts/IBMPlexSansArabic-Regular.ttf");
 pub const SIZES_PT: [f32; 3] = [12.0, 48.0, 200.0];
 pub const WIDTHS_PT: [f32; 2] = [120.0, 600.0];
 

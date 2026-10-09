@@ -52,10 +52,12 @@ impl SnapshotJob {
                         .document
                         .artboard_index(id)
                         .ok_or_else(|| Error::new("not_found", format!("unknown artboard:{id}")))?;
-                    varos_raster::rasterize_artboard(std::sync::Arc::new(self.document), index, self.size)
+                    varos_raster::rasterize_artboard_checked(std::sync::Arc::new(self.document), index, self.size)
+                        .map_err(|e| Error::new("limit_exceeded", e))?
                         .ok_or_else(|| Error::new("invalid_argument", "artboard cannot be rendered"))?
                 }
             };
+            let raster = raster.into_result().map_err(|e| Error::new("limit_exceeded", e))?;
             checkpoint()?;
             let png = raster.encode_png().map_err(|e| Error::new("invalid_argument", e))?;
             checkpoint()?;
@@ -160,6 +162,7 @@ struct RetainedReceipt {
     reply: Reply,
     ids: bool,
     export_report: bool,
+    stroke_fields: bool,
 }
 #[derive(Default)]
 struct Client {
@@ -318,6 +321,34 @@ impl Service {
         if matches!(&req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")) && reply.ok {
             reply = page_ids(reply, None).unwrap_or_else(Reply::failure);
         }
+        if req.api() == "1.2" && reply.ok && matches!(req, Request::Edit(v) if v.receipt.as_deref()!=Some("ids")) {
+            if let Some(board) = req.board() {
+                if let Ok(access) = host.access(board) {
+                    let mut report = varos_core::ExportReport::default();
+                    for p in &access.editor.doc.paths {
+                        if !p.stroke_style.is_default() {
+                            if let Ok(coverage) = varos_core::stroke::evaluate(p, 0.01, &|| false) {
+                                report.notes.extend(coverage.report.notes);
+                            }
+                        }
+                    }
+                    if !report.notes.is_empty() {
+                        if let Some(result) = &mut reply.result {
+                            result["report"] = json!(report);
+                        }
+                    }
+                }
+            }
+        }
+        // Status returns the original mutation's receipt, including its API 1.2 fields.
+        let retained_stroke_fields = matches!(req, Request::RequestStatus(v) if self.clients.get(&ctx.client)
+            .and_then(|c| c.receipts.iter().find(|r| r.id == v.request_id))
+            .is_some_and(|r| r.stroke_fields));
+        if req.api() != "1.2" && !retained_stroke_fields {
+            if let Some(result) = &mut reply.result {
+                strip_stroke_style(result);
+            }
+        }
         if compact(&reply).len() > MAX_TEXT {
             if reply.ok && req.mutation().is_some() {
                 // The receipt still proves commit; a large selection/detail must be read in pages.
@@ -335,30 +366,28 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if (crate::TOOLS_12.contains(&req.tool()) && req.api() != "1.2")
-            || ![API, "1.1"].contains(&req.api())
-                && !(req.api() == "1.2"
-                    && matches!(
-                        req,
-                        Request::Print(_)
-                            | Request::Copy(_)
-                            | Request::Cut(_)
-                            | Request::ExportPdf(_)
-                            | Request::ExportSvg(_)
-                            | Request::ExportRaster(_)
-                            | Request::Select(_)
-                            | Request::Capabilities(_)
-                            | Request::Edit(_)
-                            | Request::Describe(_)
-                            | Request::SaveTemplate(_)
-                            | Request::NewFromTemplate(_)
-                            | Request::WindowMemory(_)
-                    ))
+        if ![API, "1.1", "1.2"].contains(&req.api()) {
+            return Reply::failure(Error::new("unsupported", "Bridge API must be 1.0, 1.1 or 1.2"));
+        }
+        if matches!(req, Request::ImportSvg(_)) && req.api() != "1.2" {
+            return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
+        }
+        if [
+            "schema",
+            "list_verbs",
+            "print",
+            "copy",
+            "cut",
+            "export_svg",
+            "export_raster",
+            "save_template",
+            "new_from_template",
+            "window_memory",
+        ]
+        .contains(&req.tool())
+            && req.api() != "1.2"
         {
-            return Reply::failure(Error::new(
-                "unsupported",
-                "Bridge API must be 1.0 or 1.1 (capabilities, select, edit, describe, exports, templates and window_memory also support 1.2)",
-            ));
+            return Reply::failure(Error::new("unsupported", "tool requires API 1.2"));
         }
         if matches!(req, Request::ExportSvg(_) | Request::ExportRaster(_)) && req.api() != "1.2" {
             return Reply::failure(Error::new("unsupported", "New export verbs require API 1.2 opt-in"));
@@ -427,6 +456,8 @@ impl Service {
                 }
             }
             match req {
+                Request::Schema(v) => Ok(Reply::success(crate::mcp::schema(&v.tool, v.verb.as_deref())?)),
+                Request::ListVerbs(_) => Ok(Reply::success(crate::mcp::list_verbs())),
                 Request::WindowMemory(v) => {
                     if v.api != "1.2" {
                         return Err(Error::new("unsupported", "window_memory requires API 1.2"));
@@ -446,12 +477,89 @@ impl Service {
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
                     }
                     if req.api() == "1.2" {
-                        if let Some(v) = r.result.as_mut() {
+                        if let Some(v) = &mut r.result {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
-                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1"]});
+                            v["readable_vrs"] = json!([1, 2, 3, 4, 5]);
+                            v["writable_vrs"] = json!([5]);
+                            v["stroke_style_schema"] = crate::mcp::stroke_style_schema();
+                            let tools = crate::mcp::full_tools_for("1.2");
+                            if let Some(edit) =
+                                tools["tools"].as_array().and_then(|tools| tools.iter().find(|t| t["name"] == "edit"))
+                            {
+                                // Capabilities publish standalone operation schemas, so expand
+                                // the local references used to keep tools/list within its budget.
+                                fn standalone(value: &Value, root: &Value) -> Value {
+                                    if let Some(reference) = value["$ref"].as_str().and_then(|r| r.strip_prefix('#')) {
+                                        if let Some(target) = root.pointer(reference) {
+                                            let target = standalone(target, root);
+                                            let Some(mut siblings) = value.as_object().cloned() else {
+                                                // Preserve an unexpected schema shape without expanding it.
+                                                return value.clone();
+                                            };
+                                            siblings.remove("$ref");
+                                            if siblings.is_empty() {
+                                                return target;
+                                            }
+                                            let Value::Object(mut expanded) =
+                                                standalone(&Value::Object(siblings), root)
+                                            else {
+                                                // Keep the reference if expansion cannot preserve its siblings.
+                                                return value.clone();
+                                            };
+                                            let Value::Array(constraints) =
+                                                expanded.entry("allOf").or_insert_with(|| json!([]))
+                                            else {
+                                                // A malformed allOf must remain visible, not be discarded.
+                                                return value.clone();
+                                            };
+                                            constraints.push(target);
+                                            return Value::Object(expanded);
+                                        }
+                                    }
+                                    match value {
+                                        Value::Object(m) => Value::Object(
+                                            m.iter().map(|(k, v)| (k.clone(), standalone(v, root))).collect(),
+                                        ),
+                                        Value::Array(a) => {
+                                            Value::Array(a.iter().map(|v| standalone(v, root)).collect())
+                                        }
+                                        _ => value.clone(),
+                                    }
+                                }
+                                let schema = &edit["inputSchema"];
+                                v["stroke_operations_schema"] = json!({
+                                    "set_stroke_style":standalone(&schema["$defs"]["set_stroke_style"], schema),
+                                    "set_paint":standalone(&schema["$defs"]["set_paint"], schema)
+                                });
+                            }
+                            v["edit_verbs"] = json!(crate::EDIT_VERBS
+                                .iter()
+                                .copied()
+                                .chain(["repeat", "set_stroke_style", "trace_rgba"])
+                                .chain(crate::CONSTRUCTION_VERBS.iter().copied())
+                                .collect::<Vec<_>>());
+                            v["api_by_tool"] = json!({"edit":["1.0","1.1","1.2"],"capabilities":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1","1.2"]});
+                            if let Some(unsupported) = v["unsupported"].as_array_mut() {
+                                unsupported.retain(|v| v != "pathfinder");
+                            }
+                            v["slice4a_verbs"] =
+                                json!(["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]);
+                            if let Some(verbs) = v["edit_verbs"].as_array_mut() {
+                                verbs.extend(
+                                    ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]
+                                        .map(|verb| json!(verb)),
+                                );
+                            }
+                            v["economy_hint"] = json!("API 1.2 tools/list publishes core schemas and a compact extended verb enum. Use list_verbs for grouped names and one-line descriptions; request schema {api:1.2,tool:edit,verb:NAME} for full params before an extended edit. Existing typed calls, defaults, tuples, repeat and IDs receipts are unchanged.");
+                            v["trace"] = json!({"input":"RGBA8 array; alpha below 128 omitted","coordinates":"input pixels, y down","max_pixels":varos_core::trace::MAX_PIXELS,"max_anchors":varos_core::trace::MAX_ANCHORS,"grayscale_levels":8,"request_bytes":crate::MAX_FRAME});
+                            v["api_by_tool"]["import_svg"] = json!(["1.2"]);
+                            v["tools"].as_array_mut().unwrap().push(json!("import_svg"));
+                            v["api_by_tool"] = json!({"schema":["1.2"],"list_verbs":["1.2"],"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1","1.2"],"import_svg":["1.2"]});
                             if let Some(tools) = v["tools"].as_array_mut() {
                                 for name in [
+                                    "schema",
+                                    "list_verbs",
                                     "export_svg",
                                     "export_raster",
                                     "save_template",
@@ -533,6 +641,25 @@ impl Service {
                         }
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                }
+                Request::ImportSvg(v) => {
+                    if v.path.is_none() || v.scope.is_some() {
+                        return Err(Error::new("invalid_argument", "import_svg requires path and no scope"));
+                    }
+                    let from = self.boards[&v.board].rev;
+                    let imported = host.file_effect("import_svg", v)?;
+                    if !imported.ok {
+                        return Ok(imported);
+                    }
+                    self.observe(host);
+                    self.observe_selection(host, &v.board);
+                    let report = imported.result.as_ref().and_then(|r| r.get("report"));
+                    let mut reply =
+                        self.edit_receipt_reserved(&v.board, from, report.map_or(0, |r| r.to_string().len()));
+                    if let (Some(result), Some(report)) = (reply.result.as_mut(), report) {
+                        result["report"] = report.clone();
+                    }
+                    Ok(reply)
                 }
                 Request::SaveTemplate(v) | Request::NewFromTemplate(v) => {
                     if v.api != "1.2" {
@@ -629,6 +756,12 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
+                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a()) {
+                        return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
+                    }
+                    if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::TraceRgba { .. })) {
+                        return Err(Error::new("unsupported", "trace_rgba requires API 1.2"));
+                    }
                     if v.api != "1.2"
                         && ops.iter().any(|op| {
                             matches!(
@@ -648,7 +781,7 @@ impl Service {
                         return Err(Error::new("unsupported", "command wave, clip and release_clip require API 1.2"));
                     }
                     let a = host.access(&v.board)?;
-                    if matches!(v.api.as_str(), "1.1" | "1.2") {
+                    if crate::economy::edit_enabled(&v.api) {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.
@@ -682,9 +815,10 @@ impl Service {
                                 &mut locals,
                                 &mut expanded,
                                 &mut affected,
+                                &|| cancelled.load(Ordering::Acquire),
                             )
                             .map_err(|e| leaves[index].error(e))?;
-                            if matches!(v.api.as_str(), "1.1" | "1.2") {
+                            if crate::economy::edit_enabled(&v.api) {
                                 let label = match ops[index] {
                                     Operation::AddShape { kind, name: None, .. } => Some(match kind {
                                         ShapeKind::Rect => "Rect",
@@ -705,6 +839,8 @@ impl Service {
                             leaves[index.min(leaves.len() - 1)].error(Error::new(
                                 if reason == "active gesture" {
                                     "busy"
+                                } else if reason.contains("limit_exceeded:") {
+                                    "limit_exceeded"
                                 } else if reason.starts_with("internal error:") {
                                     "internal"
                                 } else if reason.starts_with("cancelled") {
@@ -823,6 +959,7 @@ impl Service {
                     reply: reply.clone(),
                     ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
                     export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) if v.api == "1.2"),
+                    stroke_fields: req.api() == "1.2",
                 });
                 while client.receipts.len() > 128 {
                     client.receipts.pop_front();
@@ -961,15 +1098,30 @@ impl Service {
         }
         let fields = v.fields.as_deref().unwrap_or(&[]);
         if let Some(f) = fields.iter().find(|f| {
-            !["metadata", "artboards", "selection", "state", "bounds", "paint", "parent", "name", "geometry"]
-                .contains(&f.as_str())
+            ![
+                "metadata",
+                "artboards",
+                "selection",
+                "state",
+                "bounds",
+                "paint",
+                "parent",
+                "name",
+                "geometry",
+                "stroke_style",
+            ]
+            .contains(&f.as_str())
         }) {
             return Err(Error::new("invalid_argument", format!("unknown describe field {f}")));
         }
+        if v.api != "1.2" && fields.iter().any(|f| f == "stroke_style") {
+            return Err(Error::new("unsupported", "stroke_style requires API 1.2"));
+        }
         // state alone or with object fields retains its API 1.0 object meaning.
         let board_fields = fields.iter().any(|f| ["metadata", "artboards", "selection"].contains(&f.as_str()));
-        let object_fields =
-            fields.iter().any(|f| ["bounds", "paint", "parent", "name", "geometry"].contains(&f.as_str()));
+        let object_fields = fields
+            .iter()
+            .any(|f| ["bounds", "paint", "parent", "name", "geometry", "stroke_style"].contains(&f.as_str()));
         // Preserve the existing dedicated board pages and object-only wire shapes.
         let legacy_board = v.ids.is_none()
             && ((!fields.is_empty() && fields.iter().all(|f| ["metadata", "artboards"].contains(&f.as_str())))
@@ -1199,6 +1351,9 @@ impl Service {
                         }
                     }
                     "paint" => {
+                        if v.api == "1.2" && source["kind"] == "path" {
+                            out["stroke_style"] = source["stroke_style"].clone();
+                        }
                         for key in ["fill", "stroke", "stroke_width", "opacity"] {
                             out[key] = source[key].clone();
                         }
@@ -1375,6 +1530,11 @@ fn projection(doc: &Document) -> (BTreeMap<String, Value>, Value, Vec<String>) {
         o["fill"] = color(&v["fill"]);
         o["stroke"] = color(&v["stroke"]["paint"]);
         o["stroke_width"] = v["stroke"]["width"].clone();
+        if let Some(pid) = id.strip_prefix("path:").and_then(|n| n.parse::<u32>().ok()) {
+            if let Some(p) = doc.paths.iter().find(|p| p.id == pid) {
+                o["stroke_style"] = p.stroke_style.expanded();
+            }
+        }
         // A hash detects geometry edits that keep the same bounds; geometry itself never leaks.
         o["geometry_digest"] = json!(geometry_digest(&details[id]));
         objects.insert(id.into(), o);
@@ -1684,6 +1844,7 @@ fn text_value(v: &Value) -> String {
 
 pub(crate) fn target_error(e: varos_core::bridge::TargetError) -> Error {
     let code = match e.code {
+        TargetErrorCode::LimitExceeded => "limit_exceeded",
         TargetErrorCode::NotFound => "not_found",
         TargetErrorCode::LockedTarget => "locked_target",
         TargetErrorCode::HiddenTarget => "hidden_target",
@@ -1694,6 +1855,23 @@ pub(crate) fn target_error(e: varos_core::bridge::TargetError) -> Error {
     let mut error = Error::new(code, e.reason).at(e.index);
     error.ids = e.ids.iter().map(|id| format!("path:{id}")).collect();
     error
+}
+
+fn strip_stroke_style(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.remove("stroke_style");
+            for v in map.values_mut() {
+                strip_stroke_style(v);
+            }
+        }
+        Value::Array(values) => {
+            for v in values {
+                strip_stroke_style(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]

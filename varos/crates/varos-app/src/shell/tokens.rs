@@ -633,6 +633,18 @@ pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
 pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
 pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
 
+/// Provisional Stroke mirror, sharing the control bar number-field width.
+pub const STROKE_MIRROR_WEIGHT_W: f32 = 64.0;
+pub const STROKE_CHOICE_W: f32 = 110.0;
+pub const STROKE_POPUP_W: f32 = 250.0;
+pub const STROKE_POPUP_H: f32 = 520.0;
+pub const STROKE_POPUP_MARGIN: i8 = 10;
+// Provisional select/transform sheets (4A); append-only, owner review pending.
+pub const SLICE4A_TOOLS_FIELD_W: f32 = 264.0;
+pub const SLICE4A_TOOLS_HOME_W: f32 = 264.0;
+pub const SLICE4A_TOOLS_SHEET_W: f32 = 288.0;
+pub const SLICE4A_TOOLS_MARGIN: i8 = 12;
+pub const SLICE4A_TOOLS_BREADCRUMB_X: f32 = 64.0;
 /// Width of the Windows command submenu; keeps nested Illustrator labels readable.
 pub const GUIDE_HIT_HALF: f32 = 3.0;
 pub const GUIDE_FIELD_INSET: f32 = 24.0;

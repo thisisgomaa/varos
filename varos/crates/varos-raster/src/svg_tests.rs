@@ -105,3 +105,63 @@ fn svg_frozen_artboard_fixtures_match_cpu_with_edge_tolerance() {
         compare(d, name);
     }
 }
+
+#[test]
+fn frozen_stroke_styles_match_svg_on_cpu() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../varos-core/tests/fixtures/v5");
+    let index = std::fs::read_to_string(root.join("INDEX")).unwrap();
+    for name in index.lines().filter(|name| *name != "plain") {
+        let loaded = varos_core::format::decode_model(
+            &std::fs::read(root.join(format!("{name}.json"))).unwrap(),
+            None,
+            &varos_core::format::Limits::DEFAULT,
+        )
+        .unwrap();
+        compare(loaded.doc, name);
+    }
+}
+
+#[test]
+fn styled_native_overlapping_subpaths_paint_once_under_alpha() {
+    let mut p = rect(10, [10.0, 10.0], [80.0, 80.0]);
+    p.fill = Paint::None;
+    p.stroke = Paint::Solid([0.8, 0.2, 0.1, 0.5]);
+    p.stroke_width = 30.0;
+    p.opacity = 0.8;
+    p.stroke_style.cap = varos_core::stroke::StrokeCap::Butt;
+    p.holes.push(rect(20, [50.0, 20.0], [20.0, 40.0]).anchors);
+    compare(board(vec![p]), "native overlapping stroke subpaths");
+}
+
+#[test]
+fn degenerate_styled_caps_use_shared_coverage_instead_of_native_zero_line_rules() {
+    use varos_core::stroke::StrokeCap;
+    for cap in [StrokeCap::Butt, StrokeCap::Round, StrokeCap::Square] {
+        let mut p = rect(10, [50.0, 50.0], [0.0, 0.0]);
+        p.anchors.truncate(2);
+        p.closed = false;
+        p.fill = Paint::None;
+        p.stroke = Paint::Solid([0.8, 0.2, 0.1, 0.5]);
+        p.stroke_width = 10.0;
+        p.stroke_style.cap = cap;
+        p.stroke_style.miter_limit = 11.0;
+        compare(board(vec![p]), &format!("degenerate {cap:?}"));
+    }
+    let mut p = rect(10, [50.0, 50.0], [0.0, 0.0]);
+    p.anchors.truncate(1);
+    p.closed = false;
+    p.fill = Paint::None;
+    p.stroke = Paint::Solid([0.8, 0.2, 0.1, 0.5]);
+    p.stroke_width = 10.0;
+    p.stroke_style.miter_limit = 11.0;
+    compare(board(vec![p]), "single-anchor styled round cap");
+
+    let mut p = rect(10, [50.0, 50.0], [0.0, 0.0]);
+    p.anchors.truncate(1);
+    p.closed = false;
+    p.fill = Paint::None;
+    p.stroke = Paint::Solid([0.8, 0.2, 0.1, 0.5]);
+    p.stroke_width = 10.0;
+    p.stroke_style.cap = StrokeCap::Square;
+    compare(board(vec![p]), "single-anchor square cap");
+}

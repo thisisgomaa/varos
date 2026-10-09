@@ -28,5 +28,27 @@ pub(super) fn rows() -> Vec<Entry> {
         Entry::Sep,
         Entry::Native(Native::BringAllToFront),
     ]);
+    window.push(Entry::Sub {
+        label: "Layers",
+        items: [
+            "Release to Layers (Sequence)",
+            "Release to Layers (Build)",
+            "Collect in New Layer",
+            "Merge Selected Layers",
+            "Flatten Artwork",
+            "Locate Object",
+            "Hide Others",
+            "Lock Others",
+        ]
+        .into_iter()
+        .map(|label| Entry::Item {
+            id: format!("4a.{label}"),
+            label,
+            accel: None,
+            cmd: MenuCmd::Slice4a(label),
+            check: None,
+        })
+        .collect(),
+    });
     window
 }

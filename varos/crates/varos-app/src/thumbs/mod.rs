@@ -297,7 +297,7 @@ fn render_write_inner(root: &Path, req: &Request) -> Result<PathBuf, String> {
             varos_raster::export::encode(asset, &options, &AtomicBool::new(false))?.bytes
         }
     } else {
-        raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]).encode_png()?
+        raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]).into_result()?.encode_png()?
     };
     let path = cache_path(root, &req.key);
     write_atomic(root, &path, &bytes)?;

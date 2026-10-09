@@ -188,3 +188,114 @@ mod environment_tests {
         }
     }
 }
+
+/// Read a bounded existing SVG source under the same files-scope containment policy.
+/// Canonical containment is rechecked and symlinks/hardlinks are refused.
+#[cfg(unix)]
+pub fn read_source(path: &Path, extension: &str, max: usize) -> Result<Vec<u8>, Error> {
+    validate_path(path, extension)?;
+    let home =
+        crate::conn::fsutil::user_home_dir().map_err(|_| Error::new("scope_refused", "user home unavailable"))?;
+    read_source_contained(path, &home, max)
+}
+#[cfg(unix)]
+fn read_source_contained(path: &Path, home: &Path, max: usize) -> Result<Vec<u8>, Error> {
+    use std::{
+        io::Read,
+        os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    };
+    if forbidden_for_home(path, home) || !contained(path, home) {
+        return Err(Error::new("scope_refused", "protected source"));
+    }
+    let canonical = path.canonicalize().map_err(|_| Error::new("io_error", "source unavailable"))?;
+    if canonical != path {
+        return Err(Error::new("scope_refused", "source aliases refused"));
+    }
+    if forbidden_for_home(&canonical, home) || !contained(&canonical, home) {
+        return Err(Error::new("scope_refused", "protected source"));
+    }
+    let root = std::ffi::CString::new("/").map_err(|_| Error::new("io_error", "invalid root"))?;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    // SAFETY: valid C string; successful descriptors become owned Files below.
+    let raw = unsafe { libc::open(root.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    if raw < 0 {
+        return Err(Error::new("io_error", "source root unavailable"));
+    }
+    // SAFETY: raw is a newly opened owned descriptor.
+    let mut dir = unsafe { std::fs::File::from_raw_fd(raw) };
+    let parts: Vec<_> = canonical
+        .components()
+        .filter_map(|c| if let std::path::Component::Normal(s) = c { Some(s) } else { None })
+        .collect();
+    for (i, part) in parts.iter().enumerate() {
+        let name = std::ffi::CString::new(part.as_bytes())
+            .map_err(|_| Error::new("invalid_argument", "invalid source name"))?;
+        let directory = i + 1 != parts.len();
+        // SAFETY: valid directory descriptor and C string; no symlink following at any component.
+        let raw = unsafe {
+            libc::openat(
+                dir.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY
+                    | libc::O_NOFOLLOW
+                    | libc::O_CLOEXEC
+                    | libc::O_NONBLOCK
+                    | if directory { libc::O_DIRECTORY } else { 0 },
+            )
+        };
+        if raw < 0 {
+            return Err(Error::new("scope_refused", "source changed or is a symlink"));
+        }
+        // SAFETY: openat succeeded and transferred a fresh descriptor.
+        dir = unsafe { std::fs::File::from_raw_fd(raw) };
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: writable statfs storage and a valid owned descriptor.
+        if unsafe { libc::fstatfs(dir.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+            return Err(Error::new("io_error", "source volume unavailable"));
+        }
+        // SAFETY: fstatfs succeeded and initialized stat.
+        if unsafe { stat.assume_init() }.f_flags & libc::MNT_LOCAL as u32 == 0 {
+            return Err(Error::new("scope_refused", "network source volume refused"));
+        }
+    }
+    let meta = dir.metadata().map_err(|_| Error::new("io_error", "source metadata unavailable"))?;
+    if !meta.is_file() || meta.nlink() != 1 {
+        return Err(Error::new("scope_refused", "source must be an unaliased regular file"));
+    }
+    let mut bytes = Vec::new();
+    dir.take((max + 1) as u64).read_to_end(&mut bytes).map_err(|_| Error::new("io_error", "source read failed"))?;
+    if bytes.len() > max {
+        return Err(Error::new("limit_exceeded", "SVG source too large"));
+    }
+    Ok(bytes)
+}
+#[cfg(not(unix))]
+pub fn read_source(_path: &Path, _extension: &str, _max: usize) -> Result<Vec<u8>, Error> {
+    Err(Error::new("scope_refused", "secure SVG source reading unavailable on this platform"))
+}
+
+#[cfg(all(test, unix))]
+mod source_tests {
+    use super::*;
+    #[test]
+    fn bounded_sources_refuse_aliases_and_nonregular_files() {
+        let home =
+            std::env::temp_dir().canonicalize().unwrap().join(format!("varos-import-source-{}", std::process::id()));
+        std::fs::create_dir(&home).unwrap();
+        let source = home.join("source.svg");
+        std::fs::write(&source, b"<svg/>").unwrap();
+        assert_eq!(read_source_contained(&source, &home, 100).unwrap(), b"<svg/>");
+        assert_eq!(read_source_contained(&source, &home, 2).unwrap_err().code, "limit_exceeded");
+        let alias = home.join("alias.svg");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        assert_eq!(read_source_contained(&alias, &home, 100).unwrap_err().code, "scope_refused");
+        let hard = home.join("hard.svg");
+        std::fs::hard_link(&source, &hard).unwrap();
+        assert_eq!(read_source_contained(&source, &home, 100).unwrap_err().code, "scope_refused");
+        assert_eq!(read_source_contained(&home, &home, 100).unwrap_err().code, "scope_refused");
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}

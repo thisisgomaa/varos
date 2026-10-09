@@ -438,3 +438,21 @@ PNG/base64 bytes and provider image usage, retries and planning separately; no a
 Implement in savings/effort order: (1) defaults/names/compact plus terse reads/receipts; (2) repeat; (3) optional bars/group/clone.
 Slice 1 reaches 9,910 ops bytes; slice 2 reaches 7,960 and passes the byte gate; slice 3 is not required for that gate.
 All slices require parity/rollback/undo/idempotency/limit gates and same-task visual/editability checks; owner acceptance stays separate.
+
+## Amendment — 1.2 progressive disclosure
+
+Status: proposed — 2026-10-09; moderator acceptance pending.
+
+API 1.2 `tools/list` publishes full core tool schemas (capabilities, describe,
+snapshot, select, edit, history, request_status, list_boards and export tools).
+Core edit operations, creation tuples, defaults and bounded repeat remain inline;
+extended edits appear as a compact verb enum with one-line descriptions. Typed
+execution and every existing tool/verb spelling remain unchanged. Read-only
+`list_verbs {"api":"1.2"}` groups names and descriptions; `schema
+{"api":"1.2","tool":"edit","verb":"stroke_style"}` resolves the full standalone
+params schema (`stroke_style` discovers the existing `set_stroke_style` verb).
+Other tool schemas can be requested by tool name. Discovery requires 1.2 and no
+board, revision or mutation ID. The 24,000-byte cap applies to each supported
+API's list; 1.0/1.1 projections and fixtures remain byte-identical. This implements
+a bounded discovery projection in the direction of proposed ADR-0015, without a
+free-form command dispatcher or accepting that ADR's broader registry proposal.

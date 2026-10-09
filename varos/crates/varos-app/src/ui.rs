@@ -13,7 +13,6 @@ use varos_core::geom::{Pt, Rgba, View};
 use varos_core::EditCommand;
 use winit::event::WindowEvent;
 use winit::window::Window;
-
 // The law palette (warm ramp; tokens.rs) is shared with the split UI modules.
 // Legacy colour aliases retain the established body names.
 use varos_app::shell::tokens::{
@@ -67,6 +66,8 @@ use snap::*;
 use style::*;
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
 mod icon_actions;
+mod isolation;
+pub(crate) mod select_transform;
 use icon_actions::*;
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction {
@@ -519,6 +520,7 @@ impl Ui {
             ed,
             &input,
         );
+        select_transform::prepare(self, ed);
         self.prepare_picker(ed);
         let mut snap = Snap::read(ed);
         snap.board_colors = self.picker_board_colors.read(
@@ -704,6 +706,8 @@ impl Ui {
                 new_column = shell.side_column_span();
             }
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
+            select_transform::draw(ctx, ed, hole);
+            isolation::draw(ctx, ed, hole);
             build_ab_chrome(
                 ctx,
                 view,

@@ -13,6 +13,34 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    SetWandOptions(crate::select_transform::WandOptions),
+    SetEyedropperOptions(crate::select_transform::PickOptions),
+    Transform(crate::select_transform::Transform),
+    TransformBegin,
+    TransformLive(crate::select_transform::Transform),
+    TransformCommit,
+    TransformCancel,
+    MagicWand {
+        source: u32,
+        options: crate::select_transform::WandOptions,
+        mode: crate::select_transform::SelectMode,
+    },
+    Eyedropper {
+        source: u32,
+        options: crate::select_transform::PickOptions,
+        colour_only: bool,
+    },
+    Isolate(Option<u32>),
+    LayerFamily {
+        action: crate::select_transform::LayerAction,
+        nodes: Vec<u32>,
+    },
+    /// Insert a pure trace result as one undoable edit; all IDs are remapped.
+    InsertTracedPaths {
+        paths: Vec<crate::model::Path>,
+    },
+    /// Place normalized artwork as one group with fresh ids and one undo entry.
+    PlaceArtwork(Box<crate::model::Document>),
     ZoomPercent(f32),
     View(crate::editor::view_commands::ViewAction),
     Selection(crate::editor::wave::Selection),
@@ -90,6 +118,10 @@ pub enum EditCommand {
     SetOpacity(f32),
     #[serde(rename = "SetStrokeWidth")]
     SetStrokeWidth(f32),
+    SetStrokeStyle {
+        ids: Vec<u32>,
+        style: crate::stroke::StrokeStyle,
+    },
     #[serde(rename = "SetClipExempt")]
     SetClipExempt(bool),
     #[serde(rename = "ApplyPaint")]
@@ -200,6 +232,31 @@ pub enum EditCommand {
     Distribute(DistAxis),
     #[serde(rename = "Boolean")]
     Boolean(BoolOp),
+    #[serde(rename = "Pathfinder")]
+    Pathfinder(crate::planar::PathfinderOp),
+    #[serde(rename = "ShapeBuilder")]
+    ShapeBuilder {
+        points: Vec<Pt>,
+        delete: bool,
+    },
+    #[serde(rename = "Scissors")]
+    Scissors {
+        path: u32,
+        segment: usize,
+        t: f32,
+    },
+    #[serde(rename = "Knife")]
+    Knife {
+        points: Vec<Pt>,
+    },
+    #[serde(rename = "Eraser")]
+    Eraser {
+        points: Vec<Pt>,
+        radius: f32,
+    },
+    #[serde(rename = "DivideObjectsBelow")]
+    DivideObjectsBelow,
+
     #[serde(rename = "Arrange")]
     Arrange(ZOrder),
     #[serde(rename = "TransformAgain")]
@@ -318,6 +375,43 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::SetWandOptions(options) => {
+                ed.select_transform.wand = options;
+                ed.select_transform.options_requested = true;
+            }
+            Self::SetEyedropperOptions(options) => {
+                ed.select_transform.pick = options;
+                ed.select_transform.options_requested = true;
+            }
+            Self::Transform(s) => ed.transform_edit(s),
+            Self::TransformBegin => ed.transform_begin(),
+            Self::TransformLive(s) => ed.transform_live(s),
+            Self::TransformCommit => ed.transform_end(false),
+            Self::TransformCancel => ed.transform_end(true),
+            Self::MagicWand { source, options, mode } => ed.magic_wand(source, options, mode),
+            Self::Eyedropper { source, options, colour_only } => ed.sample_options(source, options, colour_only),
+            Self::Isolate(n) => ed.isolate(n),
+            Self::LayerFamily { action, nodes } => ed.layer_family(action, nodes),
+            Self::InsertTracedPaths { paths } => {
+                if paths.is_empty() {
+                    return;
+                }
+                if crate::trace::check_insert(ed, &paths).is_err() {
+                    return;
+                }
+                ed.begin();
+                for mut path in paths {
+                    path.id = ed.doc.nid();
+                    for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
+                        a.id = ed.doc.nid();
+                    }
+                    ed.doc.paths.push(path);
+                }
+                ed.doc.sync_tree();
+                ed.dirty = true;
+                ed.commit();
+            }
+            Self::PlaceArtwork(doc) => crate::placement::place(ed, *doc),
             Self::ZoomPercent(value) => ed.requested_zoom = Some(value),
             Self::View(action) => ed.view_command(action),
             Self::Selection(action) => ed.selection_command(action),
@@ -338,13 +432,13 @@ impl EditCommand {
                 let _ = ed.add_shape(kind, bounds, parent, fill, stroke, stroke_width, opacity, name);
             }
             Self::SelectPaths(paths) => {
-                ed.escape();
+                ed.escape_selection();
                 ed.tool = crate::editor::ToolKind::Object;
-                ed.objsel.extend(paths);
+                ed.objsel.extend(paths.into_iter().filter(|p| ed.in_isolation(*p)).collect::<Vec<_>>());
                 ed.refresh_obj_angle();
             }
             Self::SelectAnchors(anchors) => {
-                ed.escape();
+                ed.escape_selection();
                 ed.tool = crate::editor::ToolKind::Direct;
                 ed.selected.extend(anchors);
             }
@@ -354,6 +448,23 @@ impl EditCommand {
             Self::SetObjectRotation(degrees) => ed.set_obj_rotation(degrees),
             Self::SetOpacity(opacity) => ed.set_opacity(opacity),
             Self::SetStrokeWidth(width) => set_stroke_width(ed, width),
+            Self::SetStrokeStyle { ids, style } => {
+                let command = Self::SetStrokeStyle { ids: ids.clone(), style: style.clone() };
+                if crate::bridge::check(&command, ed).is_err() {
+                    return;
+                }
+                if !ed.doc.paths.iter().any(|p| ids.contains(&p.id) && p.stroke_style != style) {
+                    return;
+                }
+                ed.begin();
+                for p in &mut ed.doc.paths {
+                    if ids.contains(&p.id) {
+                        p.stroke_style = style.clone();
+                    }
+                }
+                ed.dirty = true;
+                ed.commit();
+            }
             Self::SetClipExempt(exempt) => ed.set_clip_exempt(exempt),
             Self::ApplyPaint { target, color } => {
                 ed.set_paint_target(target);
@@ -393,6 +504,12 @@ impl EditCommand {
             Self::Align { mode, target } => ed.align(mode, target),
             Self::Distribute(axis) => ed.distribute(axis),
             Self::Boolean(operation) => ed.pathfinder(operation),
+            Self::Pathfinder(operation) => ed.planar_pathfinder(operation),
+            Self::ShapeBuilder { points, delete } => ed.shape_builder(&points, delete),
+            Self::Scissors { path, segment, t } => ed.scissors(path, segment, t),
+            Self::Knife { points } => ed.cut_fills(&points, None),
+            Self::Eraser { points, radius } => ed.cut_fills(&points, Some(radius)),
+            Self::DivideObjectsBelow => ed.divide_objects_below(),
             Self::Arrange(order) => ed.arrange(order),
             Self::TransformAgain => ed.transform_again(),
             Self::DeleteSelected => ed.delete_selected(),

@@ -111,12 +111,8 @@ mod tests {
     #[test]
     fn winding_preserves_glyph_counter() {
         let fonts = FontSet::new(
-            vec![FontFace::new(
-                "Inter",
-                400,
-                include_bytes!("../../varos-app/assets/fonts/Inter-Regular.ttf").as_slice().into(),
-            )
-            .unwrap()],
+            vec![FontFace::new("Inter", 400, include_bytes!("../assets/fonts/Inter-Regular.ttf").as_slice().into())
+                .unwrap()],
             FallbackPolicy::default(),
         )
         .unwrap();

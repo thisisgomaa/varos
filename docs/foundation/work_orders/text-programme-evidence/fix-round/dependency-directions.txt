@@ -1,0 +1,4 @@
+check_dep_directions: PASS
+internal edges: Bridge -> core, raster; raster -> core (+ pdf tests); CLI -> Bridge, core, pdf, raster; app -> core, renderer, pdf, raster, Bridge
+varos-text: pure leaf; app -> text allowed; core -> text forbidden until T4; isolated features clean
+egui_tiles code use: varos-app/src/shell/boxtree.rs only

@@ -27,7 +27,7 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
     let envelope: Envelope = serde_json::from_slice(bytes)
         .map_err(|e| BatchError { index: 0, reason: format!("expected Bridge batch envelope: {e}") })?;
     let version = envelope.api.split('.').collect::<Vec<_>>();
-    if version.len() != 2 || version[0] != "0" || version[1].parse::<u32>().is_err() {
+    if envelope.api != "1.2" && (version.len() != 2 || version[0] != "0" || version[1].parse::<u32>().is_err()) {
         return Err(BatchError {
             index: 0,
             reason: format!("unsupported Bridge API {}; expected major 0 (0.1)", envelope.api),
@@ -37,7 +37,29 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
     values
         .into_iter()
         .enumerate()
-        .map(|(index, v)| serde_json::from_value(v).map_err(|e| BatchError { index, reason: e.to_string() }))
+        .map(|(index, v)| {
+            let command: EditCommand =
+                serde_json::from_value(v).map_err(|e| BatchError { index, reason: e.to_string() })?;
+            if envelope.api != "1.2"
+                && matches!(
+                    command,
+                    EditCommand::SetWandOptions(_)
+                        | EditCommand::SetEyedropperOptions(_)
+                        | EditCommand::Transform(_)
+                        | EditCommand::TransformBegin
+                        | EditCommand::TransformLive(_)
+                        | EditCommand::TransformCommit
+                        | EditCommand::TransformCancel
+                        | EditCommand::MagicWand { .. }
+                        | EditCommand::Eyedropper { .. }
+                        | EditCommand::Isolate(_)
+                        | EditCommand::LayerFamily { .. }
+                )
+            {
+                return Err(BatchError { index, reason: "slice 4A commands require API 1.2".into() });
+            }
+            Ok(command)
+        })
         .collect()
 }
 
@@ -46,16 +68,25 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
     if matches!(
         command,
-        View(crate::editor::view_commands::ViewAction::ConvertArtboards)
+        InsertTracedPaths { .. }
+            | View(crate::editor::view_commands::ViewAction::ConvertArtboards)
             | InsertAnchor { .. }
             | AddPath { .. }
             | AddShape { .. }
             | GroupSelection
             | ClipMake
             | Boolean(_)
+            | Pathfinder(_)
+            | ShapeBuilder { .. }
+            | Scissors { .. }
+            | Knife { .. }
+            | Eraser { .. }
+            | DivideObjectsBelow
             | Paste { .. }
             | DuplicateMoveLayer { .. }
             | DuplicateArtboard(_)
+            | Transform(crate::select_transform::Transform { copy: true, .. })
+            | LayerFamily { .. }
             | Object(
                 crate::editor::wave::ObjectAction::NewLayer
                     | crate::editor::wave::ObjectAction::NewSublayer
@@ -88,7 +119,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     let path = |id: u32| {
-        if ed.doc.pidx(id).is_none() {
+        if !ed.in_isolation(id) {
+            Err(format!("path {id} is outside isolation"))
+        } else if ed.doc.pidx(id).is_none() {
             Err(format!("unknown path id {id}"))
         } else if ed.doc.eff_hidden(id) || ed.doc.eff_locked(id) {
             Err(format!("path {id} is hidden or locked"))
@@ -116,6 +149,120 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        SetStrokeStyle { ids, style } => {
+            if ids.is_empty() {
+                return Err("stroke style targets must not be empty".into());
+            }
+            let mut stroke_budget = crate::stroke::evaluate::StrokeBudget::default();
+            for id in ids {
+                path(*id)?;
+                style.validate(*id).map_err(|e| e.to_string())?;
+                if let Some(index) = ed.doc.pidx(*id) {
+                    let mut proposed = ed.doc.paths[index].clone();
+                    proposed.stroke_style = style.clone();
+                    let coverage = crate::stroke::evaluate(&proposed, 0.01, &|| false).map_err(|e| e.to_string())?;
+                    stroke_budget.charge(&coverage).map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(())
+        }
+        SetEyedropperOptions(_) => Ok(()),
+        SetWandOptions(options) => {
+            for v in [options.colour, options.weight, options.opacity] {
+                finite(v)?;
+                if v < 0. {
+                    return Err("tolerance must be nonnegative".into());
+                }
+            }
+            Ok(())
+        }
+        Pathfinder(_) => {
+            selection()?;
+            ed.pathfinder_enabled().map_err(str::to_owned)
+        }
+        ShapeBuilder { points, .. } | Knife { points } | Eraser { points, .. } => {
+            selection()?;
+            if points.is_empty() || points.len() > 1000 {
+                return Err("gesture needs 1..1000 points".into());
+            }
+            for p in points {
+                for v in p {
+                    finite(*v)?;
+                    finite(*v + *v)?;
+                }
+            }
+            if let Eraser { radius, .. } = command {
+                dimension(*radius)?;
+            }
+            Ok(())
+        }
+        Scissors { path: pid, segment, t } => {
+            path(*pid)?;
+            finite(*t)?;
+            let p = ed.doc.pidx(*pid).map(|i| &ed.doc.paths[i]).ok_or("unknown path")?;
+            if !p.holes.is_empty() || ed.doc.is_mask_source(*pid) {
+                return Err("scissors does not support compound contours or mask sources".into());
+            }
+            let count = if p.closed { p.anchors.len() } else { p.anchors.len().saturating_sub(1) };
+            if *segment >= count || !(0.0..=1.0).contains(t) {
+                Err("invalid scissors segment or parameter".into())
+            } else {
+                Ok(())
+            }
+        }
+        DivideObjectsBelow => selection(),
+        Transform(s) | TransformLive(s) => {
+            s.check()?;
+            selection()
+        }
+        TransformBegin => selection(),
+        TransformCommit | TransformCancel => Ok(()),
+        Isolate(n) => {
+            if let Some(n) = n {
+                node(*n)?;
+                if ed.doc.node(*n).is_none_or(|n| n.kind != NodeKind::Group) {
+                    return Err("isolation requires a group".into());
+                }
+            }
+            Ok(())
+        }
+        LayerFamily { action, nodes } => {
+            use crate::select_transform::LayerAction as A;
+            if matches!(action, A::ReleaseBuild) {
+                ed.check_release_build(nodes, format::Limits::DEFAULT)?;
+            }
+            for n in nodes {
+                node(*n)?;
+                let Some(row) = ed.doc.node(*n) else { return Err("unknown node".into()) };
+                if matches!(action, A::ReleaseSequence | A::ReleaseBuild | A::Merge) && row.kind != NodeKind::Layer {
+                    return Err("operation requires layers".into());
+                }
+                if !matches!(action, A::Locate) && (row.hidden || row.locked) {
+                    return Err("layer target is hidden or locked".into());
+                }
+                let mut parent = row.parent;
+                while let Some(p) = parent {
+                    if nodes.contains(&p) {
+                        return Err("targets must not overlap ancestors".into());
+                    }
+                    parent = ed.doc.node(p).and_then(|n| n.parent);
+                }
+            }
+            Ok(())
+        }
+        MagicWand { source, options, .. } => {
+            path(*source)?;
+            for v in [options.colour, options.weight, options.opacity] {
+                finite(v)?;
+                if v < 0. {
+                    return Err("tolerance must be nonnegative".into());
+                }
+            }
+            Ok(())
+        }
+        Eyedropper { source, .. } => path(*source),
+        InsertTracedPaths { paths } => crate::trace::check_insert(ed, paths),
+        PlaceArtwork(doc) => crate::placement::check(ed, doc),
         ZoomPercent(v) => {
             finite(*v)?;
             if !(5.0..=4000.0).contains(v) {
@@ -737,6 +884,10 @@ pub(crate) fn check_document(ed: &Editor) -> Result<(), String> {
 /// Deliberately separate from wire DTOs and the interactive command enum.
 #[derive(Clone, Debug)]
 pub enum TargetEdit {
+    StrokeStyle {
+        paths: Vec<u32>,
+        style: crate::stroke::StrokeStyle,
+    },
     Move {
         paths: Vec<u32>,
         delta: [f32; 2],
@@ -751,6 +902,7 @@ pub enum TargetEdit {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TargetErrorCode {
+    LimitExceeded,
     NotFound,
     LockedTarget,
     HiddenTarget,
@@ -822,9 +974,11 @@ impl Editor {
                 replay.apply_targeted_op(op, index)?;
                 if let Err(reason) = validate_targeted_stage(&replay) {
                     let ids = match op {
-                        TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths.clone(),
+                        TargetEdit::Move { paths, .. }
+                        | TargetEdit::Paint { paths, .. }
+                        | TargetEdit::StrokeStyle { paths, .. } => paths.clone(),
                     };
-                    return Err(TargetError { code: TargetErrorCode::InvalidArgument, index, ids, reason });
+                    return Err(TargetError { code: target_reason_code(&reason), index, ids, reason });
                 }
                 replay.clear_batch_history();
             }
@@ -843,7 +997,9 @@ impl Editor {
     }
     pub fn apply_targeted_op(&mut self, op: &TargetEdit, index: usize) -> Result<(), TargetError> {
         let paths = match op {
-            TargetEdit::Move { paths, .. } | TargetEdit::Paint { paths, .. } => paths,
+            TargetEdit::Move { paths, .. }
+            | TargetEdit::Paint { paths, .. }
+            | TargetEdit::StrokeStyle { paths, .. } => paths,
         };
         let fail = |code, reason: String| TargetError { code, index, ids: paths.clone(), reason };
         if paths.is_empty() {
@@ -863,6 +1019,9 @@ impl Editor {
         let result = (|| -> Result<(), String> {
             self.try_execute(EditCommand::SelectPaths(paths.clone()))?;
             match op {
+                TargetEdit::StrokeStyle { style, .. } => {
+                    self.try_execute(EditCommand::SetStrokeStyle { ids: paths.clone(), style: style.clone() })?;
+                }
                 TargetEdit::Move { delta, .. } => {
                     if !delta.iter().all(|v| v.is_finite()) {
                         return Err("delta must be finite".into());
@@ -895,8 +1054,16 @@ impl Editor {
             }
             Ok(())
         })();
-        result.map_err(|reason| fail(TargetErrorCode::InvalidArgument, reason))?;
+        result.map_err(|reason| fail(target_reason_code(&reason), reason))?;
         Ok(())
+    }
+}
+
+fn target_reason_code(reason: &str) -> TargetErrorCode {
+    if reason.contains("limit_exceeded:") {
+        TargetErrorCode::LimitExceeded
+    } else {
+        TargetErrorCode::InvalidArgument
     }
 }
 

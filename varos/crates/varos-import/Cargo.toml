@@ -1,0 +1,11 @@
+[package]
+name = "varos-import"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+varos-core = { path = "../varos-core" }
+usvg = { version = "0.45.1", default-features = false }
+roxmltree = "0.20"
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }

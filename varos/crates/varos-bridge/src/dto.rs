@@ -11,6 +11,8 @@ fn page() -> usize {
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Capabilities(Capabilities),
+    Schema(Schema),
+    ListVerbs(Capabilities),
     WindowMemory(Capabilities),
     ListBoards(ListBoards),
     Describe(Describe),
@@ -22,6 +24,8 @@ pub enum Request {
     Save(FileEffect),
     SaveAs(FileEffect),
     ExportPdf(FileEffect),
+    /// API 1.2 only; import source under the files scope, placed into board.
+    ImportSvg(FileEffect),
     ExportSvg(FileEffect),
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
@@ -29,6 +33,14 @@ pub enum Request {
     Print(FileEffect),
     Copy(FileEffect),
     Cut(FileEffect),
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Schema {
+    pub api: String,
+    pub tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verb: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -186,6 +198,20 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    Pathfinder {
+        ids: Vec<String>,
+        operation: String,
+    },
+    ShapeBuilder {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+        delete: bool,
+    },
+    Scissors {
+        ids: Vec<String>,
+        segment: usize,
+        t: f32,
+    },
     View {
         ids: Vec<String>,
         action: varos_core::editor::view_commands::ViewAction,
@@ -199,6 +225,54 @@ pub enum Operation {
         ids: Vec<String>,
         segment: usize,
         t: f32,
+    },
+    Knife {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+    },
+    Eraser {
+        ids: Vec<String>,
+        points: Vec<[f32; 2]>,
+        radius: f32,
+    },
+    DivideObjectsBelow {
+        ids: Vec<String>,
+    },
+    ToolOptions {
+        #[serde(default)]
+        wand: Option<varos_core::select_transform::WandOptions>,
+        #[serde(default)]
+        eyedropper: Option<varos_core::select_transform::PickOptions>,
+    },
+    Transform {
+        ids: Vec<String>,
+        spec: varos_core::select_transform::Transform,
+    },
+    MagicWand {
+        ids: Vec<String>,
+        options: varos_core::select_transform::WandOptions,
+        mode: varos_core::select_transform::SelectMode,
+    },
+    Eyedropper {
+        ids: Vec<String>,
+        source: String,
+        options: varos_core::select_transform::PickOptions,
+        colour_only: bool,
+    },
+    Isolation {
+        ids: Vec<String>,
+        exit: bool,
+    },
+    Layers {
+        ids: Vec<String>,
+        action: varos_core::select_transform::LayerAction,
+    },
+    TraceRgba {
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+        #[serde(default)]
+        options: varos_core::trace::TraceOptions,
     },
     DeleteAnchor {
         ids: Vec<String>,
@@ -312,8 +386,14 @@ pub enum Operation {
         ids: Vec<String>,
         delta: [f32; 2],
     },
+    SetStrokeStyle {
+        ids: Vec<String>,
+        stroke_style: varos_core::stroke::StrokeStyle,
+    },
     SetPaint {
         ids: Vec<String>,
+        #[serde(default, deserialize_with = "optional_stroke_style", skip_serializing_if = "Option::is_none")]
+        stroke_style: Option<varos_core::stroke::StrokeStyle>,
         #[serde(default, skip_serializing_if = "Paint::unchanged")]
         fill: Paint,
         #[serde(default, skip_serializing_if = "Paint::unchanged")]
@@ -432,9 +512,23 @@ pub enum Order {
     Back,
 }
 impl Operation {
+    pub fn slice4a(&self) -> bool {
+        matches!(
+            self,
+            Self::ToolOptions { .. }
+                | Self::Transform { .. }
+                | Self::MagicWand { .. }
+                | Self::Eyedropper { .. }
+                | Self::Isolation { .. }
+                | Self::Layers { .. }
+        )
+    }
+
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::DocumentSetup { .. }
+            Self::ToolOptions { .. }
+            | Self::TraceRgba { .. }
+            | Self::DocumentSetup { .. }
             | Self::AddShape { .. }
             | Self::AddPath { .. }
             | Self::AddArtboard { .. }
@@ -446,7 +540,18 @@ impl Operation {
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
-            Self::View { ids, .. }
+            Self::Pathfinder { ids, .. }
+            | Self::ShapeBuilder { ids, .. }
+            | Self::Scissors { ids, .. }
+            | Self::Knife { ids, .. }
+            | Self::Eraser { ids, .. }
+            | Self::DivideObjectsBelow { ids }
+            | Self::Transform { ids, .. }
+            | Self::MagicWand { ids, .. }
+            | Self::Eyedropper { ids, .. }
+            | Self::Isolation { ids, .. }
+            | Self::Layers { ids, .. }
+            | Self::View { ids, .. }
             | Self::AnchorType { ids, .. }
             | Self::InsertAnchor { ids, .. }
             | Self::DeleteAnchor { ids, .. }
@@ -455,6 +560,7 @@ impl Operation {
             | Self::DistributeSpacing { ids, .. }
             | Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
+            | Self::SetStrokeStyle { ids, .. }
             | Self::Resize { ids, .. }
             | Self::Rotate { ids, .. }
             | Self::Rename { ids, .. }
@@ -506,13 +612,19 @@ impl Operation {
         matches!(
             self,
             Self::Delete { .. }
+                | Self::Ungroup { .. }
+                | Self::DeleteArtboard { .. }
+                | Self::Pathfinder { .. }
+                | Self::ShapeBuilder { .. }
+                | Self::Scissors { .. }
+                | Self::Knife { .. }
+                | Self::Eraser { .. }
+                | Self::DivideObjectsBelow { .. }
                 | Self::View {
                     action: varos_core::editor::view_commands::ViewAction::ClearGuides
                         | varos_core::editor::view_commands::ViewAction::ConvertArtboards,
                     ..
                 }
-                | Self::Ungroup { .. }
-                | Self::DeleteArtboard { .. }
                 | Self::Object {
                     action: varos_core::editor::wave::ObjectAction::Join
                         | varos_core::editor::wave::ObjectAction::CleanUp
@@ -687,6 +799,8 @@ impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
         match self {
+            Self::Schema(_) => "schema",
+            Self::ListVerbs(_) => "list_verbs",
             Self::Capabilities(_) => "capabilities",
             Self::WindowMemory(_) => "window_memory",
             Self::ListBoards(_) => "list_boards",
@@ -699,6 +813,7 @@ impl Request {
             Self::Save(_) => "save",
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
+            Self::ImportSvg(_) => "import_svg",
             Self::ExportSvg(_) => "export_svg",
             Self::ExportRaster(_) => "export_raster",
             Self::SaveTemplate(_) => "save_template",
@@ -710,7 +825,8 @@ impl Request {
     }
     pub fn api(&self) -> &str {
         match self {
-            Self::Capabilities(v) | Self::WindowMemory(v) => &v.api,
+            Self::Capabilities(v) | Self::WindowMemory(v) | Self::ListVerbs(v) => &v.api,
+            Self::Schema(v) => &v.api,
             Self::ListBoards(v) => &v.api,
             Self::Describe(v) => &v.api,
             Self::Select(v) => &v.api,
@@ -727,6 +843,7 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportSvg(v)
             | Self::Cut(v) => &v.api,
         }
     }
@@ -743,6 +860,7 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportSvg(v)
             | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
@@ -764,6 +882,7 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportSvg(v)
             | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,
         }
@@ -845,6 +964,12 @@ impl Reply {
     pub fn failure(error: Error) -> Self {
         Self { ok: false, result: None, request_id: None, board: None, rev: None, undo_steps: 0, error: Some(error) }
     }
+}
+
+fn optional_stroke_style<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<varos_core::stroke::StrokeStyle>, D::Error> {
+    varos_core::stroke::StrokeStyle::deserialize(d).map(Some)
 }
 
 #[cfg(test)]

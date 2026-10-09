@@ -1,4 +1,4 @@
-//! The ONLY place that touches the external boolean-geometry crates.
+//! Curve-preserving boolean adapter; `planar` separately uses i_overlay for face construction.
 //! Primary: `flo_curves` — boolean ops DIRECTLY on cubic-bezier paths (curves & handles survive).
 //! Fallback: `i_overlay` — robust polygon boolean (also guards the primary result area).
 //!

@@ -124,32 +124,7 @@ pub(crate) fn panel_properties(
             // Fill / Stroke swatches + stroke weight
             paint_row(ui, PaintTarget::Fill, s.fill, s.fill_mixed, ops);
             paint_row(ui, PaintTarget::Stroke, s.stroke, s.stroke_mixed, ops);
-            ui.horizontal(|ui| {
-                let id = doc_id(ui, "stroke-weight-presets");
-                let weights = [0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0];
-                let entries = ["0.25 pt", "0.5 pt", "1 pt", "2 pt", "3 pt", "4 pt", "6 pt", "8 pt", "12 pt"]
-                    .map(kit::MenuEntry::Item);
-                if let Some(index) = kit::menu(ui.ctx(), id, &entries) {
-                    ops.push(Op::SetStrokeW(weights[index]));
-                }
-                fields::num(
-                    ui,
-                    inner - ICON_BTN_W - PANEL_ITEM_GAP_X,
-                    Lab::Icon(ic.strokew.as_ref()),
-                    "Stroke weight",
-                    s.sw,
-                    1,
-                    0.2,
-                    0.0..=400.0,
-                    ops,
-                    Op::SetStrokeW,
-                );
-                let r = IA_STROKE_PRESETS.show_response(ui, kit::IconState::Action);
-                if r.activated {
-                    kit::toggle_menu_below(ui.ctx(), id, r.response.rect);
-                    let _ = kit::menu(ui.ctx(), id, &entries);
-                }
-            });
+            stroke_section(ui, s, ic, inner, ops);
 
             hsep(ui, inner);
             ui.label(micro_label("SHAPE"));

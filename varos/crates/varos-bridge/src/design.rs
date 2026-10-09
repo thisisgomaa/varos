@@ -13,9 +13,16 @@ use varos_core::{
 };
 fn fail(reason: impl Into<String>) -> Error {
     let reason = reason.into();
-    Error::new(if reason.starts_with("internal error:") { "internal" } else { "invalid_argument" }, reason)
+    let code = if reason.contains("limit_exceeded:") {
+        "limit_exceeded"
+    } else if reason.starts_with("internal error:") {
+        "internal"
+    } else {
+        "invalid_argument"
+    };
+    Error::new(code, reason)
 }
-fn canonical(id: &str) -> Result<(&str, u32), Error> {
+pub(crate) fn canonical(id: &str) -> Result<(&str, u32), Error> {
     let (kind, value) = id.split_once(':').ok_or_else(|| fail("use path:N or node:N"))?;
     let n = value.parse::<u32>().map_err(|_| fail("id suffix must be u32"))?;
     if n == 0 || format!("{kind}:{n}") != id || !["path", "node"].contains(&kind) {
@@ -192,7 +199,63 @@ pub(crate) fn apply_design_op(
     locals: &mut BTreeMap<String, String>,
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<u32>, Error> {
+    if op.slice4a() {
+        let mut resolved = op.clone();
+        let ids = match &mut resolved {
+            Operation::Transform { ids, .. }
+            | Operation::MagicWand { ids, .. }
+            | Operation::Eyedropper { ids, .. }
+            | Operation::Isolation { ids, .. }
+            | Operation::Layers { ids, .. } => Some(ids),
+            _ => None,
+        };
+        if let Some(ids) = ids {
+            for id in ids {
+                if id.starts_with('$') {
+                    *id = locals
+                        .get(id)
+                        .cloned()
+                        .ok_or_else(|| Error::new("not_found", "unknown request-local target"))?;
+                }
+            }
+        }
+        if let Operation::Eyedropper { source, .. } = &mut resolved {
+            if source.starts_with('$') {
+                *source = locals
+                    .get(source)
+                    .cloned()
+                    .ok_or_else(|| Error::new("not_found", "unknown request-local source"))?;
+            }
+        }
+        let count = resolved
+            .ids()
+            .iter()
+            .map(|id| {
+                let (kind, n) = canonical(id)?;
+                Ok(if kind == "path" { 1 } else { ed.doc.node_paths(n).len() })
+            })
+            .collect::<Result<Vec<usize>, Error>>()?
+            .into_iter()
+            .sum::<usize>();
+        *expanded += count;
+        if *expanded > MAX_TARGETS {
+            return Err(Error::new("limit_exceeded", "batch expanded targets exceed 1000"));
+        }
+        return crate::select_transform::apply(ed, &resolved, affected);
+    }
+    if let Operation::TraceRgba { rgba, width, height, options } = op {
+        let (paths, _) = varos_core::trace::trace(rgba, *width, *height, options).map_err(fail)?;
+        let before: BTreeSet<_> = ed.doc.paths.iter().map(|p| p.id).collect();
+        ed.try_execute(EditCommand::InsertTracedPaths { paths }).map_err(fail)?;
+        for p in &ed.doc.paths {
+            if !before.contains(&p.id) {
+                affected.insert(format!("path:{}", p.id));
+            }
+        }
+        return Ok(None);
+    }
     #[cfg(test)]
     if matches!(op, Operation::Rename { name, .. } if name == "__forced_adapter_panic__") {
         ed.doc.name = "corrupted staged document".into();
@@ -262,6 +325,14 @@ pub(crate) fn apply_design_op(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let new_style = match op {
+        Operation::SetStrokeStyle { stroke_style, .. } => Some(stroke_style),
+        Operation::SetPaint { stroke_style, .. } => stroke_style.as_ref(),
+        _ => None,
+    };
+    if new_style.is_some() && ids.iter().any(|id| !id.starts_with("path:")) {
+        return Err(Error::new("unsupported", "stroke style targets must be explicit editable paths"));
+    }
     let paths = if matches!(op, Operation::AddShape { .. } | Operation::AddPath { .. }) {
         vec![]
     } else if matches!(op, Operation::View { action, .. } if !matches!(action,
@@ -302,6 +373,30 @@ pub(crate) fn apply_design_op(
     } else {
         resolve(&ed.doc, &ids, false)?
     };
+    if let Some(style) = new_style {
+        let mut budget = varos_core::stroke::evaluate::StrokeBudget::default();
+        for pid in &paths {
+            let Some(index) = ed.doc.pidx(*pid) else {
+                continue;
+            };
+            let mut proposed = ed.doc.paths[index].clone();
+            proposed.stroke_style = style.clone();
+            if let Operation::SetPaint { stroke_width: Some(width), .. } = op {
+                proposed.stroke_width = *width;
+            }
+            let coverage = varos_core::stroke::evaluate(&proposed, 0.01, cancelled).map_err(|e| {
+                Error::new(
+                    match e {
+                        varos_core::stroke::StrokeError::Cancelled => "cancelled",
+                        varos_core::stroke::StrokeError::LimitExceeded => "limit_exceeded",
+                        _ => "invalid_argument",
+                    },
+                    e.to_string(),
+                )
+            })?;
+            budget.charge(&coverage).map_err(|e| Error::new("limit_exceeded", e.to_string()))?;
+        }
+    }
     *expanded += paths.len();
     if *expanded > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "batch expanded targets exceed 1000"));
@@ -341,6 +436,7 @@ pub(crate) fn apply_design_op(
         return Ok(None);
     }
     match op {
+        Operation::TraceRgba { .. } => return Err(fail("trace dispatch failed")),
         Operation::AddShape { parent, local, name, fill, stroke, stroke_width, opacity, .. }
         | Operation::AddPath { parent, local, name, fill, stroke, stroke_width, opacity, .. } => {
             if let Some(local) = local {
@@ -453,18 +549,35 @@ pub(crate) fn apply_design_op(
         Operation::Move { delta, .. } => {
             ed.apply_targeted_op(&TargetEdit::Move { paths, delta: *delta }, 0).map_err(super::service::target_error)?
         }
-        Operation::SetPaint { fill, stroke, stroke_width, opacity, .. } => ed
-            .apply_targeted_op(
-                &TargetEdit::Paint {
-                    paths,
-                    fill: paint(fill)?,
-                    stroke: paint(stroke)?,
-                    stroke_width: *stroke_width,
-                    opacity: *opacity,
-                },
-                0,
-            )
-            .map_err(super::service::target_error)?,
+        Operation::SetStrokeStyle { stroke_style, .. } => {
+            ed.try_execute(EditCommand::SetStrokeStyle { ids: paths, style: stroke_style.clone() }).map_err(fail)?;
+        }
+        Operation::SetPaint { fill, stroke, stroke_width, opacity, stroke_style, .. } => {
+            if fill != &crate::dto::Paint::Unchanged
+                || stroke != &crate::dto::Paint::Unchanged
+                || stroke_width.is_some()
+                || opacity.is_some()
+            {
+                ed.apply_targeted_op(
+                    &TargetEdit::Paint {
+                        paths,
+                        fill: paint(fill)?,
+                        stroke: paint(stroke)?,
+                        stroke_width: *stroke_width,
+                        opacity: *opacity,
+                    },
+                    0,
+                )
+                .map_err(super::service::target_error)?;
+            }
+            if let Some(style) = stroke_style {
+                ed.try_execute(EditCommand::SetStrokeStyle {
+                    ids: ids.iter().map(|id| canonical(id).map(|(_, n)| n)).collect::<Result<Vec<_>, _>>()?,
+                    style: style.clone(),
+                })
+                .map_err(fail)?;
+            }
+        }
         Operation::Rename { name, .. } => {
             let name = clean_name(name)?;
             for id in ids {
@@ -527,6 +640,24 @@ pub(crate) fn apply_design_op(
             };
             ed.try_execute(EditCommand::SelectPaths(paths.clone())).map_err(fail)?;
             match op {
+                Operation::Pathfinder { operation, .. } => {
+                    let command = construction_command(operation)?;
+                    execute(ed, command)?;
+                }
+                Operation::ShapeBuilder { points, delete, .. } => {
+                    execute(ed, EditCommand::ShapeBuilder { points: points.clone(), delete: *delete })?
+                }
+                Operation::Scissors { segment, t, .. } => {
+                    if paths.len() != 1 {
+                        return Err(fail("scissors requires one path"));
+                    }
+                    execute(ed, EditCommand::Scissors { path: paths[0], segment: *segment, t: *t })?;
+                }
+                Operation::Knife { points, .. } => execute(ed, EditCommand::Knife { points: points.clone() })?,
+                Operation::Eraser { points, radius, .. } => {
+                    execute(ed, EditCommand::Eraser { points: points.clone(), radius: *radius })?
+                }
+                Operation::DivideObjectsBelow { .. } => execute(ed, EditCommand::DivideObjectsBelow)?,
                 Operation::InsertAnchor { segment, t, .. } => {
                     if paths.len() != 1 {
                         return Err(fail("insert_anchor needs one path"));
@@ -793,6 +924,23 @@ fn rounded_rect([x, y, w, h]: [f32; 4], r: f32) -> Result<Vec<varos_core::model:
     Ok(anchors)
 }
 
+fn construction_command(operation: &str) -> Result<EditCommand, Error> {
+    use varos_core::{boolean::BoolOp, planar::PathfinderOp};
+    Ok(match operation {
+        "unite" => EditCommand::Boolean(BoolOp::Unite),
+        "minus_front" => EditCommand::Boolean(BoolOp::MinusFront),
+        "intersect" => EditCommand::Boolean(BoolOp::Intersect),
+        "exclude" => EditCommand::Boolean(BoolOp::Exclude),
+        "divide" => EditCommand::Pathfinder(PathfinderOp::Divide),
+        "trim" => EditCommand::Pathfinder(PathfinderOp::Trim),
+        "merge" => EditCommand::Pathfinder(PathfinderOp::Merge),
+        "crop" => EditCommand::Pathfinder(PathfinderOp::Crop),
+        "outline" => EditCommand::Pathfinder(PathfinderOp::Outline),
+        "minus_back" => EditCommand::Pathfinder(PathfinderOp::MinusBack),
+        _ => return Err(Error::new("invalid_argument", "unknown pathfinder operation")),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,6 +984,7 @@ mod tests {
                 &mut BTreeMap::new(),
                 &mut 0,
                 &mut BTreeSet::new(),
+                &|| false,
             )
             .unwrap_err();
             assert_eq!(error.code, "invalid_argument");

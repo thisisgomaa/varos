@@ -4,6 +4,10 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 const DEFAULT_KEYS: &[&str] = &["parent", "fill", "stroke", "stroke_width", "radius", "opacity"];
+/// API 1.2 edit inherits the API 1.1 wire economy without changing older tools.
+pub(crate) fn edit_enabled(api: &str) -> bool {
+    matches!(api, "1.1" | "1.2")
+}
 fn invalid(reason: impl Into<String>) -> Error {
     Error::new("invalid_argument", reason)
 }
@@ -94,9 +98,9 @@ struct Repeat {
 
 /// First normalize and bound all work, before accessing the allocator/staging editor.
 pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
-    let economy = matches!(edit.api.as_str(), "1.1" | "1.2");
+    let economy = edit_enabled(&edit.api);
     if !economy && (edit.defaults.is_some() || edit.receipt.is_some()) {
-        return Err(invalid("defaults and receipt require API 1.1"));
+        return Err(invalid("defaults and receipt require API 1.1 or 1.2"));
     }
     if edit.receipt.as_deref().is_some_and(|r| r != "ids") {
         return Err(invalid("receipt must be ids"));
@@ -148,7 +152,20 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     let mut out = Vec::new();
     let mut targets = 0;
     for (index, op) in edit.ops.iter().enumerate() {
-        walk(op, economy, &defaults, 0, [0.0, 0.0], "", index, &[], &mut out, &mut targets)?;
+        walk(
+            op,
+            &edit.api,
+            economy,
+            edit.api == "1.2",
+            &defaults,
+            0,
+            [0.0, 0.0],
+            "",
+            index,
+            &[],
+            &mut out,
+            &mut targets,
+        )?;
     }
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
@@ -161,7 +178,9 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
 #[allow(clippy::too_many_arguments)]
 fn walk(
     v: &Value,
+    api: &str,
     economy: bool,
+    construction: bool,
     defaults: &Map<String, Value>,
     depth: usize,
     delta: [f32; 2],
@@ -174,7 +193,7 @@ fn walk(
     let result = (|| {
         if v.get("verb").and_then(Value::as_str) == Some("repeat") {
             if !economy {
-                return Err(Error::new("unsupported", "repeat requires API 1.1"));
+                return Err(Error::new("unsupported", "repeat requires API 1.1 or 1.2"));
             }
             let r: Repeat = serde_json::from_value(v.clone()).map_err(|e| invalid(e.to_string()))?;
             debug_assert_eq!(r.verb, "repeat");
@@ -195,7 +214,9 @@ fn walk(
                     path.push(format!("op:{j}"));
                     walk(
                         child,
+                        api,
                         economy,
+                        construction,
                         defaults,
                         depth + 1,
                         offset,
@@ -210,10 +231,18 @@ fn walk(
             return Ok(());
         }
         if !economy && v.is_array() {
-            return Err(invalid("tuples require API 1.1"));
+            return Err(invalid("tuples require API 1.1 or 1.2"));
         }
         let mut normalized = tuple(v)?;
         let m = normalized.as_object_mut().ok_or_else(|| invalid("operation must be an object or creation tuple"))?;
+        if api == "1.2" && m.contains_key("op") {
+            if m.contains_key("verb") {
+                return Err(invalid("use op or verb, not both"));
+            }
+            if let Some(verb) = m.remove("op") {
+                m.insert("verb".into(), verb);
+            }
+        }
         let creation = matches!(m.get("verb").and_then(Value::as_str), Some("add_shape" | "add_path"));
         if depth > 0 && !creation {
             return Err(invalid("repeat children must be creation operations or repeats"));
@@ -228,7 +257,14 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
+        if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
+            return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
+        }
         if !crate::EDIT_VERBS.contains(&verb)
+            && !(api == "1.2" && verb == "set_stroke_style")
+            && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
+            && !(api == "1.2"
+                && ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"].contains(&verb))
             && ![
                 "document_setup",
                 "clip",

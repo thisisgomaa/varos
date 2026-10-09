@@ -1,5 +1,64 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(crate) enum StrokeField {
+    Cap,
+    Join,
+    Align,
+    Start,
+    End,
+    ArrowAlign,
+    Miter,
+    Phase,
+    ScaleStart,
+    ScaleEnd,
+    Dash(usize),
+}
+impl StrokeField {
+    pub(crate) const ALL: [Self; 6] = [Self::Cap, Self::Join, Self::Align, Self::Start, Self::End, Self::ArrowAlign];
+    pub(crate) fn apply(self, next: &varos_core::stroke::StrokeStyle, target: &mut varos_core::stroke::StrokeStyle) {
+        match self {
+            Self::Cap => target.cap = next.cap,
+            Self::Join => target.join = next.join,
+            Self::Align => target.align = next.align,
+            Self::Start => target.arrows.start = next.arrows.start,
+            Self::End => target.arrows.end = next.arrows.end,
+            Self::ArrowAlign => target.arrows.align = next.arrows.align,
+            Self::Miter => target.miter_limit = next.miter_limit,
+            Self::Phase => target.dash_phase = next.dash_phase,
+            Self::ScaleStart => target.arrows.scale_start = next.arrows.scale_start,
+            Self::ScaleEnd => target.arrows.scale_end = next.arrows.scale_end,
+            Self::Dash(i) => {
+                if let Some(value) = next.dash.get(i) {
+                    while target.dash.len() <= i {
+                        target.dash.extend([6.0, 3.0]);
+                    }
+                    target.dash[i] = *value;
+                }
+            }
+        }
+    }
+}
+fn stroke_targets(ed: &mut Editor, change: impl Fn(&mut varos_core::stroke::StrokeStyle)) {
+    let changes = ed
+        .selected_pids()
+        .iter()
+        .filter_map(|id| ed.doc.pidx(*id))
+        .filter_map(|i| {
+            let p = &ed.doc.paths[i];
+            let mut style = p.stroke_style.clone();
+            change(&mut style);
+            (p.stroke_style != style)
+                .then_some(varos_core::bridge::TargetEdit::StrokeStyle { paths: vec![p.id], style })
+        })
+        .collect::<Vec<_>>();
+    if changes.is_empty() {
+        ed.stroke_error = None;
+        return;
+    }
+    ed.stroke_error = ed.execute_targeted_batch(changes).err().map(|error| error.reason);
+}
+
 pub(crate) enum Op {
     View(varos_core::editor::view_commands::ViewAction),
     Zoom(f32),
@@ -15,6 +74,10 @@ pub(crate) enum Op {
     SetRot(f32),
     SetOpacity(f32),
     SetStrokeW(f32),
+    SetStrokeStyle(varos_core::stroke::StrokeStyle, varos_core::stroke::StrokeStyle),
+    ResetStrokeStyle,
+    SetStrokeField(StrokeField, varos_core::stroke::StrokeStyle),
+    SwapStrokeHeads,
     SetClipExempt(bool), // A30: release the selection from artboard clip (true) / re-clip it (false)
     Paint(PaintTarget, Option<Rgba>),
     PaintFocus(PaintTarget), // rail fill/stroke control: focus the target (X toggles)
@@ -42,7 +105,9 @@ pub(crate) enum Op {
     LayerDupMove(Vec<u32>, u32, u8), // Alt+drag: duplicate the rows' art into the target
     LayerMoveBoard(Vec<u32>, Option<usize>, usize), // cross-section drop: srcs, source board, target board
     Flip(bool),
-    Align(AlignMode, AlignTarget),     // A4: carries the target the align resolves against
+    Align(AlignMode, AlignTarget), // A4: carries the target the align resolves against
+    Pathfinder(varos_core::planar::PathfinderOp),
+    DivideObjectsBelow,
     Bool(varos_core::boolean::BoolOp), // Pathfinder home + the Properties "Shape" mirror
     // ---- artboard ops (i = artboard index) ----
     AbActive(usize),
@@ -181,6 +246,21 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::SetClipExempt(exempt) => ed.execute_ui(EditCommand::SetClipExempt(exempt)),
             Op::SetStrokeW(width) => ed.execute_ui(EditCommand::SetStrokeWidth(width)),
             Op::Paint(target, color) => ed.execute_ui(EditCommand::ApplyPaint { target, color }),
+            Op::ResetStrokeStyle => {
+                let mut ids: Vec<_> = ed.selected_pids().into_iter().collect();
+                ids.sort_unstable();
+                ed.stroke_error = ed
+                    .try_execute(EditCommand::SetStrokeStyle { ids, style: varos_core::stroke::StrokeStyle::default() })
+                    .err();
+            }
+            Op::SetStrokeStyle(base, next) => {
+                stroke_targets(ed, |style| varos_core::stroke::apply_difference(&base, &next, style))
+            }
+            Op::SetStrokeField(field, next) => stroke_targets(ed, |style| field.apply(&next, style)),
+            Op::SwapStrokeHeads => stroke_targets(ed, |style| {
+                std::mem::swap(&mut style.arrows.start, &mut style.arrows.end);
+                std::mem::swap(&mut style.arrows.scale_start, &mut style.arrows.scale_end);
+            }),
             Op::PaintFocus(target) => ed.set_paint_target(target),
             Op::SwapColors => ed.execute_ui(EditCommand::SwapColors),
             Op::DefaultPaint => ed.execute_ui(EditCommand::DefaultPaint),
@@ -268,6 +348,8 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::Align(mode, target) => ed.execute_ui(EditCommand::Align { mode, target }),
             Op::Bool(operation) => ed.execute_ui(EditCommand::Boolean(operation)),
             Op::AbActive(index) => ed.execute_ui(EditCommand::SetActiveArtboard(index)),
+            Op::Pathfinder(operation) => ed.execute_ui(EditCommand::Pathfinder(operation)),
+            Op::DivideObjectsBelow => ed.execute_ui(EditCommand::DivideObjectsBelow),
             Op::AbRect(index, x, y, width, height) => {
                 ed.execute_ui(EditCommand::SetArtboardRect { index, x, y, width, height })
             }

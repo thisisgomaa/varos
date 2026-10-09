@@ -4289,6 +4289,7 @@ dependencies = [
  "unicode-normalization",
  "varos-bridge",
  "varos-core",
+ "varos-import",
  "varos-pdf",
  "varos-raster",
  "varos-render-wgpu",
@@ -4319,9 +4320,11 @@ dependencies = [
 name = "varos-cli"
 version = "0.1.0"
 dependencies = [
+ "image",
  "serde_json",
  "varos-bridge",
  "varos-core",
+ "varos-import",
  "varos-pdf",
  "varos-raster",
 ]
@@ -4332,6 +4335,7 @@ version = "0.1.0"
 dependencies = [
  "flo_curves",
  "i_overlay",
+ "kurbo 0.13.1",
  "proc-macro2",
  "resvg",
  "roxmltree",
@@ -4339,6 +4343,17 @@ dependencies = [
  "serde_json",
  "syn 2.0.118",
  "unicode-normalization",
+]
+
+[[package]]
+name = "varos-import"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "roxmltree",
+ "serde",
+ "usvg",
+ "varos-core",
 ]
 
 [[package]]

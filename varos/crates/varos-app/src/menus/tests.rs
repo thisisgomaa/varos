@@ -260,6 +260,7 @@ const ADDED_AFTER_SPLIT: &[&str] = &[
     "file.savecopy",
     "file.revert",
     "file.exportselection",
+    "file.place.svg",
     "file.export",
     "file.print",
     "view.fitall",
@@ -277,7 +278,7 @@ fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, V
     fn strip(v: Vec<Entry>) -> Vec<Entry> {
         v.into_iter()
             .filter(|e| {
-                !matches!(e, Entry::Sub { label: "Clipping Mask", .. })
+                !matches!(e, Entry::Sub { label: "Clipping Mask" | "Transform" | "Layers", .. })
                     && !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str()))
             })
             .map(|e| match e {
@@ -343,6 +344,7 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.new",
             "file.open",
             "sub Open Recent",
+            "file.place.svg",
             "file.new-template",
             "file.save-template",
             "file.document-setup",
@@ -398,6 +400,15 @@ fn file_rows_enable_from_the_document_state() {
     assert!(file_row_enabled(FileCmd::ExportSelection, selected));
 }
 
+#[test]
+fn svg_place_row_is_namespaced_and_has_no_shortcut() {
+    let rows = super::file::rows();
+    let row = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "file.place.svg"));
+    assert!(matches!(
+        row,
+        Some(Entry::Item { label: "Place SVG…", accel: None, cmd: MenuCmd::File(FileCmd::PlaceSvg), .. })
+    ));
+}
 #[test]
 fn clipping_rows_use_illustrator_shortcuts_and_core_commands() {
     let items = flat_items(&menus());

@@ -387,6 +387,13 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
                 let sp: Vec<StrokePt> = pts.iter().map(|p| stroke_screen(*p, view)).collect();
                 stroke_poly(&mut v, &sp, width * z, *color, w, h);
             }
+            Prim::StrokeCoverage { rings, color, .. } => {
+                if let Ok(triangles) = varos_core::stroke::evaluate::triangles(rings) {
+                    for [a, b, c] in triangles {
+                        tri(&mut v, view.w2s(a), view.w2s(b), view.w2s(c), *color, w, h);
+                    }
+                }
+            }
             Prim::Dashed { pts, width, color } => {
                 let sp: Vec<Pt> = pts.iter().map(|p| view.w2s(*p)).collect();
                 dashed_poly(&mut v, &sp, width * z, *color, w, h);
@@ -409,6 +416,7 @@ pub fn build_fg(prims: &[Prim], view: View, size_scale: f32, w: f32, h: f32) -> 
 /// `Knockout` = one filled object with a translucent stroke: mark the band (stencil bit 0x80), even-odd
 /// fan the fill (bit 0x01), paint the fill only where inside AND NOT under the band, then paint the band
 /// once — so the stroke blends against what's BEHIND the object, never against its own fill.
+#[derive(Debug, PartialEq)]
 pub enum Draw {
     Fill { fan: (u32, u32), cover: (u32, u32) },
     // `scissor` = a pixel-space rect [x, y, w, h] to confine this run to (A2: an artboard-clipped OPAQUE
@@ -448,6 +456,7 @@ pub fn scissor_px(rect: [f32; 4], view: View, w: f32, h: f32) -> Option<[u32; 4]
 /// bit `0x02`, replay `members` with the clip test, then `mask_clear` zeros `0x02` — all in ONE render
 /// pass so the clip bit persists across the member draws (each scene pass clears the stencil at entry).
 /// `mask_fan`/`mask_clear` are ranges into the shared FILL buffer (the ring fan + its bbox cover quad).
+#[derive(Debug, PartialEq)]
 pub enum GroupDraw {
     Opaque { draws: Vec<Draw> },
     Layer { draws: Vec<Draw>, quad: (u32, u32) },
@@ -478,6 +487,14 @@ fn knock_draws(
             stroke_poly(fgv, &sp, screen_width, bcol, w, h);
         }
     }
+    for p in prims {
+        if let Prim::StrokeCoverage { rings, color, .. } = p {
+            bcol = *color;
+            let points: Vec<StrokePt> = rings.iter().flatten().map(|q| stroke_screen(*q, view)).collect();
+            extend_stroke_bounds(&mut bounds, &points, 0.0);
+            fgv.extend(build_fg(std::slice::from_ref(p), view, zoom, w, h));
+        }
+    }
     let band = (t0, fgv.len() as u32 - t0);
     let (fv, fr) = build_fills(prims, view, w, h);
     let off = fillv.len() as u32;
@@ -494,7 +511,9 @@ fn knock_draws(
 /// Does this (single-object) prim set need knockout? = has a fill AND a translucent stroke.
 fn needs_knockout(prims: &[Prim]) -> bool {
     prims.iter().any(|p| matches!(p, Prim::Fill { .. }))
-        && prims.iter().any(|p| matches!(p, Prim::Stroke { color, .. } if color[3] < 0.999))
+        && prims
+            .iter()
+            .any(|p| matches!(p, Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } if color[3] < 0.999))
 }
 
 /// Build ONE group's ordered draw steps (fill fan+cover, stroke fg, translucent-stroke mark+cover,
@@ -537,13 +556,13 @@ fn group_draws(
             // (otherwise every overlap re-blends and the band turns into the blotchy "blur").
             let j = (i..prims.len()).find(|&k| matches!(prims[k], Prim::Fill { .. })).unwrap_or(prims.len());
             while i < j {
-                if let Prim::Stroke { color, .. } = &prims[i] {
+                if let Prim::Stroke { color, .. } | Prim::StrokeCoverage { color, .. } = &prims[i] {
                     if color[3] < 0.999 {
                         let col = *color;
                         // an object's outer + hole rings share one colour → mark them together so
                         // even ring-vs-ring overlap of one object's stroke still paints once
                         let e = (i..j)
-                            .find(|&k| !matches!(&prims[k], Prim::Stroke { color: c2, .. } if *c2 == col))
+                            .find(|&k| !matches!(&prims[k], Prim::Stroke { color: c2, .. } | Prim::StrokeCoverage { color: c2, .. } if *c2 == col))
                             .unwrap_or(j);
                         let t0 = fgv.len() as u32;
                         let mut bounds = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
@@ -553,6 +572,14 @@ fn group_draws(
                                 let screen_width = width * zoom;
                                 extend_stroke_bounds(&mut bounds, &sp, screen_width);
                                 stroke_poly(fgv, &sp, screen_width, col, w, h);
+                            }
+                        }
+                        for p in &prims[i..e] {
+                            if let Prim::StrokeCoverage { rings, .. } = p {
+                                let points: Vec<StrokePt> =
+                                    rings.iter().flatten().map(|q| stroke_screen(*q, view)).collect();
+                                extend_stroke_bounds(&mut bounds, &points, 0.0);
+                                fgv.extend(build_fg(std::slice::from_ref(p), view, zoom, w, h));
                             }
                         }
                         let tris = (t0, fgv.len() as u32 - t0);
@@ -569,7 +596,8 @@ fn group_draws(
                 // unambiguous. Translucent bands stay on the centerline clip (the stencil StrokeCov path,
                 // above) — a sub-half-width, semi-transparent overhang, left untouched to keep that path
                 // stable. A degenerate clip ⇒ scissor None ⇒ drawn uncut (fail-open).
-                if let Prim::Stroke { clip: Some(rect), .. } = &prims[i] {
+                if let Prim::Stroke { clip: Some(rect), .. } | Prim::StrokeCoverage { clip: Some(rect), .. } = &prims[i]
+                {
                     let scissor = scissor_px(*rect, view, w, h);
                     let start = fgv.len() as u32;
                     fgv.extend(build_fg(&prims[i..=i], view, zoom, w, h));
@@ -584,7 +612,7 @@ fn group_draws(
                 // (a clipped stroke needs its own scissored draw, so it can't share a coalesced range)
                 let e = (i + 1..j)
                     .find(|&k| {
-                        matches!(&prims[k], Prim::Stroke { color, clip, .. } if color[3] < 0.999 || clip.is_some())
+                        matches!(&prims[k], Prim::Stroke { color, clip, .. } | Prim::StrokeCoverage { color, clip, .. } if color[3] < 0.999 || clip.is_some())
                     })
                     .unwrap_or(j);
                 let start = fgv.len() as u32;
@@ -1732,3 +1760,6 @@ fn clipped_isolated_tail_has_no_empty_clip_pass() {
         assert!(metas.iter().all(|m| !matches!(m, GroupDraw::Clip { members, .. } if members.is_empty())));
     }
 }
+#[cfg(test)]
+#[path = "tess_stroke_tests.rs"]
+mod stroke_tests;

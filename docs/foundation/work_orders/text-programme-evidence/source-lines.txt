@@ -1,0 +1,15 @@
+ 269 varos/crates/varos-text/src/composer.rs
+ 507 varos/crates/varos-text/src/converge/analysis.rs
+ 273 varos/crates/varos-text/src/converge/fitting.rs
+ 426 varos/crates/varos-text/src/converge/mod.rs
+ 510 varos/crates/varos-text/src/engine.rs
+ 448 varos/crates/varos-text/src/engine_support.rs
+ 161 varos/crates/varos-text/src/fonts.rs
+ 279 varos/crates/varos-text/src/incremental.rs
+ 225 varos/crates/varos-text/src/kashida.rs
+ 111 varos/crates/varos-text/src/labels.rs
+  35 varos/crates/varos-text/src/lib.rs
+  74 varos/crates/varos-text/src/metrics.rs
+ 143 varos/crates/varos-text/src/outlines.rs
+  89 varos/crates/varos-text/src/paths.rs
+ 139 varos/crates/varos-text/src/text_types.rs

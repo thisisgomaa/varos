@@ -54,6 +54,14 @@ pub enum ToolKind {
     Artboard,
     Rotate,
     Scale,
+    ShapeBuilder,
+    Scissors,
+    Knife,
+    Eraser,
+    Reflect,
+    Shear,
+    FreeTransform,
+    MagicWand,
 }
 
 /// What the Pen tool would do at the cursor right now — drives the contextual pen cursor (Illustrator
@@ -84,6 +92,7 @@ impl ToolKind {
 #[derive(Clone)]
 pub enum Drag {
     None,
+    Construction { points: Vec<Pt>, delete: bool },
     PenNew { aid: u32, down: Pt, broken: bool },
     PenClose { aid: u32, down: Pt, broken: bool },
     Anchors { start: Pt, items: Vec<(u32, Pt, Option<Pt>, Option<Pt>)> },
@@ -413,6 +422,7 @@ struct SelectionState {
 
 #[derive(Clone)]
 pub struct Editor {
+    pub select_transform: crate::select_transform::State,
     pub last_error: Option<crate::guard::EngineError>,
     pub doc: Document,
     pub tool: ToolKind,
@@ -461,12 +471,16 @@ pub struct Editor {
     pub space: bool,
     pub cur_fill: Option<Rgba>,
     pub cur_stroke: Option<Rgba>,
+    /// Transient checked stroke-edit diagnostic; never persisted or part of undo.
+    pub stroke_error: Option<String>,
+    pub stroke_inspection: crate::stroke::inspection::InspectionCache,
     pub cur_sw: f32,
     pub paint: PaintTarget,
     pub recent_colors: Vec<Rgba>, // picker MRU — newest first, deduped, cap 12; ephemeral (not serialized)
     /// Document revision — bumps on every committed change, undo and redo. `rev != saved_rev` (held by
     /// the app) = unsaved changes. (`dirty` below is a PER-GESTURE flag for begin/commit, not this.)
     pub rev: u64,
+    pub(crate) construction_cache: crate::construction::SharedConstructionCache,
     pub dirty: bool,
     /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
     /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
@@ -490,6 +504,7 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            select_transform: Default::default(),
             last_error: None,
             doc: Document::default(),
             tool: ToolKind::Object,
@@ -528,10 +543,13 @@ impl Editor {
             space: false,
             cur_fill: Some(DEFAULT_FILL),
             cur_stroke: Some(DEFAULT_STROKE),
+            stroke_error: None,
+            stroke_inspection: Default::default(),
             cur_sw: 2.0,
             paint: PaintTarget::Fill,
             recent_colors: vec![],
             rev: 0,
+            construction_cache: Default::default(),
             dirty: false,
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
@@ -569,7 +587,7 @@ impl Editor {
         let r = r / self.ppu;
         let mut best: Option<(u32, f32)> = None;
         for p in &self.doc.paths {
-            if shown_only && !self.path_shown(p.id) {
+            if !self.in_isolation(p.id) || (shown_only && !self.path_shown(p.id)) {
                 continue;
             }
             // A7 seam: anchors are drawn at their WORLD positions → hit them in world.
@@ -615,7 +633,8 @@ impl Editor {
         let edge_r = EDGE_R / self.ppu;
         for pi in (0..self.doc.paths.len()).rev() {
             let id = self.doc.paths[pi].id;
-            if self.doc.eff_hidden(id)
+            if !self.in_isolation(id)
+                || self.doc.eff_hidden(id)
                 || self.doc.eff_locked(id)
                 || (self.doc.guide_paths.contains(&id) && (self.guides_hidden || self.doc.guides_locked))
             {
@@ -625,6 +644,18 @@ impl Editor {
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
             // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
+            let p = &self.doc.paths[pi];
+            if !self.doc.guide_paths.contains(&id) && !p.stroke_style.is_default() {
+                let in_fill = p.fill.solid().is_some() && self.doc.point_in_path(pi, lp);
+                let in_stroke = crate::stroke::evaluate(p, 0.25 / f64::from(self.ppu.max(0.0001)), &|| false)
+                    .is_ok_and(|c| crate::stroke::evaluate::contains(&c.rings, lp, edge_r));
+                if (in_fill || in_stroke)
+                    && self.stroke_mask_rings(id).iter().all(|rings| crate::stroke::evaluate::contains(rings, pos, 0.0))
+                {
+                    return Some(id);
+                }
+                continue;
+            }
             let guide = self.doc.guide_paths.contains(&id);
             let reach = edge_r + if guide { 0.0 } else { painted_half_width(&self.doc.paths[pi]) };
             if !ctrl_bbox_near(&self.doc.paths[pi], lp, reach) {
@@ -811,6 +842,40 @@ impl Editor {
         }
         base
     }
+    fn stroke_mask_rings(&self, pid: u32) -> Vec<Vec<Vec<Pt>>> {
+        let mut masks = Vec::new();
+        let mut current = self.doc.node_of_path(pid);
+        while let Some(id) = current {
+            let Some(node) = self.doc.node(id) else {
+                break;
+            };
+            if node.role.is_mask_group() {
+                let rings = node
+                    .mask_child
+                    .map(|mask| {
+                        self.doc
+                            .node_paths(mask)
+                            .into_iter()
+                            .filter_map(|pid| self.doc.pidx(pid))
+                            .flat_map(|pi| {
+                                std::iter::once(self.doc.world_outline_px(pi, self.ppu))
+                                    .chain(
+                                        self.doc.paths[pi]
+                                            .holes
+                                            .iter()
+                                            .map(|h| self.doc.world_ring_px(h, pi, self.ppu)),
+                                    )
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                masks.push(rings);
+            }
+            current = node.parent;
+        }
+        masks
+    }
     /// Does a path touch / fall inside a marquee rect? Illustrator rule (QW1 / Astra F08): the marquee
     /// must touch the PAINTED geometry — (a) any piece of the outline or a hole rim, grown by the painted
     /// stroke half-width, crosses the rect (a segment test, so a thin marquee across a long edge counts
@@ -823,6 +888,41 @@ impl Editor {
         // chords ~4 screen px, so the polyline hugs the drawn curve at any zoom.
         let p = &self.doc.paths[pi];
         let xf = self.doc.unit_xform(p.id);
+        if !p.stroke_style.is_default() {
+            let r = (x0, y0, x1, y1);
+            let masks = self.stroke_mask_rings(p.id);
+            let touches = |mut rings: Vec<Vec<Pt>>| {
+                for mask in &masks {
+                    let Ok(clipped) = crate::stroke::evaluate::intersect(&rings, mask) else {
+                        return false;
+                    };
+                    rings = clipped;
+                }
+                rings.iter().any(|ring| {
+                    ring.iter()
+                        .zip(ring.iter().cycle().skip(1))
+                        .take(ring.len())
+                        .any(|(a, b)| seg_touches_rect(*a, *b, r))
+                }) || crate::stroke::evaluate::contains(&rings, [(x0 + x1) * 0.5, (y0 + y1) * 0.5], 0.0)
+            };
+            let stroke =
+                crate::stroke::evaluate(p, 0.25 / f64::from(self.ppu.max(0.0001)), &|| false).is_ok_and(|coverage| {
+                    touches(
+                        coverage
+                            .rings
+                            .into_iter()
+                            .map(|ring| ring.into_iter().map(|point| xf.apply(point)).collect())
+                            .collect(),
+                    )
+                });
+            let fill = p.fill.solid().is_some()
+                && touches(
+                    std::iter::once(self.doc.world_outline_px(pi, self.ppu))
+                        .chain(p.holes.iter().map(|h| self.doc.world_ring_px(h, pi, self.ppu)))
+                        .collect(),
+                );
+            return stroke || fill;
+        }
         let poly = self.doc.outline_px(pi, self.ppu);
         if poly.is_empty() {
             return false;
@@ -851,7 +951,7 @@ impl Editor {
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
-        if self.tool != ToolKind::Object {
+        if !matches!(self.tool, ToolKind::Object | ToolKind::FreeTransform) {
             return None;
         }
         let hs = self.frame_handles()?;
@@ -1293,7 +1393,7 @@ impl Editor {
     /// Build one path as cubic contours (outer + hole contours) for the boolean engine. A7: the contours are
     /// emitted in WORLD space (unit transform composed), so a rotated participant is fed to the engine at
     /// its true position — the boolean IMPLICITLY bakes rotation and the result is fresh identity geometry.
-    fn path_to_segs(&self, pi: usize) -> Vec<Vec<Seg>> {
+    pub(crate) fn path_to_segs(&self, pi: usize) -> Vec<Vec<Seg>> {
         let p = &self.doc.paths[pi];
         let xf = self.doc.unit_xform(p.id);
         let world = |ring: &[Anchor]| -> Vec<Anchor> {
@@ -1338,7 +1438,7 @@ impl Editor {
         }
         out
     }
-    fn pathfinder_objects(&self) -> HashSet<u32> {
+    pub(crate) fn pathfinder_objects(&self) -> HashSet<u32> {
         self.objsel
             .iter()
             .copied()
@@ -3420,6 +3520,9 @@ impl Editor {
         staged.selected = self.selected.clone();
         staged.group_sel = self.group_sel.clone();
         staged.tool = self.tool;
+        staged.select_transform.isolation = self.select_transform.isolation;
+        staged.select_transform.wand = self.select_transform.wand;
+        staged.select_transform.pick = self.select_transform.pick;
         staged.dsel_path = self.dsel_path;
         staged.absel = self.absel.clone();
         staged.clipboard = self.clipboard.clone();
@@ -3453,6 +3556,18 @@ impl Editor {
             self.doc = staged.doc;
             self.dirty = true;
             self.commit();
+        }
+        self.select_transform.isolation = staged.select_transform.isolation;
+        self.select_transform.located = staged.select_transform.located;
+        if staged.select_transform.options_requested {
+            self.select_transform.wand = staged.select_transform.wand;
+            self.select_transform.pick = staged.select_transform.pick;
+        }
+        if staged.select_transform.selection_requested {
+            self.objsel = staged.objsel.clone();
+            self.selected.clear();
+            self.group_sel.clear();
+            self.dsel_path = None;
         }
         if preserve_transient {
             self.refresh_obj_angle();
@@ -3597,22 +3712,38 @@ impl Editor {
     /// Enforce the selection invariant after any visibility/lock mutation: hidden or locked paths
     /// cannot remain selected through either object selection, Direct path selection, or grabbed anchors.
     pub(crate) fn prune_inert_selection(&mut self) {
+        let allowed = self.select_transform.isolation.map(|n| self.doc.node_paths(n));
         let doc = &self.doc;
-        self.objsel.retain(|&pid| doc.pidx(pid).is_some() && !doc.eff_hidden(pid) && !doc.eff_locked(pid));
+        self.objsel.retain(|&pid| {
+            doc.pidx(pid).is_some()
+                && allowed.as_ref().is_none_or(|a| a.contains(&pid))
+                && !doc.eff_hidden(pid)
+                && !doc.eff_locked(pid)
+        });
         self.group_sel.retain(|&gid| {
             let editable: Vec<u32> =
                 doc.node_paths(gid).into_iter().filter(|&pid| !doc.eff_hidden(pid) && !doc.eff_locked(pid)).collect();
             !editable.is_empty() && editable.iter().all(|pid| self.objsel.contains(pid))
         });
-        self.selected
-            .retain(|&aid| doc.pid_of_anchor(aid).is_some_and(|pid| !doc.eff_hidden(pid) && !doc.eff_locked(pid)));
-        if self.dsel_path.is_some_and(|pid| doc.pidx(pid).is_none() || doc.eff_hidden(pid) || doc.eff_locked(pid)) {
+        self.selected.retain(|&aid| {
+            doc.pid_of_anchor(aid).is_some_and(|pid| {
+                allowed.as_ref().is_none_or(|a| a.contains(&pid)) && !doc.eff_hidden(pid) && !doc.eff_locked(pid)
+            })
+        });
+        if self.dsel_path.is_some_and(|pid| {
+            doc.pidx(pid).is_none()
+                || allowed.as_ref().is_some_and(|a| !a.contains(&pid))
+                || doc.eff_hidden(pid)
+                || doc.eff_locked(pid)
+        }) {
             self.dsel_path = None;
         }
     }
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        self.stroke_error = None;
+        self.select_transform = Default::default();
         self.reselect.clear();
         self.reselect_state = None;
         self.key_object = None;
@@ -3637,6 +3768,9 @@ impl Editor {
     // ---------- shared mutating ops (used by tools) ----------
     pub fn reverse(&mut self, pi: usize) {
         self.doc.paths[pi].anchors.reverse();
+        let arrows = &mut self.doc.paths[pi].stroke_style.arrows;
+        std::mem::swap(&mut arrows.start, &mut arrows.end);
+        std::mem::swap(&mut arrows.scale_start, &mut arrows.scale_end);
         for a in &mut self.doc.paths[pi].anchors {
             std::mem::swap(&mut a.hin, &mut a.hout);
         }
@@ -3879,7 +4013,7 @@ impl Editor {
         if self.tool == ToolKind::Artboard {
             return ToolKind::Artboard;
         } // Artboard tool never morphs
-        if self.mods.ctrl {
+        if self.mods.ctrl && self.tool != ToolKind::FreeTransform {
             ToolKind::Direct
         } else if self.tool == ToolKind::Pen && self.mods.alt {
             ToolKind::Convert
@@ -3973,6 +4107,9 @@ impl Editor {
         // a locked/hidden object is inert on canvas: drop it from the selection so grabbing the transform
         // frame can never move it (the hit-test already refuses to newly pick it). This is the REAL lock.
         self.prune_inert_selection();
+        if crate::tools::select_transform::down(self, pos) {
+            return;
+        }
         if self.gesture == ToolKind::Artboard {
             self.ab_down(pos);
             return;
@@ -3994,9 +4131,19 @@ impl Editor {
             pos
         };
         self.cursor = pos;
-        tools::get(self.gesture).down(self, pos);
+        if matches!(self.gesture, ToolKind::ShapeBuilder | ToolKind::Knife | ToolKind::Eraser) {
+            self.reset_construction_walk();
+            self.drag = Drag::Construction { points: vec![pos], delete: self.mods.alt };
+        } else if self.gesture == ToolKind::Scissors {
+            self.scissors_at(pos);
+        } else {
+            tools::get(self.gesture).down(self, pos);
+        }
     }
     pub fn pointer_up(&mut self) {
+        if crate::tools::select_transform::up(self) {
+            return;
+        }
         if let Drag::GroupClick { path, .. } = self.drag {
             self.execute_ui(crate::command::EditCommand::Selection(wave::Selection::Group(path)));
         }
@@ -4035,6 +4182,11 @@ impl Editor {
         } // rotate/scale/reflect
           // A7: apply the rotate drag's clean end-state — bakes cleanly ONLY if the gesture ended exactly at
           // total-angle-≡-0 (mid-drag zero-crossings stayed live). Must run before `drag = None`.
+        if matches!(self.drag, Drag::Construction { .. }) {
+            if let Drag::Construction { points, delete } = std::mem::replace(&mut self.drag, Drag::None) {
+                self.finish_construction(points, delete);
+            }
+        }
         self.finish_rotate_drag();
         if let Drag::TfPending { down, .. } = self.drag {
             // a click (no drag) relocates the pivot — snapped
@@ -4077,6 +4229,10 @@ impl Editor {
         }
     }
     pub fn pointer_move(&mut self, pos: Pt) {
+        if crate::tools::select_transform::movement(self, pos) {
+            self.cursor = pos;
+            return;
+        }
         let prev = self.cursor;
         self.cursor = pos;
         if self.tool == ToolKind::Artboard {
@@ -4095,6 +4251,12 @@ impl Editor {
             self.hover_snap(pos); // A10: phantom snap point before the first click of a drawing tool
         }
         match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Construction { mut points, delete } => {
+                if points.last().is_none_or(|p| dist(*p, pos) > 0.5 / self.ppu) && points.len() < 1000 {
+                    points.push(pos);
+                }
+                self.drag = Drag::Construction { points, delete };
+            }
             Drag::PenNew { aid, down, mut broken } => {
                 if dist(pos, down) >= DRAG_THRESH {
                     if self.mods.alt {
@@ -4258,7 +4420,7 @@ impl Editor {
                 let inside = |p: Pt| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
                 let mut sel: HashSet<u32> = base.iter().copied().collect();
                 for p in &self.doc.paths {
-                    if self.doc.eff_hidden(p.id) || self.doc.eff_locked(p.id) {
+                    if !self.in_isolation(p.id) || self.doc.eff_hidden(p.id) || self.doc.eff_locked(p.id) {
                         continue;
                     } // locked/hidden = not marquee-able
                     let xf = self.doc.unit_xform(p.id); // A7 seam: test WORLD anchor positions
@@ -4309,7 +4471,7 @@ impl Editor {
                 self.group_sel = base_groups.iter().copied().collect();
                 for pi in 0..self.doc.paths.len() {
                     let id = self.doc.paths[pi].id;
-                    if self.doc.eff_locked(id) || self.doc.eff_hidden(id) {
+                    if !self.in_isolation(id) || self.doc.eff_locked(id) || self.doc.eff_hidden(id) {
                         continue;
                     } // locked/hidden = not marquee-able
                     if self.path_in_rect(pi, x0, y0, x1, y1) {
@@ -4322,6 +4484,7 @@ impl Editor {
                 // a marquee that catches any group member selects the whole group
                 let expanded: Vec<u32> = self.objsel.iter().flat_map(|&p| self.doc.group_members(p)).collect();
                 self.objsel.extend(expanded);
+                self.prune_inert_selection();
                 self.drag = Drag::ObjMarquee { start, base, base_groups };
             }
             Drag::DupPending { srcs, down, object } => {
@@ -4576,7 +4739,11 @@ impl Editor {
         } else {
             self.absel.clear();
         }
-        if matches!(t, ToolKind::Rotate | ToolKind::Scale) && self.objsel.is_empty() {
+        if matches!(
+            t,
+            ToolKind::Rotate | ToolKind::Scale | ToolKind::Reflect | ToolKind::Shear | ToolKind::FreeTransform
+        ) && self.objsel.is_empty()
+        {
             // the transform tools act on whole objects — promote any anchor selection (coming from Direct)
             let pids: Vec<u32> = self.selected.iter().filter_map(|&aid| self.doc.pid_of_anchor(aid)).collect();
             for pid in pids {
@@ -4600,6 +4767,14 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        if self.select_transform.preview.is_some() {
+            self.transform_end(true);
+            self.select_transform.down = None;
+        }
+        if self.select_transform.isolation.take().is_some() {
+            self.escape_selection();
+            return;
+        }
         self.active = None;
         self.selected.clear();
         self.objsel.clear();
@@ -4632,7 +4807,7 @@ impl Editor {
         let pickable: Vec<usize> = (0..self.doc.paths.len())
             .filter(|&pi| {
                 let id = self.doc.paths[pi].id;
-                !self.doc.eff_hidden(id) && !self.doc.eff_locked(id)
+                self.in_isolation(id) && !self.doc.eff_hidden(id) && !self.doc.eff_locked(id)
             })
             .collect();
         self.selected.clear();
@@ -4649,7 +4824,7 @@ impl Editor {
                 if let Some(group) = self.doc.top_group_of_path(self.doc.paths[pi].id) {
                     self.group_sel.insert(group);
                 }
-                self.objsel.extend(members);
+                self.objsel.extend(members.into_iter().filter(|p| self.in_isolation(*p)).collect::<Vec<_>>());
             }
         }
         self.refresh_obj_angle(); // one unit keeps its stored rotation; several axis-align (A7)
@@ -4845,7 +5020,15 @@ impl Editor {
         self.active = None; // a pen path in progress ends, as on any selection change
         self.drag = Drag::None;
         self.ab_drag = AbDrag::None;
-        if !matches!(self.tool, ToolKind::Object | ToolKind::Direct | ToolKind::Rotate | ToolKind::Scale) {
+        if !matches!(
+            self.tool,
+            ToolKind::Object
+                | ToolKind::Direct
+                | ToolKind::Rotate
+                | ToolKind::Scale
+                | ToolKind::Reflect
+                | ToolKind::Shear
+        ) {
             // the pasted art must show as selected (the same hand-off the Layers Alt-drag copy makes)
             self.tool = ToolKind::Object;
         }
@@ -4869,6 +5052,18 @@ impl Editor {
         false
     }
     pub fn double_click(&mut self, pos: Pt) {
+        if let Some(pid) = self.path_under(pos) {
+            if self.tool == ToolKind::Object {
+                if let Some(group) = self.doc.top_group_of_path(pid) {
+                    self.execute_ui(crate::EditCommand::Isolate(Some(group)));
+                    return;
+                }
+            }
+        } else if self.select_transform.isolation.is_some() {
+            self.execute_ui(crate::EditCommand::Isolate(None));
+            return;
+        }
+
         if self.guide_at(pos).is_some() {
             // double-click a guide → delete it
             if let Some(idx) = self.guide_at(pos) {

@@ -16,6 +16,19 @@ pub(super) fn rows() -> Vec<Entry> {
                 key("obj.back", "Send to Back", cmd_shift(K::BracketLeft)),
             ],
         },
+        Entry::Sub {
+            label: "Transform",
+            items: ["Rotate…", "Scale…", "Reflect…", "Shear…", "Transform Each…"]
+                .into_iter()
+                .map(|label| Entry::Item {
+                    id: format!("4a.{label}"),
+                    label,
+                    accel: None,
+                    cmd: MenuCmd::Slice4a(label),
+                    check: None,
+                })
+                .collect(),
+        },
         Entry::Sep,
         key("obj.group", "Group", cmd(K::KeyG)),
         key("obj.ungroup", "Ungroup", cmd_shift(K::KeyG)),

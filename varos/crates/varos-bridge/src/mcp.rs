@@ -15,6 +15,94 @@ pub fn tool_result(reply: &Reply) -> Value {
     }
     json!({"content":content,"structuredContent":projection,"isError":!reply.ok})
 }
+/// Explicit MCP tools/list API 1.2 opt-in; the default 1.0/1.1 schema remains byte-identical.
+fn construction_tools(api: &str) -> Value {
+    let mut list = legacy_tools_list();
+    if api != "1.2" {
+        return list;
+    }
+    // Transform schemas and compaction belong exclusively to the opt-in projection.
+    if let Some(entries) = list["tools"].as_array_mut() {
+        if let Some(edit) = entries.iter_mut().find(|tool| tool["name"] == "edit") {
+            let mut extra = serde_json::Map::new();
+            let mut ops = Vec::new();
+            crate::select_transform::schemas(&mut extra, &mut ops);
+            if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
+                defs.extend(extra);
+            }
+            if let Some(all) = edit["inputSchema"]["$defs"]["operation"]["anyOf"].as_array_mut() {
+                all.extend(ops);
+            }
+        }
+    }
+    if let Some(entries) = list["tools"].as_array_mut() {
+        for tool in entries {
+            let name = tool["name"].as_str().unwrap_or("").to_owned();
+            if name == "edit" {
+                let edit = &mut tool["inputSchema"];
+                let edit_ids = json!({"$ref":"#/$defs/move/properties/ids"});
+                let point = json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}});
+                edit["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+                edit["$defs"]["construction_points"] =
+                    json!({"type":"array","minItems":1,"maxItems":1000,"items":point});
+                let gesture = json!({"$ref":"#/$defs/construction_points"});
+                let extra = [
+                    (
+                        "pathfinder",
+                        object(
+                            json!({"verb":{"const":"pathfinder"},"ids":edit_ids,"operation":{"enum":["unite","minus_front","intersect","exclude","divide","trim","merge","crop","outline","minus_back"]}}),
+                            &["verb", "ids", "operation"],
+                        ),
+                    ),
+                    (
+                        "shape_builder",
+                        object(
+                            json!({"verb":{"const":"shape_builder"},"ids":edit_ids,"points":gesture,"delete":{"type":"boolean"}}),
+                            &["verb", "ids", "points", "delete"],
+                        ),
+                    ),
+                    (
+                        "scissors",
+                        object(
+                            json!({"verb":{"const":"scissors"},"ids":edit_ids,"segment":{"type":"integer","minimum":0},"t":{"type":"number","minimum":0,"maximum":1}}),
+                            &["verb", "ids", "segment", "t"],
+                        ),
+                    ),
+                    (
+                        "knife",
+                        object(
+                            json!({"verb":{"const":"knife"},"ids":edit_ids,"points":gesture}),
+                            &["verb", "ids", "points"],
+                        ),
+                    ),
+                    (
+                        "eraser",
+                        object(
+                            json!({"verb":{"const":"eraser"},"ids":edit_ids,"points":gesture,"radius":{"type":"number","exclusiveMinimum":0}}),
+                            &["verb", "ids", "points", "radius"],
+                        ),
+                    ),
+                    (
+                        "divide_objects_below",
+                        object(json!({"verb":{"const":"divide_objects_below"},"ids":edit_ids}), &["verb", "ids"]),
+                    ),
+                ];
+                for (verb, schema) in extra {
+                    edit["$defs"][verb] = schema;
+                    if let Some(ops) = edit["$defs"]["operation"]["anyOf"].as_array_mut() {
+                        ops.push(json!({"$ref":format!("#/$defs/{verb}")}));
+                    }
+                }
+            }
+            if name == "capabilities" {
+                tool["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+            }
+        }
+    }
+
+    list
+}
+
 pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
     if name == "edit" {
         let edit: Edit =
@@ -27,7 +115,14 @@ pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
 fn object(properties: Value, required: &[&str]) -> Value {
     json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
 }
+/// Default discovery is the frozen main-now legacy projection.
 pub fn tools() -> Value {
+    legacy_tools_list()
+}
+
+// Copied verbatim from main-now (73f3221), except for the function name.
+// Keep API 1.2 mutations outside this builder; fixtures lock its serialized bytes.
+fn legacy_tools_list() -> Value {
     let api = json!({"type":"string","const":"1.0","default":"1.0"});
     let ids = json!({"type":"array","items":{"type":"string","pattern":"^(path|node):[0-9]+$"},"maxItems":1000});
     let rev = json!({"type":"integer","minimum":0});
@@ -311,134 +406,6 @@ pub fn tools() -> Value {
     },"inputSchema":schemas[*name]})).collect();
     json!({"tools":tools})
 }
-/// Explicit 1.2 discovery; the default tool table and its 1.0/1.1 contracts stay frozen.
-pub fn tools_for_api(api: &str) -> Value {
-    let mut table = tools();
-    if api != "1.2" {
-        return table;
-    }
-    if let Some(rows) = table["tools"].as_array_mut() {
-        for row in rows {
-            match row["name"].as_str() {
-                Some("capabilities") => {
-                    row["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"})
-                }
-                Some("edit") => {
-                    row["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"]});
-                    let defs = &mut row["inputSchema"]["$defs"]["operation"]["anyOf"];
-                    if let Some(ops) = defs.as_array_mut() {
-                        for verb in ["clip", "release_clip"] {
-                            ops.push(object(json!({"verb":{"const":verb},"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string"}}}), &["verb","ids"]));
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    append_export_tools(&mut table);
-    append_document_tools(&mut table);
-    if let Some(list) = table["tools"].as_array_mut() {
-        if let Some(export) = list.iter_mut().find(|v| v["name"] == "export_pdf") {
-            export["inputSchema"]["properties"]["options"] =
-                json!({"type":"object","description":"PDF preset, image_ppi, compress_streams, boxes and marks"});
-        }
-    }
-    if let Some(list) = table["tools"].as_array_mut() {
-        for name in crate::TOOLS_12 {
-            list.push(json!({"name":name,"description":"API 1.2 desktop host effect. Print opens a prepared PDF in Preview; Copy/Cut publish the current selection to the OS clipboard.","inputSchema": {"type":"object","additionalProperties":false,"properties":{"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"scope":{"enum":["active_artboard","all_visible_artboards","artwork_bounds"]},"options":{"type":"object"}},"required":["api","board","request_id","expected_rev"]}}));
-        }
-    }
-    if let Some(rows) = table["tools"].as_array_mut() {
-        for row in rows {
-            compact_api_12_schema(&mut row["inputSchema"]);
-            row["description"] = json!(match row["name"].as_str().unwrap_or("") {
-                "capabilities" => "Negotiate API, scopes, limits and file guards.",
-                "describe" => "Summary/detail by fields and ids; cursor pages; since returns changes or resync_required.",
-                "edit" => "Atomic batch; one undo step; retains selection. Tuples or object operations; artboard:N page ids.",
-                "snapshot" => "Revision-pinned CPU PNG; board or artboard:N; max 1024px per dimension.",
-                "save" | "save_as" | "export_pdf" | "export_svg" | "export_raster" => "Queue revision-pinned output; poll request_status. Fresh names only; capabilities lists file guards.",
-                "save_template" => "Save NAME.vrs template; poll request_status.",
-                "new_from_template" => "Open NAME.vrs template as dirty Untitled; poll request_status.",
-                "print" => "Open prepared PDF in Preview.",
-                "copy" => "Publish selection to OS clipboard.",
-                "cut" => "Publish selection to OS clipboard, then delete in one undo step.",
-                _ => row["description"].as_str().unwrap_or(""),
-            });
-        }
-    }
-    table
-}
-// Each inputSchema is an independent JSON Schema resource: keep its references local.
-// Only annotations and definition names change; validation constraints are retained.
-fn compact_api_12_schema(schema: &mut Value) {
-    fn visit(value: &mut Value, action: &mut impl FnMut(&mut Value)) {
-        action(value);
-        match value {
-            Value::Object(map) => {
-                for child in map.values_mut() {
-                    visit(child, action);
-                }
-            }
-            Value::Array(array) => {
-                for child in array {
-                    visit(child, action);
-                }
-            }
-            _ => {}
-        }
-    }
-    visit(schema, &mut |value| {
-        if let Some(map) = value.as_object_mut() {
-            map.remove("description");
-        }
-    });
-    let Some(defs) = schema["$defs"].as_object() else { return };
-    let names: std::collections::BTreeMap<_, _> = defs
-        .keys()
-        .filter(|name| !matches!(name.as_str(), "operation" | "document_setup"))
-        .enumerate()
-        .map(|(index, name)| (name.clone(), index.to_string()))
-        .collect();
-    visit(schema, &mut |value| {
-        if let Some(reference) = value.get_mut("$ref") {
-            if let Some(name) = reference.as_str().and_then(|s| s.strip_prefix("#/$defs/")) {
-                if let Some(short) = names.get(name) {
-                    *reference = json!(format!("#/$defs/{short}"));
-                }
-            }
-        }
-    });
-    let Some(old_defs) = schema["$defs"].as_object_mut() else { return };
-    let defs = std::mem::take(old_defs);
-    for (name, value) in defs {
-        old_defs.insert(names.get(&name).cloned().unwrap_or(name), value);
-    }
-    // Repeated numeric/parent constraints are cheaper as shared definitions.
-    for (index, pattern) in [
-        json!({"type":"number","minimum":0,"maximum":1}),
-        json!({"type":"string","pattern":"^node:[1-9][0-9]*$"}),
-        json!({"type":"number","minimum":0}),
-        json!({"type":"integer","minimum":1,"maximum":100}),
-        json!({"type":"integer","minimum":1}),
-        json!({"type":"integer","minimum":0}),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let name = format!("c{index}");
-        let mut count = 0;
-        visit(schema, &mut |value| {
-            if *value == pattern {
-                *value = json!({"$ref":format!("#/$defs/{name}")});
-                count += 1;
-            }
-        });
-        if count > 0 {
-            schema["$defs"][name] = pattern;
-        }
-    }
-}
 fn rpc_result(id: Value, result: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"result":result})
 }
@@ -556,10 +523,12 @@ pub fn serve<T: Transport>(
             }
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
-            "tools/list" => rpc_result(id, tools_for_api(params["api"].as_str().unwrap_or("1.0"))),
+            "tools/list" => rpc_result(id, tools_for_api(params.get("api").and_then(Value::as_str).unwrap_or("1.0"))),
             "tools/call"
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
+                        && name != "import_svg"
+                        && !["schema", "list_verbs"].contains(&name)
                         && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
                             .contains(&name)
@@ -632,7 +601,519 @@ pub fn serve<T: Transport>(
     Ok(())
 }
 
-/// Explicit API 1.2 discovery. Legacy tools/list remains byte-identical.
+/// Explicit 1.2 schema projection; legacy tools() remains byte-frozen.
+pub fn tools_for_api(api: &str) -> Value {
+    tools_for(api)
+}
+
+pub(crate) fn full_tools_for(api: &str) -> Value {
+    let mut out = construction_tools(api);
+    if api != "1.2" {
+        return out;
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.push(json!({"name":"import_svg","description":"SVG/SVGZ; files scope; undo; losses.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}), &["api","board","request_id","expected_rev","path"])}));
+    }
+    append_export_tools(&mut out);
+    append_document_tools(&mut out);
+    if let Some(list) = out["tools"].as_array_mut() {
+        if let Some(export) = list.iter_mut().find(|v| v["name"] == "export_pdf") {
+            export["inputSchema"]["properties"]["options"] =
+                json!({"type":"object","description":"PDF preset, image_ppi, compress_streams, boxes and marks"});
+        }
+    }
+    if let Some(list) = out["tools"].as_array_mut() {
+        for name in crate::TOOLS_12 {
+            list.push(json!({"name":name,"description":"API 1.2 desktop host effect. Print opens a prepared PDF in Preview; Copy/Cut publish the current selection to the OS clipboard.","inputSchema": {"type":"object","additionalProperties":false,"properties":{"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"scope":{"enum":["active_artboard","all_visible_artboards","artwork_bounds"]},"options":{"type":"object"}},"required":["api","board","request_id","expected_rev"]}}));
+        }
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        if let Some(edit) = rows.iter_mut().find(|r| r["name"] == "edit") {
+            if let Some(ops) = edit["inputSchema"]["$defs"]["operation"]["anyOf"].as_array_mut() {
+                ops.extend(
+                ["clip", "release_clip"].map(|verb| object(json!({"verb":{"const":verb},"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string"}}}), &["verb","ids"])));
+            }
+        }
+    }
+    let style = stroke_style_schema();
+    if let Some(tools) = out["tools"].as_array_mut() {
+        for tool in tools {
+            let name = tool["name"].as_str().unwrap_or("").to_owned();
+            if ![
+                "import_svg",
+                "export_svg",
+                "export_raster",
+                "save_template",
+                "new_from_template",
+                "window_memory",
+                "print",
+                "copy",
+                "cut",
+            ]
+            .contains(&name.as_str())
+            {
+                tool["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+            }
+            if name == "describe" {
+                if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
+                    fields.push(json!("stroke_style"));
+                }
+            }
+            if name == "edit" {
+                let schema = &mut tool["inputSchema"];
+                schema["$defs"]["trace_rgba"] = object(
+                    json!({"verb":{"const":"trace_rgba"},"rgba":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}},"width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1},"options":{"type":"object","description":"API 1.2 only: TraceOptions; mode BlackWhite, Grayscale, or {Color:{colors:1..255}}; fidelity/corners 0..100, threshold 0..255, noise_px, ignore_white"}}),
+                    &["verb", "rgba", "width", "height"],
+                );
+                if let Some(ops) = schema["$defs"]["operation"]["anyOf"].as_array_mut() {
+                    ops.push(json!({"$ref":"#/$defs/trace_rgba"}));
+                }
+                schema["$defs"]["stroke_style"] = style.clone();
+                schema["$defs"]["op_key"] = json!({"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}]});
+                let shared_ids = schema["$defs"]["move"]["properties"]["ids"].clone();
+                schema["$defs"]["ids"] = shared_ids.clone();
+                schema["$defs"]["set_paint"]["properties"]["stroke_style"] = json!({"$ref":"#/$defs/stroke_style"});
+                schema["$defs"]["set_stroke_style"] = object(
+                    json!({"verb":{"const":"set_stroke_style"},"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string","pattern":"^path:[1-9][0-9]*$"}},"stroke_style":{"$ref":"#/$defs/stroke_style"}}),
+                    &["verb", "ids", "stroke_style"],
+                );
+                if let Some(ops) = schema["$defs"]["operation"]["anyOf"].as_array_mut() {
+                    ops.push(json!({"$ref":"#/$defs/set_stroke_style"}));
+                }
+                // API 1.2 accepts the contract's `op` spelling, or the retained `verb`, but never both.
+                if let Some(defs) = schema["$defs"].as_object_mut() {
+                    for definition in defs.values_mut() {
+                        if let Some(value) = definition["properties"]["verb"].get("const").cloned() {
+                            definition["properties"]["op"] = json!({"const":value});
+                            if let Some(required) = definition["required"].as_array_mut() {
+                                required.retain(|v| v != "verb");
+                            }
+                            let mut constraints = vec![json!({"$ref":"#/$defs/op_key"})];
+                            if let Some(original) = definition.as_object_mut().and_then(|d| d.remove("oneOf")) {
+                                constraints.push(json!({"oneOf":original}));
+                            }
+                            definition["allOf"] = json!(constraints);
+                            if definition["properties"]["ids"] == shared_ids {
+                                definition["properties"]["ids"] = json!({"$ref":"#/$defs/ids"});
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Keep the combined opt-in projection within the existing tools/list size budget.
+    fn trim_descriptions(value: &mut Value) {
+        match value {
+            Value::Object(m) => {
+                m.remove("description");
+                for v in m.values_mut() {
+                    trim_descriptions(v);
+                }
+            }
+            Value::Array(a) => {
+                for v in a {
+                    trim_descriptions(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(tools) = out["tools"].as_array_mut() {
+        for tool in tools {
+            trim_descriptions(&mut tool["inputSchema"]);
+        }
+    }
+    // Reuse identical property constraints without changing validation or accepted spellings.
+    fn share(value: &mut Value, original: &Value, reference: &Value) {
+        if value == original {
+            *value = reference.clone();
+        } else {
+            match value {
+                Value::Object(m) => {
+                    for v in m.values_mut() {
+                        share(v, original, reference);
+                    }
+                }
+                Value::Array(a) => {
+                    for v in a {
+                        share(v, original, reference);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(tools) = out["tools"].as_array_mut() {
+        if let Some(edit) = tools.iter_mut().find(|t| t["name"] == "edit") {
+            let schema = &mut edit["inputSchema"];
+            let d = &schema["$defs"];
+            let shared = [
+                ("paint", d["set_paint"]["properties"]["fill"].clone()),
+                ("pt", d["move"]["properties"]["delta"].clone()),
+                ("board_id", d["delete_artboard"]["properties"]["id"].clone()),
+                ("local", d["add_path"]["properties"]["local"].clone()),
+                ("arrow", d["stroke_style"]["properties"]["arrows"]["properties"]["start"].clone()),
+                ("name", d["add_path"]["properties"]["name"].clone()),
+                ("bounds", d["resize"]["properties"]["bounds"].clone()),
+                ("parent", d["add_path"]["properties"]["parent"].clone()),
+            ];
+            for (name, original) in shared {
+                if original.is_null() || original.get("$ref").is_some() {
+                    continue;
+                }
+                share(schema, &original, &json!({"$ref":format!("#/$defs/{name}")}));
+                schema["$defs"][name] = original;
+            }
+        }
+    }
+    // Compact only the combined 1.2 projection; retain standalone named definitions.
+    if let Some(tools) = out["tools"].as_array_mut() {
+        for tool in tools.iter_mut() {
+            let description = match tool["name"].as_str() {
+                Some("capabilities") => Some("APIs/limits/scopes."),
+                Some("list_boards") => Some("Open boards."),
+                Some("describe") => Some("Paged detail/diff."),
+                Some("select") => Some("Select; no undo."),
+                Some("history") => Some("Checked undo/redo."),
+                Some("request_status") => Some("Poll receipt."),
+                Some("snapshot") => Some("Pinned PNG; <=1024px."),
+                Some("edit") => Some("Atomic targets; one undo; selection retained. Tuples/objects, repeat, defaults, IDs receipts. Trace: pixels. Pages: artboard:N."),
+                Some("save") => Some("Pinned file job; poll request_status. Fresh .vrs/.pdf in home/Volumes/iCloud/CloudStorage; local volumes, existing canonical parents. Protected/dot/symlink/hardlink/overwrite guards; see capabilities."),
+                Some("save_as" | "export_pdf") => {
+                    Some("Pinned file job; save guards; poll request_status.")
+                }
+                Some("export_svg" | "export_raster") => Some("Pinned output; file guards; poll receipt."),
+                Some("save_template" | "new_from_template") => Some("NAME.vrs; poll receipt; opening is dirty Untitled."),
+                Some("window_memory") => Some("Persisted window geometry."),
+                Some("print") => Some("Open prepared PDF in Preview."),
+                Some("copy" | "cut") => Some("Publish selection; cut deletes with undo."),
+                _ => None,
+            };
+            if let Some(description) = description {
+                tool["description"] = json!(description);
+            }
+        }
+        if let Some(edit) = tools.iter_mut().find(|t| t["name"] == "edit") {
+            let schema = &mut edit["inputSchema"];
+            let Some(defs) = schema["$defs"].as_object_mut() else {
+                // Compaction is optional; retain the original projection if definitions are absent.
+                return out;
+            };
+            // oneOf already rejects the case where both discriminator keys are present.
+            defs["op_key"]["oneOf"] = json!([{"required":["verb"]},{"required":["op"]}]);
+            defs["op_key"]["type"] = json!("object");
+            for definition in defs.values_mut() {
+                if definition["allOf"][0] == json!({"$ref":"#/$defs/op_key"}) {
+                    let Some(m) = definition.as_object_mut() else {
+                        // Leave non-object definitions unchanged rather than compacting them.
+                        continue;
+                    };
+                    let Some(Value::Array(mut constraints)) = m.get("allOf").cloned() else {
+                        // Preserve the original definition if its constraints cannot be compacted.
+                        continue;
+                    };
+                    m.remove("type");
+                    m.remove("allOf");
+                    m.insert("$ref".into(), json!("#/$defs/op_key"));
+                    constraints.remove(0);
+                    if !constraints.is_empty() {
+                        m.insert("allOf".into(), json!(constraints));
+                    }
+                }
+            }
+            // Repeat depth changes only its children, not its common fields or closure.
+            let mut base = defs["repeat0"].clone();
+            base["properties"]["ops"] = json!({});
+            defs.insert("repeat_base".into(), base);
+            for depth in 0..4 {
+                let name = format!("repeat{depth}");
+                let ops = defs[&name]["properties"]["ops"].clone();
+                defs.insert(name, json!({"$ref":"#/$defs/repeat_base","properties":{"ops":ops}}));
+            }
+            // Preserve every public definition name while sharing identical constraints.
+            let mut seen = std::collections::BTreeMap::<String, String>::new();
+            let mut aliases = Vec::new();
+            for (name, definition) in defs.iter() {
+                let key = definition.to_string();
+                if let Some(canonical) = seen.get(&key) {
+                    aliases.push((name.clone(), canonical.clone(), definition.clone()));
+                } else {
+                    seen.insert(key, name.clone());
+                }
+            }
+            for (name, canonical, original) in aliases {
+                share(schema, &original, &json!({"$ref":format!("#/$defs/{canonical}")}));
+                schema["$defs"][&canonical] = original;
+                schema["$defs"][name] = json!({"$ref":format!("#/$defs/{canonical}")});
+            }
+            fn count_constraints(value: &Value, counts: &mut std::collections::BTreeMap<String, (usize, Value)>) {
+                match value {
+                    Value::Object(m) => {
+                        if ["type", "anyOf", "oneOf", "enum", "const"].iter().any(|k| m.contains_key(*k))
+                            && value["properties"]["verb"].is_null()
+                            && value["properties"]["op"].is_null()
+                        {
+                            let entry = counts.entry(value.to_string()).or_insert((0, value.clone()));
+                            entry.0 += 1;
+                        }
+                        for child in m.values() {
+                            count_constraints(child, counts);
+                        }
+                    }
+                    Value::Array(a) => {
+                        for child in a {
+                            count_constraints(child, counts);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut counts = std::collections::BTreeMap::new();
+            count_constraints(schema, &mut counts);
+            let mut next = 0;
+            for (key, (count, original)) in counts {
+                let name = format!("{next:x}");
+                let reference = json!({"$ref":format!("#/$defs/{name}")});
+                if count > 1 && count * key.len() > key.len() + name.len() + 5 + count * reference.to_string().len() {
+                    share(schema, &original, &reference);
+                    schema["$defs"][name] = original;
+                    next += 1;
+                }
+            }
+        }
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.push(json!({"name":"schema","description":"Full params schema on demand; no document required.","inputSchema":object(json!({"api":{"const":"1.2"},"tool":{"type":"string"},"verb":{"type":"string"}}), &["api","tool"])}));
+        rows.push(json!({"name":"list_verbs","description":"Grouped names and one-line descriptions; no document required.","inputSchema":object(json!({"api":{"const":"1.2"}}), &["api"])}));
+    }
+    out
+}
+
+/// API 1.2 publishes core schemas and an index of extended edit operations.
+/// Discovery never changes the typed decoder or execution path.
+pub fn tools_for(api: &str) -> Value {
+    if api != "1.2" {
+        return legacy_tools_list();
+    }
+    let mut out = full_tools_for(api);
+    if let Some(rows) = out["tools"].as_array_mut() {
+        if let Some(edit) = rows.iter_mut().find(|row| row["name"] == "edit") {
+            let root = edit["inputSchema"].clone();
+            let mut alternatives = Vec::new();
+            let mut extended = Vec::new();
+            if let Some(ops) = root["$defs"]["operation"]["anyOf"].as_array() {
+                for op in ops {
+                    let expanded = expand_schema(op, &root);
+                    let verb = schema_verb(&expanded);
+                    if verb.is_none_or(core_verb) {
+                        alternatives.push(op.clone());
+                    } else if let Some(verb) = verb {
+                        extended.push(verb.to_owned());
+                    }
+                }
+            }
+            let descriptions = extended
+                .iter()
+                .map(|verb| format!("{verb}: {}", verb_description(verb)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            alternatives.push(json!({"type":"object","properties":{"verb":{"enum":extended},"op":{"enum":extended}},"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}],"description":descriptions}));
+            edit["inputSchema"]["$defs"]["operation"]["anyOf"] = json!(alternatives);
+            prune_definitions(&mut edit["inputSchema"]);
+            edit["description"] = json!("Atomic typed edits; core params inline. Extended verbs: call schema api 1.2 tool edit verb NAME before use; list_verbs groups all verbs. Decoder validates all params.");
+        }
+    }
+    out
+}
+
+fn schema_verb(schema: &Value) -> Option<&str> {
+    schema["properties"]["verb"]["const"]
+        .as_str()
+        .or_else(|| schema.get("allOf").and_then(Value::as_array).and_then(|parts| parts.iter().find_map(schema_verb)))
+}
+
+fn core_verb(verb: &str) -> bool {
+    matches!(
+        verb,
+        "move"
+            | "set_paint"
+            | "add_shape"
+            | "add_path"
+            | "resize"
+            | "rotate"
+            | "rename"
+            | "align"
+            | "group"
+            | "order"
+            | "delete"
+            | "ungroup"
+            | "repeat"
+    )
+}
+
+fn verb_description(verb: &str) -> String {
+    match verb {
+        "clip" => "Create a clipping group".into(),
+        "release_clip" => "Release a clipping group".into(),
+        "pathfinder" => "Combine paths with a Boolean operation".into(),
+        "trace_rgba" => "Trace RGBA pixels into vector paths".into(),
+        "set_stroke_style" | "stroke_style" => "Set caps, joins, dashes and arrows".into(),
+        "document_setup" => "Set units, PPI, bleed or transparency grid".into(),
+        "repeat" => "Repeat creation operations with an offset".into(),
+        _ => format!("Apply {}", verb.replace('_', " ")),
+    }
+}
+
+/// Expand local references while preserving sibling validation constraints.
+fn expand_schema(value: &Value, root: &Value) -> Value {
+    if let Some(pointer) = value.get("$ref").and_then(Value::as_str).and_then(|s| s.strip_prefix('#')) {
+        if let Some(target) = root.pointer(pointer) {
+            let target = expand_schema(target, root);
+            if let Some(map) = value.as_object() {
+                let siblings: serde_json::Map<String, Value> = map
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != "$ref")
+                    .map(|(key, value)| (key.clone(), expand_schema(value, root)))
+                    .collect();
+                if siblings.is_empty() {
+                    return target;
+                }
+                let mut siblings = Value::Object(siblings);
+                if let Some(map) = siblings.as_object_mut() {
+                    let constraints = map.entry("allOf").or_insert_with(|| json!([]));
+                    if let Some(constraints) = constraints.as_array_mut() {
+                        constraints.push(target);
+                        return siblings;
+                    }
+                }
+            }
+        }
+    }
+    match value {
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), expand_schema(v, root))).collect()),
+        Value::Array(array) => Value::Array(array.iter().map(|v| expand_schema(v, root)).collect()),
+        _ => value.clone(),
+    }
+}
+
+/// Retain only definitions reachable from the public schema, including transitive refs.
+fn prune_definitions(schema: &mut Value) {
+    fn refs(value: &Value, found: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(name) = map.get("$ref").and_then(Value::as_str).and_then(|s| s.strip_prefix("#/$defs/")) {
+                    found.insert(name.split('/').next().unwrap_or(name).into());
+                }
+                for (key, child) in map {
+                    if key != "$defs" {
+                        refs(child, found);
+                    }
+                }
+            }
+            Value::Array(array) => {
+                for child in array {
+                    refs(child, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut needed = std::collections::BTreeSet::new();
+    refs(schema, &mut needed);
+    loop {
+        let previous = needed.clone();
+        for name in &previous {
+            refs(&schema["$defs"][name], &mut needed);
+        }
+        if needed == previous {
+            break;
+        }
+    }
+    if let Some(defs) = schema["$defs"].as_object_mut() {
+        defs.retain(|name, _| needed.contains(name));
+    }
+}
+
+pub fn schema(tool: &str, verb: Option<&str>) -> Result<Value, Error> {
+    let table = full_tools_for("1.2");
+    let root = table["tools"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["name"] == tool))
+        .map(|row| &row["inputSchema"])
+        .ok_or_else(|| Error::new("invalid_argument", "unknown schema tool"))?;
+    let Some(verb) = verb else {
+        if tool == "edit" {
+            return Err(Error::new("invalid_argument", "edit schema requires a verb"));
+        }
+        return Ok(root.clone());
+    };
+    if tool != "edit" {
+        return Err(Error::new("invalid_argument", "verb discovery requires tool edit"));
+    }
+    let name = if verb == "stroke_style" { "set_stroke_style" } else { verb };
+    if let Some(ops) = root["$defs"]["operation"]["anyOf"].as_array() {
+        for op in ops {
+            let expanded = expand_schema(op, root);
+            if schema_verb(&expanded) == Some(name) {
+                let mut params = op
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|reference| reference.strip_prefix('#'))
+                    .and_then(|pointer| root.pointer(pointer))
+                    .unwrap_or(op)
+                    .clone();
+                params["$defs"] = root["$defs"].clone();
+                prune_definitions(&mut params);
+                return Ok(params);
+            }
+        }
+    }
+    Err(Error::new("invalid_argument", "unknown edit verb"))
+}
+
+pub fn list_verbs() -> Value {
+    let table = full_tools_for("1.2");
+    let mut core = Vec::new();
+    let mut extended = Vec::new();
+    let mut tools = Vec::new();
+    if let Some(rows) = table["tools"].as_array() {
+        for row in rows {
+            let name = row["name"].as_str().unwrap_or_default();
+            if name == "edit" {
+                let root = &row["inputSchema"];
+                if let Some(ops) = root["$defs"]["operation"]["anyOf"].as_array() {
+                    for op in ops {
+                        let expanded = expand_schema(op, root);
+                        if let Some(verb) = schema_verb(&expanded) {
+                            let entry = json!({"name":verb,"description":verb_description(verb)});
+                            if core_verb(verb) {
+                                core.push(entry);
+                            } else {
+                                extended.push(entry);
+                            }
+                        }
+                    }
+                }
+            } else {
+                tools.push(json!({"name":name,"description":row["description"]}));
+            }
+        }
+    }
+    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"group":"tools","verbs":tools}]})
+}
+
+pub fn stroke_style_schema() -> Value {
+    let arrows = object(
+        json!({"start":{"anyOf":[{"enum":varos_core::stroke::ArrowHead::ALL},{"type":"null"}],"default":null},"end":{"anyOf":[{"enum":varos_core::stroke::ArrowHead::ALL},{"type":"null"}],"default":null},"scale_start":{"type":"number","minimum":0.01,"maximum":100,"default":1},"scale_end":{"type":"number","minimum":0.01,"maximum":100,"default":1},"align":{"enum":["Tip","Extend"],"default":"Tip"}}),
+        &[],
+    );
+    object(
+        json!({"cap":{"enum":["Butt","Round","Square"],"default":"Round"},"join":{"enum":["Miter","Round","Bevel"],"default":"Round"},"miter_limit":{"type":"number","minimum":1,"maximum":1000,"default":10},"dash":{"type":"array","items":{"anyOf":[{"const":0},{"type":"number","minimum":0.0001,"maximum":1000000}]},"anyOf":[{"minItems":0,"maxItems":0},{"minItems":2,"maxItems":2},{"minItems":4,"maxItems":4},{"minItems":6,"maxItems":6}],"default":[],"description":"0, 2, 4 or 6 entries; positive entries >= 0.0001; every dash/gap pair has positive sum"},"dash_phase":{"type":"number","minimum":-1000000,"maximum":1000000,"default":0},"align_dashes_to_corners":{"type":"boolean","default":false},"align":{"enum":["Center","Inside","Outside"],"default":"Center"},"arrows":arrows}),
+        &[],
+    )
+}
+
 fn append_export_tools(result: &mut Value) {
     let Some(list) = result.get_mut("tools").and_then(Value::as_array_mut) else { return };
     for name in ["export_svg", "export_raster"] {
@@ -674,6 +1155,76 @@ fn append_document_tools(out: &mut Value) {
                     fields.push(json!("document_info"));
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+fn compact_api_12_schema(schema: &mut Value) {
+    fn visit(value: &mut Value, action: &mut impl FnMut(&mut Value)) {
+        action(value);
+        match value {
+            Value::Object(map) => {
+                for child in map.values_mut() {
+                    visit(child, action);
+                }
+            }
+            Value::Array(array) => {
+                for child in array {
+                    visit(child, action);
+                }
+            }
+            _ => {}
+        }
+    }
+    visit(schema, &mut |value| {
+        if let Some(map) = value.as_object_mut() {
+            map.remove("description");
+        }
+    });
+    let Some(defs) = schema["$defs"].as_object() else { return };
+    let names: std::collections::BTreeMap<_, _> = defs
+        .keys()
+        .filter(|name| !matches!(name.as_str(), "operation" | "document_setup"))
+        .enumerate()
+        .map(|(index, name)| (name.clone(), index.to_string()))
+        .collect();
+    visit(schema, &mut |value| {
+        if let Some(reference) = value.get_mut("$ref") {
+            if let Some(name) = reference.as_str().and_then(|s| s.strip_prefix("#/$defs/")) {
+                if let Some(short) = names.get(name) {
+                    *reference = json!(format!("#/$defs/{short}"));
+                }
+            }
+        }
+    });
+    let Some(old_defs) = schema["$defs"].as_object_mut() else { return };
+    let defs = std::mem::take(old_defs);
+    for (name, value) in defs {
+        old_defs.insert(names.get(&name).cloned().unwrap_or(name), value);
+    }
+    // Repeated numeric/parent constraints are cheaper as shared definitions.
+    for (index, pattern) in [
+        json!({"type":"number","minimum":0,"maximum":1}),
+        json!({"type":"string","pattern":"^node:[1-9][0-9]*$"}),
+        json!({"type":"number","minimum":0}),
+        json!({"type":"integer","minimum":1,"maximum":100}),
+        json!({"type":"integer","minimum":1}),
+        json!({"type":"integer","minimum":0}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("c{index}");
+        let mut count = 0;
+        visit(schema, &mut |value| {
+            if *value == pattern {
+                *value = json!({"$ref":format!("#/$defs/{name}")});
+                count += 1;
+            }
+        });
+        if count > 0 {
+            schema["$defs"][name] = pattern;
         }
     }
 }
@@ -756,10 +1307,8 @@ mod integration_tests {
             let row = rows.iter().find(|row| row["name"] == name).unwrap();
             assert_eq!(row["inputSchema"]["properties"]["api"]["const"], "1.2");
         }
-        let edit = rows.iter().find(|row| row["name"] == "edit").unwrap();
-        let operations = edit["inputSchema"]["$defs"]["operation"]["anyOf"].as_array().unwrap();
         for verb in ["clip", "release_clip", "view", "object", "anchor_type", "distribute_mode", "distribute_spacing"] {
-            assert_eq!(operations.iter().filter(|op| op["properties"]["verb"]["const"] == verb).count(), 1, "{verb}");
+            assert_eq!(schema_verb(&schema("edit", Some(verb)).unwrap()), Some(verb));
         }
     }
 }

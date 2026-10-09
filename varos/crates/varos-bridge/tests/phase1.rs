@@ -127,16 +127,14 @@ fn document_info_matches_legacy_counts() {
 fn schemas_are_opt_in() {
     assert_eq!(
         varos_bridge::mcp::tools_12()["tools"].as_array().unwrap().len(),
-        varos_bridge::mcp::tools()["tools"].as_array().unwrap().len() + 8
+        varos_bridge::mcp::tools()["tools"].as_array().unwrap().len() + 11
     );
     let schema = varos_bridge::mcp::tools_12();
     let tools = schema["tools"].as_array().unwrap();
     let edit = tools.iter().find(|t| t["name"] == "edit").unwrap();
-    assert_eq!(edit["inputSchema"]["$defs"]["document_setup"]["required"], json!(["verb", "field", "value"]));
-    assert!(edit["inputSchema"]["$defs"]["operation"]["anyOf"]
-        .as_array()
-        .unwrap()
-        .contains(&json!({"$ref":"#/$defs/document_setup"})));
+    assert!(edit["inputSchema"]["$defs"].get("document_setup").is_none());
+    let setup = varos_bridge::mcp::schema("edit", Some("document_setup")).unwrap();
+    assert_eq!(setup["required"], json!(["field", "value"]));
     let legacy = varos_bridge::mcp::tools();
     let legacy_edit = legacy["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
     assert!(legacy_edit["inputSchema"]["$defs"].get("document_setup").is_none());

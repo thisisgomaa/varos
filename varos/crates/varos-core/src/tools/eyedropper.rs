@@ -6,7 +6,11 @@ pub struct Eyedropper;
 impl Tool for Eyedropper {
     fn down(&self, ed: &mut Editor, pos: Pt) {
         if let Some(pid) = ed.path_under(pos) {
-            ed.eyedrop(pid);
+            ed.execute_ui(crate::EditCommand::Eyedropper {
+                source: pid,
+                options: ed.select_transform.pick,
+                colour_only: ed.mods.shift,
+            });
         }
     }
 }
