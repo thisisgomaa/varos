@@ -172,6 +172,7 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         // crosshair + the tool's own badge, on hover and for the whole drag (owner 2026-09-25)
         ToolKind::Rotate => CK::CrossRotate,
         ToolKind::Scale => CK::CrossScale,
+        ToolKind::Reflect | ToolKind::Shear | ToolKind::FreeTransform | ToolKind::MagicWand => CK::CrossScale,
         ToolKind::Rect => CK::CrossRect,
         ToolKind::Ellipse => CK::CrossEllipse,
         ToolKind::Triangle => CK::CrossTriangle,
@@ -259,6 +260,10 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Artboard => "Artboard (Shift+O)",
         ToolKind::Rotate => "Rotate (R)",
         ToolKind::Scale => "Scale (S)",
+        ToolKind::Reflect => "Reflect (O)",
+        ToolKind::Shear => "Shear",
+        ToolKind::FreeTransform => "Free Transform (E)",
+        ToolKind::MagicWand => "Magic Wand (Y)",
     }
 }
 
@@ -328,10 +333,14 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         "KeyL" => ed.set_tool(ToolKind::Ellipse),
         "KeyR" => ed.set_tool(ToolKind::Rotate), // Rotate tool (Illustrator R)
         "KeyS" => ed.set_tool(ToolKind::Scale),  // Scale tool (Illustrator S)
+        "KeyE" if !shift => ed.set_tool(ToolKind::FreeTransform),
+        "KeyY" if !shift => ed.set_tool(ToolKind::MagicWand),
         "KeyI" => ed.set_tool(ToolKind::Eyedropper),
         "KeyO" => {
             if shift {
                 ed.set_tool(ToolKind::Artboard);
+            } else {
+                ed.set_tool(ToolKind::Reflect);
             }
         }
         "KeyX" => {
@@ -754,6 +763,11 @@ fn run_action(
 /// action first commits the open field to what it was editing (its own undo step), then runs. `false`
 /// = the field's text does not parse: nothing ran, the action must be held.
 fn run_doc(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: egui::Rect, ui: &mut dyn host::DocUi) -> bool {
+    if matches!(a, host::DocAction::Key(KeyCode::Escape, _)) && ed.select_transform.preview.is_some() {
+        ed.execute(EditCommand::TransformCancel);
+        ed.select_transform.down = None;
+        return true;
+    }
     let history = matches!(a, host::DocAction::Key(KeyCode::KeyZ | KeyCode::KeyY, m) if m.ctrl);
     if history && ui.field_has_focus() {
         return true;
@@ -770,6 +784,7 @@ fn run_doc_action(a: host::DocAction, ed: &mut Editor, view: &mut View, canvas: 
     match a {
         host::DocAction::Key(code, m) => doc_key(ed, view, canvas, code, m),
         host::DocAction::Snap(row) => menu_snap_toggle(ed, row),
+        host::DocAction::Slice4a(name) => ui::select_transform::menu(ed, name),
     }
 }
 
@@ -1266,6 +1281,11 @@ fn main() {
                                     let d = D::Key(code, Mods::default());
                                     raise_doc(&mut pending, d, &mut s.editor, &mut s.view, canvas, &mut gui);
                                 }
+                            }
+                        }
+                        Some(R::Slice4a(name)) => {
+                            if let Some(s) = ws.active_mut() {
+                                raise_doc(&mut pending, D::Slice4a(name), &mut s.editor, &mut s.view, canvas, &mut gui);
                             }
                         }
                         Some(R::Snap(row)) => {
@@ -3108,5 +3128,27 @@ mod picker_shortcut_tests {
         assert!(if ed.paint == PaintTarget::Fill { ed.cur_fill.is_none() } else { ed.cur_stroke.is_none() });
         apply_key(&mut ed, &mut view, [0.0, 0.0], "KeyI", false, false, false);
         assert!(ed.tool == ToolKind::Eyedropper);
+    }
+}
+
+#[cfg(test)]
+mod slice4a_shortcut_tests {
+    use super::*;
+    #[test]
+    fn slice4a_shortcuts_preserve_shift_o_and_leave_shift_e_for_eraser_lane() {
+        let mut ed = Editor::new();
+        let mut view = View::identity();
+        for (key, shift, expected) in [
+            ("KeyO", false, ToolKind::Reflect),
+            ("KeyO", true, ToolKind::Artboard),
+            ("KeyE", false, ToolKind::FreeTransform),
+            ("KeyY", false, ToolKind::MagicWand),
+        ] {
+            apply_key(&mut ed, &mut view, [0., 0.], key, false, shift, false);
+            assert!(ed.tool == expected);
+        }
+        ed.set_tool(ToolKind::Object);
+        apply_key(&mut ed, &mut view, [0., 0.], "KeyE", false, true, false);
+        assert!(ed.tool == ToolKind::Object);
     }
 }

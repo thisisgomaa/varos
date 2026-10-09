@@ -190,9 +190,10 @@ pub fn tools() -> Value {
         definitions.insert(format!("repeat{depth}"), object(json!({"verb":{"const":"repeat"},"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"anyOf":alternatives}},"count":{"type":"integer","minimum":1,"maximum":100},"dx":{"type":"number"},"dy":{"type":"number"}}), &["verb","ops","count","dx","dy"]));
     }
     all_ops.push(json!({"$ref":"#/$defs/repeat0"}));
+    crate::select_transform::schemas(&mut definitions, &mut all_ops);
     definitions.insert("operation".into(), json!({"anyOf":all_ops}));
     let edit = schemas.get_mut("edit").unwrap();
-    edit["properties"]["api"] = json!({"enum":["1.0","1.1"]});
+    edit["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"]});
     edit["properties"]["ops"]["items"] = json!({"$ref":"#/$defs/operation"});
     edit["properties"]["defaults"] = object(
         json!({"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"radius":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
@@ -213,6 +214,11 @@ pub fn tools() -> Value {
         schemas.get_mut(tool).unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1"],"default":"1.0"});
     }
     schemas.get_mut("export_pdf").unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+    for tool in ["capabilities", "select"] {
+        if let Some(schema) = schemas.get_mut(tool) {
+            schema["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+        }
+    }
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
         "capabilities"=>"Negotiate Bridge API 1.0/1.1; export_pdf additionally supports 1.2 reports; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",

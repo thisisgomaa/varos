@@ -168,3 +168,5 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
+
+| 4A select/transform (Lane I) | implemented (provisional UI, owner design review pending) | uncommitted `feat/p4-tools` | Reflect/Shear/Free Transform shear; preview + Copy sheets; Transform Each; Wand/Eyedropper options; isolation; Layers family; API 1.2 + CLI. Align/key object belongs to 0.8; distort/perspective deferred. Native hand test and independent moderator review pending. |

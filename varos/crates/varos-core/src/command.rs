@@ -13,6 +13,28 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    SetWandOptions(crate::select_transform::WandOptions),
+    SetEyedropperOptions(crate::select_transform::PickOptions),
+    Transform(crate::select_transform::Transform),
+    TransformBegin,
+    TransformLive(crate::select_transform::Transform),
+    TransformCommit,
+    TransformCancel,
+    MagicWand {
+        source: u32,
+        options: crate::select_transform::WandOptions,
+        mode: crate::select_transform::SelectMode,
+    },
+    Eyedropper {
+        source: u32,
+        options: crate::select_transform::PickOptions,
+        colour_only: bool,
+    },
+    Isolate(Option<u32>),
+    LayerFamily {
+        action: crate::select_transform::LayerAction,
+        nodes: Vec<u32>,
+    },
     /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
     AddShape {
         kind: crate::model::ShapeKind,
@@ -281,6 +303,23 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::SetWandOptions(options) => {
+                ed.select_transform.wand = options;
+                ed.select_transform.options_requested = true;
+            }
+            Self::SetEyedropperOptions(options) => {
+                ed.select_transform.pick = options;
+                ed.select_transform.options_requested = true;
+            }
+            Self::Transform(s) => ed.transform_edit(s),
+            Self::TransformBegin => ed.transform_begin(),
+            Self::TransformLive(s) => ed.transform_live(s),
+            Self::TransformCommit => ed.transform_end(false),
+            Self::TransformCancel => ed.transform_end(true),
+            Self::MagicWand { source, options, mode } => ed.magic_wand(source, options, mode),
+            Self::Eyedropper { source, options, colour_only } => ed.sample_options(source, options, colour_only),
+            Self::Isolate(n) => ed.isolate(n),
+            Self::LayerFamily { action, nodes } => ed.layer_family(action, nodes),
             Self::AddPath { .. } => {
                 let _ = ed.try_execute_created(self);
             }
@@ -288,13 +327,13 @@ impl EditCommand {
                 let _ = ed.add_shape(kind, bounds, parent, fill, stroke, stroke_width, opacity, name);
             }
             Self::SelectPaths(paths) => {
-                ed.escape();
+                ed.escape_selection();
                 ed.tool = crate::editor::ToolKind::Object;
-                ed.objsel.extend(paths);
+                ed.objsel.extend(paths.into_iter().filter(|p| ed.in_isolation(*p)).collect::<Vec<_>>());
                 ed.refresh_obj_angle();
             }
             Self::SelectAnchors(anchors) => {
-                ed.escape();
+                ed.escape_selection();
                 ed.tool = crate::editor::ToolKind::Direct;
                 ed.selected.extend(anchors);
             }

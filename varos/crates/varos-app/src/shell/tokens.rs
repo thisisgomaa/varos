@@ -633,6 +633,13 @@ pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
 pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
 pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
 
+// Provisional select/transform sheets (4A); append-only, owner review pending.
+pub const SLICE4A_TOOLS_FIELD_W: f32 = 264.0;
+pub const SLICE4A_TOOLS_HOME_W: f32 = 264.0;
+pub const SLICE4A_TOOLS_SHEET_W: f32 = 288.0;
+pub const SLICE4A_TOOLS_MARGIN: i8 = 12;
+pub const SLICE4A_TOOLS_BREADCRUMB_X: f32 = 64.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

@@ -10,7 +10,7 @@ impl Tool for Object {
             return;
         } // on a handle → transform (keep frame angle)
         if let Some(pid) = ed.path_under(pos) {
-            let members = ed.doc.group_members(pid); // a grouped object selects/moves as a whole unit
+            let members: Vec<_> = ed.doc.group_members(pid).into_iter().filter(|p| ed.in_isolation(*p)).collect(); // a grouped object selects/moves as a whole unit
             let group = ed.doc.top_group_of_path(pid);
             if ed.mods.alt {
                 // duplicate the whole selection if the clicked group is part of a multi-selection
