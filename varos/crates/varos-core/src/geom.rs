@@ -1,6 +1,15 @@
 //! Pure 2D geometry: points, vector math, cubic beziers, hit-testing math.
 //! No rendering, no platform deps.
 
+pub mod edit;
+pub mod fit;
+pub mod kurbo;
+pub mod shapes;
+
+pub use edit::{add_anchor_points, average_anchors, join_open_paths, simplify, smooth, AverageAxis};
+pub use fit::fit_points;
+pub use shapes::{arc, line, polar_grid, polygon, rectangular_grid, rounded_rectangle, spiral, star, ArcClosure};
+
 pub type Pt = [f32; 2];
 pub type Rgba = [f32; 4];
 
