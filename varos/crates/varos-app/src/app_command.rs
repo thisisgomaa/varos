@@ -111,6 +111,8 @@ pub enum AppCommand {
     OpenDialog,
     /// Provisional File ▸ Place SVG, existing native file-picker pattern.
     PlaceSvg(SessionId),
+    // ---- Lane H ----
+    PlaceFile(SessionId, PathBuf),
     /// Open these files (an already-open file is focused, never reloaded).
     OpenPaths(Vec<PathBuf>, OpenOrigin),
     /// ⌘S — save this tab (goes through Save As when it has no `.vrs` path yet).

@@ -138,6 +138,8 @@ impl ExportEvent {
 /// One unit of background file work.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileJob {
+    // ---- Lane H ----
+    Import(crate::import_jobs::Job),
     Template(crate::template_jobs::Job),
     Save(SaveJob),
     /// Slice 0.6: File ▸ Save a Copy… — the same write as `Save`, but its result only releases the
@@ -182,6 +184,8 @@ pub struct ExportDone {
 /// A finished background job, applied on the UI thread through `AppCommand::FileDone`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FileDone {
+    // ---- Lane H ----
+    Import(crate::import_jobs::Done),
     Template(crate::template_jobs::Done),
     Autosaved(Box<crate::autosave_io::Done>),
     Saved(SaveDone),
@@ -225,6 +229,10 @@ impl FileDone {
     /// What the worker delivers if `job` panicked (a bug): a failure carrying the job's identity.
     pub fn panicked(job: &FileJob) -> FileDone {
         match job {
+            FileJob::Import(j) => FileDone::Import(crate::import_jobs::Done {
+                job: j.clone(),
+                result: Err("Import worker panicked".into()),
+            }),
             FileJob::Template(j) => FileDone::Template(crate::template_jobs::Done {
                 ticket: j.ticket,
                 result: Err(varos_bridge::Error::new("io_error", "template worker panicked")),
@@ -286,6 +294,7 @@ pub fn next_ticket() -> u64 {
 /// Recent entry, and a save's Recent entry is recorded by the lifecycle when its result is applied.
 pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
     match job {
+        FileJob::Import(j) => FileDone::Import(crate::import_jobs::execute(j)),
         FileJob::Template(j) => FileDone::Template(crate::template_jobs::execute(j)),
         FileJob::Bridge(j) => execute_bridge(*j, disk),
         FileJob::Save(j) => {
@@ -316,7 +325,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
             FileJob::Save(s) | FileJob::SaveCopy(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
             FileJob::Screen(e) => &mut e.job.dest,
-            FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
+            FileJob::Bridge(_) | FileJob::Template(_) | FileJob::Import(_) => unreachable!(),
         };
         if let Some((path, expected)) = &j.expected {
             if expected.is_none() || disk.fingerprint(path) != *expected {
@@ -359,7 +368,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 };
                 FileDone::Exported(ExportDone { job: e, result, report })
             }
-            FileJob::Bridge(_) | FileJob::Template(_) => unreachable!(),
+            FileJob::Bridge(_) | FileJob::Template(_) | FileJob::Import(_) => unreachable!(),
         })
     })();
     let (reply, done) = match result {
@@ -389,7 +398,11 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 FileDone::Exported(_) => {
                     varos_bridge::Reply::failure(varos_bridge::Error::new("io_error", "PDF export refused or failed"))
                 }
-                FileDone::Autosaved(_) | FileDone::Bridge { .. } | FileDone::CopySaved(_) | FileDone::Template(_) => {
+                FileDone::Autosaved(_)
+                | FileDone::Bridge { .. }
+                | FileDone::CopySaved(_)
+                | FileDone::Template(_)
+                | FileDone::Import(_) => {
                     unreachable!()
                 }
             };

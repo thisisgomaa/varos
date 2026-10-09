@@ -528,6 +528,8 @@ pub fn serve<T: Transport>(
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
                         && name != "import_svg"
+                        && name != "import_file"
+                        && name != "import_clipboard"
                         && !["schema", "list_verbs"].contains(&name)
                         && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
@@ -614,6 +616,13 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     if let Some(rows) = out["tools"].as_array_mut() {
         rows.push(json!({"name":"import_svg","description":"SVG/SVGZ; files scope; undo; losses.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}), &["api","board","request_id","expected_rev","path"])}));
     }
+    // ---- Lane H: API 1.2 only; legacy fixture table unchanged ----
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.push(json!({"name":"import_file","description":"Place external SVG/PDF-compatible AI/PDF/ASCII DXF atomically; explicit losses; files scope.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"},"options":{"type":"object","additionalProperties":false,"properties":{"loss_policy":{"enum":["refuse","allow_reported"],"default":"refuse"},"page":{"type":"integer","minimum":1,"maximum":100},"points_per_unit":{"type":"number","exclusiveMinimum":0}}}}), &["api","board","request_id","expected_rev","path"])}));
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.push(json!({"name":"import_clipboard","description":"Paste the highest supported OS artwork flavour; no silent bitmap fallback; one undo step.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"options":{"type":"object","additionalProperties":false,"properties":{"loss_policy":{"enum":["refuse","allow_reported"]},"page":{"type":"integer","minimum":1,"maximum":100}}}}), &["api","board","request_id","expected_rev"])}));
+    }
     append_export_tools(&mut out);
     append_document_tools(&mut out);
     if let Some(list) = out["tools"].as_array_mut() {
@@ -641,6 +650,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             let name = tool["name"].as_str().unwrap_or("").to_owned();
             if ![
                 "import_svg",
+                "import_file",
+                "import_clipboard",
                 "export_svg",
                 "export_raster",
                 "save_template",
