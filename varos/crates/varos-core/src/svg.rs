@@ -604,10 +604,15 @@ fn title(out: &mut String, name: &str) {
 pub(crate) fn image_clip_data(doc: &Document, clip: u32) -> String {
     mask_paths(doc, clip).iter().map(|(p, xf, _)| path_data(p, xf, None)).collect()
 }
-pub(crate) fn paint_image_companion(out: &mut String, doc: &Document, id: u32) -> Result<(), ExportError> {
+pub(crate) fn paint_image_companion(
+    out: &mut String,
+    doc: &Document,
+    id: u32,
+    decimals: Option<u8>,
+) -> Result<(), ExportError> {
     let Some(pi) = doc.pidx(id) else { return Ok(()) };
     let Some(d) = drawable(doc, pi, &doc.paths[pi]) else { return Ok(()) };
-    paint_drawn(out, &d, doc, None)
+    paint_drawn(out, &d, doc, decimals)
 }
 
 #[cfg(test)]

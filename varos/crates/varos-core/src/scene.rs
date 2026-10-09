@@ -653,7 +653,7 @@ fn build_scene_impl(
             return out;
         }
         let paint = p.appearance().stroke().resolved(&ed.doc);
-        if let crate::model::Paint::Gradient(g) = paint {
+        if let crate::model::Paint::Gradient(g) = &paint {
             // Integration w2: gradient strokes take THE stroke seam too — main's canvas cache/cap/back-off
             // on the canvas (world rings), strict evaluation + aggregate budget for export.
             match crate::gradient_canvas::coverage(ed, p, ppu, canvas) {
@@ -690,14 +690,19 @@ fn build_scene_impl(
                     }
                 }
                 Err(e) => {
-                    if canvas {
-                        crate::stroke::canvas::simplified(&mut stroke_report.borrow_mut(), p.id, true);
-                    } else {
+                    if !canvas {
                         stroke_errors.borrow_mut().push(format!("path {}: {e}", p.id));
+                        return out;
                     }
+                    // Integration w2 (review P1): like a solid stroke, a gradient stroke that exceeds the
+                    // canvas budget falls through to the visible native round stroke below, painted with
+                    // the gradient's representative colour, plus the muted "simplified" note.
+                    crate::stroke::canvas::simplified(&mut stroke_report.borrow_mut(), p.id, true);
                 }
             }
-            return out;
+            if !out.is_empty() || !canvas {
+                return out;
+            }
         }
         if !p.stroke_style.is_default() {
             if let Some(color) = paint.solid() {
@@ -779,7 +784,14 @@ fn build_scene_impl(
             // centre-aligned native stroke primitive, with the same page/view clipping.
         }
         if p.anchors.len() >= 2 {
-            if let Some(c) = p.appearance().stroke().resolved(&ed.doc).solid() {
+            // Solid paints draw as themselves; a canvas gradient fallback uses its representative colour.
+            let resolved = p.appearance().stroke().resolved(&ed.doc);
+            let fallback = resolved.solid().or_else(|| {
+                (canvas && matches!(resolved, crate::model::Paint::Gradient(_)))
+                    .then(|| resolved.representative())
+                    .flatten()
+            });
+            if let Some(c) = fallback {
                 let clip = clip_rects(pi);
                 // Only the styled canvas fallback needs this expansion; preserve the
                 // ordinary native/export stroke geometry and its frozen vertex counts.

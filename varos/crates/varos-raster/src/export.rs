@@ -179,7 +179,15 @@ fn encode_inner(
         }
         .map_err(|e| e.to_string())?
     } else {
-        varos_core::images::svg::export(&outlined, store, &plan, false, cancel)?
+        // integration w2 (review P2): advanced SVG options apply to image documents too
+        varos_core::images::svg::export_with_options(
+            &outlined,
+            store,
+            &plan,
+            false,
+            cancel,
+            svg_options.filter(|_| options.format == Format::Svg),
+        )?
     };
     if !asset.doc.text_boxes.is_empty() {
         report.notes.extend(varos_text_layout::export_notes(&asset.doc)?);
