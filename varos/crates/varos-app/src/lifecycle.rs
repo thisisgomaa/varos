@@ -354,6 +354,14 @@ impl Lifecycle<'_> {
             AppCommand::LocateRecent(path) => self.locate(path),
             AppCommand::RemoveRecent(path) => self.store.remove_recent(&path),
             AppCommand::ClearRecent => self.store.clear_recent(),
+            // ---- Lane C ----
+            AppCommand::ShowNewDocument | AppCommand::PathMenu(..) => {},
+            AppCommand::CreateDocument(settings) => {
+                match settings.document() {
+                    Ok(doc) => {self.ws.new_untitled_with(doc);},
+                    Err(reason) => self.dialogs.notice("New Document", &reason),
+                }
+            }
             AppCommand::NewBoard => {
                 // `Editor::new()` holds `board::new_board()`: a free canvas with zero artboards
                 self.ws.new_untitled();

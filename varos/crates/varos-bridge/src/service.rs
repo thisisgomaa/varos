@@ -570,6 +570,11 @@ impl Service {
                             }
                             v["slice4a_verbs"] =
                                 json!(["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]);
+                            // ---- Lane C ----
+                            v["api_by_tool"]["export_screens"] = json!(["1.2"]);
+                            if let Some(tools) = v["tools"].as_array_mut() {
+                                tools.push(json!("export_screens"));
+                            }
                             if let Some(verbs) = v["edit_verbs"].as_array_mut() {
                                 verbs.extend(
                                     ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]
@@ -731,7 +736,10 @@ impl Service {
                 | Request::Print(v)
                 | Request::Copy(v)
                 | Request::Cut(v) => {
-                    if v.options.is_some() && (v.api != "1.2" || !["export_pdf", "print"].contains(&req.tool())) {
+                    if v.options.is_some()
+                        && (v.api != "1.2"
+                            || !["export_pdf", "print", "export_svg", "export_raster"].contains(&req.tool()))
+                    {
                         return Err(Error::new("invalid_argument", "PDF options require export_pdf API 1.2"));
                     }
                     match req {
@@ -809,7 +817,7 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
-                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a()) {
+                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a() || op.lane_c()) {
                         return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
                     }
                     // ---- Lane D: version opt-in ----
@@ -1973,6 +1981,7 @@ fn strip_stroke_style(value: &mut Value) {
     match value {
         Value::Object(map) => {
             map.remove("stroke_style");
+            map.remove("corners");
             for v in map.values_mut() {
                 strip_stroke_style(v);
             }

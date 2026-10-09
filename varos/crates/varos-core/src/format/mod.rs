@@ -15,6 +15,8 @@ mod gradient_keys;
 pub mod limits;
 pub mod migrate;
 mod stroke_keys;
+// ---- Lane C ----
+mod corner_keys;
 pub mod structure;
 pub mod validate;
 
@@ -22,7 +24,7 @@ pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
 pub use migrate::{
     migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v7,
-    migrate_v7_to_v8, readable_versions,
+    migrate_v7_to_v8, migrate_v8_to_v9, readable_versions,
 };
 pub use structure::check_structure;
 pub use validate::validate;
@@ -46,7 +48,10 @@ pub const GRADIENT_VERSION: u32 = 7;
 pub const TEXT_FORMAT_VERSION: u32 = 8;
 /// The last format before editable text (the declared version a pre-text file may carry).
 pub const PRE_TEXT_FORMAT_VERSION: u32 = GRADIENT_VERSION;
-pub const FORMAT_VERSION: u32 = TEXT_FORMAT_VERSION;
+/// 9 (2026-10-09, wave 2): Live Corners — `doc.paths[].corners` (w2-export-paths), plus the
+/// app lane's container-level embedded preview in the same bump.
+pub const CORNERS_VERSION: u32 = 9;
+pub const FORMAT_VERSION: u32 = CORNERS_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -152,6 +157,10 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     }
     if version < GRADIENT_VERSION {
         gradient_keys::refuse(json, version)?;
+    }
+    // ---- Lane C ----
+    if version < CORNERS_VERSION {
+        corner_keys::refuse(json, version)?;
     }
     if version < 5 {
         stroke_keys::refuse(json, version)?;

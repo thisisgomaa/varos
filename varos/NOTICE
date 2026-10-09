@@ -117,3 +117,8 @@ color/src/cms/lab.rs @ a469568. Copyright (c) 2026 ArtCraft Team and contributor
 MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
 Lane B GPU radial ray/circle equation idea: PhotoCraft gpu/src/compose.wgsl:632-680
 @ a469568 (MIT OR Apache-2.0); independent Varos LUT/dither/stencil pipeline.
+
+Lane C — new_document.rs adapts VectorCraft engine/src/cmd/newdoc.rs:19,125;
+path_advanced.rs adapts pathops/src/offset.rs:79; live_corners.rs adapts
+geom/src/corners.rs:134,149 (a469568, MIT OR Apache-2.0), copyright 2026
+ArtCraft Team and VectorCraft contributors. No UI/assets/dependencies copied.

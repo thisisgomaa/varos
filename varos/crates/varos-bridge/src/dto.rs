@@ -33,6 +33,8 @@ pub enum Request {
     AddImage(FileEffect),
     ImageAction(FileEffect),
     ExportSvg(FileEffect),
+    // ---- Lane C ----
+    #[serde(alias = "export_screens")]
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
     NewFromTemplate(FileEffect),
@@ -250,6 +252,29 @@ pub enum Operation {
     Colour {
         ids: Vec<String>,
         command: varos_core::colour_commands::ColourCommand,
+    },
+    // ---- Lane C ----
+    OutlineStroke {
+        ids: Vec<String>,
+    },
+    OffsetPath {
+        ids: Vec<String>,
+        delta: f32,
+        join: varos_core::stroke::StrokeJoin,
+        miter: f32,
+    },
+    Expand {
+        ids: Vec<String>,
+    },
+    LiveCorners {
+        ids: Vec<String>,
+        corners: Vec<varos_core::live_corners::CornerParam>,
+    },
+    ScaleStrokes {
+        enabled: bool,
+    },
+    NewDocument {
+        settings: varos_core::new_document::Settings,
     },
     Pathfinder {
         ids: Vec<String>,
@@ -577,10 +602,23 @@ impl Operation {
                 | Self::DrawingOptions { .. }
         )
     }
+    pub fn lane_c(&self) -> bool {
+        matches!(
+            self,
+            Self::OutlineStroke { .. }
+                | Self::OffsetPath { .. }
+                | Self::Expand { .. }
+                | Self::LiveCorners { .. }
+                | Self::ScaleStrokes { .. }
+                | Self::NewDocument { .. }
+        )
+    }
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
             Self::Colour { .. }
+                | Self::ScaleStrokes { .. }
+                | Self::NewDocument { .. }
                 | Self::ToolOptions { .. }
                 | Self::Transform { .. }
                 | Self::MagicWand { .. }
@@ -594,6 +632,8 @@ impl Operation {
         match self {
             Self::AddText { .. }
             | Self::SetText { .. }
+            | Self::ScaleStrokes { .. }
+            | Self::NewDocument { .. }
             | Self::ToolOptions { .. }
             | Self::TraceRgba { .. }
             | Self::DocumentSetup { .. }
@@ -616,6 +656,10 @@ impl Operation {
             | Self::PathErase { ids, .. }
             | Self::JoinTool { ids, .. }
             | Self::Colour { ids, .. }
+            | Self::OutlineStroke { ids }
+            | Self::OffsetPath { ids, .. }
+            | Self::Expand { ids }
+            | Self::LiveCorners { ids, .. }
             | Self::Pathfinder { ids, .. }
             | Self::ShapeBuilder { ids, .. }
             | Self::Scissors { ids, .. }

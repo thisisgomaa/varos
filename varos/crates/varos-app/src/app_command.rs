@@ -96,6 +96,10 @@ pub enum AppCommand {
     Selection(SessionId, varos_core::editor::wave::Selection),
     Object(SessionId, varos_core::editor::wave::ObjectAction),
     NewBoard,
+    // ---- Lane C ----
+    ShowNewDocument,
+    CreateDocument(varos_core::new_document::Settings),
+    PathMenu(SessionId, &'static str),
     DocumentSetup(SessionId),
     DocumentInfo(SessionId),
     SaveTemplate(SessionId),

@@ -36,6 +36,7 @@ mod bridge_host;
 mod chrome;
 mod cursors;
 mod document_ui;
+mod export_folders;
 mod export_ui;
 mod file_jobs;
 mod file_ports;
@@ -836,6 +837,25 @@ fn dispatch(
                 }
             }
             ran
+        }
+        // ---- Lane C ----
+        host::HostAction::App(AppCommand::ShowNewDocument) => {
+            gui.lane_c_new_document();
+            host::Ran { ran: true, ..Default::default() }
+        }
+        host::HostAction::App(AppCommand::PathMenu(id, name)) => {
+            if let Some(s) = ws.get_mut(id) {
+                match name {
+                    "Outline Stroke" => s
+                        .editor
+                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Outline)),
+                    "Expand" => s
+                        .editor
+                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Expand)),
+                    _ => gui.lane_c_offset(id),
+                }
+            }
+            host::Ran { ran: true, ..Default::default() }
         }
         // DFS S6: Export (button, burger row, File ▸ Export ▸ PDF…) opens the Export PDF sheet
         // slice 0.6: File ▸ Export Selection… opens the same sheet on its Selection scope

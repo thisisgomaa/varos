@@ -20,6 +20,7 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (5, migrate_v5_to_v6),
     (6, migrate_v6_to_v7),
     (7, migrate_v7_to_v8),
+    (8, migrate_v8_to_v9),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the
@@ -150,5 +151,12 @@ pub fn migrate_v5_to_v6(doc: Document, _limits: &Limits) -> Result<Document, Loa
 /// v6 → v7 (gradient paints + document swatches) is a pure identity: old paints and absent
 /// swatches are already the canonical stored form. No validation here (the loader validates).
 pub fn migrate_v6_to_v7(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    Ok(doc)
+}
+
+// ---- Lane C ----
+/// v8 → v9 (Live Corners) is identity: older writers did not emit `Path.corners`. The app lane's
+/// embedded preview is container-level (PDF catalog) and needs no model step.
+pub fn migrate_v8_to_v9(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

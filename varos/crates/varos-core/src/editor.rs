@@ -1138,6 +1138,20 @@ impl Editor {
     /// path in the unit's subtree, then reset the xform to identity. This IS the old `Drag::Rotate` bake,
     /// reused. World geometry is unchanged; only the split between stored-anchors and stored-transform moves.
     fn bake_unit(&mut self, unit: u32) -> bool {
+        // ---- Lane C ----
+        for pid in self.doc.node_paths(unit) {
+            if let Some(pi) = self.doc.pidx(pid) {
+                if !self.doc.paths[pi].corners.is_empty() {
+                    let mut path = crate::live_corners::evaluated(&self.doc.paths[pi]);
+                    for a in &mut path.anchors {
+                        if a.id == 0 {
+                            a.id = self.doc.nid();
+                        }
+                    }
+                    self.doc.paths[pi] = path;
+                }
+            }
+        }
         let xf = self.doc.node_xform(unit);
         if xf.is_identity() {
             return false;
@@ -2045,6 +2059,7 @@ impl Editor {
             return;
         }
         let base = self.objsel_base();
+        crate::path_advanced::scale_selected_strokes(self, sx, sy);
         let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
         self.transform_image_base(tf);
         for pid in self.objsel.iter().copied().collect::<Vec<_>>() {
@@ -2128,6 +2143,7 @@ impl Editor {
             [p[0] + tx, p[1] + ty]
         });
         if !no_scale {
+            crate::path_advanced::scale_selected_strokes(self, sx, sy);
             for pid in self.doc.node_paths(unit) {
                 if let Some(pi) = self.doc.pidx(pid) {
                     crate::gradient_transform::map(&mut self.doc, pid, scale_local);

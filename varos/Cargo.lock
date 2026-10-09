@@ -4385,6 +4385,8 @@ version = "0.1.0"
 dependencies = [
  "image",
  "resvg",
+ "serde",
+ "serde_json",
  "tiny-skia",
  "varos-core",
  "varos-pdf",

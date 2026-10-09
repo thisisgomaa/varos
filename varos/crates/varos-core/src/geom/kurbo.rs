@@ -101,6 +101,8 @@ pub fn contour(anchors: &[Anchor], closed: bool) -> BezPath {
 }
 /// Convert outer and hole contours; handles in the model are absolute, never offsets.
 pub fn to_bez_path(source: &Path) -> BezPath {
+    let evaluated = crate::live_corners::evaluated(source);
+    let source = &evaluated;
     let mut out = BezPath::new();
     append(&mut out, &source.anchors, source.closed);
     for hole in &source.holes {

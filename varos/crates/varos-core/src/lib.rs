@@ -19,6 +19,10 @@ pub mod planar;
 pub mod scene;
 // ---- Lane E ----
 pub mod stroke;
+// ---- Lane C ----
+pub mod live_corners;
+pub mod new_document;
+pub mod path_advanced;
 pub mod svg;
 pub mod tools;
 // ---- Lane D: drawing tools ----

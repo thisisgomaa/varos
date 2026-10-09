@@ -3201,7 +3201,9 @@ fn api_12_discovery_is_opt_in_and_old_tables_stay_identical() {
     let table = varos_bridge::mcp::tools_for_api("1.2");
     let edit = table["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
     assert_eq!(edit["inputSchema"]["properties"]["api"]["enum"], json!(["1.0", "1.1", "1.2"]));
-    assert!(edit["inputSchema"]["$defs"]["operation"].to_string().contains("release_clip"));
+    // integration w2: extended verbs are one shared enum ($defs.extended_verbs) referenced by the operation
+    assert!(edit["inputSchema"]["$defs"]["operation"].to_string().contains("extended_verbs"));
+    assert!(edit["inputSchema"]["$defs"]["extended_verbs"].to_string().contains("release_clip"));
     let mut host = FakeHost::new();
     let mut service = Service::new("test-epoch".into());
     let reply = handle(&mut service, &mut host, req("capabilities", json!({"api":"1.2"})));
@@ -3512,8 +3514,8 @@ fn phase_one_effects_are_opt_in_revision_pinned_and_idempotent_without_os_calls(
     let old = varos_bridge::mcp::tools();
     assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
     let new = varos_bridge::mcp::tools_for_api("1.2");
-    // 11 base + 2 Lane H imports + 2 w2-images (add_image, image_action)
-    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2 + 2);
+    // 11 base + 2 Lane H imports + 2 w2-images (add_image, image_action) + 1 Lane C (export_screens)
+    assert_eq!(new["tools"].as_array().unwrap().len(), varos_bridge::TOOLS.len() + 11 + 2 + 2 + 1);
 }
 
 #[test]

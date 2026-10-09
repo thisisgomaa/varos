@@ -57,6 +57,7 @@ fn serde_document_node_path_have_no_byte_blobs() {
         include_str!("../src/stroke.rs"),
         include_str!("../src/gradient.rs"),
         include_str!("../src/swatches.rs"),
+        include_str!("../src/live_corners.rs"),
     ] {
         for item in syn::parse_file(source).unwrap().items {
             match item {

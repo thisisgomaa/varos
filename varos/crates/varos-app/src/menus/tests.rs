@@ -301,6 +301,9 @@ fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, V
                     && !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str()))
             })
             .map(|e| match e {
+                Entry::Item { id, accel, cmd, check, .. } if id == "file.new" => {
+                    Entry::Item { id, label: "New", accel, cmd, check }
+                }
                 Entry::Item { id, .. } if id == "view.snapgrid" => {
                     toggle("view.snapgrid", "Snap to Grid", MenuCmd::Snap(SnapRow::Grid), Check::SnapGrid)
                 }

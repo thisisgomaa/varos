@@ -33,6 +33,8 @@ fn construction_tools(api: &str) -> Value {
             crate::drawing::schemas(&mut extra, &mut ops);
             // ---- w2-gradients ----
             crate::colour::schemas(&mut extra, &mut ops);
+            // ---- Lane C ----
+            crate::path_advanced::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -110,6 +112,10 @@ fn construction_tools(api: &str) -> Value {
 }
 
 pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
+    // ---- Lane C ----
+    if name == "export_screens" && (args["api"] != "1.2" || args["options"].get("screens").is_none()) {
+        return Err(Error::new("invalid_argument", "export_screens requires API 1.2 and options.screens"));
+    }
     if name == "edit" {
         let edit: Edit =
             serde_json::from_value(args.clone()).map_err(|e| Error::new("invalid_argument", e.to_string()))?;
@@ -536,7 +542,7 @@ pub fn serve<T: Transport>(
                         && name != "import_svg"
                         && name != "import_file"
                         && name != "import_clipboard"
-                        && !["schema", "list_verbs"].contains(&name)
+                        && !["schema", "list_verbs", "export_screens"].contains(&name)
                         && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
                             .contains(&name)
@@ -662,6 +668,7 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
                 "import_clipboard",
                 "export_svg",
                 "export_raster",
+                "export_screens",
                 "save_template",
                 "new_from_template",
                 "window_memory",
@@ -937,6 +944,15 @@ pub fn tools_for(api: &str) -> Value {
         }
     }
     if let Some(rows) = out["tools"].as_array_mut() {
+        for row in rows
+            .iter_mut()
+            .filter(|r| matches!(r["name"].as_str(), Some("export_svg" | "export_raster" | "export_screens")))
+        {
+            row["inputSchema"]["properties"]["options"] =
+                json!({"type":"object","description":"Call schema API 1.2 for SVG/screens options."});
+        }
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
         if let Some(edit) = rows.iter_mut().find(|row| row["name"] == "edit") {
             let root = edit["inputSchema"].clone();
             let mut alternatives = Vec::new();
@@ -963,8 +979,10 @@ pub fn tools_for(api: &str) -> Value {
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-            alternatives.push(json!({"type":"object","properties":{"verb":{"enum":extended},"op":{"enum":extended}},"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}],"description":descriptions}));
+            // integration w2: the extended-verb enum is listed once and shared by `verb` and `op`.
+            alternatives.push(json!({"type":"object","properties":{"verb":{"$ref":"#/$defs/extended_verbs"},"op":{"$ref":"#/$defs/extended_verbs"}},"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}],"description":descriptions}));
             edit["inputSchema"]["$defs"]["operation"]["anyOf"] = json!(alternatives);
+            edit["inputSchema"]["$defs"]["extended_verbs"] = json!({"enum":extended});
             prune_definitions(&mut edit["inputSchema"]);
             edit["description"] = json!("Atomic typed edits; core params inline. Extended verbs: call schema api 1.2 tool edit verb NAME before use; list_verbs groups all verbs. Decoder validates all params.");
         }
@@ -996,8 +1014,13 @@ pub fn tools_for(api: &str) -> Value {
     if let Some(rows) = out["tools"].as_array_mut() {
         for row in rows {
             economical(&mut row["inputSchema"]);
-            row["description"] =
-                json!(format!("Use schema api 1.2 tool {} for details.", row["name"].as_str().unwrap_or_default()));
+            // integration w2: the "how to get params" instruction is stated once (on `schema`); every
+            // other row points at it in two words, keeping the combined list inside 24,000 B.
+            row["description"] = json!(match row["name"].as_str() {
+                Some("schema") => "Full params of any tool: schema api 1.2 tool NAME (edit: also verb NAME).",
+                Some("list_verbs") => "Grouped edit verbs.",
+                _ => "Params: schema.",
+            });
         }
     }
     out
@@ -1203,8 +1226,9 @@ pub fn stroke_style_schema() -> Value {
 
 fn append_export_tools(result: &mut Value) {
     let Some(list) = result.get_mut("tools").and_then(Value::as_array_mut) else { return };
-    for name in ["export_svg", "export_raster"] {
+    for name in ["export_svg", "export_raster", "export_screens"] {
         let mut properties = json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer","minimum":0},"path":{"type":"string"},"scope":{"type":"string","description":"all_visible_artboards, whole_board, artwork_bounds, selection or artboard:N"}});
+        properties["options"] = crate::path_advanced::export_schema(name);
         if name == "export_raster" {
             properties["format"] = json!({"enum":["png","jpeg","webp","tiff"],"default":"png"});
             properties["scale"] = json!({"type":"number","exclusiveMinimum":0,"maximum":64,"default":1});

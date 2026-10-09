@@ -8,7 +8,8 @@ pub(super) fn native(p: &Path) -> bool {
         && (p.closed || (p.stroke_style.arrows.start.is_none() && p.stroke_style.arrows.end.is_none()))
         && p.stroke_style.dash.iter().all(|v| *v > 0.0)
 }
-fn attrs(p: &Path) -> String {
+fn attrs(p: &Path, decimals: Option<u8>) -> String {
+    let num = |v| number(v, decimals);
     let s = &p.stroke_style;
     let cap = match s.cap {
         StrokeCap::Butt => "butt",
@@ -34,7 +35,8 @@ fn attrs(p: &Path) -> String {
     }
     out
 }
-pub(super) fn coverage_data(rings: &[Vec<crate::Pt>], xf: &Xform) -> String {
+pub(super) fn coverage_data(rings: &[Vec<crate::Pt>], xf: &Xform, decimals: Option<u8>) -> String {
+    let num = |v| number(v, decimals);
     let mut out = String::new();
     for r in rings {
         if let Some(first) = r.first() {
@@ -49,11 +51,12 @@ pub(super) fn coverage_data(rings: &[Vec<crate::Pt>], xf: &Xform) -> String {
     }
     out
 }
-pub(super) fn paint(out: &mut String, d: &Drawn<'_>) -> Result<(), ExportError> {
+pub(super) fn paint(out: &mut String, d: &Drawn<'_>, decimals: Option<u8>) -> Result<(), ExportError> {
+    let num = |v| number(v, decimals);
     let p = d.p;
-    let data = path_data(p, &d.xf);
+    let data = path_data(p, &d.xf, decimals);
     let coverage = crate::stroke::evaluate(p, 0.01, &|| false).map_err(stroke_error)?;
-    let band = coverage_data(&coverage.rings, &d.xf);
+    let band = coverage_data(&coverage.rings, &d.xf, decimals);
     out.push_str(&format!(
         "<g id=\"{}\" opacity=\"{}\">\n",
         id("path", p.id as usize, p.name.as_deref().unwrap_or("")),
@@ -82,7 +85,7 @@ pub(super) fn paint(out: &mut String, d: &Drawn<'_>) -> Result<(), ExportError> 
                     "<path d=\"{data}\" fill=\"none\" stroke=\"{}\" stroke-opacity=\"{}\" {}/>\n",
                     color(c),
                     num(c[3]),
-                    attrs(p)
+                    attrs(p, decimals)
                 ));
             } else {
                 out.push_str(&format!(

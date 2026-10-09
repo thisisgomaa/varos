@@ -129,6 +129,10 @@ pub(crate) fn thumb_key(ed: &Editor, pids_zorder: &[u32]) -> u64 {
         for hole in &path.holes {
             hole.len().hash(&mut state);
         }
+        for corner in &path.corners {
+            hash_f32(corner.radius, &mut state);
+            std::mem::discriminant(&corner.kind).hash(&mut state);
+        }
         path.appearance().fill().resolved(&ed.doc).hash(&mut state);
         path.appearance().stroke().resolved(&ed.doc).hash(&mut state);
         hash_f32(path.stroke_width, &mut state);

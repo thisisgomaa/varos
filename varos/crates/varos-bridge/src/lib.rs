@@ -74,6 +74,8 @@ pub mod images;
 mod select_transform;
 // ---- Lane D ----
 mod drawing;
+// ---- Lane C ----
+mod path_advanced;
 pub mod storage_paths;
 
 pub mod templates;

@@ -274,7 +274,21 @@ fn walk(
             && !(api == "1.2" && ["set_stroke_style", "add_text", "set_text"].contains(&verb))
             && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"
-                && ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"].contains(&verb))
+                && [
+                    "transform",
+                    "magic_wand",
+                    "eyedropper",
+                    "isolation",
+                    "layers",
+                    "tool_options",
+                    "outline_stroke",
+                    "offset_path",
+                    "expand",
+                    "live_corners",
+                    "scale_strokes",
+                    "new_document",
+                ]
+                .contains(&verb))
             && ![
                 "document_setup",
                 "clip",

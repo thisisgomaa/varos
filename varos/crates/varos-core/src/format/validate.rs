@@ -108,6 +108,9 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         }
         nonnegative(p.stroke_width, &label, "stroke width")?;
         p.stroke_style.validate(p.id)?;
+        // ---- Lane C ----
+        crate::live_corners::validate(p, &p.corners)
+            .map_err(|_| Invalid::NonFinite { what: format!("path {} corners", p.id) })?;
         if !p.stroke_style.is_default() {
             let coverage = crate::stroke::evaluate(p, 0.01, &|| false)
                 .map_err(|e| Invalid::Stroke { path: p.id, reason: e.to_string() })?;
