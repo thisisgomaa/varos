@@ -412,7 +412,9 @@ impl Editor {
 
     /// Checked creation returns the actual allocated identity, never a guessed counter.
     pub fn try_execute_created(&mut self, command: EditCommand) -> Result<u32, String> {
+        // Immutable history handles bound rollback cost independently of retained artwork.
         let snapshot = self.clone();
+        self.clipping_enablement.get_mut().take();
         match crate::guard::catch_panic(|| self.execute_created_inner(command)) {
             Ok(result) => result,
             Err(error) => {
@@ -492,7 +494,9 @@ impl Editor {
 
     /// Fallible command boundary. The interactive facade retains errors for its existing notice path.
     pub fn execute(&mut self, command: EditCommand) -> Result<(), crate::EngineError> {
+        // Immutable history handles bound rollback cost independently of retained artwork.
         let snapshot = self.clone();
+        self.clipping_enablement.get_mut().take();
         let result = crate::guard::catch_panic(|| {
             command.apply(self);
             // One invariant gate for every command, including commands whose geometry changes artboard
