@@ -123,6 +123,10 @@ pub fn default_scope(doc: &Document) -> ExportScope {
 
 /// Plan the pages `scope` exports, or say why it can't. Never a dummy page.
 pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportUnavailable> {
+    // ---- Lane B w3-effects ----
+    let resolved = varos_core::effects_document::document(doc).map_err(|_| ExportUnavailable::NothingToExport)?;
+    let doc = resolved.as_ref();
+    // ---- end Lane B w3-effects ----
     // ---- Lane G ----
     let outlined;
     let doc = if doc.text_boxes.is_empty() {

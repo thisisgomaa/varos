@@ -35,6 +35,9 @@ fn construction_tools(api: &str) -> Value {
             crate::colour::schemas(&mut extra, &mut ops);
             // ---- Lane C ----
             crate::path_advanced::schemas(&mut extra, &mut ops);
+            // ---- Lane B w3-effects ----
+            crate::effects::schemas(&mut extra, &mut ops);
+            // ---- end Lane B w3-effects ----
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }

@@ -258,6 +258,10 @@ pub struct Path {
     // ---- Lane A ----
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stack: Vec<crate::appearance::StackItem>,
+    // ---- Lane B w3-effects ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<crate::effects::Effect>,
+    // ---- end Lane B w3-effects ----
     pub id: u32,
     pub anchors: Vec<Anchor>,
     pub closed: bool,
@@ -304,6 +308,9 @@ impl Path {
             stack: vec![],
             stroke_style: StrokeStyle::default(),
             corners: vec![],
+            // ---- Lane B w3-effects ----
+            effects: vec![],
+            // ---- end Lane B w3-effects ----
             holes: vec![],
             opacity: 1.0,
             hidden: false,
@@ -1292,6 +1299,9 @@ impl Document {
             .collect();
         Path {
             holes,
+            // ---- Lane B w3-effects ----
+            effects: src.effects.clone(),
+            // ---- end Lane B w3-effects ----
             corners: src.corners.clone(),
             // ---- Lane A ----
             stack: src.stack.clone(),

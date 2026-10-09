@@ -77,3 +77,23 @@ pub mod registry;
 // ---- Lane A ----
 pub mod appearance_edits;
 pub mod appearance_scene;
+// ---- Lane B w3-effects ----
+pub mod effects;
+mod effects_warp;
+pub mod width_profile;
+// ---- end Lane B w3-effects ----
+
+// ---- Lane B w3-effects ----
+pub mod width_geometry;
+mod width_geometry_helpers;
+// ---- end Lane B w3-effects ----
+
+// ---- Lane B w3-effects ----
+pub mod effects_preview;
+pub mod width_tool;
+// ---- end Lane B w3-effects ----
+
+// ---- Lane B w3-effects ----
+pub mod effects_document;
+pub mod effects_hit;
+// ---- end Lane B w3-effects ----

@@ -1,4 +1,6 @@
 //! Lane A frozen PDF/SVG appearance goldens, alpha groups and format refusals.
+#[path = "support/native_era.rs"]
+mod native_era;
 use std::sync::atomic::AtomicBool;
 use varos_core::format::{self, Limits};
 fn root() -> std::path::PathBuf {
@@ -9,9 +11,20 @@ fn frozen_appearance_pdf_and_svg_goldens() {
     for name in ["plain", "multiple", "alpha", "isolated_alpha"] {
         let bytes = std::fs::read(root().join(format!("{name}.json"))).unwrap();
         let loaded = format::decode_model(&bytes, None, &Limits::DEFAULT).unwrap();
-        assert_eq!(format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(), bytes);
+        // integration w3: the frozen v10 bodies re-save byte-identical apart from the writer stamp
+        let current = format!("\"varos\":{}", format::FORMAT_VERSION);
+        assert_eq!(
+            format::encode_model(&loaded.doc, &Limits::DEFAULT)
+                .unwrap()
+                .replacen(&current, "\"varos\":10", 1)
+                .as_bytes(),
+            bytes
+        );
         let pdf = varos_pdf::write_pdf(&loaded.doc).unwrap();
-        assert_eq!(pdf, std::fs::read(root().join(format!("{name}.pdf"))).unwrap());
+        assert_eq!(
+            native_era::restamp(&pdf, format::FORMAT_VERSION, 10),
+            std::fs::read(root().join(format!("{name}.pdf"))).unwrap()
+        );
         let parsed = lopdf::Document::load_mem(&pdf).unwrap();
         assert!(!parsed.get_pages().is_empty());
         let plan = varos_core::svg::plan_svg_export(&loaded.doc, varos_core::svg::ExportScope::WholeBoard).unwrap();
@@ -30,7 +43,11 @@ fn frozen_appearance_pdf_and_svg_goldens() {
 fn frozen_refusals_and_old_reader_header_gate() {
     for name in ["refused_v9_stack", "refused_future", "refused_missing_base", "refused_unknown_blend"] {
         let bytes = std::fs::read(root().join(format!("{name}.json"))).unwrap();
-        assert!(format::decode_model(&bytes, None, &Limits::DEFAULT).is_err());
+        let error = format::decode_model(&bytes, None, &Limits::DEFAULT).unwrap_err();
+        if name == "refused_future" {
+            // integration w3: every lane's refused-future fixture is format 15 (writer 14)
+            assert_eq!(error, format::LoadError::NewerVersion { found: 15, supported: format::FORMAT_VERSION });
+        }
     }
     let bytes = std::fs::read(root().join("multiple.json")).unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

@@ -48,6 +48,8 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                         // ---- Lane A ----
                         | EditCommand::Appearance(_)
                         | EditCommand::Mask(_)
+                        // ---- Lane B w3-effects ----
+                        | EditCommand::LiveEffects(_)
                         | EditCommand::AddText { .. }
                         | EditCommand::SetText { .. }
                         | EditCommand::Image(_)
@@ -211,6 +213,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         // ---- Lane A ----
         Appearance(edit) => crate::appearance_edits::check(ed, edit),
         Mask(edit) => crate::appearance_edits::check_mask(ed, edit),
+        // ---- Lane B w3-effects ----
+        LiveEffects(action) => crate::effects::check(ed, action),
+        // ---- end Lane B w3-effects ----
         Drawing(action) => crate::drawing::check(ed, action),
         AddText { .. } | SetText { .. } => Ok(()),
         Colour(c) => crate::colour_commands::check(ed, c),

@@ -189,6 +189,9 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
     }
     let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
+        // ---- Lane B w3-effects ----
+        ToolKind::Width => CK::CrossRect,
+        // ---- end Lane B w3-effects ----
         ToolKind::Text => CK::CrossRect,
         ToolKind::Gradient => CK::CrossRotate,
         ToolKind::Object if !idle => CK::Select, // marquee / guide drag
@@ -303,6 +306,9 @@ fn rotate_ck(corner: u8, angle: f32) -> CK {
 /// The control bar's idle label for the current tool (`ui.rs`).
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
+        // ---- Lane B w3-effects ----
+        ToolKind::Width => "Width (Shift+W)",
+        // ---- end Lane B w3-effects ----
         ToolKind::Text => "Type (T)",
         ToolKind::Gradient => "Gradient (G)",
         ToolKind::Pen => "Pen (P)",
@@ -443,6 +449,9 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
     // ---- Lane F: Preferences ▸ keyboard increment ----
     let s = ed.keyboard_increment_pt * if shift { 10.0 } else { 1.0 };
     match code {
+        // ---- Lane B w3-effects ----
+        "KeyW" if shift && !alt => ed.execute_ui(EditCommand::LiveEffects(varos_core::effects::Action::Tool)),
+        // ---- end Lane B w3-effects ----
         "KeyT" => ed.set_tool(ToolKind::Text),
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
@@ -852,6 +861,13 @@ fn dispatch(
             host::Ran { ran: true, ..Default::default() }
         }
         host::HostAction::App(AppCommand::PathMenu(id, name)) => {
+            // ---- Lane B w3-effects ----
+            if let Some(s) = ws.get_mut(id) {
+                if gui.effects_menu(&mut s.editor, id, name) {
+                    return host::Ran { ran: true, ..Default::default() };
+                }
+            }
+            // ---- end Lane B w3-effects ----
             if let Some(s) = ws.get_mut(id) {
                 match name {
                     "Outline Stroke" => s

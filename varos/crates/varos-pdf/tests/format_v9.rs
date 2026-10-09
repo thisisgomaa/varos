@@ -32,11 +32,13 @@ fn frozen_gate(body: &[u8], supported: u32) -> Result<u32, LoadError> {
 
 #[test]
 fn mixed_v9_round_trips_and_pins_document_key_order() {
-    assert_eq!(FORMAT_VERSION, 10);
     let loaded = decode_model(JSON, None, &Limits::DEFAULT).unwrap();
     assert_eq!((loaded.source_version, loaded.migrated), (9, true));
     assert_eq!(
-        encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().replacen("\"varos\":10", "\"varos\":9", 1).as_bytes(),
+        encode_model(&loaded.doc, &Limits::DEFAULT)
+            .unwrap()
+            .replacen(&format!("\"varos\":{FORMAT_VERSION}"), "\"varos\":9", 1)
+            .as_bytes(),
         JSON
     );
     let value: serde_json::Value = serde_json::from_slice(JSON).unwrap();
@@ -61,7 +63,10 @@ fn mixed_v9_container_reopens_and_preserves_objects_across_v10_rewrite() {
     assert!(loaded.blobs.get(&loaded.doc.images[0].blob).is_some());
     // ---- Lane A: PDF offsets and the model stamp grow; every appearance/resource object is frozen ----
     let bytes = varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap();
-    assert_eq!(embedded_model_json(&bytes).replacen("\"varos\":10", "\"varos\":9", 1).as_bytes(), JSON);
+    assert_eq!(
+        embedded_model_json(&bytes).replacen(&format!("\"varos\":{FORMAT_VERSION}"), "\"varos\":9", 1).as_bytes(),
+        JSON
+    );
     let old = lopdf::Document::load_mem(VRS).unwrap();
     let new = lopdf::Document::load_mem(&bytes).unwrap();
     let model = old.catalog().unwrap().get(b"VAROS_Model").unwrap().as_reference().unwrap();

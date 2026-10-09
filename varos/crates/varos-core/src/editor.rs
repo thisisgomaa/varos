@@ -42,6 +42,9 @@ pub enum PaintTarget {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToolKind {
+    // ---- Lane B w3-effects ----
+    Width,
+    // ---- end Lane B w3-effects ----
     // ---- Lane G ----
     Text,
     // ---- w2-gradients ----
@@ -447,6 +450,10 @@ struct SelectionState {
 #[derive(Clone)]
 pub struct Editor {
     // Transient gradient gestures never enter the document.
+    // ---- Lane B w3-effects ----
+    pub width_tool: crate::width_tool::State,
+    pub effects_preview: Option<crate::effects_preview::Preview>,
+    // ---- end Lane B w3-effects ----
     pub gradient_tool: crate::tools::gradient::State,
     pub colour_error: Option<String>,
     pub select_transform: crate::select_transform::State,
@@ -551,6 +558,10 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            // ---- Lane B w3-effects ----
+            width_tool: crate::width_tool::State::default(),
+            effects_preview: None,
+            // ---- end Lane B w3-effects ----
             gradient_tool: Default::default(),
             colour_error: None,
             select_transform: Default::default(),
@@ -710,6 +721,16 @@ impl Editor {
             // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
             let p = &self.doc.paths[pi];
+            // ---- Lane B w3-effects ----
+            if !p.effects.is_empty() && !self.doc.guide_paths.contains(&id) {
+                if crate::effects_hit::contains(self, id, lp, edge_r)
+                    && self.stroke_mask_rings(id).iter().all(|rings| crate::stroke::evaluate::contains(rings, pos, 0.0))
+                {
+                    return Some(id);
+                }
+                continue;
+            }
+            // ---- end Lane B w3-effects ----
             if !self.doc.guide_paths.contains(&id) && !p.stroke_style.is_default() {
                 let in_fill =
                     p.appearance().fill().resolved_ref(&self.doc).is_painted() && self.doc.point_in_path(pi, lp);
@@ -3878,6 +3899,10 @@ impl Editor {
         }
     }
     pub fn undo(&mut self) {
+        // ---- Lane B w3-effects ----
+        crate::effects_preview::cancel(self);
+        crate::width_tool::cancel(self);
+        // ---- end Lane B w3-effects ----
         if let Some(s) = self.undo.pop() {
             if let Some(entry) = self.history_log.undo.pop() {
                 self.history_log.redo.push(entry);
@@ -3889,6 +3914,10 @@ impl Editor {
         }
     }
     pub fn redo(&mut self) {
+        // ---- Lane B w3-effects ----
+        crate::effects_preview::cancel(self);
+        crate::width_tool::cancel(self);
+        // ---- end Lane B w3-effects ----
         if let Some(s) = self.redo.pop() {
             if let Some(entry) = self.history_log.redo.pop() {
                 self.history_log.undo.push(entry);
@@ -3999,6 +4028,10 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        // ---- Lane B w3-effects ----
+        self.effects_preview = None;
+        self.width_tool = Default::default();
+        // ---- end Lane B w3-effects ----
         // ---- Lane E ----
         self.view_depth = Default::default();
         self.requested_pan = None;
@@ -4404,6 +4437,11 @@ impl Editor {
         if crate::drawing::down(self, pos) {
             return;
         }
+        // ---- Lane B w3-effects ----
+        if crate::width_tool::down(self, pos) {
+            return;
+        }
+        // ---- end Lane B w3-effects ----
         if crate::tools::gradient::down(self, pos) {
             return;
         }
@@ -4449,6 +4487,11 @@ impl Editor {
         if crate::drawing::up(self) {
             return;
         }
+        // ---- Lane B w3-effects ----
+        if crate::width_tool::up(self) {
+            return;
+        }
+        // ---- end Lane B w3-effects ----
         if crate::tools::gradient::up(self) {
             return;
         }
@@ -4559,6 +4602,11 @@ impl Editor {
             self.cursor = pos;
             return;
         }
+        // ---- Lane B w3-effects ----
+        if crate::width_tool::movement(self, pos) {
+            return;
+        }
+        // ---- end Lane B w3-effects ----
         if crate::tools::gradient::movement(self, pos) {
             self.cursor = pos;
             return;
@@ -5108,6 +5156,12 @@ impl Editor {
 
     // ---------- tool/keys ----------
     pub fn set_tool(&mut self, t: ToolKind) {
+        // ---- Lane B w3-effects ----
+        if self.tool != t {
+            crate::width_tool::cancel(self);
+            crate::effects_preview::cancel(self);
+        }
+        // ---- end Lane B w3-effects ----
         if self.tool != t {
             crate::drawing::finish(self, false);
         }
@@ -5166,6 +5220,9 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        // ---- Lane B w3-effects ----
+        crate::width_tool::cancel(self);
+        // ---- end Lane B w3-effects ----
         if self.image_drag.take().is_some() {
             if let Some(before) = self.pending.take() {
                 self.doc = std::sync::Arc::unwrap_or_clone(before);

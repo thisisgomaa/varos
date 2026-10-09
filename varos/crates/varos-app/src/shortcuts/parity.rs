@@ -15,6 +15,11 @@ macro_rules! b {
     };
 }
 pub const BINDINGS: &[Binding] = &[
+    // ---- Lane B w3-effects ----
+    b!("KeyW", false, true, false, "Width Tool"),
+    b!("KeyE", true, true, false, "Apply Last Effect"),
+    b!("KeyE", true, true, true, "Last Effect"),
+    // ---- end Lane B w3-effects ----
     // ---- Lane E ----
     b!("KeyY", true, false, false, "Outline"),
     b!("KeyY", true, false, true, "Pixel Preview"),

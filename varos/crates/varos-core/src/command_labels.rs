@@ -3,6 +3,15 @@ use crate::EditCommand;
 pub(crate) fn label(command: &EditCommand) -> &'static str {
     use EditCommand::*;
     match command {
+        // ---- Lane B w3-effects ----
+        LiveEffects(crate::effects::Action::Set { .. } | crate::effects::Action::SetPerPath { .. }) => {
+            "Set live effects"
+        }
+        LiveEffects(crate::effects::Action::Expand { .. }) => "Expand live effects",
+        LiveEffects(crate::effects::Action::Width { .. } | crate::effects::Action::WidthLive { .. }) => {
+            "Change width profile"
+        }
+        // ---- end Lane B w3-effects ----
         Nudge { .. } => "Move",
         SetOpacity(_) => "Change opacity",
         AddShape { .. } => "Draw shape",

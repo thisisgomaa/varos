@@ -609,3 +609,16 @@ limits and an 8 MiB decoder budget before decoding, and reuses those validated b
 best-effort; missing/corrupt/unwritable cache falls back to an in-memory thumbnail. The signed macOS
 Quick Look extension and blob-aware integration remain moderator work, requiring native acceptance.
 <!-- End Lane F fix round -->
+
+<!-- ---- Lane B w3-effects ---- -->
+## Provisional wave-3 v11 — Phase 10 live effects
+Writer: 11. Previous era: 10 (Lane A appearance; identity reservation in this standalone worktree).
+Pure step: migrate_v10_to_v11, typed defaults only. Integrator rechains v9→v10→v11.
+Path.effects: ordered tagged offset/zig_zag/transform/warp recipes, empty list omitted.
+StrokeStyle.width_profile: optional {points:[[length_fraction,left_factor,right_factor],…]}, None omitted.
+Seven presets are canonical point arrays; custom points have the same representation.
+Reader key gates refuse both new keys in eras 1–10, including empty/null values.
+Frozen JSON/refusal corpus: crates/varos-core/tests/fixtures/w3-effects, SHA256SUMS.
+Export resolves independent copies; editable embedded models retain the authored stack.
+No change to historical fixtures; historical malformed-v10 assertions now test typed refusal.
+<!-- ---- end Lane B w3-effects ---- -->
