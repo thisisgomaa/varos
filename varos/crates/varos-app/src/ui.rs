@@ -25,10 +25,10 @@ use varos_app::shell::tokens::{
 // Icon stage 1: one icon registry + one icon button (shell::kit), one set of icon sizes (tokens).
 use varos_app::shell::kit::field::Label as Lab;
 use varos_app::shell::kit::icons::{
-    legacy_texture, LEGACY_AL_B, LEGACY_AL_CH, LEGACY_AL_L, LEGACY_AL_M, LEGACY_AL_R, LEGACY_AL_T, LEGACY_ARTBOARD,
-    LEGACY_DIRECT, LEGACY_DIST_H, LEGACY_DIST_V, LEGACY_ELLIPSE, LEGACY_EYE, LEGACY_FIT, LEGACY_L_EYE, LEGACY_L_EYEOFF,
-    LEGACY_L_LOCK, LEGACY_L_SEARCH, LEGACY_L_UNLOCK, LEGACY_MENU, LEGACY_OPACITY, LEGACY_PEN, LEGACY_POLYGON,
-    LEGACY_RECT, LEGACY_ROTATE, LEGACY_SCALE, LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
+    legacy_texture, LEGACY_AL_B, LEGACY_AL_CH, LEGACY_AL_L, LEGACY_AL_M, LEGACY_AL_R, LEGACY_AL_T, LEGACY_DIRECT,
+    LEGACY_DIST_H, LEGACY_DIST_V, LEGACY_ELLIPSE, LEGACY_EYE, LEGACY_FIT, LEGACY_L_EYE, LEGACY_L_EYEOFF, LEGACY_L_LOCK,
+    LEGACY_L_SEARCH, LEGACY_L_UNLOCK, LEGACY_MENU, LEGACY_OPACITY, LEGACY_PEN, LEGACY_RECT, LEGACY_ROTATE,
+    LEGACY_SELECT, LEGACY_STROKEW, LEGACY_TRIANGLE,
 };
 use varos_app::shell::kit::{self, Icon};
 mod export;
@@ -48,6 +48,10 @@ mod panels;
 mod picker;
 mod pointer;
 mod rail;
+// ---- Lane D: provisional drawing UI ----
+mod drawing;
+mod rail_flyout;
+pub(crate) use drawing::{key as drawing_key, tool_name as drawing_tool_name};
 mod snap;
 mod style;
 #[cfg(test)]
@@ -77,12 +81,7 @@ pub enum WinAction {
     /// The band's V mark (4b, macOS): the native About panel.
     About,
 }
-struct ToolBtn {
-    pub(crate) kind: ToolKind,
-    pub(crate) tip: &'static str,
-    pub(crate) tex: Option<egui::TextureHandle>,
-    pub(crate) group_end: bool,
-}
+
 pub struct Ui {
     ctx: egui::Context,
     state: egui_winit::State,
@@ -99,9 +98,6 @@ pub struct Ui {
     panel_column: Option<egui::Rangef>,
     pub document_sheet: Option<crate::document_ui::Sheet>,
     export_scopes: std::collections::HashMap<SessionId, varos_pdf::ExportScope>,
-    tools: Vec<ToolBtn>,    // rail singletons: Object · Direct · Artboard · Pen · Eyedropper
-    shapes: Vec<ToolBtn>,   // the shape tools, collapsed into one rail slot (right-click → flyout)
-    shape_active: ToolKind, // which shape the shapes slot currently represents
     ic_rotate: Option<egui::TextureHandle>,
     ic_opacity: Option<egui::TextureHandle>,
     ic_strokew: Option<egui::TextureHandle>,
@@ -205,24 +201,6 @@ impl Ui {
         install_fonts(&ctx);
         install_style(&ctx);
         disable_ui_keyboard_zoom(&ctx);
-        let tools = rail::tools(&ctx);
-        // shape tools collapse into ONE rail slot: left-click uses the current shape, right-click flyouts all four.
-        let shape_defs: [(ToolKind, &str, &str); 4] = [
-            (ToolKind::Rect, LEGACY_RECT, "Rectangle (M)"),
-            (ToolKind::Ellipse, LEGACY_ELLIPSE, "Ellipse (L)"),
-            (ToolKind::Triangle, LEGACY_TRIANGLE, "Triangle"),
-            (ToolKind::Polygon, LEGACY_POLYGON, "Polygon"),
-        ];
-        let shapes = shape_defs
-            .iter()
-            .enumerate()
-            .map(|(i, (kind, svg, tip))| ToolBtn {
-                kind: *kind,
-                tip,
-                tex: legacy_texture(&ctx, &format!("ic-shape{i}"), svg, false),
-                group_end: false,
-            })
-            .collect();
         let ic_rotate = legacy_texture(&ctx, "lbl-rot", LEGACY_ROTATE, false);
         let ic_opacity = legacy_texture(&ctx, "lbl-op", LEGACY_OPACITY, false);
         let ic_strokew = legacy_texture(&ctx, "lbl-sw", LEGACY_STROKEW, false);
@@ -257,9 +235,6 @@ impl Ui {
             export_sheet: None,
             panel_column: None,
             export_scopes: Default::default(),
-            tools,
-            shapes,
-            shape_active: ToolKind::Rect,
             ic_rotate,
             ic_opacity,
             ic_strokew,
@@ -536,8 +511,6 @@ impl Ui {
         let ruler_reset = ed.doc.active_artboard().map(|a| [a.x, a.y]).unwrap_or([0.0, 0.0]);
         let ruler_grid = ed.adaptive_grid_step(); // tick on the SAME base-5 lattice as the dot grid
         let origin_preview = ed.origin_preview; // dashed crosshair while dragging the ruler zero-point
-        let tools = &self.tools;
-        let shapes = &self.shapes;
         let icons = DockIcons {
             rotate: &self.ic_rotate,
             opacity: &self.ic_opacity,
@@ -572,7 +545,6 @@ impl Ui {
         let mut align_target = self.align_target;
         let mut ab_name_edit = std::mem::take(&mut self.ab_name_edit);
         let mut fit_request: Option<usize> = None;
-        let mut shape_active = self.shape_active;
         let mut win_action = None;
         let mut show_rail = self.show_rail;
         let mut show_dock = self.show_dock;
@@ -641,7 +613,7 @@ impl Ui {
                             }
                             guide_field::show(ui, inner, view, ppp, ed, &mut ops);
                             if show_rail {
-                                board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
+                                board_rail(ui.ctx(), inner, &snap, &mut ops);
                             }
                             if show_dock {
                                 board_ctlbar(
@@ -706,6 +678,7 @@ impl Ui {
                 new_column = shell.side_column_span();
             }
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
+            drawing::draw(ctx, ed, hole, view, ppp);
             select_transform::draw(ctx, ed, hole);
             isolation::draw(ctx, ed, hole);
             build_ab_chrome(
@@ -745,7 +718,6 @@ impl Ui {
         self.lay_drag = lay_drag;
         self.lay_anchor = lay_anchor;
         self.layer_rows_cache = layer_rows_cache;
-        self.shape_active = shape_active;
         if fit_request.is_some() {
             self.fit_request = fit_request;
         }

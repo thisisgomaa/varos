@@ -759,6 +759,10 @@ impl Service {
                     if v.api != "1.2" && ops.iter().any(|op| op.slice4a()) {
                         return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
                     }
+                    // ---- Lane D: version opt-in ----
+                    if v.api != "1.2" && ops.iter().any(|op| op.drawing()) {
+                        return Err(Error::new("unsupported", "drawing requires API 1.2"));
+                    }
                     if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::TraceRgba { .. })) {
                         return Err(Error::new("unsupported", "trace_rgba requires API 1.2"));
                     }

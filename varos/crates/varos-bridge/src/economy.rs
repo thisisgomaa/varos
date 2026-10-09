@@ -260,7 +260,9 @@ fn walk(
         if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
             return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
         }
+        // ---- Lane D: opt-in drawing verb expansion ----
         if !crate::EDIT_VERBS.contains(&verb)
+            && !(construction && crate::drawing::VERBS.contains(&verb))
             && !(api == "1.2" && verb == "set_stroke_style")
             && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"

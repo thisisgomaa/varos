@@ -187,6 +187,19 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         ToolKind::Rect => CK::CrossRect,
         ToolKind::Ellipse => CK::CrossEllipse,
         ToolKind::Triangle => CK::CrossTriangle,
+        // ---- Lane D ----
+        ToolKind::RoundedRect
+        | ToolKind::Star
+        | ToolKind::Line
+        | ToolKind::Arc
+        | ToolKind::Spiral
+        | ToolKind::RectGrid
+        | ToolKind::PolarGrid
+        | ToolKind::Pencil
+        | ToolKind::Smooth
+        | ToolKind::PathEraser
+        | ToolKind::Join
+        | ToolKind::Curvature => CK::CrossRect,
         ToolKind::Polygon => CK::CrossPolygon,
         ToolKind::Hand => CK::Hand,
         ToolKind::Zoom => CK::Direct,
@@ -270,6 +283,18 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Rect => "Rectangle (M)",
         ToolKind::Ellipse => "Ellipse (L)",
         ToolKind::Triangle => "Triangle",
+        ToolKind::RoundedRect
+        | ToolKind::Star
+        | ToolKind::Line
+        | ToolKind::Arc
+        | ToolKind::Spiral
+        | ToolKind::RectGrid
+        | ToolKind::PolarGrid
+        | ToolKind::Pencil
+        | ToolKind::Smooth
+        | ToolKind::PathEraser
+        | ToolKind::Join
+        | ToolKind::Curvature => ui::drawing_tool_name(t),
         ToolKind::Polygon => "Polygon",
         ToolKind::Convert => "Anchor Point (Shift+C)",
         ToolKind::Hand => "Hand (H)",
@@ -372,6 +397,10 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
             }
             _ => {}
         }
+        return;
+    }
+    // ---- Lane D: Illustrator drawing shortcuts and gesture arrows ----
+    if ui::drawing_key(ed, code, shift, alt) {
         return;
     }
     let s = if shift { 10.0 } else { 1.0 };

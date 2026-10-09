@@ -35,16 +35,3 @@ pub(crate) fn construction_row(ui: &mut egui::Ui, pf: Result<(), &'static str>, 
         ops.push(Op::DivideObjectsBelow);
     }
 }
-pub(crate) fn construction_tools(ui: &mut egui::Ui, active: ToolKind, ops: &mut Vec<Op>) {
-    for (tool, icon, label) in [
-        (ToolKind::ShapeBuilder, Icon::PathMerge, "Shape Builder (Shift+M) — Alt-drag deletes"),
-        (ToolKind::Scissors, Icon::PathScissors, "Scissors (C)"),
-        (ToolKind::Knife, Icon::PathKnife, "Knife"),
-        (ToolKind::Eraser, Icon::PathEraser, "Eraser (Shift+E)"),
-    ] {
-        let state = IconState::Tool(active == tool);
-        if kit::icon_button(ui, ui.id().with(label), icon, label, state).activated {
-            ops.push(Op::Tool(tool));
-        }
-    }
-}

@@ -670,6 +670,14 @@ pub const BLEED_GUIDE_W: f32 = 1.0;
 // Phase 1 document transparency furniture (canvas only).
 pub const DOC_CHECKERBOARD: [[f32; 4]; 2] = [[0.18, 0.18, 0.18, 1.0], [0.24, 0.24, 0.24, 1.0]];
 
+// ---- Lane D: provisional drawing sheets/flyouts ----
+pub const DRAW_FIELD_W: f32 = 220.;
+pub const DRAW_SHEET_W: f32 = 280.;
+pub const DRAW_MARGIN: i8 = 6;
+pub const DRAW_RAIL_OFFSET: f32 = 16.;
+pub const DRAW_HOLD_SECONDS: f64 = 0.45;
+pub const DRAW_PREVIEW_STROKE: f32 = 1.;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;
