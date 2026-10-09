@@ -51,6 +51,7 @@ mod pacing;
 mod recent_files;
 mod recovery_host;
 mod single_instance;
+mod svg_import;
 mod thumbs;
 mod ui;
 mod workspace;

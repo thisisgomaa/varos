@@ -311,11 +311,17 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+        if ![API, "1.1"].contains(&req.api())
+            && !(req.api() == "1.2"
+                && matches!(req, Request::ExportPdf(_) | Request::ImportSvg(_) | Request::Capabilities(_)))
+        {
             return Reply::failure(Error::new(
                 "unsupported",
                 "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
             ));
+        }
+        if matches!(req, Request::ImportSvg(_)) && req.api() != "1.2" {
+            return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
         }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
@@ -393,6 +399,16 @@ impl Service {
                         v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
                     }
+                    if req.api() == "1.2" {
+                        if let Some(v) = r.result.as_mut() {
+                            v["api"] = json!("1.2");
+                            v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
+                            v["api_by_tool"] = json!({"import_svg":["1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
+                            if let Some(tools) = v["tools"].as_array_mut() {
+                                tools.push(json!("import_svg"));
+                            }
+                        }
+                    }
                     Ok(r)
                 }
                 Request::ListBoards(v) => {
@@ -436,6 +452,25 @@ impl Service {
                         }
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                }
+                Request::ImportSvg(v) => {
+                    if v.path.is_none() || v.scope.is_some() {
+                        return Err(Error::new("invalid_argument", "import_svg requires path and no scope"));
+                    }
+                    let from = self.boards[&v.board].rev;
+                    let imported = host.file_effect("import_svg", v)?;
+                    if !imported.ok {
+                        return Ok(imported);
+                    }
+                    self.observe(host);
+                    self.observe_selection(host, &v.board);
+                    let report = imported.result.as_ref().and_then(|r| r.get("report"));
+                    let mut reply =
+                        self.edit_receipt_reserved(&v.board, from, report.map_or(0, |r| r.to_string().len()));
+                    if let (Some(result), Some(report)) = (reply.result.as_mut(), report) {
+                        result["report"] = report.clone();
+                    }
+                    Ok(reply)
                 }
                 Request::Save(v) | Request::SaveAs(v) | Request::ExportPdf(v) => {
                     match req {

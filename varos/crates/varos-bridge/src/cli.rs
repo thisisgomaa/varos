@@ -122,7 +122,7 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
         .map_err(|e| e.to_string())?;
         return Ok(0);
     }
-    if !crate::TOOLS.contains(&verb.as_str()) {
+    if !crate::TOOLS.contains(&verb.as_str()) && verb != "import_svg" {
         return Err(format!("unsupported tool {verb}"));
     }
     if (verb == "snapshot") != output_path.is_some() {

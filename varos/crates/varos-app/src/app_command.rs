@@ -88,6 +88,8 @@ pub enum AppCommand {
     InstallRecovered(Box<crate::workspace::RecoveredDocument>),
     /// ⌘O / File ▸ Open… — show the Open dialog, then open what was picked.
     OpenDialog,
+    /// Provisional File ▸ Place SVG, existing native file-picker pattern.
+    PlaceSvg(SessionId),
     /// Open these files (an already-open file is focused, never reloaded).
     OpenPaths(Vec<PathBuf>, OpenOrigin),
     /// ⌘S — save this tab (goes through Save As when it has no `.vrs` path yet).

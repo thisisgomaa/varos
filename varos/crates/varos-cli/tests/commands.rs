@@ -721,3 +721,18 @@ fn diff_keeps_sub_decimal_geometry_changes_despite_describe_rounding() {
     );
     assert_eq!(varos_core::bridge::diff(&doc, &changed)["changed"][0]["id"], "path:10");
 }
+
+#[test]
+fn import_svg_writes_editable_document_and_reports_losses() {
+    let dir = Scratch::new();
+    let input = dir.path("source.svg");
+    let output = dir.path("imported.vrs");
+    std::fs::write(&input, r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 30"><rect width="20" height="10"/><text>omitted</text></svg>"#).unwrap();
+    let result = cli(&["import-svg".as_ref(), input.as_os_str(), "--out".as_ref(), output.as_os_str()], true);
+    assert_eq!(result["report"]["paths"], 1);
+    assert!(result["report"]["loss_notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("Text")));
+    let doc = varos_pdf::load_vrs(&output).unwrap();
+    assert_eq!(doc.artboards[0].w, 50.);
+    assert_eq!(doc.paths.len(), 1);
+    cli(&["import-svg".as_ref(), input.as_os_str(), "--out".as_ref(), input.as_os_str()], false);
+}

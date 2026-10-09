@@ -21,6 +21,8 @@ pub enum Request {
     Save(FileEffect),
     SaveAs(FileEffect),
     ExportPdf(FileEffect),
+    /// API 1.2 only; import source under the files scope, placed into board.
+    ImportSvg(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -520,6 +522,7 @@ impl Request {
             Self::Save(_) => "save",
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
+            Self::ImportSvg(_) => "import_svg",
         }
     }
     pub fn api(&self) -> &str {
@@ -532,14 +535,14 @@ impl Request {
             Self::History(v) => &v.api,
             Self::RequestStatus(v) => &v.api,
             Self::Snapshot(v) => &v.api,
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => &v.api,
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ImportSvg(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some(&v.board),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ImportSvg(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -551,7 +554,9 @@ impl Request {
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some((&v.request_id, v.expected_rev)),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ImportSvg(v) => {
+                Some((&v.request_id, v.expected_rev))
+            }
             _ => None,
         }
     }

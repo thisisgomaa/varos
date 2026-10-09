@@ -8,6 +8,7 @@ name = "varos-cli"
 path = "src/main.rs"
 
 [dependencies]
+varos-import = { path = "../varos-import" }
 varos-bridge = { path = "../varos-bridge" }
 varos-core = { path = "../varos-core" }
 varos-pdf = { path = "../varos-pdf" }
