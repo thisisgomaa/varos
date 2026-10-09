@@ -40,26 +40,34 @@ pub(crate) fn type_section(ui: &mut egui::Ui, text: &TextBox, ops: &mut Vec<Op>)
             }
         }
     }
-    if let Some(value) = number(ui, "Font size", first.style.size, 0.1..=4096., false) {
+    number(ui, "Font size", first.style.size, 0.1..=4096., false, ops, |value| {
+        let mut next = text.clone();
         for run in &mut next.runs {
             run.style.size = value;
         }
-    }
-    if let Some(value) = number(ui, "Line height", text.para.line_height, 1.3..=20., false) {
+        Op::Text(next)
+    });
+    number(ui, "Line height", text.para.line_height, 1.3..=20., false, ops, |value| {
+        let mut next = text.clone();
         next.para.line_height = value;
-    }
+        Op::Text(next)
+    });
     let arabic = varos_core::text::contains_arabic(&text.source());
-    if let Some(value) = number(
+    number(
         ui,
         if arabic { "Letter spacing (Arabic: 0)" } else { "Letter spacing" },
         first.style.letter_spacing,
         -first.style.size..=first.style.size,
         arabic,
-    ) {
-        for run in &mut next.runs {
-            run.style.letter_spacing = value;
-        }
-    }
+        ops,
+        |value| {
+            let mut next = text.clone();
+            for run in &mut next.runs {
+                run.style.letter_spacing = value;
+            }
+            Op::Text(next)
+        },
+    );
     let align = [Alignment::Left, Alignment::Centre, Alignment::Right, Alignment::Justify];
     if let Some(i) = choice(
         ui,
@@ -101,45 +109,16 @@ fn choice(ui: &mut egui::Ui, label: &str, names: &[&str], selected: usize) -> Op
         label,
     )
 }
+#[allow(clippy::too_many_arguments)]
 fn number(
     ui: &mut egui::Ui,
     label: &'static str,
     value: f32,
     range: std::ops::RangeInclusive<f32>,
     disabled: bool,
-) -> Option<f32> {
-    use varos_app::shell::kit::field::{number_field, NumberField};
+    ops: &mut Vec<Op>,
+    mk: impl Fn(f32) -> Op,
+) {
     ui.label(micro_label(label));
-    let id = doc_id(ui, ("type-number", label));
-    let pending = id.with("pending");
-    let previous = ui.ctx().data(|d| d.get_temp::<f32>(pending));
-    let edit = number_field(
-        ui,
-        NumberField {
-            id,
-            width: TYPE_FIELD_W,
-            label: Lab::Letter(""),
-            tip: label,
-            value: previous.unwrap_or(value),
-            decimals: 2,
-            speed: 0.1,
-            range,
-            disabled,
-        },
-    );
-    if let Some(v) = edit.commit {
-        ui.ctx().data_mut(|d| d.remove::<f32>(pending));
-        return Some(v);
-    }
-    if edit.closed {
-        ui.ctx().data_mut(|d| d.remove::<f32>(pending));
-        return None;
-    }
-    if let Some(v) = edit.live {
-        ui.ctx().data_mut(|d| d.insert_temp(pending, v));
-    }
-    if !edit.editing && !ui.input(|i| i.pointer.primary_down()) {
-        return ui.ctx().data_mut(|d| d.remove_temp::<f32>(pending));
-    }
-    None
+    fields::num_disabled(ui, TYPE_FIELD_W, Lab::Letter(""), label, value, 2, 0.1, range, disabled, ops, mk);
 }

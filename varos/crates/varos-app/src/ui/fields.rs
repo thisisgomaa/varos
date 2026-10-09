@@ -369,6 +369,32 @@ pub(crate) fn finish_frame(
     *pending = fresh;
 }
 
+// ---- Lane G: draft fields settle before the source edit batch is published. ----
+pub(crate) fn settle_text(
+    ctx: &egui::Context,
+    doc: Option<SessionId>,
+    pending: &mut Option<Pending>,
+    tool: &mut crate::text_product::TextProduct,
+    ed: &mut Editor,
+) -> bool {
+    if !pending.as_ref().is_some_and(|p| matches!(p.op, Op::Text(_))) {
+        return true;
+    }
+    let settled = kf::settle(ctx);
+    if settled.blocked.is_some() {
+        return false;
+    }
+    let mut ops = vec![];
+    if let Some(p) = pending.take() {
+        if p.doc == doc && settled.commits.contains(&p.id) {
+            ops.push(p.op);
+        }
+    }
+    tool.finish_ops(ed, &mut ops);
+    apply_ops(ed, ops);
+    tool.error.is_none()
+}
+
 /// K3 before a lifecycle command or a canvas press: commit the open field into `ed` (its last pending
 /// value; unchanged text just closes). `false` = its text does not parse: it keeps the keyboard and
 /// its reason, nothing ran, and the command must not run either.

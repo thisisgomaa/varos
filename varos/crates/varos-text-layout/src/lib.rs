@@ -63,15 +63,18 @@ struct Entry {
     source: TextBox,
     bucket: i32,
     output: Composed,
+    used: u64,
 }
 pub struct TextLayout {
     engine: Engine,
     cache: HashMap<u32, Entry>,
+    shaping: HashMap<u32, (TextBox, Layout, u64)>,
+    clock: u64,
     pub layouts: u64,
 }
 impl TextLayout {
     pub fn new(fonts: FontSet) -> Result<Self, String> {
-        Ok(Self { engine: Engine::new(fonts)?, cache: HashMap::new(), layouts: 0 })
+        Ok(Self { engine: Engine::new(fonts)?, cache: HashMap::new(), shaping: HashMap::new(), clock: 0, layouts: 0 })
     }
     pub fn bundled() -> Result<Self, String> {
         Self::new(bundled_fonts()?)
@@ -85,9 +88,113 @@ impl TextLayout {
             return Err("invalid text zoom".into());
         }
         let bucket = (zoom.log2().ceil() as i32).clamp(-8, 12);
+        self.clock += 1;
+        if let Some(entry) = self.cache.get_mut(&text.id) {
+            entry.used = self.clock;
+        }
         if self.cache.get(&text.id).is_some_and(|e| e.source == *text && e.bucket == bucket) {
             return Ok(&self.cache[&text.id].output);
         }
+        let mut layout =
+            if let Some((_, layout, used)) = self.shaping.get_mut(&text.id).filter(|(source, _, _)| source == text) {
+                *used = self.clock;
+                layout.clone()
+            } else {
+                let layout = self.shape(text)?;
+                self.shaping.remove(&text.id);
+                // Independent bounds: document-sized small layouts, capped source/glyph retention.
+                while self.shaping.len() >= 4096
+                    || self
+                        .shaping
+                        .values()
+                        .map(|(t, _, _)| t.runs.iter().map(|r| r.text.len()).sum::<usize>())
+                        .sum::<usize>()
+                        + text.source().len()
+                        > 8 * 1024 * 1024
+                    || self
+                        .shaping
+                        .values()
+                        .map(|(_, l, _)| l.lines.iter().map(|line| line.glyphs.len()).sum::<usize>())
+                        .sum::<usize>()
+                        + layout.lines.iter().map(|line| line.glyphs.len()).sum::<usize>()
+                        > 1_000_000
+                {
+                    let Some(id) = self.shaping.iter().min_by_key(|(_, (_, _, used))| *used).map(|(id, _)| *id) else {
+                        break;
+                    };
+                    self.shaping.remove(&id);
+                }
+                self.shaping.insert(text.id, (text.clone(), layout.clone(), self.clock));
+                layout
+            };
+        let first = text.runs.first().ok_or("text requires a style")?;
+        let origin = match text.box_kind {
+            TextBoxKind::Point => [text.frame[0], text.frame[1] - layout.lines.first().map_or(0., |l| l.baseline)],
+            TextBoxKind::Area(r) => [r[0], r[1]],
+        };
+        let overset = matches!(text.box_kind, TextBoxKind::Area(r) if layout.lines.last().is_some_and(|l| l.baseline + l.descent > r[3]));
+        let mut paths = Vec::new();
+        let mut vertices = 0usize;
+        if layout.lines.iter().map(|l| l.glyphs.len()).sum::<usize>() > 16_384 {
+            return Err("text glyph limit exceeded".into());
+        }
+        for glyph in layout
+            .lines
+            .iter()
+            .filter(|line| match text.box_kind {
+                TextBoxKind::Point => true,
+                TextBoxKind::Area(r) => line.baseline + line.descent <= r[3],
+            })
+            .flat_map(|l| &l.glyphs)
+        {
+            let mut start = 0;
+            let mut fill = first.style.fill;
+            for run in &text.runs {
+                if (start..start + run.text.len()).contains(&glyph.cluster.start) {
+                    fill = run.style.fill;
+                    break;
+                }
+                start += run.text.len();
+            }
+            let outline = varos_text::outlines::glyph_outline(self.engine.font_set(), glyph)?;
+            let glyph_paths = outline_paths(&outline.commands, origin, fill, 0.1 / 2f32.powi(bucket))?;
+            vertices += glyph_paths.iter().map(path_vertices).sum::<usize>();
+            if vertices > 250_000 {
+                return Err("text outline budget exceeded".into());
+            }
+            paths.extend(glyph_paths);
+        }
+        // Refresh ink bounds after tracking/point alignment using the same coverage we draw.
+        layout.ink_bounds = paths
+            .iter()
+            .flat_map(|p| p.anchors.iter().chain(p.holes.iter().flatten()))
+            .map(|a| [a.p[0] - origin[0], a.p[1] - origin[1]])
+            .fold(None, |bounds, p| {
+                Some(match bounds {
+                    None => [p[0], p[1], p[0], p[1]],
+                    Some([x0, y0, x1, y1]) => [x0.min(p[0]), y0.min(p[1]), x1.max(p[0]), y1.max(p[1])],
+                })
+            });
+        let retained = self.cache.values().flat_map(|e| &e.output.paths).map(path_vertices).sum::<usize>();
+        let mut retained = retained;
+        while self.cache.len() >= 256 || retained + vertices > 500_000 {
+            let Some(id) = self.cache.iter().min_by_key(|(_, e)| e.used).map(|(id, _)| *id) else { break };
+            if let Some(old) = self.cache.remove(&id) {
+                retained = retained.saturating_sub(old.output.paths.iter().map(path_vertices).sum::<usize>());
+            }
+        }
+        self.cache.insert(
+            text.id,
+            Entry {
+                source: text.clone(),
+                bucket,
+                used: self.clock,
+                output: Composed { layout, paths, origin, overset },
+            },
+        );
+        Ok(&self.cache[&text.id].output)
+    }
+    fn shape(&mut self, text: &TextBox) -> Result<Layout, String> {
         let source = text.source();
         if source.len() > 65_536 {
             return Err("text layout limit exceeded: 64 KiB per frame".into());
@@ -155,6 +262,7 @@ impl TextLayout {
             ..Default::default()
         };
         let mut layout = self.engine.compose(&req, &options)?;
+        self.layouts += 1;
         tracking::apply(&mut layout, text);
         if text.box_kind == TextBoxKind::Point {
             // Point text aligns each baseline around the authored anchor, without inventing a wrap width.
@@ -180,63 +288,7 @@ impl TextLayout {
                 }
             }
         }
-        let origin = match text.box_kind {
-            TextBoxKind::Point => [text.frame[0], text.frame[1] - layout.lines.first().map_or(0., |l| l.baseline)],
-            TextBoxKind::Area(r) => [r[0], r[1]],
-        };
-        let overset = matches!(text.box_kind, TextBoxKind::Area(r) if layout.lines.last().is_some_and(|l| l.baseline + l.descent > r[3]));
-        let mut paths = Vec::new();
-        let mut vertices = 0usize;
-        if layout.lines.iter().map(|l| l.glyphs.len()).sum::<usize>() > 16_384 {
-            return Err("text glyph limit exceeded".into());
-        }
-        for glyph in layout
-            .lines
-            .iter()
-            .filter(|line| match text.box_kind {
-                TextBoxKind::Point => true,
-                TextBoxKind::Area(r) => line.baseline + line.descent <= r[3],
-            })
-            .flat_map(|l| &l.glyphs)
-        {
-            let mut start = 0;
-            let mut fill = first.style.fill;
-            for run in &text.runs {
-                if (start..start + run.text.len()).contains(&glyph.cluster.start) {
-                    fill = run.style.fill;
-                    break;
-                }
-                start += run.text.len();
-            }
-            let outline = varos_text::outlines::glyph_outline(self.engine.font_set(), glyph)?;
-            let glyph_paths = outline_paths(&outline.commands, origin, fill, 0.1 / 2f32.powi(bucket))?;
-            vertices += glyph_paths.iter().map(path_vertices).sum::<usize>();
-            if vertices > 250_000 {
-                return Err("text outline budget exceeded".into());
-            }
-            paths.extend(glyph_paths);
-        }
-        // Refresh ink bounds after tracking/point alignment using the same coverage we draw.
-        layout.ink_bounds = paths
-            .iter()
-            .flat_map(|p| p.anchors.iter().chain(p.holes.iter().flatten()))
-            .map(|a| [a.p[0] - origin[0], a.p[1] - origin[1]])
-            .fold(None, |bounds, p| {
-                Some(match bounds {
-                    None => [p[0], p[1], p[0], p[1]],
-                    Some([x0, y0, x1, y1]) => [x0.min(p[0]), y0.min(p[1]), x1.max(p[0]), y1.max(p[1])],
-                })
-            });
-        self.layouts += 1;
-        let retained = self.cache.values().flat_map(|e| &e.output.paths).map(path_vertices).sum::<usize>();
-        if self.cache.len() >= 256 || retained + vertices > 500_000 {
-            self.cache.clear();
-        }
-        self.cache.insert(
-            text.id,
-            Entry { source: text.clone(), bucket, output: Composed { layout, paths, origin, overset } },
-        );
-        Ok(&self.cache[&text.id].output)
+        Ok(layout)
     }
     /// Transient render/export snapshot: replace each text leaf IN PLACE, preserving order/ancestors.
     pub fn outlined(&mut self, source: &Document, zoom: f32) -> Result<Document, String> {

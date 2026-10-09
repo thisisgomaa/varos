@@ -9,7 +9,22 @@ pub struct ClipboardVectors {
     pub rect: [f32; 4],
 }
 pub fn clipboard_vectors(doc: &Document, clipboard: &Clipboard) -> Result<ClipboardVectors, String> {
-    let selected: HashSet<u32> = clipboard.source_ids().collect();
+    let mut selected: HashSet<u32> = clipboard.source_ids().collect();
+    // ---- Lane G: public flavours use outlines, internal flavour keeps editable source. ----
+    let outlined;
+    let doc = if doc.text_boxes.is_empty() {
+        doc
+    } else {
+        outlined = varos_text_layout::outline_document(doc)?;
+        for text in &doc.text_boxes {
+            if selected.remove(&text.id) {
+                if let Some(node) = varos_core::text::node_id(doc, text.id) {
+                    selected.extend(outlined.node_paths(node));
+                }
+            }
+        }
+        &outlined
+    };
     let (narrowed, plan) = crate::plan_selection_export(doc, &selected).map_err(|e| e.to_string())?;
     let cancel = AtomicBool::new(false);
     let pdf = crate::export_pdf_bytes(&narrowed, &plan, &cancel).map_err(|e| e.to_string())?;

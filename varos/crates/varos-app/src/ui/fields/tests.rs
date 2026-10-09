@@ -1024,3 +1024,57 @@ fn board_section_hit_targets_are_at_least_24pt() {
     }
     assert_eq!(chips, 2, "one × per tag");
 }
+
+#[test]
+fn type_number_pending_settles_into_draft_before_save_or_tab_switch() {
+    for (label, value) in [("Font size", "48"), ("Line height", "2"), ("Letter spacing", "1")] {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        let doc = Some(SessionId(1));
+        let mut pending = None;
+        let mut ed = Editor::new();
+        let mut tool = crate::text_product::TextProduct::default();
+        tool.session = Some(varos_text_layout::edit::EditSession::new(
+            varos_text_layout::default_text("ABC", [20., 50.]).unwrap(),
+        ));
+        let mut frame = |events: Vec<Event>, tool: &mut crate::text_product::TextProduct, ed: &mut Editor| {
+            set_doc_salt(&ctx, doc);
+            clear_probes();
+            let text = tool.selected_text(ed).unwrap();
+            let mut ops = vec![];
+            let _ = ctx.run_ui(
+                RawInput {
+                    events,
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800., 800.))),
+                    ..Default::default()
+                },
+                |ui| {
+                    crate::ui::type_section(ui, &text, &mut ops);
+                },
+            );
+            finish_frame(&ctx, doc, &mut ops, &mut pending);
+            tool.finish_ops(ed, &mut ops);
+            apply_ops(ed, ops);
+        };
+        frame(vec![], &mut tool, &mut ed);
+        let rect = probed_rect(label, 0).center();
+        frame(press(rect, true), &mut tool, &mut ed);
+        frame(press(rect, false), &mut tool, &mut ed);
+        frame(vec![], &mut tool, &mut ed);
+        frame(vec![Event::Text(value.into())], &mut tool, &mut ed);
+        assert!(pending.is_some(), "{label}");
+        assert!(super::settle_text(&ctx, doc, &mut pending, &mut tool, &mut ed));
+        assert!(ed.doc.text_boxes.is_empty());
+        tool.commit(&mut ed).unwrap();
+        let text = &ed.doc.text_boxes[0];
+        let actual = match label {
+            "Font size" => text.runs[0].style.size,
+            "Line height" => text.para.line_height,
+            _ => text.runs[0].style.letter_spacing,
+        };
+        assert_eq!(actual, value.parse::<f32>().unwrap());
+        assert_eq!(ed.rev, 1);
+        ed.undo();
+        assert!(ed.doc.text_boxes.is_empty());
+    }
+}

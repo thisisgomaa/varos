@@ -32,7 +32,7 @@ fn cache_zoom_and_missing_snapshot() {
     e.compose(&t, 1.).unwrap();
     assert_eq!(e.layouts, count);
     e.compose(&t, 2.).unwrap();
-    assert_eq!(e.layouts, count + 1);
+    assert_eq!(e.layouts, count);
     t.runs[0].style.font.hash = "0".repeat(64);
     assert!(e.compose(&t, 1.).unwrap_err().contains("missing font snapshot"));
 }
@@ -209,4 +209,25 @@ fn point_alignment_anchors_each_line_without_changing_source_or_wrapping() {
             assert!((left + line.width * fraction).abs() < 0.01);
         }
     }
+}
+
+#[test]
+fn cache_pressure_and_zoom_do_not_repeat_shaping() {
+    let mut engine = TextLayout::bundled().unwrap();
+    let mut text = default_text("A", [0., 40.]).unwrap();
+    for id in 1..=300 {
+        text.id = id;
+        engine.compose(&text, 1.).unwrap();
+    }
+    assert_eq!(engine.layouts, 300);
+    for zoom in [1., 1., 2.] {
+        for id in 1..=300 {
+            text.id = id;
+            engine.compose(&text, zoom).unwrap();
+        }
+        assert_eq!(engine.layouts, 300);
+    }
+    text.runs[0].text = "B".into();
+    engine.compose(&text, 2.).unwrap();
+    assert_eq!(engine.layouts, 301);
 }

@@ -76,3 +76,108 @@ fn v5_reader_gate_refuses_next_writer() {
     let json: serde_json::Value = serde_json::from_slice(include_bytes!("fixtures/text_next/mixed.json")).unwrap();
     assert!(json["varos"].as_u64().unwrap() > 5);
 }
+
+#[test]
+fn release_build_refuses_text_without_mutation_or_history() {
+    let mut ed = Editor::new();
+    ed.try_execute(EditCommand::AddText { text: fixture().text_boxes[0].clone(), parent: None }).unwrap();
+    let before = ed.doc.clone();
+    let rev = ed.rev;
+    assert!(ed
+        .try_execute(EditCommand::LayerFamily {
+            action: varos_core::select_transform::LayerAction::ReleaseBuild,
+            nodes: vec![ed.doc.active_layer],
+        })
+        .unwrap_err()
+        .contains("text"));
+    assert_eq!(ed.doc, before);
+    assert_eq!(ed.rev, rev);
+    ed.undo();
+    assert!(ed.doc.text_boxes.is_empty());
+}
+
+#[test]
+fn mixed_object_selection_translate_copy_cut_paste_delete_and_undo() {
+    let mut ed = Editor::new();
+    let text =
+        ed.try_execute_created(EditCommand::AddText { text: fixture().text_boxes[0].clone(), parent: None }).unwrap();
+    let path = ed.doc.nid();
+    ed.doc.paths.push(varos_core::model::Path::new(path, vec![], false, None, None, 1.));
+    ed.doc.sync_tree();
+    ed.try_execute(EditCommand::SelectPaths(vec![text, path])).unwrap();
+    let before = ed.doc.text_boxes[0].clone();
+    ed.try_execute(EditCommand::Transform(varos_core::select_transform::Transform {
+        movement: [10., 20.],
+        ..Default::default()
+    }))
+    .unwrap();
+    assert_eq!(ed.doc.text_boxes[0].frame, [before.frame[0] + 10., before.frame[1] + 20.]);
+    ed.undo();
+    assert_eq!(ed.doc.text_boxes[0], before);
+    ed.try_execute(EditCommand::SelectPaths(vec![text, path])).unwrap();
+    ed.try_execute(EditCommand::Copy).unwrap();
+    assert_eq!(ed.clipboard().len(), 2);
+    ed.try_execute(EditCommand::Paste { offset: Some([40., 50.]) }).unwrap();
+    assert_eq!(ed.doc.text_boxes.len(), 2);
+    assert_eq!(ed.doc.text_boxes[1].source(), before.source());
+    assert_ne!(ed.doc.text_boxes[1].id, text);
+    assert_eq!(ed.doc.text_boxes[1].frame, [before.frame[0] + 40., before.frame[1] + 50.]);
+    validate_document(&ed.doc).unwrap();
+    ed.try_execute(EditCommand::Cut).unwrap();
+    assert_eq!(ed.doc.text_boxes.len(), 1);
+    ed.undo();
+    assert_eq!(ed.doc.text_boxes.len(), 2);
+    ed.try_execute(EditCommand::SelectPaths(vec![text])).unwrap();
+    ed.try_execute(EditCommand::DeleteSelected).unwrap();
+    assert!(!ed.doc.text_boxes.iter().any(|t| t.id == text));
+    ed.undo();
+    assert!(ed.doc.text_boxes.iter().any(|t| t.id == text));
+}
+
+#[test]
+fn mixed_translation_preserves_rotated_group_transform() {
+    use varos_core::model::{Anchor, NodeKind, Path, Xform};
+    let mut ed = Editor::new();
+    let id =
+        ed.try_execute_created(EditCommand::AddText { text: fixture().text_boxes[0].clone(), parent: None }).unwrap();
+    let pid = ed.doc.nid();
+    let aid = ed.doc.nid();
+    ed.doc.paths.push(Path::new(
+        pid,
+        vec![Anchor { id: aid, p: [10., 20.], hin: None, hout: None, smooth: false }],
+        false,
+        None,
+        None,
+        1.,
+    ));
+    ed.doc.sync_tree();
+    let layer = ed.doc.active_layer;
+    let mut group = ed.doc.node(layer).unwrap().clone();
+    group.id = ed.doc.nid();
+    group.kind = NodeKind::Group;
+    group.parent = Some(layer);
+    group.xform = Xform { rot: 1., piv: [5., 8.] };
+    let xf = group.xform;
+    for node in &mut ed.doc.nodes {
+        if group.children.contains(&node.id) {
+            node.parent = Some(group.id);
+        }
+    }
+    ed.doc.nodes.iter_mut().find(|n| n.id == layer).unwrap().children = vec![group.id];
+    ed.doc.nodes.push(group);
+    let text_before = xf.apply(ed.doc.text_boxes[0].frame);
+    let path_before = xf.apply(ed.doc.paths[0].anchors[0].p);
+    ed.try_execute(EditCommand::SelectPaths(vec![id, pid])).unwrap();
+    ed.try_execute(EditCommand::Transform(varos_core::select_transform::Transform {
+        movement: [30., 40.],
+        ..Default::default()
+    }))
+    .unwrap();
+    assert_eq!(ed.doc.unit_xform(pid), xf);
+    for (before, after) in
+        [(text_before, xf.apply(ed.doc.text_boxes[0].frame)), (path_before, xf.apply(ed.doc.paths[0].anchors[0].p))]
+    {
+        assert!((after[0] - before[0] - 30.).abs() < 0.001);
+        assert!((after[1] - before[1] - 40.).abs() < 0.001);
+    }
+}

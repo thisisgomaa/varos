@@ -256,3 +256,80 @@ pub fn check_change(ed: &Editor, text: &TextBox, replacing: Option<u32>, parent:
     }
     Ok(())
 }
+
+pub fn node_id(doc: &Document, id: u32) -> Option<u32> {
+    doc.nodes.iter().find(|n| n.kind == NodeKind::Text(id)).map(|n| n.id)
+}
+pub fn subtree_has_text(doc: &Document, root: u32) -> bool {
+    doc.node(root)
+        .is_some_and(|n| matches!(n.kind, NodeKind::Text(_)) || n.children.iter().any(|c| subtree_has_text(doc, *c)))
+}
+pub fn selected_ids(ed: &Editor) -> Vec<u32> {
+    ed.doc.text_boxes.iter().filter(|t| ed.objsel.contains(&t.id) && editable(ed, t.id).is_ok()).map(|t| t.id).collect()
+}
+pub fn editable(ed: &Editor, id: u32) -> Result<(), String> {
+    let n = node_id(&ed.doc, id).and_then(|n| ed.doc.node(n)).ok_or("missing text")?;
+    if n.hidden || n.locked || !ed.in_isolation(id) {
+        return Err("text is hidden, locked or outside isolation".into());
+    }
+    check_parent(ed, n.parent)
+}
+pub fn translate(text: &mut TextBox, delta: [f32; 2]) {
+    text.frame[0] += delta[0];
+    text.frame[1] += delta[1];
+    if let TextBoxKind::Area(r) = &mut text.box_kind {
+        r[0] += delta[0];
+        r[1] += delta[1];
+    }
+}
+pub fn translation_only(s: crate::select_transform::Transform) -> bool {
+    s.scale == [1., 1.] && s.angle == 0. && s.reflect.is_none() && s.shear == 0. && !s.copy && !s.random
+}
+pub fn translate_selected(ed: &mut Editor, spec: crate::select_transform::Transform) -> bool {
+    if !translation_only(spec) {
+        return false;
+    }
+    let ids = selected_ids(ed);
+    for id in &ids {
+        let mut at = node_id(&ed.doc, *id).and_then(|n| ed.doc.node(n));
+        let mut xf = at.map(|n| n.xform).unwrap_or_default();
+        while let Some(n) = at {
+            if n.kind == NodeKind::Group {
+                xf = n.xform;
+            }
+            at = n.parent.and_then(|p| ed.doc.node(p));
+        }
+        let delta = crate::geom::rotate_about(spec.movement, [0., 0.], -xf.rot);
+        if let Some(t) = ed.doc.text_boxes.iter_mut().find(|t| t.id == *id) {
+            translate(t, delta);
+        }
+    }
+    !ids.is_empty() && spec.movement != [0., 0.]
+}
+pub fn remove(doc: &mut Document, ids: &[u32]) {
+    let nodes: Vec<_> = ids.iter().filter_map(|id| node_id(doc, *id)).collect();
+    doc.text_boxes.retain(|t| !ids.contains(&t.id));
+    doc.nodes.retain(|n| !nodes.contains(&n.id));
+    for n in &mut doc.nodes {
+        n.children.retain(|c| !nodes.contains(c));
+    }
+}
+
+/// A mixed translation keeps every live unit transform, avoiding baking a shared text/path group.
+pub fn translate_objects(ed: &mut Editor, spec: crate::select_transform::Transform) -> bool {
+    let changed = translate_selected(ed, spec);
+    for id in ed.structural_object_paths() {
+        let xf = ed.doc.unit_xform(id);
+        let delta = crate::geom::rotate_about(spec.movement, [0., 0.], -xf.rot);
+        let moved = |p: [f32; 2]| [p[0] + delta[0], p[1] + delta[1]];
+        if let Some(pi) = ed.doc.pidx(id) {
+            let path = &mut ed.doc.paths[pi];
+            for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
+                a.p = moved(a.p);
+                a.hin = a.hin.map(moved);
+                a.hout = a.hout.map(moved);
+            }
+        }
+    }
+    changed
+}

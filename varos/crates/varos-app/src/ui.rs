@@ -410,6 +410,9 @@ impl Ui {
     /// K3: commit the open field into `ed` now (before a canvas press, which may change the selection
     /// the field edits). `false` = its text does not parse — it keeps the keyboard; drop the press.
     pub fn commit_fields(&mut self, ed: &mut Editor) -> bool {
+        if !fields::settle_text(&self.ctx, self.doc_active, &mut self.field_pending, &mut self.text_tool, ed) {
+            return false;
+        }
         if let Err(error) = self.text_tool.commit(ed) {
             self.text_tool.error = Some(error);
             return false;
