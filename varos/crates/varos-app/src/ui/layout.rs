@@ -74,7 +74,8 @@ impl Ui {
 }
 
 pub(super) fn picker_owns_escape(ctx: &egui::Context, open: bool) -> bool {
-    open && (varos_app::shell::kit::menu_open(ctx)
+    open && (ctx.data(|d| d.get_temp::<bool>(egui::Id::new("picker-mini")).unwrap_or(false))
+        || varos_app::shell::kit::menu_open(ctx)
         || varos_app::shell::kit::field::any_open(ctx)
         || ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
             ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("picker-panel-rect"))).is_some_and(|r| r.contains(p))
@@ -141,6 +142,18 @@ pub(super) fn settle_picker_fields(
         }
     }
     super::fields::settle(ctx, doc, pending, ed)
+}
+
+pub(super) fn sync_picker_open(
+    layout: &mut varos_app::storage::layout::PickerLayout,
+    panel: Option<&super::ColorPanel>,
+) {
+    if let Some(m) = panel {
+        if !m.mini() {
+            layout.open = true;
+        }
+    }
+    // Closing the full panel clears its preference in panel::build; Mini never does.
 }
 
 #[cfg(test)]

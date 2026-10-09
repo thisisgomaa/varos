@@ -11,7 +11,8 @@ pub(crate) enum Op {
     PaintFocus(PaintTarget), // rail fill/stroke control: focus the target (X toggles)
     SwapColors,              // Shift+X
     DefaultPaint,            // D — existing tool default fill / stroke
-    OpenPicker(MTarget),     // double-click a swatch → open the Colour picker panel for it (a click only focuses)
+    OpenMini(u32, egui::Rect),
+    OpenPicker(MTarget), // double-click a swatch → open the Colour picker panel for it (a click only focuses)
     // Colour picker v3: transactions exist only during an active gesture.
     PickerBegin,
     PickerLive(MTarget, Rgba),
@@ -121,8 +122,15 @@ pub(crate) fn apply_picker_frame(
         }
     }
     let mut request = None;
+    let mut mini_anchor = None;
     ops.retain(|op| match op {
+        Op::OpenMini(id, anchor) => {
+            request = Some(MTarget::Ab(*id));
+            mini_anchor = Some(*anchor);
+            false
+        }
         Op::OpenPicker(t) => {
+            mini_anchor = None;
             request = Some(*t);
             false
         }
@@ -135,6 +143,9 @@ pub(crate) fn apply_picker_frame(
     apply_frame(ed, snap, ops);
     if let Some(target) = request {
         open_picker(modal, target, ed);
+        if let Some(anchor) = mini_anchor {
+            modal.as_mut().unwrap().config = picker::Config::Mini(anchor);
+        }
     }
 }
 
@@ -153,7 +164,7 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::PaintFocus(target) => ed.set_paint_target(target),
             Op::SwapColors => ed.execute(EditCommand::SwapColors),
             Op::DefaultPaint => ed.execute(EditCommand::DefaultPaint),
-            Op::OpenPicker(_) => {} // UI-only: taken out by apply_picker_frame (opens the panel after the frame); never reaches here
+            Op::OpenMini(..) | Op::OpenPicker(_) => {} // UI-only: taken out by apply_picker_frame (opens the panel after the frame); never reaches here
             Op::PickerLive(..) if !ed.transaction_open() => {}
             Op::PickerLive(target, color) => match target {
                 MTarget::Paint(target) => ed.execute(EditCommand::PickerLivePaint { target, color }),

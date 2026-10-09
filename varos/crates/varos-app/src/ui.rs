@@ -132,6 +132,7 @@ pub struct Ui {
     recent_warning: Option<String>,
     app_cmds: Vec<AppCommand>,
     color_panel: Option<ColorPanel>,
+    picker_board_colors: picker::BoardColors,
     picker_layout: varos_app::storage::layout::PickerLayout,
     layer_icons: LayerIcons,
     lay_collapsed: std::collections::HashSet<u32>, // collapsed container node ids (UI-only)
@@ -307,6 +308,7 @@ impl Ui {
             recent_warning: None,
             app_cmds: vec![],
             color_panel: None,
+            picker_board_colors: Default::default(),
             picker_layout: Default::default(),
             layer_icons,
             lay_collapsed: std::collections::HashSet::new(),
@@ -394,6 +396,9 @@ impl Ui {
         self.start_model = model;
     }
     pub fn set_tabs(&mut self, tabs: Vec<TabView>, active: Option<SessionId>) {
+        if self.doc_active != active {
+            self.picker_board_colors = Default::default();
+        }
         self.doc_tabs = tabs;
         self.doc_active = active;
     }
@@ -540,7 +545,11 @@ impl Ui {
             &input,
         );
         self.prepare_picker(ed);
-        let snap = Snap::read(ed);
+        let mut snap = Snap::read(ed);
+        snap.board_colors = self.picker_board_colors.read(
+            ed,
+            self.color_panel.is_some() && self.picker_layout.drawer_open && self.picker_layout.drawer_tab == 1,
+        );
         let absnap = AbSnap::read(ed);
         let abs = ab_infos(ed);
         let presence = crate::agent_presence::frame(self.doc_active, ed, Instant::now());
@@ -787,7 +796,7 @@ impl Ui {
             true
         });
         apply_picker_frame(ed, snap_cfg, ops, &mut self.color_panel);
-        self.picker_layout.open = self.color_panel.is_some();
+        layout::sync_picker_open(&mut self.picker_layout, self.color_panel.as_ref());
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output
 
         // macOS: cursors.rs owns the OS cursor (Retina NSCursor, re-set every frame from `chrome_ck` /

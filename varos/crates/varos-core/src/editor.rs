@@ -4838,16 +4838,26 @@ impl Editor {
         }
         self.dirty = false;
     }
-    /// The distinct colours the artwork uses RIGHT NOW (fills + strokes, first-appearance order, cap 12).
+    /// The distinct colours the artwork uses RIGHT NOW (fills + strokes, first-appearance order, cap 36).
     /// Derived on demand — never stored (COLOR_SPEC Stage 1).
     pub fn document_colors(&self) -> Vec<Rgba> {
+        self.artwork_colors(false)
+    }
+    /// Colours used on the active artboard; overlaps count on each owning board.
+    pub fn board_colors(&self) -> Vec<Rgba> {
+        self.artwork_colors(true)
+    }
+    fn artwork_colors(&self, active_only: bool) -> Vec<Rgba> {
         let same = |a: &Rgba, b: &Rgba| a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-4);
         let mut out: Vec<Rgba> = Vec::new();
-        for p in &self.doc.paths {
+        for (pi, p) in self.doc.paths.iter().enumerate() {
+            if active_only && !self.doc.path_boards(pi).contains(&self.doc.active) {
+                continue;
+            }
             for c in [p.fill.solid(), p.stroke.solid()].into_iter().flatten() {
                 if !out.iter().any(|r| same(r, &c)) {
                     out.push(c);
-                    if out.len() >= 12 {
+                    if out.len() >= 36 {
                         return out;
                     }
                 }

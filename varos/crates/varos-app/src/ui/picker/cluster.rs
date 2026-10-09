@@ -161,6 +161,12 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, origin: egui::Pos2, m: &ColorPanel, s: &Snap, ops: &mut Vec<Op>) {
+    #[cfg(test)]
+    super::super::fields::tests::probe(
+        "picker cluster",
+        egui::Rect::from_min_size(origin, egui::Vec2::splat(t::PICKER_FILL_R)),
+    );
+
     // Owner parity (hand test 2026-10-09): the focused target is painted IN FRONT (Illustrator/Affinity):
     // Fill focused → fill circle over the stroke ring; Stroke focused → ring over the circle.
     let front = cluster_front(m);
