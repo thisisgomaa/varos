@@ -63,6 +63,8 @@ pub enum Phase {
 /// computed once, not every frame).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportSheet {
+    pub pdf_options: varos_pdf::PdfOptions,
+    pub pdf_options_expanded: bool,
     pub sid: SessionId,
     pub rows: Vec<ScopeRow>,
     pub selected: ExportScope,
@@ -111,7 +113,15 @@ impl ExportSheet {
             .or_else(|| can(default).then_some(default))
             .or_else(|| rows.iter().find(|r| r.available).map(|r| r.scope))
             .unwrap_or(default);
-        ExportSheet { sid, rows, selected, phase: Phase::Choose, busy }
+        ExportSheet {
+            pdf_options: Default::default(),
+            pdf_options_expanded: false,
+            sid,
+            rows,
+            selected,
+            phase: Phase::Choose,
+            busy,
+        }
     }
 
     /// The sheet for tab `s`: its document, its selection, and whether it is still exporting. It opens
@@ -342,6 +352,8 @@ pub fn draw(ctx: &egui::Context, sheet: &mut ExportSheet, panel_column: Option<e
                     sheet.select(scope);
                 }
                 ui.add_space(t::KIT_GAP);
+                crate::pdf_options::draw(ui, &mut sheet.pdf_options, &mut sheet.pdf_options_expanded, running);
+                remember_print(sheet.sid, sheet.selected, sheet.pdf_options);
                 kit::notice(ui, NOTE);
                 ui.add_space(t::KIT_GAP);
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
@@ -594,4 +606,15 @@ mod tests {
         let args: Vec<&std::ffi::OsStr> = c.get_args().collect();
         assert_eq!(args, [std::ffi::OsStr::new("-R"), path.as_os_str()]);
     }
+}
+
+thread_local! { static PRINT_SETTINGS: std::cell::RefCell<std::collections::HashMap<SessionId,(Option<ExportScope>,varos_pdf::PdfOptions)>> = std::cell::RefCell::new(Default::default()); }
+fn remember_print(id: SessionId, scope: ExportScope, options: varos_pdf::PdfOptions) {
+    let scope = if scope == ExportScope::Selection { None } else { Some(scope) };
+    PRINT_SETTINGS.with(|s| {
+        s.borrow_mut().insert(id, (scope, options));
+    });
+}
+pub fn print_settings(id: SessionId) -> (Option<ExportScope>, varos_pdf::PdfOptions) {
+    PRINT_SETTINGS.with(|s| s.borrow().get(&id).copied().unwrap_or_default())
 }

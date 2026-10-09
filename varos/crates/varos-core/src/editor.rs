@@ -4648,6 +4648,11 @@ impl Editor {
         }
         self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect()
     }
+    /// Fresh detached payload using the same source rules as Copy/Cut. No editor mutation.
+    /// Desktop adapters can publish it before a destructive Cut; anchors alone capture nothing.
+    pub fn capture_selection_clipboard(&self, cut: bool) -> Clipboard {
+        Clipboard::capture(&self.doc, &self.clipboard_sources(!cut))
+    }
     /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
     /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
     /// nothing selected the clipboard keeps its previous content (Illustrator).

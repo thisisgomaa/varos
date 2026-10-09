@@ -226,6 +226,27 @@ pub fn tools() -> Value {
     },"inputSchema":schemas[*name]})).collect();
     json!({"tools":tools})
 }
+/// API 1.2 discovery is opt-in, leaving the historic tool-list bytes untouched.
+pub fn tools_for_api(api: Option<&str>) -> Value {
+    let mut result = tools();
+    if api == Some("1.2") {
+        if let Some(list) = result["tools"].as_array_mut() {
+            if let Some(capabilities) = list.iter_mut().find(|v| v["name"] == "capabilities") {
+                capabilities["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+            }
+            if let Some(export) = list.iter_mut().find(|v| v["name"] == "export_pdf") {
+                export["inputSchema"]["properties"]["options"] =
+                    json!({"type":"object","description":"PDF preset, image_ppi, compress_streams, boxes and marks"});
+            }
+        }
+        if let Some(list) = result["tools"].as_array_mut() {
+            for name in crate::TOOLS_12 {
+                list.push(json!({"name":name,"description":"API 1.2 desktop host effect. Print opens a prepared PDF in Preview; Copy/Cut publish the current selection to the OS clipboard.","inputSchema": {"type":"object","additionalProperties":false,"properties":{"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"scope":{"enum":["active_artboard","all_visible_artboards","artwork_bounds"]},"options":{"type":"object"}},"required":["api","board","request_id","expected_rev"]}}));
+            }
+        }
+    }
+    result
+}
 fn rpc_result(id: Value, result: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"result":result})
 }
@@ -343,8 +364,12 @@ pub fn serve<T: Transport>(
             }
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
-            "tools/list" => rpc_result(id, tools()),
-            "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
+            "tools/list" => rpc_result(id, tools_for_api(params["api"].as_str())),
+            "tools/call"
+                if params["name"]
+                    .as_str()
+                    .is_none_or(|name| !TOOLS.contains(&name) && !crate::TOOLS_12.contains(&name)) =>
+            {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }
             "tools/call" => {

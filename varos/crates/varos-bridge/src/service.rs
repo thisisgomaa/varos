@@ -311,7 +311,18 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+        if (crate::TOOLS_12.contains(&req.tool()) && req.api() != "1.2")
+            || (![API, "1.1"].contains(&req.api())
+                && !(req.api() == "1.2"
+                    && matches!(
+                        req,
+                        Request::Capabilities(_)
+                            | Request::ExportPdf(_)
+                            | Request::Print(_)
+                            | Request::Copy(_)
+                            | Request::Cut(_)
+                    )))
+        {
             return Reply::failure(Error::new(
                 "unsupported",
                 "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
@@ -385,6 +396,15 @@ impl Service {
                     let mut r = Reply::success(
                         json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":true,"edit":true,"destructive_scope":true,"history_scope":true,"trust":"local user","file_guards":["home_or_external_volume_or_cloud_drive","local_volume_only","protected_roots","dot_components","extension","canonical_parent","no_symlink_escape","no_hardlink_escape","no_overwrite"],"files_scope":true,"scopes":["read","edit","destructive","history","files"],"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
                     );
+                    if req.api() == "1.2" {
+                        if let Some(value) = r.result.as_mut() {
+                            value["api"] = json!("1.2");
+                            value["supported_api"] = json!(["1.0", "1.1", "1.2"]);
+                            let tools: Vec<_> = TOOLS.iter().chain(crate::TOOLS_12).copied().collect();
+                            value["tools"] = json!(tools);
+                            value["api_by_tool"] = json!({"export_pdf":["1.0","1.1","1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1"]});
+                        }
+                    }
                     if req.api() == "1.1" {
                         let v = r.result.as_mut().unwrap();
                         v["api"] = json!("1.1");
@@ -437,7 +457,15 @@ impl Service {
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
                 }
-                Request::Save(v) | Request::SaveAs(v) | Request::ExportPdf(v) => {
+                Request::Save(v)
+                | Request::SaveAs(v)
+                | Request::ExportPdf(v)
+                | Request::Print(v)
+                | Request::Copy(v)
+                | Request::Cut(v) => {
+                    if v.options.is_some() && (v.api != "1.2" || !["export_pdf", "print"].contains(&req.tool())) {
+                        return Err(Error::new("invalid_argument", "PDF options require export_pdf API 1.2"));
+                    }
                     match req {
                         Request::Save(_) if v.path.is_some() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save uses CURRENT backing file only"))
@@ -451,6 +479,8 @@ impl Service {
                         _ => {}
                     }
                     let mut reply = host.file_effect(req.tool(), v)?;
+                    self.observe(host);
+                    self.observe_selection(host, &v.board);
                     // Reports originate in the export worker. Preserve them for 1.2;
                     // legacy wire receipts stay byte-identical, including completion.
                     if v.api != "1.2" {

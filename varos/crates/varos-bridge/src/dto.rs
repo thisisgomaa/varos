@@ -21,6 +21,9 @@ pub enum Request {
     Save(FileEffect),
     SaveAs(FileEffect),
     ExportPdf(FileEffect),
+    Print(FileEffect),
+    Copy(FileEffect),
+    Cut(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -495,6 +498,9 @@ pub struct Status {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileEffect {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "present_value")]
+    pub options: Option<serde_json::Value>,
     #[serde(default = "api")]
     pub api: String,
     pub request_id: String,
@@ -520,6 +526,9 @@ impl Request {
             Self::Save(_) => "save",
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
+            Self::Print(_) => "print",
+            Self::Copy(_) => "copy",
+            Self::Cut(_) => "cut",
         }
     }
     pub fn api(&self) -> &str {
@@ -532,14 +541,18 @@ impl Request {
             Self::History(v) => &v.api,
             Self::RequestStatus(v) => &v.api,
             Self::Snapshot(v) => &v.api,
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => &v.api,
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::Print(v) | Self::Copy(v) | Self::Cut(v) => {
+                &v.api
+            }
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some(&v.board),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::Print(v) | Self::Copy(v) | Self::Cut(v) => {
+                Some(&v.board)
+            }
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -551,7 +564,9 @@ impl Request {
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some((&v.request_id, v.expected_rev)),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::Print(v) | Self::Copy(v) | Self::Cut(v) => {
+                Some((&v.request_id, v.expected_rev))
+            }
             _ => None,
         }
     }
