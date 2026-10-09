@@ -256,7 +256,7 @@ fn coloured_cpu_pixels_match_straight_alpha_formula_for_every_mode() {
                 let opacity = 0.7;
                 let b = [cb[0] * ab, cb[1] * ab, cb[2] * ab, ab];
                 let a = as_ * opacity;
-                let rgb = blend_rgb(mode, cb, cs);
+                let rgb = coloured_golden(mode);
                 let formula = [
                     (1.0 - a) * ab * cb[0] + (1.0 - ab) * a * cs[0] + a * ab * rgb[0],
                     (1.0 - a) * ab * cb[1] + (1.0 - ab) * a * cs[1] + a * ab * rgb[1],
@@ -281,13 +281,26 @@ fn coloured_cpu_pixels_match_straight_alpha_formula_for_every_mode() {
 }
 #[test]
 fn invalid_large_effects_are_refused_instead_of_silently_clamped() {
-    assert!(validate(&[Prim::Blur { object: 0, revision: 0, radius: 129.0 }], [1, 1], 1.0).is_err());
-    assert!(validate(
-        &[Prim::Shadow { object: 0, revision: 0, offset: [f32::MAX, 0.0], blur: 1.0, colour: [0.0; 4], outer: false }],
-        [1, 1],
-        1.0
-    )
-    .is_err());
+    for (effect, message) in [
+        (Prim::Blur { object: 0, revision: 0, radius: 129.0 }, "invalid blur"),
+        (Prim::Blur { object: 0, revision: 0, radius: f32::INFINITY }, "invalid blur"),
+        (
+            Prim::Shadow { object: 0, revision: 0, offset: [f32::MAX, 0.0], blur: 1.0, colour: [0.0; 4], outer: false },
+            "invalid shadow",
+        ),
+        (
+            Prim::Shadow { object: 0, revision: 0, offset: [0.0; 2], blur: 129.0, colour: [0.0; 4], outer: false },
+            "invalid shadow",
+        ),
+    ] {
+        let list = [begin(1.0, Blend::Normal), effect, Prim::LayerEnd];
+        assert!(validate(&list, [1, 1], 1.0).unwrap_err().starts_with(message));
+        let mut dst = [[0.1; 4]];
+        assert!(CpuLayers::default()
+            .render(&list, [1, 1], 1.0, Limits::default(), &mut dst, |_, _| panic!("invalid draw"))
+            .is_err());
+        close(dst[0], [0.1; 4]);
+    }
 }
 #[test]
 fn pooled_buffers_and_shadow_cache_stay_inside_a_reduced_budget() {
@@ -319,4 +332,97 @@ fn pooled_buffers_and_shadow_cache_stay_inside_a_reduced_budget() {
     let flat = renderer.render(&list, [3, 1], 1.0, Limits { depth: 1, bytes: 0 }, &mut dst, paint).unwrap();
     assert!(flat.flattened);
     assert_eq!(flat.peak_bytes, 0);
+}
+
+#[test]
+fn deep_pool_then_tiny_shadow_budget_reserves_scratch() {
+    let mut renderer = CpuLayers::default();
+    let mut dst = [[0.0; 4]];
+    let mut nested = vec![begin(1.0, Blend::Normal); 16];
+    nested.extend(vec![Prim::LayerEnd; 16]);
+    renderer.render(&nested, [1, 1], 1.0, Limits::default(), &mut dst, paint).unwrap();
+    assert_eq!(renderer.pool.len(), 16);
+    let list = [
+        begin(1.0, Blend::Normal),
+        draw([1.0; 4]),
+        Prim::Shadow { object: 1, revision: 1, offset: [0.0; 2], blur: 0.0, colour: [0.0; 4], outer: true },
+        Prim::LayerEnd,
+    ];
+    let report = renderer.render(&list, [1, 1], 1.0, Limits { depth: 16, bytes: 85 }, &mut dst, paint).unwrap();
+    assert!(!report.flattened);
+    assert!(report.peak_bytes <= 85, "{report:?}");
+}
+#[test]
+fn shared_effect_cache_replaces_edits_and_evicts_least_recently_used() {
+    let key = |object, revision| CacheKey::new(object, revision, 1.0, 1.0, [1, 1]);
+    let mut cache = EffectCache::default();
+    for revision in [1, 2, 3] {
+        assert!(cache.prepare(key(1, revision), 2));
+        cache.insert(key(1, revision), revision);
+    }
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.get(&key(1, 3)), Some(&3));
+    assert!(cache.prepare(key(2, 1), 2));
+    cache.insert(key(2, 1), 2);
+    assert_eq!(cache.get(&key(1, 3)), Some(&3));
+    assert!(cache.prepare(key(3, 1), 2));
+    cache.insert(key(3, 1), 3);
+    assert!(cache.get(&key(2, 1)).is_none());
+    assert_eq!(cache.get(&key(1, 3)), Some(&3));
+    assert!(!cache.prepare(key(4, 1), 0));
+    assert_eq!(pool_capacity(85, 64, 16, 16), 0);
+    assert_eq!(pool_capacity(43, 32, 8, 8), 0);
+}
+#[test]
+fn edited_effects_hit_on_repeat_at_two_entry_capacity() {
+    for shadow in [false, true] {
+        let mut renderer = CpuLayers::default();
+        let mut dst = [[0.0; 4]];
+        for (revision, hits) in [(1, 0), (2, 0), (3, 0), (3, 1)] {
+            let effect = if shadow {
+                Prim::Shadow { object: 1, revision, offset: [0.0; 2], blur: 1.0, colour: [0.0; 4], outer: true }
+            } else {
+                Prim::Blur { object: 1, revision, radius: 1.0 }
+            };
+            let list = [begin(1.0, Blend::Normal), draw([1.0; 4]), effect, Prim::LayerEnd];
+            let report =
+                renderer.render(&list, [1, 1], 1.0, Limits { depth: 16, bytes: 128 }, &mut dst, paint).unwrap();
+            assert_eq!(report.cache_hits, hits);
+            assert!(report.peak_bytes <= 128);
+        }
+    }
+}
+#[test]
+fn dodge_burn_near_endpoints_have_independent_goldens() {
+    for (mode, b, s, expected) in [
+        (Blend::ColorDodge, 0.00005, 1.0, 1.0),
+        (Blend::ColorDodge, 0.00005, 0.5, 0.0001),
+        (Blend::ColorDodge, 0.0, 1.0, 0.0),
+        (Blend::ColorBurn, 0.99995, 0.0, 0.0),
+        (Blend::ColorBurn, 0.99995, 0.5, 0.9999),
+        (Blend::ColorBurn, 1.0, 0.0, 1.0),
+    ] {
+        close(composite(mode, [b, b, b, 1.0], [s, s, s, 1.0], 1.0), [expected, expected, expected, 1.0]);
+    }
+}
+fn coloured_golden(mode: Blend) -> [f32; 3] {
+    // Cb=(.1,.6,.9), Cs=(.8,.2,.4): independent frozen W3C equation values.
+    match mode {
+        Blend::Normal => [0.8, 0.2, 0.4],
+        Blend::Multiply => [0.08, 0.12, 0.36],
+        Blend::Screen => [0.82, 0.68, 0.94],
+        Blend::Overlay => [0.16, 0.36, 0.88],
+        Blend::Darken => [0.1, 0.2, 0.4],
+        Blend::Lighten => [0.8, 0.6, 0.9],
+        Blend::ColorDodge => [0.5, 0.75, 1.0],
+        Blend::ColorBurn => [0.0, 0.0, 0.75],
+        Blend::HardLight => [0.64, 0.24, 0.72],
+        Blend::SoftLight => [0.2176, 0.456, 0.882],
+        Blend::Difference => [0.7, 0.4, 0.5],
+        Blend::Exclusion => [0.74, 0.56, 0.58],
+        Blend::Hue => [1.0, 0.22060302, 0.48040201],
+        Blend::Saturation => [0.19575, 0.57075, 0.79575],
+        Blend::Color => [0.881, 0.281, 0.481],
+        Blend::Luminosity => [0.019, 0.519, 0.819],
+    }
 }

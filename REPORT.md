@@ -1,28 +1,20 @@
-Lane D renderer capability — feat/w3-render; uncommitted worktree hand-back.
+Lane D renderer capability — feat/w3-render; fix-round hand-back (no git writes).
+- Renderer-only primitives, CPU reference and encoder-only RGBA16F GPU passes; producer hookup remains pending.
+- New lane modules: raster/{layers,layer_tests,layer_scene}.rs; render-wgpu/{layer_gpu.rs,layer_pass.wgsl}; original shared lib.rs blocks remain unchanged.
+- Nested layers, 16 blend modes, masks at LayerEnd, Gaussian blur, shadow/glow; capped subtrees flatten explicitly.
+- Default depth 16 / 256 MiB; four surfaces per active layer, quarter-budget effect cache; CPU f32 / GPU f16 accounting.
+- Budget covers offscreen/cache reservations; root, geometry, staging/uniforms and encoder-retained resources are outside measured accounting.
+- Producer must provide RGBA16F geometry, bucket_zoom and complete-input revisions (including effects/pan); no model/format/API change.
+- Attribution headers/NOTICE retained; provisional owner review status unchanged; no GUI launch or installation.
 
-- Implemented renderer-only primitives; model/format/command/Bridge/CLI emission belongs to the producer lanes.
-- Paths below are relative to varos/crates/; shared lib.rs edits are small delimited Lane D blocks.
-- varos-raster/src/layers.rs: shared Prim::{Draw,LayerBegin,LayerEnd,Blur,Shadow}, 16 PDF blend modes, preflight/pass planner, CPU reference.
-- varos-render-wgpu/src/layer_gpu.rs + layer_pass.wgsl: encoder-only RGBA16F texture pool, nested stack, parent-backdrop copy, blend/blur/shadow passes.
-- varos-raster/src/layer_scene.rs: headless tiny-skia geometry adapter; float premultiplied effects, RGBA8 output.
-- Mask coverage applies once at LayerEnd after effects; Shadow offset=0 + outer=true provides outer glow.
-- Limits: default depth 16 / 256 MiB; four surfaces per live layer, quarter-budget result cache; GPU f16 / CPU f32 byte accounting.
-- Budget excludes root buffers, geometry and encoder uploads/uniforms; peak_bytes is charged offscreen/cache reservation, not measured RSS.
-- Capped subtrees paint directly into their parent, dropping group opacity/blend/mask/effects and setting Report.flattened=true.
-- Gaussian radius means sigma in document points, scaled at the 1/64-octave zoom bucket centre; sigma >128 physical pixels is explicitly refused.
-- Blur and shadow cache keys include object, full-input revision, size, radius, zoom bucket and effect kind; invalidate(object) is available.
-- Revisions must include changes to prior effects/pan/input; geometry must use bucket_zoom to match cached results.
-- Empty lists allocate no surfaces and record no GPU commands; effect pass counts exclude geometry, clears and copies.
-- Headless coverage: 30 lane test executions (17 unique checks); 16 frozen blend goldens, 144 coloured-alpha formula cases, nested masks, blur impulses, effects, caches and budget flattening.
-- PASS cargo fmt --all --check; PASS python3 ../tools/check_dep_directions.py.
-- PASS cargo test --offline --workspace -j 3 --no-fail-fast: 2275 passed, 0 failed, 17 ignored, including doctests.
-- PASS cargo clippy --offline --workspace --all-targets -j 3 -- -D warnings (native).
-- PASS same Clippy gate with --target x86_64-pc-windows-msvc; no missing crates or added dependencies.
-- PASS core/UI ratchets; PASS Bridge ratchets (6 tests), frozen 1.0/1.1 lists 23993 B each; 1.2 list 23879/24000 B (121 B headroom).
-- Measured CPU debug probe, 128x128 sigma=3 blur + shadow: cold 137.861 ms / 6 effect passes; warm 12.648 ms / 2 cache hits; charged peak 1572864 B.
-- Measured 10000 empty-list calls: 1.402 ms; timing probe explicitly run with --ignored --nocapture. No GPU timing or driver-pixel parity claim.
-- Producer hookup pending: GpuLayers::record requires a caller-supplied RGBA16F geometry recorder and layers::Prim emission; rasterize_layers supplies the CPU endpoint.
-- Attribution headers + varos/NOTICE added for PhotoCraft effects/psblend/blend maths and rebuilt compose.wgsl ideas @ verified 4cb7cf3.
-- PLAN Progress uses the required provisional-owner-review wording; this lane adds no UI.
-- No commit/push/merge, GUI launch or install; debug test/Clippy artifacts built. Independent review, native GPU execution and owner review remain pending.
-- Gate evidence: /tmp/lane-d-gates.json and /tmp/lane-d-gate-{fmt,deps,tests,native,windows,ratchets,bridge,timings}.log.
+## Fix round
+- Accepted all three P2 findings; no disagreements. Cross-lane merge risks are integration obligations, not resolved by this isolated lane.
+- Reduced-budget admission trims retained pool against live scratch plus cache before allocating; cache insertion also trims surplus pool.
+- CPU/GPU share bounded LRU policy: replace obsolete object revisions, promote hits, evict oldest entries before replacement allocation.
+- CPU and WGSL Dodge/Burn use exact backdrop endpoints; independent near-endpoint goldens prevent inverted colours.
+- Added deep-pool→85-byte regression, revision 1/2/3/3 blur+shadow hits, bounded LRU recency; independent coloured goldens cover all 16 modes/alpha cases.
+- Numeric effect-refusal tests now enclose effects in valid layers and assert specific errors before rendering.
+- Targeted headless gate: 39 passed, 0 failed, 2 timing probes ignored; shader parsed/validated without GPU.
+- PASS fmt, dependency directions, workspace tests (2283 passed / 0 failed / 17 ignored), native + Windows Clippy -D warnings, core/UI ratchets, Bridge fixtures (6 passed; 1.0/1.1=23993 B frozen; 1.2=23879/24000 B). Evidence: /tmp/w3-render-fix-gates.json and /tmp/w3-render-fix-*.log.
+- Integration: reconcile appearance traversal/types/masks/formats/aggregate budgets, effects/live input revisions, CMYK overprint and text outline settlement.
+- GPU execution, renewed independent review, producer integration and owner hand-testing remain unverified; no commit/push/merge.

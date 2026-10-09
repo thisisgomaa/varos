@@ -2,7 +2,7 @@
 //! Adapted map-pass structure from PhotoCraft gpu/src/compose.wgsl @ 4cb7cf3.
 //! Copyright (c) 2026 ArtCraft Team and contributors. MIT OR Apache-2.0. See NOTICE.
 use crate::layers::{self, Blend, CacheKey, Limits, Prim, Report};
-use std::collections::HashMap;
+
 use wgpu::util::DeviceExt;
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 #[repr(C)]
@@ -55,7 +55,7 @@ pub struct GpuLayers {
     layout: wgpu::BindGroupLayout,
     pool: Vec<Surface>,
     size: [u32; 2],
-    cache: HashMap<CacheKey, Surface>,
+    cache: layers::EffectCache<Surface>,
 }
 impl GpuLayers {
     pub fn invalidate(&mut self, object: u64) {
@@ -122,7 +122,7 @@ impl GpuLayers {
             multiview_mask: None,
             cache: None,
         });
-        Self { pipeline, layout, pool: Vec::new(), size: [0, 0], cache: HashMap::new() }
+        Self { pipeline, layout, pool: Vec::new(), size: [0, 0], cache: layers::EffectCache::default() }
     }
     fn take(&mut self, d: &wgpu::Device, s: [u32; 2]) -> Surface {
         self.pool.pop().unwrap_or_else(|| surface(d, s))
@@ -233,6 +233,15 @@ impl GpuLayers {
             if let Prim::LayerBegin { opacity, blend, mask } = p {
                 let allowed = matches!(step, layers::Step::Begin { isolated: true });
                 let surfaces = if allowed {
+                    // Reuse up to four surfaces and discard surplus before allocating.
+                    self.pool.truncate(
+                        4 + layers::pool_capacity(
+                            limits.bytes,
+                            (active + 1) * 4 * bytes,
+                            self.cache.len() * bytes,
+                            bytes,
+                        ),
+                    );
                     let s: [Surface; 4] = std::array::from_fn(|_| self.take(d, size));
                     // Encoder-ordered mask upload: queue.write_texture would overwrite a reused
                     // pooled mask before earlier passes in this encoder execute.
@@ -354,7 +363,13 @@ impl GpuLayers {
                     &weights,
                 );
                 report.passes += 2;
-                if (self.cache.len() + 1) * bytes <= cache_budget {
+                if self.cache.prepare(key, cache_budget / bytes) {
+                    self.pool.truncate(layers::pool_capacity(
+                        limits.bytes,
+                        active * 4 * bytes,
+                        (self.cache.len() + 1) * bytes,
+                        bytes,
+                    ));
                     let cached = surface(d, size);
                     copy(e, &out.texture, &cached.texture, size);
                     self.cache.insert(key, cached);

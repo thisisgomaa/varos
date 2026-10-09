@@ -2,7 +2,7 @@
 //! Adapted from PhotoCraft compose/src/{effects,psblend}.rs and color/src/blend.rs
 //! @ 4cb7cf3, Copyright (c) 2026 ArtCraft Team and contributors, MIT OR Apache-2.0.
 //! Gaussian (rather than PhotoCraft's tent) is intentional for the Varos contract.
-use std::collections::HashMap;
+use std::collections::VecDeque;
 
 pub type Pixel = [f32; 4];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,7 +244,7 @@ pub fn blend_rgb(mode: Blend, b: [f32; 3], s: [f32; 3]) -> [f32; 3] {
                 Blend::Darken => b.min(s),
                 Blend::Lighten => b.max(s),
                 Blend::ColorDodge => {
-                    if b <= 1e-4 {
+                    if b == 0.0 {
                         0.0
                     } else if s >= 1.0 {
                         1.0
@@ -253,7 +253,7 @@ pub fn blend_rgb(mode: Blend, b: [f32; 3], s: [f32; 3]) -> [f32; 3] {
                     }
                 }
                 Blend::ColorBurn => {
-                    if b >= 1.0 - 1e-4 {
+                    if b == 1.0 {
                         1.0
                     } else if s <= 0.0 {
                         0.0
@@ -351,6 +351,50 @@ impl CacheKey {
         Self { shadow: false, object, revision, radius: radius.to_bits(), zoom: zoom_bucket(zoom), size }
     }
 }
+/// Bounded LRU shared by CPU and GPU; edited objects replace obsolete revisions.
+pub(crate) struct EffectCache<T> {
+    entries: VecDeque<(CacheKey, T)>,
+}
+impl<T> Default for EffectCache<T> {
+    fn default() -> Self {
+        Self { entries: VecDeque::new() }
+    }
+}
+impl<T> EffectCache<T> {
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&CacheKey, &T) -> bool) {
+        self.entries.retain(|(k, v)| keep(k, v));
+    }
+    pub(crate) fn get(&mut self, key: &CacheKey) -> Option<&T> {
+        let index = self.entries.iter().position(|(k, _)| k == key)?;
+        let entry = self.entries.remove(index)?;
+        self.entries.push_back(entry);
+        self.entries.back().map(|(_, value)| value)
+    }
+    /// Call before allocating the replacement value, so eviction precedes allocation.
+    pub(crate) fn prepare(&mut self, key: CacheKey, capacity: usize) -> bool {
+        self.retain(|k, _| *k != key && (k.object != key.object || k.revision == key.revision));
+        if capacity == 0 {
+            return false;
+        }
+        while self.len() >= capacity {
+            self.entries.pop_front();
+        }
+        true
+    }
+    pub(crate) fn insert(&mut self, key: CacheKey, value: T) {
+        self.entries.push_back((key, value));
+    }
+}
+/// Residual pooled storage after reserving live scratch and cache, in whole surfaces.
+pub(crate) fn pool_capacity(budget: usize, active_bytes: usize, cache_bytes: usize, surface_bytes: usize) -> usize {
+    budget.saturating_sub(active_bytes).saturating_sub(cache_bytes) / surface_bytes
+}
 struct CpuFrame<'a> {
     opacity: f32,
     blend: Blend,
@@ -359,7 +403,7 @@ struct CpuFrame<'a> {
 }
 #[derive(Default)]
 pub struct CpuLayers {
-    cache: HashMap<CacheKey, Vec<Pixel>>,
+    cache: EffectCache<Vec<Pixel>>,
     pool: Vec<Vec<Pixel>>,
 }
 impl CpuLayers {
@@ -407,7 +451,16 @@ impl CpuLayers {
                     let isolated = matches!(step, Step::Begin { isolated: true });
                     let parent = if isolated {
                         active += 1;
-                        let mut blank = self.pool.pop().unwrap_or_else(|| vec![[0.0; 4]; n]);
+                        // One pooled surface becomes live; all remaining pool storage must
+                        // fit alongside the full four-surface scratch reservation.
+                        let blank = self.pool.pop();
+                        self.pool.truncate(pool_capacity(
+                            limits.bytes,
+                            active * bytes,
+                            self.cache.len() * n * 16,
+                            n * 16,
+                        ));
+                        let mut blank = blank.unwrap_or_else(|| vec![[0.0; 4]; n]);
                         report.peak_bytes =
                             report.peak_bytes.max(active * bytes + (self.cache.len() + self.pool.len()) * n * 16);
                         blank.fill([0.0; 4]);
@@ -444,7 +497,13 @@ impl CpuLayers {
                     } else {
                         current = gaussian(&current, size, &kernel(*radius, zoom));
                         report.passes += 2;
-                        if (self.cache.len() + 1) * n * 16 <= limits.bytes / 4 {
+                        if self.cache.prepare(key, cache_budget / (n * 16)) {
+                            self.pool.truncate(pool_capacity(
+                                limits.bytes,
+                                active * bytes,
+                                (self.cache.len() + 1) * n * 16,
+                                n * 16,
+                            ));
                             self.cache.insert(key, current.clone());
                             report.peak_bytes =
                                 report.peak_bytes.max(active * bytes + (self.cache.len() + self.pool.len()) * n * 16);
@@ -464,7 +523,13 @@ impl CpuLayers {
                     } else {
                         let blurred = gaussian(&current, size, &kernel(*blur, zoom));
                         report.passes += 2;
-                        if (self.cache.len() + 1) * n * 16 <= cache_budget {
+                        if self.cache.prepare(key, cache_budget / (n * 16)) {
+                            self.pool.truncate(pool_capacity(
+                                limits.bytes,
+                                active * bytes,
+                                (self.cache.len() + 1) * n * 16,
+                                n * 16,
+                            ));
                             self.cache.insert(key, blurred.clone());
                             report.peak_bytes =
                                 report.peak_bytes.max(active * bytes + (self.cache.len() + self.pool.len()) * n * 16);
