@@ -307,7 +307,7 @@ mod tests {
     impl DocUi for Fields {
         fn settle(&mut self, ed: &mut varos_core::editor::Editor) -> bool {
             if self.commit {
-                ed.execute(varos_core::EditCommand::SetBoardName("human field".into()));
+                ed.execute_ui(varos_core::EditCommand::SetBoardName("human field".into()));
                 self.commit = false;
             }
             self.valid
@@ -509,7 +509,7 @@ mod tests {
         assert!(fields.commit);
         assert_eq!(ws.active().unwrap().editor.doc, before);
         assert!(!ws.active().unwrap().editor.history_available(false));
-        ws.active_mut().unwrap().editor.execute(varos_core::EditCommand::SetBoardName("later human edit".into()));
+        ws.active_mut().unwrap().editor.execute_ui(varos_core::EditCommand::SetBoardName("later human edit".into()));
         let reply = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert!(reply.ok, "{reply:?}");
         assert_eq!(reply.board, Some(board));
@@ -573,7 +573,7 @@ mod tests {
         struct Sample;
         impl DocUi for Sample {
             fn cancel_picker_sample(&mut self, ed: &mut varos_core::Editor) {
-                ed.execute(varos_core::EditCommand::PickerCancel);
+                ed.execute_ui(varos_core::EditCommand::PickerCancel);
             }
             fn settle(&mut self, _: &mut varos_core::Editor) -> bool {
                 true

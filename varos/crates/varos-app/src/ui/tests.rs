@@ -2198,6 +2198,7 @@ mod dead_control_tests {
         fn burger_row(&mut self, k: usize, seps: usize) -> Pos2 {
             const SEP_H: f32 = 9.0; // menu_sep: add_space(4) + a 1px line + add_space(4)
             let top_left = self.open_burger();
+            let k = k + if k >= 10 { 2 } else { 0 }; // two clipping rows precede View
             let y = top_left.y + seps as f32 * SEP_H + k as f32 * MENU_ROW_H + MENU_ROW_H / 2.0;
             egui::pos2(top_left.x + 100.0, y)
         }
@@ -3149,7 +3150,7 @@ pub(super) mod icon_action_tests {
             ed.pointer_up();
             ed.set_tool(ToolKind::Object);
             ed.select_all();
-            ed.execute(varos_core::command::EditCommand::AddArtboard);
+            ed.execute_ui(varos_core::command::EditCommand::AddArtboard);
             ed.doc.artboards[0].clip = true;
             let modal = Some(ColorPanel::new(MTarget::Paint(PaintTarget::Fill), None, false));
             let ctx = egui::Context::default();
@@ -3664,8 +3665,8 @@ mod panel_icons_lane2_tests {
         assert_eq!(ed.doc.snap.smart, !initial.smart);
         crate::menu_snap_toggle(&mut ed, crate::chrome::SnapRow::Point);
         crate::menu_snap_toggle(&mut ed, crate::chrome::SnapRow::Grid);
-        ed.execute(EditCommand::ToggleGuidesLocked);
-        ed.execute(EditCommand::ToggleSmartGuides);
+        ed.execute_ui(EditCommand::ToggleGuidesLocked);
+        ed.execute_ui(EditCommand::ToggleSmartGuides);
         check(&ed);
         assert_eq!(ed.doc.snap.grid, initial.grid);
         assert_eq!(ed.doc.snap.key_points, initial.key_points);
@@ -3677,7 +3678,7 @@ mod panel_icons_lane2_tests {
         let mut ed = Editor::new();
         assert_eq!(adjacent_artboard(0, 0, true), None);
         for _ in 0..3 {
-            ed.execute(EditCommand::AddArtboard);
+            ed.execute_ui(EditCommand::AddArtboard);
         }
         apply_ops(&mut ed, vec![Op::AbActive(0)]);
         assert_eq!(adjacent_artboard(0, 3, false), None);
@@ -3713,7 +3714,7 @@ mod panel_icons_lane2_tests {
         varos_app::shell::fonts::install(&ctx);
         varos_app::shell::tokens::apply(&ctx);
         let mut ed = Editor::new();
-        ed.execute(EditCommand::AddArtboard);
+        ed.execute_ui(EditCommand::AddArtboard);
         let rows = build_layer_rows(&ed, &Default::default(), "", 0, &mut Default::default());
         let mut path = rows[0].clone();
         path.kind = LKind::Path;

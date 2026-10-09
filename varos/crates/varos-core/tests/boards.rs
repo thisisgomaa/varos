@@ -651,7 +651,7 @@ fn duplicate_artboard_keeps_a_rotated_copy_glued_to_its_page() {
 fn duplicate_artboard_command_carries_art() {
     // the app's panel / ⋮-menu Duplicate goes through EditCommand::DuplicateArtboard — same result.
     let mut ed = populated_page();
-    ed.execute(varos_core::command::EditCommand::DuplicateArtboard(0));
+    ed.execute_ui(varos_core::command::EditCommand::DuplicateArtboard(0));
     assert_eq!(ed.doc.artboards.len(), 2);
     assert_eq!(ed.doc.paths.len(), 7, "the command path copies the page's art too");
 }
@@ -741,8 +741,8 @@ fn flagged_clip_page() -> (Editor, Vec<u32>) {
     let clip = ed.doc.clip_group(&[2, 3, 5, 6], 3).unwrap();
     assert_eq!(ed.doc.clip_group_of(5), Some(clip));
     let mask_leaf = ed.doc.node_of_path(3).unwrap();
-    ed.execute(varos_core::EditCommand::ToggleNodeHidden(mask_leaf));
-    ed.execute(varos_core::EditCommand::ToggleNodeLocked(nested));
+    ed.execute_ui(varos_core::EditCommand::ToggleNodeHidden(mask_leaf));
+    ed.execute_ui(varos_core::EditCommand::ToggleNodeLocked(nested));
     (ed, vec![2, 3, 5, 6])
 }
 
@@ -771,7 +771,7 @@ fn assert_copied_node_flags(ed: &Editor, originals: &[u32]) {
 #[test]
 fn duplicate_artboard_preserves_leaf_and_nested_group_node_flags() {
     let (mut ed, originals) = flagged_clip_page();
-    ed.execute(varos_core::EditCommand::DuplicateArtboard(0));
+    ed.execute_ui(varos_core::EditCommand::DuplicateArtboard(0));
     assert_copied_node_flags(&ed, &originals);
 }
 

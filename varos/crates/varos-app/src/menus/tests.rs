@@ -255,8 +255,12 @@ const ADDED_AFTER_SPLIT: &[&str] = &["file.closeall", "file.savecopy", "file.rev
 fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, Vec<Entry>)> {
     fn strip(v: Vec<Entry>) -> Vec<Entry> {
         v.into_iter()
-            .filter(|e| !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str())))
+            .filter(|e| {
+                !matches!(e, Entry::Sub { label: "Clipping Mask", .. })
+                    && !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str()))
+            })
             .map(|e| match e {
+                Entry::Sub { label: "Clipping Mask", .. } => Entry::Sep,
                 Entry::Sub { label, items } => Entry::Sub { label, items: strip(items) },
                 e => e,
             })
@@ -343,4 +347,42 @@ fn file_rows_enable_from_the_document_state() {
     assert!(!file_row_enabled(FileCmd::Revert, DocMenuState { active: false, ..dirty_file }));
     assert!(!file_row_enabled(FileCmd::ExportSelection, doc), "no selection");
     assert!(file_row_enabled(FileCmd::ExportSelection, selected));
+}
+
+#[test]
+fn clipping_rows_use_illustrator_shortcuts_and_core_commands() {
+    let items = flat_items(&menus());
+    for (id, alt) in [("obj.clip", false), ("obj.release_clip", true)] {
+        let a = items
+            .iter()
+            .find_map(|e| match e {
+                Entry::Item { id: found, accel, .. } if found == id => *accel,
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(a, Accel { code: KeyCode::Digit7, cmd: true, shift: false, alt });
+    }
+    let mut ed = varos_core::Editor::new();
+    for x in [0., 10.] {
+        ed.try_execute_created(varos_core::EditCommand::AddShape {
+            kind: varos_core::model::ShapeKind::Rect,
+            bounds: [x, x, 40., 40.],
+            parent: None,
+            fill: Some([1.; 4]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+    }
+    ed.select_all();
+    let mut expected = ed.clone();
+    expected.try_execute(varos_core::EditCommand::ClipMake).unwrap();
+    let mut view = varos_core::geom::View::identity();
+    crate::apply_key(&mut ed, &mut view, [0., 0.], "Digit7", true, false, false);
+    assert_eq!(ed.doc, expected.doc);
+    expected.try_execute(varos_core::EditCommand::ClipRelease).unwrap();
+    crate::apply_key(&mut ed, &mut view, [0., 0.], "Digit7", true, false, true);
+    assert_eq!(ed.doc, expected.doc);
 }

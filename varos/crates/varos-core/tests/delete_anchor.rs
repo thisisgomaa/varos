@@ -125,7 +125,7 @@ fn deleting_from_a_hole_drops_it_before_it_can_become_degenerate() {
     ed.doc.ids = 500;
     ed.set_tool(ToolKind::Direct);
     ed.selected.insert(10);
-    ed.execute(EditCommand::DeleteSelected);
+    ed.execute_ui(EditCommand::DeleteSelected);
     assert!(ed.doc.paths[0].holes.is_empty(), "a hole with fewer than three anchors is removed");
     assert!(ed.doc.paths[0].closed, "deleting a hole anchor never opens the outer path");
 }
@@ -152,7 +152,7 @@ fn pen_delete_reconnects_outer_ring_but_direct_delete_opens_it() {
     direct.doc.ids = 500;
     direct.set_tool(ToolKind::Direct);
     direct.selected.insert(2);
-    direct.execute(EditCommand::DeleteSelected);
+    direct.execute_ui(EditCommand::DeleteSelected);
     assert!(!direct.doc.paths[0].closed, "Direct+Delete keeps the A32 opening behavior");
 }
 
@@ -363,7 +363,7 @@ fn deleting_one_anchor_of_a_closed_circle_leaves_an_open_three_anchor_arc() {
     let (_, ids) = ellipse(&mut ed, 0.0, 0.0, 100.0, 100.0); // top, right, bottom, left
     let before = ed.doc.paths.clone();
     ed.selected.insert(ids[0]); // delete TOP — its neighbours are LEFT (ids[3]) and RIGHT (ids[1])
-    ed.execute(EditCommand::DeleteSelected);
+    ed.execute_ui(EditCommand::DeleteSelected);
 
     assert_eq!(ed.doc.paths.len(), 1);
     let p = &ed.doc.paths[0];
@@ -405,7 +405,7 @@ fn one_delete_across_two_circles_opens_both_and_one_undo_restores_both() {
     let before = ed.doc.paths.clone();
     ed.selected.insert(a[1]);
     ed.selected.insert(b[3]);
-    ed.execute(EditCommand::DeleteSelected);
+    ed.execute_ui(EditCommand::DeleteSelected);
 
     assert_eq!(ed.doc.paths.len(), 2);
     for p in &ed.doc.paths {
@@ -415,11 +415,11 @@ fn one_delete_across_two_circles_opens_both_and_one_undo_restores_both() {
     assert_no_invented_segment(&before, &ed.doc.paths);
     let after = ed.doc.paths.clone();
 
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.paths, before, "ONE undo restores BOTH circles exactly (closed, 4 anchors, same handles)");
-    ed.execute(EditCommand::Undo); // nothing earlier on the stack → still the original (the delete was ONE step)
+    ed.execute_ui(EditCommand::Undo); // nothing earlier on the stack → still the original (the delete was ONE step)
     assert_eq!(ed.doc.paths, before);
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::Redo);
     assert_eq!(ed.doc.paths, after, "redo re-applies the whole multi-object delete");
 }
 
@@ -435,7 +435,7 @@ fn deleting_several_anchors_on_three_overlapping_ellipses_never_relinks() {
     for id in [e1[0], e1[1], e2[2], e3[0], e3[2]] {
         ed.selected.insert(id);
     }
-    ed.execute(EditCommand::DeleteSelected);
+    ed.execute_ui(EditCommand::DeleteSelected);
 
     assert!(ed.doc.paths.iter().all(|p| !p.closed), "no path may stay/come back closed after losing anchors");
     assert_no_invented_segment(&before, &ed.doc.paths);
@@ -446,6 +446,6 @@ fn deleting_several_anchors_on_three_overlapping_ellipses_never_relinks() {
     assert_eq!(with(e2[0]).anchors.len(), 3);
     // e3 lost top+bottom → every segment touched a deleted anchor: only lone points remain, no segment.
     assert!(with(e3[1]).anchors.len() == 1 && with(e3[3]).anchors.len() == 1);
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.paths, before, "one undo restores all three ellipses");
 }

@@ -39,6 +39,7 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
         K::F12 => Code::F12,
         K::Digit0 => Code::Digit0,
         K::Digit1 => Code::Digit1,
+        K::Digit7 => Code::Digit7,
         K::Equal => Code::Equal,
         K::Minus => Code::Minus,
         K::Semicolon => Code::Semicolon,
@@ -74,6 +75,7 @@ pub struct MacMenu {
     /// File rows whose enabled state reads more than "a document is showing" (Revert, Export
     /// Selection — `menus::file_row_enabled`), written every frame by [`MacMenu::sync_file_rows`].
     file_rows: Vec<(chrome::FileCmd, MenuItem)>,
+    clip_rows: Vec<(bool, MenuItem)>,
 }
 
 impl MacMenu {
@@ -94,9 +96,10 @@ impl MacMenu {
         let mut recent = None;
         let mut document_items = vec![];
         let mut file_rows = vec![];
+        let mut clip_rows = vec![];
         for (title, entries) in chrome::menus() {
             let sub = Submenu::new(title, true);
-            let mut rows = Rows { document: &mut document_items, file: &mut file_rows };
+            let mut rows = Rows { document: &mut document_items, file: &mut file_rows, clip: &mut clip_rows };
             fill(&sub, &entries, &mut cmds, &mut checks, &mut recent, &mut rows)?;
             menu.append(&sub)?;
             if title == "Window" {
@@ -115,6 +118,7 @@ impl MacMenu {
             recent_commands: RefCell::new(HashMap::new()),
             document_items,
             file_rows,
+            clip_rows,
         })
     }
 
@@ -181,6 +185,12 @@ impl MacMenu {
 
     /// Slice 0.6: Revert (a file with unsaved changes) and Export Selection (a selection) follow the
     /// active document every frame (only the ones that differ are written).
+    pub fn sync_clip_rows(&self, ed: &varos_core::Editor, active: bool) {
+        let (make, release_enabled) = ed.clipping_enablement();
+        for (release, item) in &self.clip_rows {
+            item.set_enabled(active && if *release { release_enabled } else { make });
+        }
+    }
     pub fn sync_file_rows(&self, state: crate::menus::DocMenuState) {
         for (f, item) in &self.file_rows {
             let on = crate::menus::file_row_enabled(*f, state);
@@ -203,6 +213,7 @@ impl MacMenu {
 
 /// Where `fill` files the plain rows whose enabled state the host writes.
 struct Rows<'a> {
+    clip: &'a mut Vec<(bool, MenuItem)>,
     /// Enabled exactly while a document is showing (`sync_documents`).
     document: &'a mut Vec<MenuItem>,
     /// Enabled by the document's state (`sync_file_rows`).
@@ -241,6 +252,9 @@ fn fill(
                     }
                     None => {
                         let item = MenuItem::with_id(mid, *label, true, acc);
+                        if *id == "obj.clip" || *id == "obj.release_clip" {
+                            rows.clip.push((*id == "obj.release_clip", item.clone()));
+                        }
                         use chrome::FileCmd as F;
                         match cmd {
                             MenuCmd::File(f @ (F::Revert | F::ExportSelection)) => rows.file.push((*f, item.clone())),

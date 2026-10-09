@@ -239,7 +239,7 @@ fn open_panel_does_not_reserve_transaction_and_foreign_edit_reseeds() {
     let mut r = Rig::new(selected(false));
     assert!(!r.ed.transaction_open());
     let c = [0.1, 0.8, 0.2, 1.0];
-    r.ed.execute(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some(c) });
+    r.ed.execute_ui(EditCommand::ApplyPaint { target: PaintTarget::Fill, color: Some(c) });
     r.frame(vec![], None);
     assert_eq!(r.panel.as_ref().unwrap().last_sent, Some(c));
     assert!(!r.ed.transaction_open());

@@ -4,3 +4,11 @@ varos-core/tests/boolean_props.rs adapts boolean area and membership identities 
 VectorCraft crates/pathops/tests/prop_pathops.rs @ a469568.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-core/src/guard.rs and varos-bridge/src/service.rs adapt the panic boundary from
+VectorCraft crates/engine/src/guard.rs @ a469568.
+varos-render-wgpu/src/health.rs adapts device monitoring from
+PhotoCraft crates/gpu/src/health.rs @ 4cb7cf3.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft/PhotoCraft contributors.
+Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft,
+LICENSE-APACHE.vectorcraft, LICENSE-MIT.photocraft and LICENSE-APACHE.photocraft.
