@@ -515,6 +515,7 @@ pub fn serve<T: Transport>(
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
                         && name != "import_svg"
+                        && !["schema", "list_verbs"].contains(&name)
                         && !crate::TOOLS_12.contains(&name)
                         && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
                             .contains(&name)
@@ -592,7 +593,7 @@ pub fn tools_for_api(api: &str) -> Value {
     tools_for(api)
 }
 
-pub fn tools_for(api: &str) -> Value {
+pub(crate) fn full_tools_for(api: &str) -> Value {
     let mut out = construction_tools(api);
     if api != "1.2" {
         return out;
@@ -869,7 +870,224 @@ pub fn tools_for(api: &str) -> Value {
             }
         }
     }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        rows.push(json!({"name":"schema","description":"Full params schema on demand; no document required.","inputSchema":object(json!({"api":{"const":"1.2"},"tool":{"type":"string"},"verb":{"type":"string"}}), &["api","tool"])}));
+        rows.push(json!({"name":"list_verbs","description":"Grouped names and one-line descriptions; no document required.","inputSchema":object(json!({"api":{"const":"1.2"}}), &["api"])}));
+    }
     out
+}
+
+/// API 1.2 publishes core schemas and an index of extended edit operations.
+/// Discovery never changes the typed decoder or execution path.
+pub fn tools_for(api: &str) -> Value {
+    let mut out = full_tools_for(api);
+    if api != "1.2" {
+        return out;
+    }
+    if let Some(rows) = out["tools"].as_array_mut() {
+        if let Some(edit) = rows.iter_mut().find(|row| row["name"] == "edit") {
+            let root = edit["inputSchema"].clone();
+            let mut alternatives = Vec::new();
+            let mut extended = Vec::new();
+            if let Some(ops) = root["$defs"]["operation"]["anyOf"].as_array() {
+                for op in ops {
+                    let expanded = expand_schema(op, &root);
+                    let verb = schema_verb(&expanded);
+                    if verb.is_none_or(core_verb) {
+                        alternatives.push(op.clone());
+                    } else if let Some(verb) = verb {
+                        extended.push(verb.to_owned());
+                    }
+                }
+            }
+            let descriptions = extended
+                .iter()
+                .map(|verb| format!("{verb}: {}", verb_description(verb)))
+                .collect::<Vec<_>>()
+                .join("; ");
+            alternatives.push(json!({"type":"object","properties":{"verb":{"enum":extended},"op":{"enum":extended}},"oneOf":[{"required":["verb"],"not":{"required":["op"]}},{"required":["op"],"not":{"required":["verb"]}}],"description":descriptions}));
+            edit["inputSchema"]["$defs"]["operation"]["anyOf"] = json!(alternatives);
+            prune_definitions(&mut edit["inputSchema"]);
+            edit["description"] = json!("Atomic typed edits; core params inline. Extended verbs: call schema api 1.2 tool edit verb NAME before use; list_verbs groups all verbs. Decoder validates all params.");
+        }
+    }
+    out
+}
+
+fn schema_verb(schema: &Value) -> Option<&str> {
+    schema["properties"]["verb"]["const"]
+        .as_str()
+        .or_else(|| schema.get("allOf").and_then(Value::as_array).and_then(|parts| parts.iter().find_map(schema_verb)))
+}
+
+fn core_verb(verb: &str) -> bool {
+    matches!(
+        verb,
+        "move"
+            | "set_paint"
+            | "add_shape"
+            | "add_path"
+            | "resize"
+            | "rotate"
+            | "rename"
+            | "align"
+            | "group"
+            | "order"
+            | "delete"
+            | "ungroup"
+            | "repeat"
+    )
+}
+
+fn verb_description(verb: &str) -> String {
+    match verb {
+        "clip" => "Create a clipping group".into(),
+        "release_clip" => "Release a clipping group".into(),
+        "pathfinder" => "Combine paths with a Boolean operation".into(),
+        "trace_rgba" => "Trace RGBA pixels into vector paths".into(),
+        "set_stroke_style" | "stroke_style" => "Set caps, joins, dashes and arrows".into(),
+        "document_setup" => "Set units, PPI, bleed or transparency grid".into(),
+        "repeat" => "Repeat creation operations with an offset".into(),
+        _ => format!("Apply {}", verb.replace('_', " ")),
+    }
+}
+
+/// Expand local references while preserving sibling validation constraints.
+fn expand_schema(value: &Value, root: &Value) -> Value {
+    if let Some(pointer) = value.get("$ref").and_then(Value::as_str).and_then(|s| s.strip_prefix('#')) {
+        if let Some(target) = root.pointer(pointer) {
+            let target = expand_schema(target, root);
+            if let Some(map) = value.as_object() {
+                let siblings: serde_json::Map<String, Value> = map
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != "$ref")
+                    .map(|(key, value)| (key.clone(), expand_schema(value, root)))
+                    .collect();
+                if siblings.is_empty() {
+                    return target;
+                }
+                let mut siblings = Value::Object(siblings);
+                if let Some(map) = siblings.as_object_mut() {
+                    let constraints = map.entry("allOf").or_insert_with(|| json!([]));
+                    if let Some(constraints) = constraints.as_array_mut() {
+                        constraints.push(target);
+                        return siblings;
+                    }
+                }
+            }
+        }
+    }
+    match value {
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), expand_schema(v, root))).collect()),
+        Value::Array(array) => Value::Array(array.iter().map(|v| expand_schema(v, root)).collect()),
+        _ => value.clone(),
+    }
+}
+
+/// Retain only definitions reachable from the public schema, including transitive refs.
+fn prune_definitions(schema: &mut Value) {
+    fn refs(value: &Value, found: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(name) = map.get("$ref").and_then(Value::as_str).and_then(|s| s.strip_prefix("#/$defs/")) {
+                    found.insert(name.split('/').next().unwrap_or(name).into());
+                }
+                for (key, child) in map {
+                    if key != "$defs" {
+                        refs(child, found);
+                    }
+                }
+            }
+            Value::Array(array) => {
+                for child in array {
+                    refs(child, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut needed = std::collections::BTreeSet::new();
+    refs(schema, &mut needed);
+    loop {
+        let previous = needed.clone();
+        for name in &previous {
+            refs(&schema["$defs"][name], &mut needed);
+        }
+        if needed == previous {
+            break;
+        }
+    }
+    if let Some(defs) = schema["$defs"].as_object_mut() {
+        defs.retain(|name, _| needed.contains(name));
+    }
+}
+
+pub fn schema(tool: &str, verb: Option<&str>) -> Result<Value, Error> {
+    let table = full_tools_for("1.2");
+    let root = table["tools"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["name"] == tool))
+        .map(|row| &row["inputSchema"])
+        .ok_or_else(|| Error::new("invalid_argument", "unknown schema tool"))?;
+    let Some(verb) = verb else {
+        if tool == "edit" {
+            return Err(Error::new("invalid_argument", "edit schema requires a verb"));
+        }
+        return Ok(root.clone());
+    };
+    if tool != "edit" {
+        return Err(Error::new("invalid_argument", "verb discovery requires tool edit"));
+    }
+    let name = if verb == "stroke_style" { "set_stroke_style" } else { verb };
+    if let Some(ops) = root["$defs"]["operation"]["anyOf"].as_array() {
+        for op in ops {
+            let expanded = expand_schema(op, root);
+            if schema_verb(&expanded) == Some(name) {
+                let mut params = op
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|reference| reference.strip_prefix('#'))
+                    .and_then(|pointer| root.pointer(pointer))
+                    .unwrap_or(op)
+                    .clone();
+                params["$defs"] = root["$defs"].clone();
+                prune_definitions(&mut params);
+                return Ok(params);
+            }
+        }
+    }
+    Err(Error::new("invalid_argument", "unknown edit verb"))
+}
+
+pub fn list_verbs() -> Value {
+    let table = full_tools_for("1.2");
+    let mut core = Vec::new();
+    let mut extended = Vec::new();
+    let mut tools = Vec::new();
+    if let Some(rows) = table["tools"].as_array() {
+        for row in rows {
+            let name = row["name"].as_str().unwrap_or_default();
+            if name == "edit" {
+                let root = &row["inputSchema"];
+                if let Some(ops) = root["$defs"]["operation"]["anyOf"].as_array() {
+                    for op in ops {
+                        let expanded = expand_schema(op, root);
+                        if let Some(verb) = schema_verb(&expanded) {
+                            let entry = json!({"name":verb,"description":verb_description(verb)});
+                            if core_verb(verb) {
+                                core.push(entry);
+                            } else {
+                                extended.push(entry);
+                            }
+                        }
+                    }
+                }
+            } else {
+                tools.push(json!({"name":name,"description":row["description"]}));
+            }
+        }
+    }
+    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"group":"tools","verbs":tools}]})
 }
 
 pub fn stroke_style_schema() -> Value {
@@ -1003,6 +1221,23 @@ pub fn tools_12() -> Value {
     tools_for_api("1.2")
 }
 
+fn strip_schema_annotations(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.remove("description");
+            for child in map.values_mut() {
+                strip_schema_annotations(child);
+            }
+        }
+        Value::Array(array) => {
+            for child in array {
+                strip_schema_annotations(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod integration_tests {
     use super::*;
@@ -1076,27 +1311,8 @@ mod integration_tests {
             let row = rows.iter().find(|row| row["name"] == name).unwrap();
             assert_eq!(row["inputSchema"]["properties"]["api"]["const"], "1.2");
         }
-        let edit = rows.iter().find(|row| row["name"] == "edit").unwrap();
-        let operations = edit["inputSchema"]["$defs"]["operation"]["anyOf"].as_array().unwrap();
         for verb in ["clip", "release_clip", "view", "object", "anchor_type", "distribute_mode", "distribute_spacing"] {
-            assert_eq!(operations.iter().filter(|op| op["properties"]["verb"]["const"] == verb).count(), 1, "{verb}");
+            assert_eq!(schema_verb(&schema("edit", Some(verb)).unwrap()), Some(verb));
         }
-    }
-}
-
-fn strip_schema_annotations(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            map.remove("description");
-            for child in map.values_mut() {
-                strip_schema_annotations(child);
-            }
-        }
-        Value::Array(array) => {
-            for child in array {
-                strip_schema_annotations(child);
-            }
-        }
-        _ => {}
     }
 }

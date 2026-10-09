@@ -653,7 +653,7 @@ fn construction_api_12_all_verbs_and_legacy_rejection() {
             assert!(reply.ok, "{operation}, {api}: {reply:?}");
             if api == "1.2" {
                 assert_eq!(h.editor.rev, rev + 1);
-                h.editor.execute(varos_core::EditCommand::Undo);
+                h.editor.execute_ui(varos_core::EditCommand::Undo);
                 assert!(h.editor.doc.content_eq(&before));
             } else {
                 assert!(h.editor.doc.content_eq(&before));
@@ -682,9 +682,6 @@ fn construction_schema_is_explicit_opt_in_and_keeps_the_size_ratchet() {
     let list = varos_bridge::mcp::tools_for_api("1.2");
     let bytes = serde_json::to_vec(&list).unwrap().len();
     assert!(bytes <= 24_000, "1.2 tools/list grew to {bytes} bytes");
-    let edit = list["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
-    assert!(edit["inputSchema"]["$defs"]["pathfinder"]["properties"]["operation"]["enum"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("divide")));
+    let pathfinder = varos_bridge::mcp::schema("edit", Some("pathfinder")).unwrap();
+    assert!(pathfinder["properties"]["operation"]["enum"].as_array().unwrap().contains(&json!("divide")));
 }

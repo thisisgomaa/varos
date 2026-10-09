@@ -4,7 +4,7 @@ use varos_core::{EditCommand, Editor};
 pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
     let Some(node) = ed.select_transform.isolation else { return };
     if ed.doc.node(node).is_none() {
-        ed.execute(EditCommand::Isolate(None));
+        ed.execute_ui(EditCommand::Isolate(None));
         return;
     }
     let mut path = vec![];
@@ -34,7 +34,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
                     )
                     .activated
                     {
-                        ed.execute(EditCommand::Isolate(None));
+                        ed.execute_ui(EditCommand::Isolate(None));
                     }
                     ui.label(t::micro_label(path.join(" / ")));
                 });

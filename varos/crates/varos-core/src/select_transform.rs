@@ -655,15 +655,16 @@ mod fix_tests {
             stroke_width: 1.,
             opacity: 1.,
             name: None,
-        });
+        })
+        .expect("test edit succeeds");
         let id = e.doc.paths[0].id;
         let copy = e.doc.clone_path(id);
         let other = copy.id;
         e.doc.paths.push(copy);
         e.doc.sync_tree();
         e.doc.paths[0].holes = vec![e.doc.paths[0].anchors.clone()];
-        e.execute(crate::EditCommand::SelectPaths(vec![id, other]));
-        e.execute(crate::EditCommand::GroupSelection);
+        e.execute(crate::EditCommand::SelectPaths(vec![id, other])).expect("test edit succeeds");
+        e.execute(crate::EditCommand::GroupSelection).expect("test edit succeeds");
         let layer = e.doc.active_layer;
         let default = crate::format::Limits::DEFAULT;
         assert!(e.check_release_build(&[layer], default).is_ok());

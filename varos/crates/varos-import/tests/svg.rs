@@ -74,15 +74,15 @@ fn placement_remaps_ids_preserves_groups_and_undoes_atomically() {
     let (doc, _) =
         import_svg(&svg(r#"<g><rect width="20" height="20"/><ellipse cx="50" cy="50" rx="10" ry="10"/></g>"#)).unwrap();
     let mut ed = Editor::new();
-    ed.execute(EditCommand::PlaceArtwork(Box::new(doc.clone())));
-    ed.execute(EditCommand::PlaceArtwork(Box::new(doc)));
+    ed.execute(EditCommand::PlaceArtwork(Box::new(doc.clone()))).expect("test edit succeeds");
+    ed.execute(EditCommand::PlaceArtwork(Box::new(doc))).expect("test edit succeeds");
     assert_eq!(ed.doc.paths.len(), 4);
     varos_core::format::check_structure(&ed.doc, &varos_core::format::Limits::DEFAULT).unwrap();
-    ed.execute(EditCommand::Undo);
+    ed.execute(EditCommand::Undo).expect("test edit succeeds");
     assert_eq!(ed.doc.paths.len(), 2);
-    ed.execute(EditCommand::Undo);
+    ed.execute(EditCommand::Undo).expect("test edit succeeds");
     assert!(ed.doc.paths.is_empty());
-    ed.execute(EditCommand::Redo);
+    ed.execute(EditCommand::Redo).expect("test edit succeeds");
     assert_eq!(ed.doc.paths.len(), 2);
 }
 #[test]
@@ -178,7 +178,7 @@ fn placement_refuses_an_active_transaction_without_mutation() {
     let before = ed.doc.clone();
     let rev = ed.rev;
     assert!(varos_core::placement::check(&ed, &doc).unwrap_err().contains("active transaction"));
-    ed.execute(EditCommand::PlaceArtwork(Box::new(doc)));
+    ed.execute(EditCommand::PlaceArtwork(Box::new(doc))).expect("test edit succeeds");
     assert_eq!(ed.doc, before);
     assert_eq!(ed.rev, rev);
     assert!(ed.transaction_open());

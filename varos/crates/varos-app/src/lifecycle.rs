@@ -1711,7 +1711,7 @@ mod tests {
         r.script([Ans::Pick(Some(p("/d/art.svg")))]);
         r.run(AppCommand::PlaceSvg(id));
         assert_eq!(r.get(id).editor.doc.paths.len(), 2);
-        r.ed(id).execute(EditCommand::Undo);
+        r.ed(id).execute(EditCommand::Undo).expect("test undo succeeds");
         assert_eq!(r.get(id).editor.doc.paths.len(), 1);
         r.run(AppCommand::OpenPaths(vec![p("/d/missing.svgz")], OpenOrigin::Dialog));
         assert_eq!(r.active(), id);

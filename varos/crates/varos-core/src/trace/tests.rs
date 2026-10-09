@@ -113,9 +113,9 @@ fn insertion_is_one_undo_and_remaps_holes() {
     for a in e.doc.paths[0].anchors.iter().chain(e.doc.paths[0].holes.iter().flatten()) {
         assert!(ids.insert(a.id));
     }
-    e.execute(EditCommand::Undo);
+    e.execute(EditCommand::Undo).expect("test edit succeeds");
     assert!(e.doc.paths.is_empty());
-    e.execute(EditCommand::Redo);
+    e.execute(EditCommand::Redo).expect("test edit succeeds");
     assert_eq!(e.doc.paths[0].holes.len(), 1);
 }
 

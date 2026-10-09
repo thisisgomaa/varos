@@ -76,9 +76,9 @@ fn preview_cancel_restores_without_history() {
     let (mut e, _) = selected();
     let before = e.doc.clone();
     let rev = e.rev;
-    e.execute(EditCommand::TransformBegin);
-    e.execute(EditCommand::TransformLive(Transform { scale: [2., 3.], copy: true, ..Default::default() }));
-    e.execute(EditCommand::TransformCancel);
+    e.execute_ui(EditCommand::TransformBegin);
+    e.execute_ui(EditCommand::TransformLive(Transform { scale: [2., 3.], copy: true, ..Default::default() }));
+    e.execute_ui(EditCommand::TransformCancel);
     assert_eq!(e.doc, before);
     assert_eq!(e.rev, rev);
     assert!(!e.transaction_open());
@@ -88,10 +88,10 @@ fn preview_copy_keeps_original_and_is_one_step() {
     let (mut e, id) = selected();
     let before = e.doc.clone();
     let rev = e.rev;
-    e.execute(EditCommand::TransformBegin);
-    e.execute(EditCommand::TransformLive(Transform { movement: [10., 0.], copy: true, ..Default::default() }));
-    e.execute(EditCommand::TransformLive(Transform { movement: [20., 0.], copy: true, ..Default::default() }));
-    e.execute(EditCommand::TransformCommit);
+    e.execute_ui(EditCommand::TransformBegin);
+    e.execute_ui(EditCommand::TransformLive(Transform { movement: [10., 0.], copy: true, ..Default::default() }));
+    e.execute_ui(EditCommand::TransformLive(Transform { movement: [20., 0.], copy: true, ..Default::default() }));
+    e.execute_ui(EditCommand::TransformCommit);
     assert_eq!(e.doc.paths.len(), 2);
     near(point(&e, id), [0., 0.]);
     assert_eq!(e.rev, rev + 1);
@@ -102,8 +102,8 @@ fn preview_copy_keeps_original_and_is_one_step() {
 fn each_scales_about_separate_centres() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::Transform(Transform { each: true, scale: [2., 1.], ..Default::default() }));
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::Transform(Transform { each: true, scale: [2., 1.], ..Default::default() }));
     near(point(&e, a), [-5., 0.]);
     near(point(&e, b), [95., 0.]);
 }
@@ -111,14 +111,14 @@ fn each_scales_about_separate_centres() {
 fn each_random_is_seeded() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
     let before = e.doc.clone();
     let s = Transform { each: true, random: true, angle: 90., movement: [100., 50.], ..Default::default() };
-    e.execute(EditCommand::Transform(s));
+    e.execute_ui(EditCommand::Transform(s));
     let after = e.doc.clone();
     e.replace_doc(before);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::Transform(s));
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::Transform(s));
     assert_eq!(e.doc, after);
 }
 #[test]
@@ -130,13 +130,13 @@ fn wand_tolerance_modes_and_inert_paths() {
     e.doc.paths[bi].fill = varos_core::model::Paint::Solid([0.99, 0., 0., 1.]);
     let ci = e.doc.pidx(c).unwrap();
     e.doc.paths[ci].locked = true;
-    e.execute(EditCommand::MagicWand {
+    e.execute_ui(EditCommand::MagicWand {
         source: a,
         options: WandOptions { colour: 0.02, ..Default::default() },
         mode: SelectMode::Set,
     });
     assert_eq!(e.objsel.len(), 2);
-    e.execute(EditCommand::MagicWand { source: a, options: WandOptions::default(), mode: SelectMode::Subtract });
+    e.execute_ui(EditCommand::MagicWand { source: a, options: WandOptions::default(), mode: SelectMode::Subtract });
     assert_eq!(e.objsel, [b].into_iter().collect());
 }
 #[test]
@@ -150,7 +150,7 @@ fn wand_weight_stroke_opacity() {
         opacity: 0.1,
         ..Default::default()
     };
-    e.execute(EditCommand::MagicWand { source: a, options: o, mode: SelectMode::Set });
+    e.execute_ui(EditCommand::MagicWand { source: a, options: o, mode: SelectMode::Set });
     assert_eq!(e.objsel, [a].into_iter().collect());
 }
 #[test]
@@ -160,14 +160,14 @@ fn eyedropper_toggles_and_shift_colour_only() {
     let i = e.doc.pidx(b).unwrap();
     e.doc.paths[i].opacity = 0.4;
     e.doc.paths[i].stroke_width = 9.;
-    e.execute(EditCommand::Eyedropper {
+    e.execute_ui(EditCommand::Eyedropper {
         source: b,
         options: PickOptions { fill: false, stroke: false, weight: false, opacity: true },
         colour_only: false,
     });
     assert_eq!(e.doc.paths[e.doc.pidx(a).unwrap()].opacity, 0.4);
     assert_eq!(e.doc.paths[e.doc.pidx(a).unwrap()].stroke_width, 1.);
-    e.execute(EditCommand::Eyedropper { source: b, options: PickOptions::default(), colour_only: true });
+    e.execute_ui(EditCommand::Eyedropper { source: b, options: PickOptions::default(), colour_only: true });
     assert_eq!(e.doc.paths[e.doc.pidx(a).unwrap()].stroke_width, 1.);
 }
 #[test]
@@ -175,10 +175,10 @@ fn isolation_confines_hit_selection_all_and_marquee() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
     let c = rect(&mut e, 200.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::GroupSelection);
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::GroupSelection);
     let group = e.doc.top_group_of_path(a).unwrap();
-    e.execute(EditCommand::Isolate(Some(group)));
+    e.execute_ui(EditCommand::Isolate(Some(group)));
     assert!(e.path_under([205., 5.]).is_none());
     assert!(e.try_execute(EditCommand::SelectPaths(vec![c])).is_err());
     e.select_all();
@@ -194,8 +194,8 @@ fn isolation_confines_hit_selection_all_and_marquee() {
 fn double_click_group_and_empty_exit() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::GroupSelection);
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::GroupSelection);
     e.double_click([5., 5.]);
     assert!(e.select_transform.isolation.is_some());
     e.double_click([400., 400.]);
@@ -231,11 +231,11 @@ fn layer_collect_merge_flatten_and_undo() {
     let b = rect(&mut e, 100.);
     let before = e.doc.clone();
     let nodes = vec![e.doc.node_of_path(a).unwrap(), e.doc.node_of_path(b).unwrap()];
-    e.execute(EditCommand::LayerFamily { action: LayerAction::Collect, nodes });
+    e.execute_ui(EditCommand::LayerFamily { action: LayerAction::Collect, nodes });
     assert_eq!(e.doc.node_paths(e.doc.active_layer).len(), 2);
     e.undo();
     assert_eq!(e.doc, before);
-    e.execute(EditCommand::LayerFamily { action: LayerAction::Flatten, nodes: vec![] });
+    e.execute_ui(EditCommand::LayerFamily { action: LayerAction::Flatten, nodes: vec![] });
     assert_eq!(e.doc.nodes.iter().filter(|n| n.kind == NodeKind::Layer).count(), 1);
     assert_eq!(e.doc.paths.len(), 2);
 }
@@ -263,14 +263,14 @@ fn layer_hide_lock_others_locate() {
         let (mut e, a) = selected();
         let b = rect(&mut e, 100.);
         let other = e.doc.node_of_path(b).unwrap();
-        e.execute(EditCommand::LayerFamily { action: LayerAction::Collect, nodes: vec![other] });
+        e.execute_ui(EditCommand::LayerFamily { action: LayerAction::Collect, nodes: vec![other] });
         let n = e.doc.node_of_path(a).unwrap();
-        e.execute(EditCommand::LayerFamily { action, nodes: vec![n] });
+        e.execute_ui(EditCommand::LayerFamily { action, nodes: vec![n] });
         assert!(!e.doc.eff_hidden(a) && !e.doc.eff_locked(a));
         assert!(e.doc.eff_hidden(b) || e.doc.eff_locked(b));
         e.undo();
         assert!(!e.doc.eff_hidden(b) && !e.doc.eff_locked(b));
-        e.execute(EditCommand::LayerFamily { action: LayerAction::Locate, nodes: vec![n] });
+        e.execute_ui(EditCommand::LayerFamily { action: LayerAction::Locate, nodes: vec![n] });
         assert_eq!(e.select_transform.located, Some(n));
     }
 }
@@ -287,11 +287,11 @@ fn isolation_direct_selection_and_scene_opacity() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
     let c = rect(&mut e, 200.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::GroupSelection);
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::GroupSelection);
     let group = e.doc.top_group_of_path(a).unwrap();
     let signature = varos_core::scene::scene_signature(&e, varos_core::View::identity(), [800, 600]);
-    e.execute(EditCommand::Isolate(Some(group)));
+    e.execute_ui(EditCommand::Isolate(Some(group)));
     assert_ne!(signature, varos_core::scene::scene_signature(&e, varos_core::View::identity(), [800, 600]));
     assert!(e.nearest_anchor([200., 0.], 20., false).is_none());
     e.set_tool(varos_core::ToolKind::Direct);
@@ -310,9 +310,9 @@ fn isolation_direct_selection_and_scene_opacity() {
 fn transform_each_group_moves_rigidly_with_seeded_random() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::GroupSelection);
-    e.execute(EditCommand::Transform(Transform {
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::GroupSelection);
+    e.execute_ui(EditCommand::Transform(Transform {
         each: true,
         random: true,
         movement: [100., 50.],
@@ -326,17 +326,17 @@ fn transform_each_group_moves_rigidly_with_seeded_random() {
 fn transform_copy_preserves_group_and_noop_preserves_rotation() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::GroupSelection);
-    e.execute(EditCommand::SetObjectRotation(30.));
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::GroupSelection);
+    e.execute_ui(EditCommand::SetObjectRotation(30.));
     let before = e.doc.clone();
     let rev = e.rev;
-    e.execute(EditCommand::TransformBegin);
-    e.execute(EditCommand::TransformLive(Transform::default()));
-    e.execute(EditCommand::TransformCommit);
+    e.execute_ui(EditCommand::TransformBegin);
+    e.execute_ui(EditCommand::TransformLive(Transform::default()));
+    e.execute_ui(EditCommand::TransformCommit);
     assert_eq!(e.rev, rev);
     assert_eq!(e.doc, before);
-    e.execute(EditCommand::Transform(Transform { copy: true, movement: [200., 0.], ..Default::default() }));
+    e.execute_ui(EditCommand::Transform(Transform { copy: true, movement: [200., 0.], ..Default::default() }));
     assert_eq!(e.doc.paths.len(), 4);
     assert_eq!(e.doc.nodes.iter().filter(|n| n.kind == NodeKind::Group).count(), 2);
     e.undo();
@@ -354,7 +354,10 @@ fn merge_selected_layers_preserves_art_and_one_undo() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
     let first = e.doc.active_layer;
-    e.execute(EditCommand::LayerFamily { action: LayerAction::Collect, nodes: vec![e.doc.node_of_path(b).unwrap()] });
+    e.execute_ui(EditCommand::LayerFamily {
+        action: LayerAction::Collect,
+        nodes: vec![e.doc.node_of_path(b).unwrap()],
+    });
     let second = e.doc.active_layer;
     let before = e.doc.clone();
     let order: Vec<_> = e.doc.paths.iter().map(|p| p.id).collect();
@@ -428,7 +431,7 @@ fn release_build_1000_paths_refused_before_mutation() {
     let rev = e.rev;
     let layer = e.doc.active_layer;
     assert!(e.try_execute(EditCommand::LayerFamily { action: LayerAction::ReleaseBuild, nodes: vec![layer] }).is_err());
-    e.execute(EditCommand::LayerFamily { action: LayerAction::ReleaseBuild, nodes: vec![layer] });
+    e.execute_ui(EditCommand::LayerFamily { action: LayerAction::ReleaseBuild, nodes: vec![layer] });
     assert_eq!(e.doc, before);
     assert_eq!(e.rev, rev);
     assert!(!e.transaction_open());
@@ -438,10 +441,10 @@ fn release_build_1000_paths_refused_before_mutation() {
 fn flatten_preserves_nested_hidden_locked_state_and_undo() {
     let (mut e, a) = selected();
     let b = rect(&mut e, 100.);
-    e.execute(EditCommand::SelectPaths(vec![a, b]));
-    e.execute(EditCommand::GroupSelection);
+    e.execute_ui(EditCommand::SelectPaths(vec![a, b]));
+    e.execute_ui(EditCommand::GroupSelection);
     let original_layer = e.doc.active_layer;
-    e.execute(EditCommand::LayerFamily { action: LayerAction::Collect, nodes: vec![original_layer] });
+    e.execute_ui(EditCommand::LayerFamily { action: LayerAction::Collect, nodes: vec![original_layer] });
     let outer = e.doc.active_layer;
     let c = rect(&mut e, 200.);
     e.doc.nodes.iter_mut().find(|n| n.id == original_layer).unwrap().hidden = true;
@@ -462,24 +465,24 @@ fn noop_sampling_and_hide_lock_preserve_document_revision_and_redo() {
     for action in [LayerAction::HideOthers, LayerAction::LockOthers] {
         let (mut e, a) = selected();
         let b = rect(&mut e, 100.);
-        e.execute(EditCommand::LayerFamily {
+        e.execute_ui(EditCommand::LayerFamily {
             action: LayerAction::Collect,
             nodes: vec![e.doc.node_of_path(b).unwrap()],
         });
         let n = e.doc.node_of_path(a).unwrap();
-        e.execute(EditCommand::LayerFamily { action, nodes: vec![n] });
-        e.execute(EditCommand::SelectPaths(vec![a]));
-        e.execute(EditCommand::Transform(Transform { movement: [5., 0.], ..Default::default() }));
+        e.execute_ui(EditCommand::LayerFamily { action, nodes: vec![n] });
+        e.execute_ui(EditCommand::SelectPaths(vec![a]));
+        e.execute_ui(EditCommand::Transform(Transform { movement: [5., 0.], ..Default::default() }));
         e.undo();
         let before = e.doc.clone();
         let redo = e.history_preview(true).cloned();
         let undo = e.history_preview(false).cloned();
         let rev = e.rev;
-        e.execute(EditCommand::LayerFamily { action, nodes: vec![n] });
+        e.execute_ui(EditCommand::LayerFamily { action, nodes: vec![n] });
         for options in
             [PickOptions { fill: false, stroke: false, weight: false, opacity: false }, PickOptions::default()]
         {
-            e.execute(EditCommand::Eyedropper { source: a, options, colour_only: false });
+            e.execute_ui(EditCommand::Eyedropper { source: a, options, colour_only: false });
         }
         assert_eq!(e.doc, before);
         assert_eq!(e.rev, rev);
