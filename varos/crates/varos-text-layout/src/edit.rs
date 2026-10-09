@@ -95,20 +95,38 @@ impl EditSession {
         }
     }
     pub fn arrow(&mut self, layout: &Layout, right: bool, extend: bool) {
-        let mut carets: Vec<_> = layout.carets.iter().collect();
-        carets.sort_by(|a, b| a.line.cmp(&b.line).then(a.x.total_cmp(&b.x)).then(a.affinity.cmp(&b.affinity)));
-        if let Some(at) = carets
-            .iter()
-            .position(|c| c.byte == self.caret && c.affinity == self.affinity)
-            .or_else(|| carets.iter().position(|c| c.byte == self.caret))
-        {
-            let next = if right { (at + 1).min(carets.len() - 1) } else { at.saturating_sub(1) };
-            self.caret = carets[next].byte;
-            self.affinity = carets[next].affinity;
+        let motion = if right { varos_text::CaretMove::Right } else { varos_text::CaretMove::Left };
+        if let Some(next) = self.current_caret(layout).and_then(|c| layout.caret_move(c, motion)) {
+            self.caret = next.byte;
+            self.affinity = next.affinity;
             if !extend {
                 self.anchor = self.caret;
             }
         }
+    }
+    pub fn vertical(&mut self, layout: &Layout, down: bool, extend: bool) {
+        if let Some(c) = self.current_caret(layout) {
+            let line =
+                if down { (c.line + 1).min(layout.lines.len().saturating_sub(1)) } else { c.line.saturating_sub(1) };
+            self.hit(layout, line, c.x, extend);
+        }
+    }
+    pub fn line_edge(&mut self, layout: &Layout, end: bool, extend: bool) {
+        let motion = if end { varos_text::CaretMove::End } else { varos_text::CaretMove::Home };
+        if let Some(next) = self.current_caret(layout).and_then(|c| layout.caret_move(c, motion)) {
+            self.caret = next.byte;
+            self.affinity = next.affinity;
+            if !extend {
+                self.anchor = self.caret;
+            }
+        }
+    }
+    pub fn current_caret<'a>(&self, layout: &'a Layout) -> Option<&'a varos_text::Caret> {
+        layout
+            .carets
+            .iter()
+            .find(|c| c.byte == self.caret && c.affinity == self.affinity)
+            .or_else(|| layout.carets.iter().find(|c| c.byte == self.caret))
     }
     pub fn delete(&mut self, layout: &Layout, backward: bool) -> Result<(), String> {
         if self.range().is_empty() {

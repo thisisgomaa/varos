@@ -18,10 +18,16 @@ pub(crate) fn type_section(ui: &mut egui::Ui, text: &TextBox, ops: &mut Vec<Op>)
         .faces()
         .iter()
         .position(|f| varos_text_layout::font_hash(f.content_hash) == first.style.font.hash)
-        .unwrap_or(1);
-    if let Some(index) =
-        kit::text_dropdown(ui, doc_id(ui, "type-family"), names[selected], &names, TYPE_FIELD_W, "Font family")
-    {
+        .map(|i| names[i]);
+    let missing = format!("Missing: {}", first.style.font.family);
+    if let Some(index) = kit::text_dropdown(
+        ui,
+        doc_id(ui, "type-family"),
+        selected.unwrap_or(&missing),
+        &names,
+        TYPE_FIELD_W,
+        "Font family",
+    ) {
         {
             if let Some(font) = fonts.faces().get(index) {
                 for run in &mut next.runs {

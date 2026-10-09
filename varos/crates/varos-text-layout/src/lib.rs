@@ -156,6 +156,30 @@ impl TextLayout {
         };
         let mut layout = self.engine.compose(&req, &options)?;
         tracking::apply(&mut layout, text);
+        if text.box_kind == TextBoxKind::Point {
+            // Point text aligns each baseline around the authored anchor, without inventing a wrap width.
+            for (index, line) in layout.lines.iter_mut().enumerate() {
+                let shift = match text.para.align {
+                    Alignment::Left => 0.,
+                    Alignment::Centre => -line.width * 0.5,
+                    Alignment::Right => -line.width,
+                    Alignment::Justify => {
+                        if line.rtl {
+                            -line.width
+                        } else {
+                            0.
+                        }
+                    }
+                };
+                for glyph in &mut line.glyphs {
+                    glyph.x += shift;
+                }
+                line.empty_caret_x += shift;
+                for caret in layout.carets.iter_mut().filter(|c| c.line == index) {
+                    caret.x += shift;
+                }
+            }
+        }
         let origin = match text.box_kind {
             TextBoxKind::Point => [text.frame[0], text.frame[1] - layout.lines.first().map_or(0., |l| l.baseline)],
             TextBoxKind::Area(r) => [r[0], r[1]],
@@ -192,6 +216,17 @@ impl TextLayout {
             }
             paths.extend(glyph_paths);
         }
+        // Refresh ink bounds after tracking/point alignment using the same coverage we draw.
+        layout.ink_bounds = paths
+            .iter()
+            .flat_map(|p| p.anchors.iter().chain(p.holes.iter().flatten()))
+            .map(|a| [a.p[0] - origin[0], a.p[1] - origin[1]])
+            .fold(None, |bounds, p| {
+                Some(match bounds {
+                    None => [p[0], p[1], p[0], p[1]],
+                    Some([x0, y0, x1, y1]) => [x0.min(p[0]), y0.min(p[1]), x1.max(p[0]), y1.max(p[1])],
+                })
+            });
         self.layouts += 1;
         let retained = self.cache.values().flat_map(|e| &e.output.paths).map(path_vertices).sum::<usize>();
         if self.cache.len() >= 256 || retained + vertices > 500_000 {

@@ -42,6 +42,7 @@ fn justification_at_several_widths_preserves_source() {
     let mut t = default_text("اللغة العربية جميلة ومتنوعة في كل مكان والكتابة العربية فن جميل", [0., 0.]).unwrap();
     t.para.align = Alignment::Justify;
     t.para.kashida = Kashida::Balanced;
+    let mut insertions = 0;
     for width in [160., 240., 360.] {
         t.box_kind = TextBoxKind::Area([0., 0., width, 500.]);
         let c = e.compose(&t, 1.).unwrap();
@@ -49,7 +50,18 @@ fn justification_at_several_widths_preserves_source() {
         assert!(c.layout.lines.len() > 1);
         assert!(c.layout.carets.iter().all(|caret| t.source().is_char_boundary(caret.byte)));
         assert!(c.layout.lines.iter().all(|l| l.width.is_finite()));
+        insertions += c.layout.issues.iter().filter(|i| matches!(i, varos_text::Issue::KashidaInserted { .. })).count();
+        for (index, line) in c.layout.lines.iter().enumerate().take(c.layout.lines.len() - 1) {
+            assert!(
+                (line.width - width).abs() <= 0.5
+                    || c.layout
+                        .issues
+                        .iter()
+                        .any(|i| matches!(i, varos_text::Issue::JustificationResidual { line, .. } if *line == index))
+            );
+        }
     }
+    assert!(insertions > 0, "Balanced policy must perform real safe kashida insertion");
 }
 #[test]
 fn editing_preserves_runs_clusters_and_undo_batch() {
@@ -126,4 +138,75 @@ fn latin_tracking_moves_end_caret_and_preserves_clusters() {
     assert!((after.lines[0].width - before.lines[0].width - 6.).abs() < 0.01);
     let end = |l: &varos_text::Layout| l.carets.iter().filter(|c| c.byte == 3).map(|c| c.x).fold(0f32, f32::max);
     assert!((end(after) - end(&before) - 6.).abs() < 0.01);
+}
+
+#[test]
+fn visual_arrows_move_on_every_press_and_end_caret_has_affinity_fallback() {
+    let mut e = TextLayout::bundled().unwrap();
+    for source in ["abc", "سلام", "مرحبا Varos"] {
+        let mut session = EditSession::new(default_text(source, [0., 0.]).unwrap());
+        let layout = e.compose(&session.draft, 1.).unwrap().layout.clone();
+        assert!(session.current_caret(&layout).is_some());
+        let left = layout.carets.first().unwrap();
+        session.caret = left.byte;
+        session.affinity = left.affinity;
+        let mut changed = 0;
+        for _ in 0..layout.carets.len() {
+            let previous = session.caret;
+            session.arrow(&layout, true, true);
+            if session.caret == previous {
+                break;
+            }
+            changed += 1;
+            assert!(source.is_char_boundary(session.caret));
+        }
+        assert!(changed >= 2, "{source}");
+        assert_eq!(session.current_caret(&layout).unwrap().x, layout.carets.last().unwrap().x);
+    }
+}
+
+#[test]
+fn multiline_visual_navigation_and_selection_remain_source_aware() {
+    let mut e = TextLayout::bundled().unwrap();
+    let mut s = EditSession::new(
+        default_text(
+            "سلام
+Varos",
+            [0., 0.],
+        )
+        .unwrap(),
+    );
+    let layout = e.compose(&s.draft, 1.).unwrap().layout.clone();
+    assert_eq!(s.current_caret(&layout).unwrap().line, 1);
+    s.vertical(&layout, false, true);
+    assert_eq!(s.current_caret(&layout).unwrap().line, 0);
+    assert!(!layout.selection_rects(s.range()).is_empty());
+    assert!(s.draft.source().is_char_boundary(s.caret));
+    s.line_edge(&layout, true, false);
+    assert!(s.range().is_empty());
+    assert_eq!(
+        s.current_caret(&layout).unwrap().x,
+        layout.carets.iter().filter(|c| c.line == 0).map(|c| c.x).fold(f32::NEG_INFINITY, f32::max)
+    );
+}
+
+#[test]
+fn point_alignment_anchors_each_line_without_changing_source_or_wrapping() {
+    let mut e = TextLayout::bundled().unwrap();
+    let mut t = default_text(
+        "سلام
+مرحبا بالعالم",
+        [100., 80.],
+    )
+    .unwrap();
+    for (align, fraction) in [(Alignment::Left, 0.), (Alignment::Centre, 0.5), (Alignment::Right, 1.)] {
+        t.para.align = align;
+        let c = e.compose(&t, 1.).unwrap();
+        assert_eq!(c.layout.lines.len(), 2);
+        assert_eq!(c.layout.source, t.source());
+        for (index, line) in c.layout.lines.iter().enumerate() {
+            let left = c.layout.carets.iter().filter(|c| c.line == index).map(|c| c.x).fold(f32::INFINITY, f32::min);
+            assert!((left + line.width * fraction).abs() < 0.01);
+        }
+    }
 }
