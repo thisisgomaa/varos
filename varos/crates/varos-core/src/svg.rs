@@ -370,6 +370,12 @@ fn write_page(
         )
         .unwrap();
     }
+    // ---- Lane A ----
+    if crate::appearance_scene::needed(doc) {
+        appearance::write(&mut out, doc, page, cancel, decimals, None, false)?;
+        out.push_str("</svg>\n");
+        return Ok(out);
+    }
     let items: Vec<_> = doc
         .paint_list()
         .filter_map(|(i, p)| drawable(doc, i, p))
@@ -641,3 +647,19 @@ mod tests {
 
 // ---- Lane C ----
 pub mod options;
+
+// ---- Lane A ----
+mod appearance;
+
+// ---- Lane A ----
+pub(crate) fn appearance_with_images(
+    out: &mut String,
+    doc: &Document,
+    store: &crate::images::BlobStore,
+    page: &PageSpec,
+    preview: bool,
+    cancel: &AtomicBool,
+    decimals: Option<u8>,
+) -> Result<(), ExportError> {
+    appearance::write(out, doc, page, cancel, decimals, Some(store), preview)
+}

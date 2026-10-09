@@ -131,6 +131,8 @@ fn node(doc: &mut Document, kind: NodeKind, parent: u32, name: &str) -> u32 {
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     });
     if let Some(p) = doc.nodes.iter_mut().find(|n| n.id == parent) {

@@ -105,6 +105,8 @@ pub enum Prim {
 /// stencil vs offscreen-multiply) is its own decision. `members: Vec<Group>` already admits nested clips.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Group {
+    // ---- Lane A ----
+    Composite { opacity: f32, members: Vec<Group>, mask: Option<Vec<Group>> },
     Opaque(Vec<Prim>),
     Knockout(Vec<Prim>),
     Isolated { opacity: f32, prims: Vec<Prim> },
@@ -117,7 +119,8 @@ impl Group {
         match self {
             Group::Opaque(p) | Group::Knockout(p) => p,
             Group::Isolated { prims, .. } => prims,
-            Group::Clip { .. } => &[],
+            // ---- Lane A: recursive containers have no direct primitives ----
+            Group::Clip { .. } | Group::Composite { .. } => &[],
         }
     }
 }
@@ -140,6 +143,8 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ed.view_depth.hash(&mut state);
     ed.doc.units.ppi.to_bits().hash(&mut state);
     ed.doc.transparency_grid.hash(&mut state);
+    // ---- Lane A ----
+    crate::appearance_scene::hash(&ed.doc, &mut state);
     ed.rev.hash(&mut state);
     frame.hash(&mut state);
     point_hash(view.pan, &mut state);
@@ -515,7 +520,8 @@ fn build_scene_impl(
     let clip_map: std::collections::HashMap<u32, Option<Vec<R4>>> = if any_clip {
         let mut units: std::collections::HashMap<u32, Option<Vec<R4>>> = std::collections::HashMap::new();
         let mut m = std::collections::HashMap::new();
-        for (_, p) in ed.doc.paint_list() {
+        // ---- Lane A: alpha-mask sources share the board-membership map ----
+        for p in &ed.doc.paths {
             let Some(unit) = ed.doc.top_group_of_path(p.id).or_else(|| ed.doc.node_of_path(p.id)) else {
                 m.insert(p.id, None);
                 continue;
@@ -588,8 +594,8 @@ fn build_scene_impl(
     };
     // Cut one polyline to the path's view rect → the inside runs (one run, unchanged, when no rect).
     let view_runs = |pi: usize, pts: Vec<Pt>| -> Vec<Vec<Pt>> { cut_runs(pts, view_clip[pi]) };
-    let fill_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
-        let p = &ed.doc.paths[pi];
+    // ---- Lane A: evaluate authored entry paints over shared leaf geometry ----
+    let fill_prims = |pi: usize, p: &Path, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let mut out = Vec::new();
         // ---- Lane E ----
         // The independent outline pass ignores object opacity and clipping, including mask sources.
@@ -646,8 +652,7 @@ fn build_scene_impl(
         }
         out
     };
-    let stroke_prims = |pi: usize, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
-        let p = &ed.doc.paths[pi];
+    let stroke_prims = |pi: usize, p: &Path, geom: &PathGeometry, vclip: Option<R4>| -> Vec<Prim> {
         let mut out = Vec::new();
         if style.is_some() && crate::view_depth_scene::outlined(ed, p.id) {
             return out;
@@ -882,8 +887,8 @@ fn build_scene_impl(
             paint => paint.solid().map_or(1., |c| c[3]),
         };
         let vclip = view_clip[pi];
-        let mut fp = fill_prims(pi, geom, vclip);
-        let mut sp = stroke_prims(pi, geom, vclip);
+        let mut fp = fill_prims(pi, p, geom, vclip);
+        let mut sp = stroke_prims(pi, p, geom, vclip);
         // P11.2 (review P1-2): the object's TREATMENT (isolated / knockout / folded / opaque) is decided from
         // its UNCUT prims, so view clipping never changes it — a stroke that only exists off screen must
         // not flip an isolated object into a folded one as the view pans. View clipping only removes, so a
@@ -891,8 +896,8 @@ fn build_scene_impl(
         // partly visible path whose fill or whole stroke lies off screen).
         let (has_fill, has_stroke) = match vclip {
             Some(_) if fp.is_empty() || sp.is_empty() => (
-                !fp.is_empty() || !fill_prims(pi, geom, None).is_empty(),
-                !sp.is_empty() || !stroke_prims(pi, geom, None).is_empty(),
+                !fp.is_empty() || !fill_prims(pi, p, geom, None).is_empty(),
+                !sp.is_empty() || !stroke_prims(pi, p, geom, None).is_empty(),
             ),
             _ => (!fp.is_empty(), !sp.is_empty()),
         };
@@ -952,7 +957,8 @@ fn build_scene_impl(
     let mut clip_open: Vec<Prim> = Vec::new();
     // ---- w2-images ----
     let paths: std::collections::HashMap<_, _> = ed.doc.paint_list().map(|(pi, p)| (p.id, (pi, p))).collect();
-    for item in crate::images::paint_order(&ed.doc) {
+    let appearance = crate::appearance_scene::needed(&ed.doc);
+    for item in crate::images::paint_order(&ed.doc).into_iter().filter(|_| !appearance) {
         if let crate::model::NodeKind::Image(id) = item {
             if ed.doc.eff_hidden(id) || ed.doc.is_mask_source(id) {
                 continue;
@@ -1044,6 +1050,73 @@ fn build_scene_impl(
     }
     if !open.is_empty() {
         groups.push(Group::Opaque(open));
+    }
+    // ---- Lane A ----
+    if appearance {
+        groups = crate::appearance_scene::compose(
+            ed,
+            &|kind| match kind {
+                crate::model::NodeKind::Path(pid) => {
+                    let Some(pi) = ed.doc.pidx(pid) else { return vec![] };
+                    let source = &ed.doc.paths[pi];
+                    if source.hidden || ed.doc.guide_paths.contains(&pid) {
+                        return vec![];
+                    }
+                    let Some(geom) = geometry[pi].as_deref() else { return vec![] };
+                    let mut members = vec![];
+                    let mut run = vec![];
+                    if source.stack.is_empty() {
+                        emit_object(pi, source, geom, &mut members, &mut run);
+                    } else {
+                        for paint in crate::appearance_scene::paint_paths(source) {
+                            emit_object(pi, &paint, geom, &mut members, &mut run);
+                        }
+                    }
+                    if !run.is_empty() {
+                        members.push(Group::Opaque(run));
+                    }
+                    if !source.stack.is_empty() && source.opacity < 1.0 {
+                        vec![Group::Composite { opacity: source.opacity, members, mask: None }]
+                    } else {
+                        members
+                    }
+                }
+                crate::model::NodeKind::Image(pid) => {
+                    if style.is_some() && crate::view_depth_scene::outlined(ed, pid) {
+                        return vec![];
+                    }
+                    let Some(image) = ed.doc.images.iter().find(|i| i.id == pid) else { return vec![] };
+                    if image.opacity == 0.0 {
+                        return vec![];
+                    }
+                    let corners = crate::images::world_corners(&ed.doc, image);
+                    if cull
+                        .as_ref()
+                        .is_some_and(|c| !rects_intersect(crate::images::corner_rect(corners), c.grown(0.0)))
+                    {
+                        return vec![];
+                    }
+                    let Some(blob) = ed.blobs.get(&image.blob) else {
+                        stroke_errors.borrow_mut().push(format!("Image {pid} resource unavailable"));
+                        return vec![];
+                    };
+                    let prim = |clip| Prim::Image {
+                        key: image.blob.clone(),
+                        pixels: blob.pixels.clone(),
+                        corners,
+                        opacity: image.opacity * if ed.in_isolation(pid) { 1.0 } else { 0.25 },
+                        clip,
+                    };
+                    let prims = crate::images::board_clips(&ed.doc, pid).map_or_else(
+                        || vec![prim(None)],
+                        |rects| rects.into_iter().map(|r| prim(Some([r.0, r.1, r.2, r.3]))).collect(),
+                    );
+                    vec![Group::Opaque(prims)]
+                }
+                _ => vec![],
+            },
+            &mask_rings_of,
+        );
     }
     // ---- Lane E: cached, viewport-clipped outline pass ----
     if let Some(style) = style {

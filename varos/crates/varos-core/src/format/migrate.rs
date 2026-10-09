@@ -21,6 +21,8 @@ pub const MIGRATIONS: &[(u32, Step)] = &[
     (6, migrate_v6_to_v7),
     (7, migrate_v7_to_v8),
     (8, migrate_v8_to_v9),
+    // ---- Lane A ----
+    (9, migrate_v9_to_v10),
 ];
 
 /// Every format this build reads: each migration start plus the current writer (integration w2: the
@@ -159,5 +161,11 @@ pub fn migrate_v6_to_v7(doc: Document, _limits: &Limits) -> Result<Document, Loa
 /// `Path.corners`, and the Quick Look preview (Lane F, formerly `migrate_v5_to_next_preview`) adds
 /// only optional PDF-catalog keys — authored content is unchanged.
 pub fn migrate_v8_to_v9(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
+    Ok(doc)
+}
+
+// ---- Lane A ----
+/// v9 → v10 is pure identity: no extra paint or group look is invented.
+pub fn migrate_v9_to_v10(doc: Document, _limits: &Limits) -> Result<Document, LoadError> {
     Ok(doc)
 }

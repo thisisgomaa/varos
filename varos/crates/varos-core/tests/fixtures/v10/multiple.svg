@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" id="board" width="40.000" height="40.000" viewBox="0.000 0.000 40.000 40.000" overflow="hidden">
+<g id="appearance-node-1" opacity="1.000">
+<g opacity="0.800">
+<g id="path-4294967294" opacity="1.000">
+<path d="M0.000 0.000 L40.000 0.000 L40.000 40.000 L0.000 40.000 L0.000 0.000 Z " fill="#ff0000" fill-opacity="1.000" fill-rule="evenodd" stroke="none" stroke-opacity="1.000" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g id="path-4294967293" opacity="1.000">
+<path d="M0.000 0.000 L40.000 0.000 L40.000 40.000 L0.000 40.000 L0.000 0.000 Z " fill="#0000ff" fill-opacity="1.000" fill-rule="evenodd" stroke="none" stroke-opacity="1.000" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<g id="path-4294967292" opacity="1.000">
+<path d="M0.000 0.000 L40.000 0.000 L40.000 40.000 L0.000 40.000 L0.000 0.000 Z " fill="none" fill-opacity="1.000" fill-rule="evenodd" stroke="#00ff00" stroke-opacity="1.000" stroke-width="8.000" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<g id="path-20" opacity="0.500">
+<path d="M10.000 0.000 L30.000 0.000 L30.000 20.000 L10.000 20.000 L10.000 0.000 Z " fill="#ff0000" fill-opacity="1.000" fill-rule="evenodd" stroke="none" stroke-opacity="1.000" stroke-width="2.000" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

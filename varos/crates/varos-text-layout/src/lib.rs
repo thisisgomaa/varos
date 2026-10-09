@@ -323,6 +323,8 @@ impl TextLayout {
                     clip_exempt: false,
                     xform: Default::default(),
                     role: Default::default(),
+                    // ---- Lane A ----
+                    look: None,
                     mask_child: None,
                 };
                 doc.nodes[index].children.push(id);

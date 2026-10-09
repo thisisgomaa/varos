@@ -105,7 +105,7 @@ fn normalization_never_repairs_unsupported_soft_masks_into_normal_groups() {
     ed.doc.ids = 200;
     ed.doc.sync_tree();
     let clip = ed.doc.clip_group(&[10, 11], 11).unwrap();
-    for role in [GroupRole::MaskAlpha, GroupRole::MaskLuma] {
+    for role in [GroupRole::MaskLuma] {
         for broken in [false, true] {
             let mut doc = ed.doc.clone();
             let n = doc.nodes.iter_mut().find(|n| n.id == clip).unwrap();

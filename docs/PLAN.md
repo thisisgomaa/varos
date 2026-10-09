@@ -163,6 +163,7 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 ## Progress (moderator-maintained)
 | Slice | State | Commit | Notes |
 |---|---|---|---|
+| Phase 6 S4/S6 — Appearance stack + row masks (Lane A) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-appearance` | Assigned writer v10; ordered base/extra paints, group look, clip/alpha mask groups, recursive GPU/CPU/PDF/SVG, Properties Appearance and Layers badges/thumbnail drop, API 1.2 progressive schemas + CLI. Native GPU, thermal and owner design acceptance pending; no GUI/install/commit/push. Gate counts and bounded fallback: worktree `REPORT.md`. Integrator rechains v10→v11→v12→v13→v14. |
 | picker v3 (pre-plan) | done, owner-approved | `214e998` | Wheel/Sliders/Harmony/Mini |
 | 0.1 S0 render fixes | merged + installed, owner hand test pending | `5d422d5` | Exclude engine defect found by 0.3 and fixed in the same branch |
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |

@@ -688,6 +688,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             if name == "describe" {
                 if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
                     fields.extend([
+                        // ---- Lane A ----
+                        json!("appearance"),
                         json!("stroke_style"),
                         json!("text"),
                         json!("swatches"),
@@ -701,6 +703,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
                 let schema = &mut tool["inputSchema"];
                 // ---- Lane G ----
                 crate::text::register(schema);
+                // ---- Lane A: progressive disclosure, no inline summaries ----
+                crate::appearance::register(schema);
                 schema["$defs"]["trace_rgba"] = object(
                     json!({"verb":{"const":"trace_rgba"},"rgba":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}},"width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1},"options":{"type":"object","description":"API 1.2 only: TraceOptions; mode BlackWhite, Grayscale, or {Color:{colors:1..255}}; fidelity/corners 0..100, threshold 0..255, noise_px, ignore_white"}}),
                     &["verb", "rgba", "width", "height"],

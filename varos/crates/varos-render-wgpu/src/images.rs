@@ -44,6 +44,13 @@ pub fn residency_charge(w: u32, h: u32) -> u64 {
 fn resources(groups: &[Group], out: &mut HashMap<BlobKey, std::sync::Arc<Pixels>>) {
     for g in groups {
         match g {
+            // ---- Lane A ----
+            Group::Composite { members, mask, .. } => {
+                resources(members, out);
+                if let Some(ms) = mask {
+                    resources(ms, out);
+                }
+            }
             Group::Clip { members, .. } => resources(members, out),
             _ => {
                 for p in g.prims() {

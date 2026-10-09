@@ -6,7 +6,7 @@ fn walk(ty: &Type, defs: &HashMap<String, Vec<Type>>, seen: &mut HashSet<String>
     match ty {
         Type::Path(p) => {
             for seg in &p.path.segments {
-                if ["crate", "gradient", "swatches"].iter().any(|v| seg.ident == *v) {
+                if ["crate", "gradient", "swatches", "appearance", "stroke"].iter().any(|v| seg.ident == *v) {
                     continue;
                 }
                 let name = seg.ident.to_string();
@@ -58,6 +58,8 @@ fn serde_document_node_path_have_no_byte_blobs() {
         include_str!("../src/gradient.rs"),
         include_str!("../src/swatches.rs"),
         include_str!("../src/live_corners.rs"),
+        // ---- Lane A: walk stack/look payloads, never whitelist their contents ----
+        include_str!("../src/appearance.rs"),
     ] {
         for item in syn::parse_file(source).unwrap().items {
             match item {

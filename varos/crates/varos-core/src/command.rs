@@ -13,6 +13,9 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    // ---- Lane A ----
+    Appearance(crate::appearance_edits::AppearanceEdit),
+    Mask(crate::appearance_edits::MaskEdit),
     // ---- Lane D: deterministic drawing boundary ----
     Drawing(crate::drawing::Action),
     // ---- Lane G ----
@@ -406,6 +409,9 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            // ---- Lane A ----
+            Self::Appearance(edit) => crate::appearance_edits::apply(ed, edit),
+            Self::Mask(edit) => crate::appearance_edits::apply_mask(ed, edit),
             Self::Drawing(action) => crate::drawing::apply(ed, action),
             Self::Image(edit) => crate::images::apply(ed, edit),
             // Checked colour command dispatch.

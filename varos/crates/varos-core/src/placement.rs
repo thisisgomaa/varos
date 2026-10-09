@@ -99,6 +99,8 @@ pub fn place(ed: &mut Editor, source: Document) {
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     });
     if let Some(n) = ed.doc.nodes.iter_mut().find(|n| n.id == layer) {

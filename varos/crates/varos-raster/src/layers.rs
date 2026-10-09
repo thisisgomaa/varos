@@ -45,10 +45,14 @@ impl Blend {
         Self::Luminosity,
     ];
 }
+/// The layer draw list with the default payload: one core primitive per `Draw`.
+pub type Prim = LayerPrim<varos_core::Prim>;
 /// Mask coverage in canvas pixel order, applied once at LayerEnd, after effects.
+/// `D` is the producer's draw payload (integration w3: the appearance producer draws whole
+/// leaf-group runs through the same stack; the renderer contract itself only needs `Draw(D)`).
 #[derive(Clone, Debug)]
-pub enum Prim {
-    Draw(varos_core::Prim),
+pub enum LayerPrim<D> {
+    Draw(D),
     LayerBegin {
         opacity: f32,
         blend: Blend,
@@ -93,7 +97,7 @@ pub struct Report {
     pub cache_hits: usize,
 }
 /// Preflight, shared by both backends; malformed lists fail before rendering.
-pub fn validate(prims: &[Prim], size: [u32; 2], zoom: f32) -> Result<(), String> {
+pub fn validate<D>(prims: &[LayerPrim<D>], size: [u32; 2], zoom: f32) -> Result<(), String> {
     if size.contains(&0)
         || size.iter().any(|v| *v > i32::MAX as u32 / 2)
         || !zoom.is_finite()
@@ -109,7 +113,7 @@ pub fn validate(prims: &[Prim], size: [u32; 2], zoom: f32) -> Result<(), String>
     let mut depth = 0usize;
     for p in prims {
         match p {
-            Prim::LayerBegin { opacity, mask, .. } => {
+            LayerPrim::LayerBegin { opacity, mask, .. } => {
                 if !opacity.is_finite()
                     || !(0.0..=1.0).contains(opacity)
                     || mask
@@ -120,16 +124,16 @@ pub fn validate(prims: &[Prim], size: [u32; 2], zoom: f32) -> Result<(), String>
                 }
                 depth += 1;
             }
-            Prim::LayerEnd => {
+            LayerPrim::LayerEnd => {
                 depth = depth.checked_sub(1).ok_or("unmatched LayerEnd")?;
             }
-            Prim::Blur { .. } | Prim::Shadow { .. } if depth == 0 => {
+            LayerPrim::Blur { .. } | LayerPrim::Shadow { .. } if depth == 0 => {
                 return Err("effects require an object layer".into())
             }
-            Prim::Blur { radius, .. } if !valid_radius(*radius) => {
+            LayerPrim::Blur { radius, .. } if !valid_radius(*radius) => {
                 return Err("invalid blur (sigma limit: 128 pixels)".into())
             }
-            Prim::Shadow { offset, blur, colour, .. }
+            LayerPrim::Shadow { offset, blur, colour, .. }
                 if !valid_radius(*blur)
                     || offset
                         .iter()
@@ -155,12 +159,12 @@ pub enum Step {
     Blur { enabled: bool },
     Shadow { enabled: bool },
 }
-pub fn plan(prims: &[Prim], size: [u32; 2], zoom: f32, limits: Limits) -> Result<Vec<Step>, String> {
+pub fn plan<D>(prims: &[LayerPrim<D>], size: [u32; 2], zoom: f32, limits: Limits) -> Result<Vec<Step>, String> {
     plan_storage(prims, size, zoom, limits, 16)
 }
 /// Same pass planner, charging the backend's actual RGBA storage (CPU f32 / GPU f16).
-pub(crate) fn plan_storage(
-    prims: &[Prim],
+pub(crate) fn plan_storage<D>(
+    prims: &[LayerPrim<D>],
     size: [u32; 2],
     zoom: f32,
     limits: Limits,
@@ -173,8 +177,8 @@ pub(crate) fn plan_storage(
     let mut steps = Vec::with_capacity(prims.len());
     for p in prims {
         steps.push(match p {
-            Prim::Draw(_) => Step::Draw,
-            Prim::LayerBegin { .. } => {
+            LayerPrim::Draw(_) => Step::Draw,
+            LayerPrim::LayerBegin { .. } => {
                 let isolated = active < limits.depth
                     && active.saturating_add(1).saturating_mul(bytes) <= limits.bytes.saturating_sub(limits.bytes / 4);
                 stack.push(isolated);
@@ -183,15 +187,15 @@ pub(crate) fn plan_storage(
                 }
                 Step::Begin { isolated }
             }
-            Prim::LayerEnd => {
+            LayerPrim::LayerEnd => {
                 let isolated = stack.pop().ok_or("unmatched LayerEnd")?;
                 if isolated {
                     active -= 1;
                 }
                 Step::End { isolated }
             }
-            Prim::Blur { radius, .. } => Step::Blur { enabled: *radius > 0.0 && stack.last() == Some(&true) },
-            Prim::Shadow { .. } => Step::Shadow { enabled: stack.last() == Some(&true) },
+            LayerPrim::Blur { radius, .. } => Step::Blur { enabled: *radius > 0.0 && stack.last() == Some(&true) },
+            LayerPrim::Shadow { .. } => Step::Shadow { enabled: stack.last() == Some(&true) },
         });
     }
     Ok(steps)
@@ -412,14 +416,14 @@ impl CpuLayers {
         self.cache.retain(|k, _| k.object != object);
     }
     /// Empty lists do no allocation, cache lookup or pixel work. draw paints into the current layer.
-    pub fn render(
+    pub fn render<D>(
         &mut self,
-        prims: &[Prim],
+        prims: &[LayerPrim<D>],
         size: [u32; 2],
         zoom: f32,
         limits: Limits,
         dst: &mut [Pixel],
-        mut draw: impl FnMut(&varos_core::Prim, &mut [Pixel]),
+        mut draw: impl FnMut(&D, &mut [Pixel]),
     ) -> Result<Report, String> {
         let steps = plan(prims, size, zoom, limits)?;
         let n = size[0] as usize * size[1] as usize;
@@ -446,8 +450,8 @@ impl CpuLayers {
         let mut current = dst.to_vec();
         for (p, step) in prims.iter().zip(steps) {
             match p {
-                Prim::Draw(p) => draw(p, &mut current),
-                Prim::LayerBegin { opacity, blend, mask } => {
+                LayerPrim::Draw(p) => draw(p, &mut current),
+                LayerPrim::LayerBegin { opacity, blend, mask } => {
                     let isolated = matches!(step, Step::Begin { isolated: true });
                     let parent = if isolated {
                         active += 1;
@@ -471,7 +475,7 @@ impl CpuLayers {
                     };
                     stack.push(CpuFrame { opacity: *opacity, blend: *blend, mask: mask.as_deref(), parent });
                 }
-                Prim::LayerEnd => {
+                LayerPrim::LayerEnd => {
                     if let Some(CpuFrame { opacity, blend, mask, parent: Some(mut parent) }) = stack.pop() {
                         for i in 0..n {
                             parent[i] =
@@ -482,7 +486,7 @@ impl CpuLayers {
                         report.passes += 1;
                     }
                 }
-                Prim::Blur { object, revision, radius } => {
+                LayerPrim::Blur { object, revision, radius } => {
                     if *radius == 0.0 {
                         continue;
                     }
@@ -510,7 +514,7 @@ impl CpuLayers {
                         }
                     }
                 }
-                Prim::Shadow { object, revision, offset, blur, colour, outer } => {
+                LayerPrim::Shadow { object, revision, offset, blur, colour, outer } => {
                     if stack.last().is_none_or(|f| f.parent.is_none()) {
                         report.flattened = true;
                         continue;

@@ -19,10 +19,10 @@ fn text_native_reopens_editable_deliverable_is_outlines() {
 
 #[test]
 fn next_version_pdf_fixture_refuses_before_typed_decode() {
-    let bytes = include_bytes!("../../varos-core/tests/fixtures/text_next/refuse_newer.pdf");
+    let bytes = include_bytes!("../../varos-core/tests/fixtures/text_next/refuse_newer_v11.pdf");
     assert!(matches!(
         varos_pdf::load_vrs_bytes(bytes, &Limits::DEFAULT),
-        Err(varos_core::format::LoadError::NewerVersion { found: 10, supported: varos_core::format::FORMAT_VERSION })
+        Err(varos_core::format::LoadError::NewerVersion { found: 11, supported: varos_core::format::FORMAT_VERSION })
     ));
 }
 

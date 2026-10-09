@@ -255,6 +255,9 @@ impl<'de> Deserialize<'de> for Paint {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Path {
+    // ---- Lane A ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stack: Vec<crate::appearance::StackItem>,
     pub id: u32,
     pub anchors: Vec<Anchor>,
     pub closed: bool,
@@ -297,6 +300,8 @@ impl Path {
             fill: Paint::from_opt(fill),
             stroke: Paint::from_opt(stroke),
             stroke_width,
+            // ---- Lane A ----
+            stack: vec![],
             stroke_style: StrokeStyle::default(),
             corners: vec![],
             holes: vec![],
@@ -387,6 +392,9 @@ impl GroupRole {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
+    // ---- Lane A ----
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<crate::appearance::Look>,
     pub id: u32,
     pub kind: NodeKind,
     /// Display name for Layer/Group rows (Path leaves show their Path.name / auto-name instead).
@@ -747,6 +755,8 @@ impl Default for Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             }],
             roots: vec![1],
@@ -1283,6 +1293,8 @@ impl Document {
         Path {
             holes,
             corners: src.corners.clone(),
+            // ---- Lane A ----
+            stack: src.stack.clone(),
             stroke_style: src.stroke_style.clone(),
             fill: src.appearance().fill().resolved(self), // preserve the paint EXACTLY (future gradients too), not a solid snapshot
             stroke: src.appearance().stroke().resolved(self),
@@ -1492,6 +1504,8 @@ impl Document {
             clip_exempt: false,
             xform: Xform::default(),
             role: GroupRole::Normal,
+            // ---- Lane A ----
+            look: None,
             mask_child: None,
         });
         for &u in &units {
@@ -1626,6 +1640,8 @@ impl Document {
                 clip_exempt: false,
                 xform,
                 role,
+                // ---- Lane A ----
+                look: self.node(og).and_then(|n| n.look),
                 mask_child: None, // remapped through gmap/leafmap in step 3b (both maps must exist first)
             });
             gmap.insert(og, ng);
@@ -1652,6 +1668,8 @@ impl Document {
                     clip_exempt: false,
                     xform,
                     role: GroupRole::Normal, // a leaf is never a clip group
+                    // ---- Lane A ----
+                    look: None,
                     mask_child: None,
                 });
                 leafmap.insert(old_leaf, nl);
@@ -1799,6 +1817,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             self.roots.push(id);
@@ -1821,6 +1841,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             gmap.insert(g.id, id);
@@ -1848,6 +1870,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             self.attach_front(id);
@@ -1894,7 +1918,12 @@ impl Document {
             let empty: Vec<u32> = self
                 .nodes
                 .iter()
-                .filter(|n| matches!(n.kind, NodeKind::Group) && n.children.is_empty())
+                // ---- Lane A: keep an empty targeted mask container ----
+                .filter(|n| {
+                    matches!(n.kind, NodeKind::Group)
+                        && n.children.is_empty()
+                        && !self.nodes.iter().any(|p| p.role.is_mask_group() && p.mask_child == Some(n.id))
+                })
                 .map(|n| n.id)
                 .collect();
             if empty.is_empty() {
@@ -1918,11 +1947,14 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             self.roots.insert(0, id);
         }
-        if self.node(self.active_layer).is_none_or(|n| !matches!(n.kind, NodeKind::Layer)) {
+        // ---- Lane A: drawing may target a mask-child group ----
+        if self.node(self.active_layer).is_none_or(|n| !matches!(n.kind, NodeKind::Layer | NodeKind::Group)) {
             self.active_layer = self
                 .roots
                 .iter()
@@ -1949,6 +1981,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             if let Some(h) = self.node_mut(host) {
@@ -2160,6 +2194,8 @@ impl Document {
                         clip_exempt: false,
                         xform,
                         role: GroupRole::Normal, // a flat copy is its own plain leaf
+                        // ---- Lane A ----
+                        look: None,
                         mask_child: None,
                     });
                     cid

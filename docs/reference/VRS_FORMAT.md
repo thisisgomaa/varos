@@ -7,21 +7,36 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
-## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — current writer **9**
+## Lane A format 10 (wave-3 worktree, integration pending)
+
+The writer is 10 (`APPEARANCE_VERSION = 10`); earlier era constants remain unchanged.
+`migrate_v9_to_v10` is a named pure identity migration: absent keys keep earlier semantics.
+`Path.stack` is optional (empty is omitted). Nonempty stacks contain exactly one base fill and
+one base stroke, plus owned fill/stroke entries with paint, Normal blend, visibility and opacity.
+Extra strokes own width in points and StrokeStyle. `Node.look` is optional on containers and
+stores opacity/isolate. `GroupRole::MaskAlpha` uses the existing group `mask_child` form;
+several masks are nested groups. Stack, look and MaskAlpha are refused in every stamp below 10.
+Frozen JSON/PDF/SVG and refusal artifacts: `varos-core/tests/fixtures/v10/`, with SHA256SUMS.
+Plain v9 model bytes remain identical after replacing only the format stamp. Original v5–v9
+fixtures are retained; new v11 copies serve future-format refusals for this writer.
+Bridge 1.2 discovers appearance/mask through list_verbs/schema; legacy fixtures stay frozen.
+The integrator rechains this step with the later optional wave-3 keys.
+
+## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — base writer **9**
 
 Final numbers, binding merge order: **6** images · **7** gradients + swatches · **8** editable text ·
-**9** Live Corners + the optional Quick Look preview (one bump). `FORMAT_VERSION = CORNERS_VERSION = 9`;
+**9** Live Corners + the optional Quick Look preview (one bump). At wave-2 integration, `FORMAT_VERSION = CORNERS_VERSION = 9`;
 `IMAGE_VERSION = 6`, `GRADIENT_VERSION = 7`, `TEXT_FORMAT_VERSION = 8`, `PREVIEW_FORMAT_VERSION = 9`
 (pinned literally by `varos-core/tests/format_pin.rs`). JSON `varos` and PDF `/VAROS_SchemaVersion`
 always agree. `MIGRATIONS` is the contiguous named pure chain `migrate_v5_to_v6` (images, identity),
 `migrate_v6_to_v7` (gradients, identity, no validation), `migrate_v7_to_v8` (text,
 `text_format::migrate_to_text_boxes`), `migrate_v8_to_v9` (corners + preview, identity); Bridge 1.2
-`readable_vrs` is derived from that table (1–9). Each era's keys are refused under an older stamp
+`readable_vrs` is derived from that table (1–9 at wave-2 integration, 1–10 in Lane A). Each era's keys are refused under an older stamp
 before typed decode: images (<6), gradient paints/swatches (<7), text (<8), corners (<9) and the
 PDF-catalog preview keys (<9). Every new key is optional with a default, so plain documents keep
 their bytes apart from the stamp. `Document` key order (frozen by `fixtures/v9/mixed.json`):
 `name, description, tags, images, assets, raster_effects_ppi, swatches, text_boxes, paths, …`.
-Each lane's refused-future fixture is format **10**. Old-reader gates v4–v8 are frozen in
+Each wave-2 lane's historical refused-future fixture is format **10** and remains frozen; active future gates now use separate v11 copies. Old-reader gates v4–v8 are frozen in
 `varos-pdf/tests/{old_reader_harness,format_v9}.rs` (raw JSON and PDF container).
 
 ### Format 8 — editable text

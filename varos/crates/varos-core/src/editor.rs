@@ -5830,7 +5830,8 @@ impl Editor {
         self.commit();
     }
     pub fn set_active_layer(&mut self, nid: u32) {
-        self.doc.active_layer = self.doc.layer_ancestor(nid);
+        // ---- Lane A: restore the authoritative mask drawing child ----
+        self.doc.active_layer = crate::appearance_edits::drawing_target(&self.doc, nid);
     }
     /// Drag & drop a row: move `src` relative to `target` (Before/Into/After). No-op + no undo entry if
     /// the drop is illegal (cycle / into a leaf / layer-into-group).
@@ -5904,7 +5905,8 @@ impl Editor {
         }
         self.refresh_obj_angle(); // A7: selecting a rotated object via the panel restores its stored angle
         if let Some(&last) = nids.last() {
-            self.doc.active_layer = self.doc.layer_ancestor(last);
+            // ---- Lane A: restore the authoritative mask drawing child ----
+            self.doc.active_layer = crate::appearance_edits::drawing_target(&self.doc, last);
         }
     }
     /// Ctrl+click a row: toggle its art in/out of the canvas selection (add if any is out, else remove all).
@@ -5941,7 +5943,8 @@ impl Editor {
             }
         }
         self.refresh_obj_angle(); // selection set changed → single unit shows θ, multi axis-aligns
-        self.doc.active_layer = self.doc.layer_ancestor(nid);
+                                  // ---- Lane A: restore the authoritative mask drawing child ----
+        self.doc.active_layer = crate::appearance_edits::drawing_target(&self.doc, nid);
     }
     /// Alt+drag a row: duplicate its art into the drop target (original stays), reselect the copies.
     pub fn layer_dup_move(&mut self, srcs: &[u32], target: u32, pos: crate::model::DropPos) {
