@@ -161,10 +161,13 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
 }
 
 pub(crate) fn show(ui: &mut egui::Ui, origin: egui::Pos2, m: &ColorPanel, s: &Snap, ops: &mut Vec<Op>) {
-    for (target, point, radius) in [
-        (PaintTarget::Stroke, t::PICKER_STROKE_CENTER, t::PICKER_STROKE_R),
-        (PaintTarget::Fill, t::PICKER_FILL_CENTER, t::PICKER_FILL_R),
-    ] {
+    // Owner parity (hand test 2026-10-09): the focused target is painted IN FRONT (Illustrator/Affinity):
+    // Fill focused → fill circle over the stroke ring; Stroke focused → ring over the circle.
+    let front = cluster_front(m);
+    let stroke = (PaintTarget::Stroke, t::PICKER_STROKE_CENTER, t::PICKER_STROKE_R);
+    let fill = (PaintTarget::Fill, t::PICKER_FILL_CENTER, t::PICKER_FILL_R);
+    let order = if front == PaintTarget::Stroke { [fill, stroke] } else { [stroke, fill] };
+    for (target, point, radius) in order {
         let center = origin + egui::vec2(point[0], point[1]);
         let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
         let live = m.target == MTarget::Paint(target) && (m.change_requested || m.edited);
@@ -205,7 +208,7 @@ pub(crate) fn show(ui: &mut egui::Ui, origin: egui::Pos2, m: &ColorPanel, s: &Sn
             Stroke::new(t::PICKER_FOCUS, if m.target == MTarget::Paint(target) { t::ACCENT } else { t::LINE2 }),
         );
         let response = ui.interact(rect, ui.id().with(("target", target as u8)), egui::Sense::click());
-        let hit = ui.input(|i| i.pointer.interact_pos()).and_then(|p| cluster_target(origin, p));
+        let hit = ui.input(|i| i.pointer.interact_pos()).and_then(|p| cluster_target(origin, p, front));
         if response.clicked() {
             if let Some(target) = hit {
                 ops.push(Op::PaintFocus(target));
@@ -244,15 +247,28 @@ pub(crate) fn show(ui: &mut egui::Ui, origin: egui::Pos2, m: &ColorPanel, s: &Sn
     }
 }
 
-/// Resolve painted circles, including the Stroke ring visible inside Fill's bounding-square corner.
-fn cluster_target(origin: egui::Pos2, p: egui::Pos2) -> Option<PaintTarget> {
-    let fill = origin + egui::vec2(t::PICKER_FILL_CENTER[0], t::PICKER_FILL_CENTER[1]);
-    if p.distance(fill) <= t::PICKER_FILL_R {
-        return Some(PaintTarget::Fill);
+/// The target painted in front: the focused paint target (Fill when the panel edits a page colour).
+pub(crate) fn cluster_front(m: &ColorPanel) -> PaintTarget {
+    match m.target {
+        MTarget::Paint(target) => target,
+        MTarget::Ab(_) => PaintTarget::Fill,
     }
+}
+
+/// Resolve painted circles. The `front` target wins where the fill circle and the stroke ring overlap,
+/// matching what is painted on top; the Stroke ring stays hittable inside Fill's bounding-square corner.
+pub(crate) fn cluster_target(origin: egui::Pos2, p: egui::Pos2, front: PaintTarget) -> Option<PaintTarget> {
+    let fill = origin + egui::vec2(t::PICKER_FILL_CENTER[0], t::PICKER_FILL_CENTER[1]);
     let stroke = origin + egui::vec2(t::PICKER_STROKE_CENTER[0], t::PICKER_STROKE_CENTER[1]);
+    let on_fill = p.distance(fill) <= t::PICKER_FILL_R;
     let d = p.distance(stroke);
-    (t::PICKER_STROKE_R - t::PICKER_STROKE_BAND..=t::PICKER_STROKE_R).contains(&d).then_some(PaintTarget::Stroke)
+    let on_stroke = (t::PICKER_STROKE_R - t::PICKER_STROKE_BAND..=t::PICKER_STROKE_R).contains(&d);
+    match (on_fill, on_stroke) {
+        (true, true) => Some(front),
+        (true, false) => Some(PaintTarget::Fill),
+        (false, true) => Some(PaintTarget::Stroke),
+        (false, false) => None,
+    }
 }
 
 #[cfg(test)]
