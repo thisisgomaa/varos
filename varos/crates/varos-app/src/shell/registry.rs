@@ -8,6 +8,7 @@ use egui::{vec2, Align2, FontId, RichText, Sense, StrokeKind, Vec2};
 /// drawn by `boxtree`); the rest are dockable dummy panels for the sandbox.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum PanelId {
+    Navigator,
     Board,
     Align,
     Pathfinder,
@@ -22,10 +23,12 @@ impl PanelId {
     /// The panels the Window / box ⌄ menu can dock. Swatches/History/Assets are NOT here yet — they are
     /// unbuilt (sandbox dummies), so they must not appear as choices until they have real bodies (Ahmed
     /// 07-08). The enum variants stay, ready to re-list the moment each is built for real.
-    pub const DOCKABLE: [PanelId; 4] = [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers];
+    pub const DOCKABLE: [PanelId; 5] =
+        [PanelId::Align, PanelId::Pathfinder, PanelId::Properties, PanelId::Layers, PanelId::Navigator];
 
     pub fn title(self) -> &'static str {
         match self {
+            PanelId::Navigator => "Navigator",
             PanelId::Board => "Board",
             PanelId::Align => "Align",
             PanelId::Pathfinder => "Pathfinder",
@@ -60,6 +63,7 @@ impl PanelId {
 /// Render a panel's body into the given Ui (the box has already painted its own background + header).
 pub fn render_panel(id: PanelId, ui: &mut egui::Ui) {
     match id {
+        PanelId::Navigator => {}
         PanelId::Board => {} // drawn by boxtree (bg + dot grid + hands)
         PanelId::Align => align_panel(ui),
         PanelId::Pathfinder => pathfinder_panel(ui),

@@ -74,6 +74,8 @@ pub enum AppCommand {
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free
     /// canvas with ZERO artboards (`varos_core::board::new_board`).
+    // ---- Lane E ----
+    SetCanvasColor([u8; 3]),
     FitAll(SessionId),
     View(SessionId, varos_core::editor::view_commands::ViewAction),
     Selection(SessionId, varos_core::editor::wave::Selection),

@@ -4387,6 +4387,7 @@ dependencies = [
  "bytemuck",
  "egui",
  "egui-wgpu",
+ "naga",
  "varos-core",
  "wgpu",
 ]

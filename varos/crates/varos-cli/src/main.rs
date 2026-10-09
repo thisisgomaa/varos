@@ -1,5 +1,7 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
 mod document;
+// ---- Lane E ----
+mod view_depth;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -16,6 +18,7 @@ use varos_core::{
 // The only CLI verb table. No desktop binary names or UI routing are changed.
 mod trace;
 const VERBS: &[&str] = &[
+    "view-depth",
     "trace",
     "import-svg",
     "describe",
@@ -215,6 +218,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("expected a subcommand: {}", VERBS.join(", ")).into());
     }
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
+    if verb == "view-depth" {
+        return view_depth::run(args).map_err(Failure::from);
+    }
     if ["document-info", "document-setup", "save-template", "new-from-template"].contains(&verb.as_str()) {
         return document::run(&verb, args).map_err(Into::into);
     }

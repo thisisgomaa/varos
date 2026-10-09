@@ -559,6 +559,7 @@ mod layer_rename_tests {
 
     fn path_row(id: u32, name: &str) -> LRow {
         LRow {
+            outlined: false,
             id,
             depth: 0,
             kind: LKind::Path,
@@ -2353,7 +2354,7 @@ mod dead_control_tests {
     #[test]
     fn burger_reset_layout_uses_the_same_command_as_the_native_window_menu() {
         let mut bar = Bar::new();
-        let at = bar.burger_row(23, 5);
+        let at = bar.burger_row(24, 5);
         let cmds = bar.click(at);
         assert_eq!(cmds, vec![AppCommand::Window(crate::app_command::WindowCmd::ResetLayout)]);
         assert_eq!(

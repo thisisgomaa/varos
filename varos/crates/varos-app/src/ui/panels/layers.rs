@@ -37,6 +37,7 @@ pub(crate) struct LRow {
     pub(crate) sec: u32, // section: the artboard index, u32::MAX = the floater strip (salts egui ids for mirrors)
     pub(crate) name: String,
     pub(crate) hidden: bool,
+    pub(crate) outlined: bool,
     pub(crate) locked: bool, // OWN flags (drive the toggle icons)
     pub(crate) eff_hidden: bool,
     pub(crate) eff_locked: bool, // cascaded (drive dimming + "forced" look)
@@ -71,6 +72,7 @@ pub(crate) fn layer_rows_key(
 ) -> u64 {
     let mut state = std::collections::hash_map::DefaultHasher::new();
     ed.rev.hash(&mut state);
+    ed.view_depth.outline_nodes.hash(&mut state);
     ed.dirty.hash(&mut state);
     ed.doc.active.hash(&mut state);
     ed.doc.active_layer.hash(&mut state);
@@ -235,6 +237,8 @@ pub(crate) fn build_layer_rows(
             sec,
             name,
             hidden: n.hidden,
+            outlined: ed.view_depth.outline_nodes.contains(&nid)
+                || paths.iter().any(|&pid| !ed.view_depth.outline && varos_core::view_depth_scene::outlined(ed, pid)),
             locked: n.locked,
             eff_hidden: n.hidden || anc_hidden() || sf.0,
             eff_locked: n.locked || anc_locked() || sf.1,
@@ -278,6 +282,7 @@ pub(crate) fn build_layer_rows(
             sec: bi as u32,
             name: ab.name.clone(),
             hidden: ab.hidden,
+            outlined: false,
             locked: ab.locked,
             eff_hidden: ab.hidden,
             eff_locked: ab.locked,
@@ -642,14 +647,35 @@ pub(crate) fn panel_layers(
                             if col_toggle(
                                 ui,
                                 eye,
-                                hov,
+                                hov || row.outlined,
                                 row.hidden,
                                 row.eff_hidden && !row.hidden,
                                 &ic.eye_off,
                                 &ic.eye,
-                                if board { "Show/Hide board" } else { "Show/Hide" },
+                                if board {
+                                    "Show/Hide board"
+                                } else if row.outlined {
+                                    "Outline (primary-click to restore Preview)"
+                                } else {
+                                    "Show/Hide (primary-click for Outline)"
+                                },
                             ) {
-                                ops.push(if board { Op::AbEye(row.sec as usize) } else { Op::LayerEye(row.id) });
+                                // ---- Lane E ----
+                                if !board && ui.input(|i| i.modifiers.command) {
+                                    ops.push(Op::View(varos_core::editor::view_commands::ViewAction::Depth(
+                                        varos_core::view_depth::DepthAction::OutlineNode { id: row.id },
+                                    )));
+                                } else {
+                                    ops.push(if board { Op::AbEye(row.sec as usize) } else { Op::LayerEye(row.id) });
+                                }
+                            }
+                            if row.outlined {
+                                ui.painter().rect_stroke(
+                                    egui::Rect::from_center_size(eye.center(), egui::Vec2::splat(ICON_SM)),
+                                    CornerRadius::ZERO,
+                                    Stroke::new(1.0, MUTED),
+                                    StrokeKind::Inside,
+                                );
                             }
                             if col_toggle(
                                 ui,

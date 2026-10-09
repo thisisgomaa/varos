@@ -678,6 +678,18 @@ pub const DRAW_RAIL_OFFSET: f32 = 16.;
 pub const DRAW_HOLD_SECONDS: f64 = 0.45;
 pub const DRAW_PREVIEW_STROKE: f32 = 1.;
 
+// ---- Lane E ----
+pub const OUTLINE_RGBA: [f32; 4] = [143.0 / 255.0, 138.0 / 255.0, 134.0 / 255.0, 1.0];
+pub const CANVAS_RGBA: [f32; 4] = [20.0 / 255.0, 19.0 / 255.0, 19.0 / 255.0, 1.0];
+pub const NAVIGATOR_HEIGHT: f32 = 126.0;
+
+pub const CANVAS_DARK: [u8; 3] = [20, 19, 19];
+pub const CANVAS_LIGHT: [u8; 3] = [210, 208, 206];
+pub const CANVAS_MID: [u8; 3] = [95, 92, 89];
+
+pub const NAVIGATOR_PROXY: [u32; 2] = [224, 126];
+pub const NAVIGATOR_IMAGE_TINT: Color32 = Color32::WHITE;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;
