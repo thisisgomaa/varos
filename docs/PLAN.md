@@ -215,3 +215,9 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 9.4 History (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable History, human/agent labels, jump, bounded undo/redo, API 1.2 review/top-agent undo. |
 | 9.5 Actions (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Dockable Actions; supported semantic recording, .vrs-actions load/save, atomic replay, offline CLI apply. |
 | 9.6 Help + Quick Look fallback (Lane F) | implemented (provisional UI, owner design review pending) | WIP 48830d0 + uncommitted completion | Help/typed Bridge tool; cached PNG embedded in container; native signed QL extension packaging documented and pending. |
+
+<!-- ---- Lane D wave 3 ---- -->
+| Slice | State | Commit | Notes |
+|---|---|---|---|
+| Wave 3 renderer capability (Lane D) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-render` | Renderer-only nested layer primitives, 16 blend modes, Gaussian blur, shadow/glow, CPU reference. No UI/model/format/API writes in this lane; appearance/raster-fx lanes emit the contract. Gates and native-GPU verification limits: worktree `REPORT.md`. |
+<!-- ---- end Lane D wave 3 ---- -->
