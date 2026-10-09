@@ -420,7 +420,7 @@ fn build_scene_impl(
     let stroke_budget = (!canvas).then(|| std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default()));
     let stroke_errors = std::cell::RefCell::new(Vec::new());
     // ---- w3-cmyk ----
-    let screen = ed.doc.output_profile.as_ref().map(crate::colour_management::Screen::new);
+    let screen = ed.doc.output_profile.as_ref().map(|p| ed.colour_transforms.screen(p));
     let screen_paint = |paint: crate::model::Paint| match &screen {
         None => paint,
         Some(Ok(screen)) => match screen.paint(paint) {

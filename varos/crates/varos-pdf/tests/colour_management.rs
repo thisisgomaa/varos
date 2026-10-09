@@ -76,3 +76,51 @@ fn pdfx4_requires_printer_profile_and_emits_metadata_and_trimbox() {
     }
     assert!(report.notes.iter().any(|n| n.kind == "pdfx4"));
 }
+
+#[test]
+fn many_gradient_forms_share_one_icc_and_spot_resource_set() {
+    let mut doc = decode_model(include_bytes!("../../varos-core/tests/fixtures/v5/plain.json"), None, &Limits::DEFAULT)
+        .unwrap()
+        .doc;
+    doc.output_profile =
+        Some(IccProfile::new("sRGB".into(), &moxcms::ColorProfile::new_srgb().encode().unwrap()).unwrap());
+    let mut path = doc.paths[0].clone();
+    path.fill = Paint::Gradient(Default::default());
+    path.stroke = Paint::Managed(ManagedColour {
+        colour: Colour::Spot { name: "Brand".into(), tint: 0.5, alt: Cmyk { c: 0.2, m: 0.3, y: 0.4, k: 0.1 } },
+        alpha: 1.,
+    });
+    path.stroke_width = 2.;
+    doc.paths.clear();
+    for i in 1..=40 {
+        let mut p = path.clone();
+        p.id = i;
+        doc.paths.push(p);
+    }
+    doc.sync_tree();
+    let (bytes, _) = export(&doc);
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(text.matches("/ICCBased").count(), 1);
+    assert_eq!(text.matches("/Separation").count(), 1);
+    let pdf = lopdf::Document::load_mem(&bytes).unwrap();
+    let mut forms = 0;
+    let mut shared = None;
+    for object in pdf.objects.values() {
+        let Ok(stream) = object.as_stream() else { continue };
+        if stream.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) != Some(b"Form") {
+            continue;
+        }
+        let Ok(res) = stream.dict.get(b"Resources").and_then(|o| o.as_dict()) else { continue };
+        let Ok(spaces) = res.get(b"ColorSpace").and_then(|o| o.as_dict()) else { continue };
+        let refs = (
+            spaces.get(b"ICC3").unwrap().as_reference().unwrap(),
+            spaces.get(b"Spot4272616e64").unwrap().as_reference().unwrap(),
+        );
+        assert_eq!(*shared.get_or_insert(refs), refs);
+        for r in [refs.0, refs.1] {
+            assert!(pdf.objects.contains_key(&r));
+        }
+        forms += 1;
+    }
+    assert!(forms >= 40);
+}

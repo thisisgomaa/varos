@@ -231,6 +231,7 @@ pub fn screen_export_notes(doc: &Document, format: &str) -> Vec<crate::ExportNot
 }
 
 /// One explicit source-to-sRGB transform per scene, with no global state.
+#[derive(Clone)]
 pub(crate) struct Screen {
     transform: std::sync::Arc<moxcms::TransformF32Executor>,
     channels: usize,

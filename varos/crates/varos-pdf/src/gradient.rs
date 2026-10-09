@@ -110,6 +110,8 @@ pub(super) fn paint(
     pdf: &mut Pdf,
     ids: &mut Alloc,
     pool: &mut Pool,
+    // ---- w3-cmyk ----
+    colours: &crate::colour_management::Resources,
     t: &impl Fn([f32; 2]) -> (f32, f32),
 ) -> bool {
     let paints = [d.p.appearance().fill().resolved(doc), d.p.appearance().stroke().resolved(doc)];
@@ -175,7 +177,6 @@ pub(super) fn paint(
     let bbox = write::page_bbox(d.bbox, t);
     let data = local.finish();
     // ---- w3-cmyk ----
-    let colours = crate::colour_management::resources(doc, pdf, ids);
     let mut x = pdf.form_xobject(form, &data);
     x.bbox(Rect::new(bbox[0], bbox[1], bbox[2], bbox[3]));
     x.group().transparency().isolated(true).knockout(true).color_space().device_rgb();

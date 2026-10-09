@@ -348,7 +348,18 @@ fn write_pages_impl(
                     tick.check(cancel)?;
                     // integration w2: gradients (resolved through swatches) first, in image documents too
                     if let Item::Path(pd) = d {
-                        if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
+                        if crate::gradient::paint(
+                            doc,
+                            pd,
+                            &mut c,
+                            &mut pdf,
+                            &mut ids,
+                            &mut gradients,
+                            // ---- w3-cmyk ----
+                            &colour_resources,
+                            // ---- end w3-cmyk ----
+                            &t,
+                        ) {
                             continue;
                         }
                     }
@@ -377,7 +388,18 @@ fn write_pages_impl(
             for d in members {
                 tick.check(cancel)?;
                 if let Item::Path(pd) = d {
-                    if crate::gradient::paint(doc, pd, &mut c, &mut pdf, &mut ids, &mut gradients, &t) {
+                    if crate::gradient::paint(
+                        doc,
+                        pd,
+                        &mut c,
+                        &mut pdf,
+                        &mut ids,
+                        &mut gradients,
+                        // ---- w3-cmyk ----
+                        &colour_resources,
+                        // ---- end w3-cmyk ----
+                        &t,
+                    ) {
                         continue;
                     }
                 }

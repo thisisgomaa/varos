@@ -124,3 +124,40 @@ fn profile_and_proof_are_explicit_scene_inputs() {
     let scene = varos_core::scene::build_scene_in_view_styled(&ed, view, [100, 100], style);
     assert!(scene.errors.is_empty(), "{:?}", scene.errors);
 }
+
+#[test]
+fn ordinary_paint_and_live_reject_spot_conflicts_atomically() {
+    use varos_core::{colour_commands::ColourCommand as C, editor::PaintTarget, model::Path};
+    let ink = |c| {
+        Paint::Managed(ManagedColour {
+            colour: Colour::Spot { name: "Same ink".into(), tint: 0.8, alt: Cmyk { c, m: 0.2, y: 0.3, k: 0.4 } },
+            alpha: 0.6,
+        })
+    };
+    for live in [false, true] {
+        let mut ed = Editor::new();
+        for id in 1..=2 {
+            let mut p = Path::new(id, vec![], true, None, None, 1.);
+            p.fill = ink(0.1);
+            ed.doc.paths.push(p);
+        }
+        ed.doc.sync_tree();
+        ed.objsel.insert(1);
+        let before = ed.doc.clone();
+        let revision = ed.rev;
+        let command = if live {
+            C::Live { target: PaintTarget::Fill, paint: ink(0.9) }
+        } else {
+            C::Paint { target: PaintTarget::Fill, paint: ink(0.9) }
+        };
+        assert!(ed.try_execute(EditCommand::Colour(command)).is_err());
+        assert_eq!(ed.doc, before);
+        assert_eq!(ed.rev, revision);
+        assert!(!ed.transaction_open());
+        format::encode_model(&ed.doc, &Limits::DEFAULT).unwrap();
+        // Replacing every occurrence with the new alternate is allowed.
+        ed.objsel.insert(2);
+        ed.try_execute(EditCommand::Colour(C::Paint { target: PaintTarget::Fill, paint: ink(0.9) })).unwrap();
+        format::encode_model(&ed.doc, &Limits::DEFAULT).unwrap();
+    }
+}

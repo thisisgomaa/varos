@@ -77,6 +77,7 @@ pub mod registry;
 // ---- w3-cmyk ----
 pub mod colour_management;
 pub mod colour_management_commands;
+mod colour_transforms;
 
 // ---- w3-cmyk ----
 mod colour_format;
