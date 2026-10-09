@@ -13,6 +13,33 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    ZoomPercent(f32),
+    View(crate::editor::view_commands::ViewAction),
+    Selection(crate::editor::wave::Selection),
+    Lasso {
+        points: Vec<Pt>,
+        objects: bool,
+        additive: bool,
+    },
+    InsertAnchor {
+        path: u32,
+        segment: usize,
+        t: f32,
+    },
+    DeleteAnchor(u32),
+    AnchorType {
+        anchor: u32,
+        smooth: bool,
+    },
+    DistributeMode(AlignMode),
+    SetDistributeGap(f32),
+    SetPasteRemembersLayers(bool),
+    SetKeyObject(Option<u32>),
+    Object(crate::editor::wave::ObjectAction),
+    DistributeSpacing {
+        axis: DistAxis,
+        gap: f32,
+    },
     /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
     AddShape {
         kind: crate::model::ShapeKind,
@@ -281,6 +308,19 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            Self::ZoomPercent(value) => ed.requested_zoom = Some(value),
+            Self::View(action) => ed.view_command(action),
+            Self::Selection(action) => ed.selection_command(action),
+            Self::Lasso { points, objects, additive } => ed.lasso_select(&points, objects, additive),
+            Self::InsertAnchor { path, segment, t } => ed.wave_insert_anchor(path, segment, t),
+            Self::AnchorType { anchor, smooth } => ed.wave_anchor_type(anchor, smooth),
+            Self::DeleteAnchor(id) => ed.wave_delete_anchor(id),
+            Self::DistributeMode(mode) => ed.distribute_mode(mode),
+            Self::SetPasteRemembersLayers(enabled) => ed.paste_remembers_layers = enabled,
+            Self::SetDistributeGap(gap) => ed.distribute_gap = gap,
+            Self::SetKeyObject(id) => ed.key_object = id,
+            Self::Object(action) => ed.object_command(action),
+            Self::DistributeSpacing { axis, gap } => ed.distribute_spacing_wave(axis, gap),
             Self::AddPath { .. } => {
                 let _ = ed.try_execute_created(self);
             }

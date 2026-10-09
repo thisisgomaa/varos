@@ -45,6 +45,11 @@ pub enum ToolKind {
     Triangle,
     Polygon,
     Convert,
+    Lasso,
+    AddAnchor,
+    DeleteAnchor,
+    Hand,
+    Zoom,
     Eyedropper,
     Artboard,
     Rotate,
@@ -85,8 +90,11 @@ pub enum Drag {
     Segment { pid: u32, i: usize, down: Pt, a_out0: Option<Pt>, b_in0: Option<Pt>, ap0: Pt, bp0: Pt, straight: bool },
     Guide { idx: usize }, // moving an existing ruler guide (idx into doc.guides)
     Shape { start: Pt, pid: u32, kind: ShapeKind },
+    Lasso { points: Vec<Pt>, objects: bool, additive: bool },
     Marquee { start: Pt, base: Vec<u32> },
     ObjMarquee { start: Pt, base: Vec<u32>, base_groups: Vec<u32> },
+    ViewZoom { start: Pt, current: Pt },
+    GroupClick { path: u32, down: Pt, anchor: Option<u32> },
     DupPending { srcs: Vec<u32>, down: Pt, object: bool },
     // A7: `base` = LOCAL anchors (translated by the move), `base_world` = their world positions (for
     // snapping), `piv_base` = rotated units' base xforms whose pivots the move carries (keeps θ).
@@ -205,6 +213,7 @@ pub enum AlignTarget {
     Auto,
     #[serde(rename = "Selection")]
     Selection,
+    KeyObject,
     #[serde(rename = "Artboard")]
     Artboard,
 }
@@ -392,6 +401,13 @@ fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
     true
 }
 
+#[derive(Clone)]
+struct SelectionState {
+    paths: Vec<u32>,
+    anchors: Vec<u32>,
+    groups: Vec<u32>,
+    direct: Option<u32>,
+}
 pub struct Editor {
     pub doc: Document,
     pub tool: ToolKind,
@@ -399,6 +415,12 @@ pub struct Editor {
     pub active: Option<u32>,
     pub selected: HashSet<u32>,
     pub objsel: HashSet<u32>,
+    pub reselect: Vec<u32>,
+    reselect_state: Option<SelectionState>,
+    pub key_object: Option<u32>,
+    pub distribute_gap: f32,
+    pub paste_remembers_layers: bool,
+    pub requested_zoom: Option<f32>,
     /// Group nodes selected as groups (not merely individual descendant paths). Hidden unlocked
     /// descendants are carried only by structural operations; ordinary edits still target `objsel`.
     pub(crate) group_sel: HashSet<u32>,
@@ -468,6 +490,12 @@ impl Editor {
             active: None,
             selected: HashSet::new(),
             objsel: HashSet::new(),
+            reselect: Vec::new(),
+            reselect_state: None,
+            key_object: None,
+            distribute_gap: 0.0,
+            paste_remembers_layers: false,
+            requested_zoom: None,
             group_sel: HashSet::new(),
             absel: BTreeSet::new(),
             dsel_path: None,
@@ -579,19 +607,23 @@ impl Editor {
         let edge_r = EDGE_R / self.ppu;
         for pi in (0..self.doc.paths.len()).rev() {
             let id = self.doc.paths[pi].id;
-            if self.doc.eff_hidden(id) || self.doc.eff_locked(id) {
+            if self.doc.eff_hidden(id)
+                || self.doc.eff_locked(id)
+                || (self.doc.guide_paths.contains(&id) && (self.guides_hidden || self.doc.guides_locked))
+            {
                 continue; // not clickable (cascades)
             }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
             // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
-            let reach = edge_r + painted_half_width(&self.doc.paths[pi]);
+            let guide = self.doc.guide_paths.contains(&id);
+            let reach = edge_r + if guide { 0.0 } else { painted_half_width(&self.doc.paths[pi]) };
             if !ctrl_bbox_near(&self.doc.paths[pi], lp, reach) {
                 continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
             }
             let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
-            let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
+            let in_fill = !guide && self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
             }
@@ -1482,6 +1514,10 @@ impl Editor {
     fn resolve_align_target(&self, target: AlignTarget) -> AlignTarget {
         let has_board = self.doc.active_artboard().is_some();
         match target {
+            AlignTarget::KeyObject if self.key_object.is_some_and(|id| self.objsel.contains(&id)) => {
+                AlignTarget::KeyObject
+            }
+            AlignTarget::KeyObject => AlignTarget::Selection,
             AlignTarget::Selection => AlignTarget::Selection,
             AlignTarget::Artboard if has_board => AlignTarget::Artboard,
             AlignTarget::Artboard => AlignTarget::Selection,
@@ -1498,6 +1534,7 @@ impl Editor {
             return;
         }
         match self.resolve_align_target(target) {
+            AlignTarget::KeyObject => self.align_to_key(mode),
             AlignTarget::Artboard => self.align_objects_to_artboard(mode),
             // Selection (incl. any Auto/Artboard that degraded to it): the historic behaviour.
             _ => self.align_objects_to_selection(mode),
@@ -1536,10 +1573,18 @@ impl Editor {
         let reference = match target {
             AlignTarget::Selection if units.len() >= 2 => self.obj_bbox().ok_or("empty selection bounds")?,
             AlignTarget::Artboard => self.doc.active_artboard().ok_or("missing artboard reference")?.rect(),
+            AlignTarget::KeyObject => {
+                let key = self.key_object.filter(|id| self.objsel.contains(id)).ok_or("key object must be selected")?;
+                let unit = self.doc.unit_of(key).ok_or("missing key unit")?;
+                self.wave_unit_bbox(unit).ok_or("empty key bounds")?
+            }
             _ => return Err("explicit selection (at least two units) or artboard reference required".into()),
         };
         let mut translations = Vec::new();
         for unit in units {
+            if target == AlignTarget::KeyObject && self.key_object.and_then(|p| self.doc.unit_of(p)) == Some(unit) {
+                continue;
+            }
             let paths = self.doc.node_paths(unit);
             if paths.iter().any(|p| !self.objsel.contains(p)) {
                 return Err("alignment requires complete units".into());
@@ -2635,9 +2680,8 @@ impl Editor {
         (txl, tyl)
     }
 
-    /// World spacing of the FINEST VISIBLE dot-grid level at the current zoom, so "Snap to Grid" lands
-    /// exactly on the dots the user sees (mirrors the renderer's adaptive base-5 grid, tess.rs build_bg —
-    /// TARGET 30px, MIN 9px). Zoom-dependent: zoom in → finer grid → snaps to the closer dots.
+    /// Adaptive ruler tick spacing. Document grid rendering and snapping use
+    /// `document_grid_step` instead.
     pub fn adaptive_grid_step(&self) -> f32 {
         let zoom = self.ppu.max(1e-4);
         let k0 = ((30.0_f32 / zoom).max(1e-6).ln() / 5f32.ln()).floor();
@@ -2825,7 +2869,7 @@ impl Editor {
         }
         // grid fallback (lowest priority) — snap the top-left edge to the VISIBLE adaptive dot grid
         if cfg.grid && (!sx_done || !sy_done) {
-            let step = self.adaptive_grid_step();
+            let step = self.document_grid_step();
             if !sx_done {
                 nd[0] += (mx0 / step).round() * step - mx0;
             }
@@ -2879,7 +2923,7 @@ impl Editor {
                     guides.push(SnapGuide::Line { a: [x, s0.min(w[1])], b: [x, s1.max(w[1])] });
                 }
             } else if cfg.grid {
-                let step = self.adaptive_grid_step();
+                let step = self.document_grid_step();
                 nx = (w[0] / step).round() * step;
             }
         }
@@ -2897,7 +2941,7 @@ impl Editor {
                     guides.push(SnapGuide::Line { a: [s0.min(w[0]), y], b: [s1.max(w[0]), y] });
                 }
             } else if cfg.grid {
-                let step = self.adaptive_grid_step();
+                let step = self.document_grid_step();
                 ny = (w[1] / step).round() * step;
             }
         }
@@ -2942,7 +2986,7 @@ impl Editor {
         };
         let mut nx = pick(p[0], &xs);
         let mut ny = pick(p[1], &ys);
-        let step = self.adaptive_grid_step(); // grid fallback → the origin lands on the dots the ruler follows
+        let step = self.document_grid_step(); // grid fallback → the origin lands on the dots the ruler follows
         if nx.is_none() {
             let g = (p[0] / step).round() * step;
             if (g - p[0]).abs() <= tol {
@@ -3054,7 +3098,7 @@ impl Editor {
         if let Some((_, c)) = best {
             return c;
         }
-        let s = self.adaptive_grid_step();
+        let s = self.document_grid_step();
         let g = (v / s).round() * s;
         if (g - v).abs() <= tol {
             return g;
@@ -3296,7 +3340,7 @@ impl Editor {
 
         // 3) grid fallback
         if cfg.grid {
-            let step = self.adaptive_grid_step();
+            let step = self.document_grid_step();
             if !sx {
                 nd[0] += (moved[0] / step).round() * step - moved[0];
             }
@@ -3342,6 +3386,11 @@ impl Editor {
         staged.dsel_path = self.dsel_path;
         staged.absel = self.absel.clone();
         staged.clipboard = self.clipboard.clone();
+        staged.reselect = self.reselect.clone();
+        staged.reselect_state = self.reselect_state.clone();
+        staged.key_object = self.key_object;
+        staged.distribute_gap = self.distribute_gap;
+        staged.paste_remembers_layers = self.paste_remembers_layers;
         staged.cur_fill = self.cur_fill;
         staged.cur_stroke = self.cur_stroke;
         staged.cur_sw = self.cur_sw;
@@ -3369,6 +3418,11 @@ impl Editor {
             self.prune_inert_selection();
             return;
         }
+        self.paste_remembers_layers = staged.paste_remembers_layers;
+        self.reselect = staged.reselect;
+        self.reselect_state = staged.reselect_state;
+        self.key_object = staged.key_object;
+        self.distribute_gap = staged.distribute_gap;
         self.objsel = staged.objsel;
         self.selected = staged.selected;
         self.group_sel = staged.group_sel;
@@ -3509,6 +3563,9 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        self.reselect.clear();
+        self.reselect_state = None;
+        self.key_object = None;
         self.doc = doc;
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
         self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
@@ -3890,6 +3947,16 @@ impl Editor {
         tools::get(self.gesture).down(self, pos);
     }
     pub fn pointer_up(&mut self) {
+        if let Drag::GroupClick { path, .. } = self.drag {
+            self.execute(crate::command::EditCommand::Selection(wave::Selection::Group(path)));
+        }
+        if let Drag::Lasso { points, objects, additive } = &self.drag {
+            self.execute(crate::command::EditCommand::Lasso {
+                points: points.clone(),
+                objects: *objects,
+                additive: *additive,
+            });
+        }
         self.snap_guides.clear();
         self.snap_hud = None; // snap feedback is per-gesture
         if self.tool == ToolKind::Artboard {
@@ -4113,6 +4180,27 @@ impl Editor {
                 }
                 self.drag = Drag::Shape { start, pid, kind };
                 self.dirty = true;
+            }
+            Drag::GroupClick { path, down, anchor } => {
+                self.drag = Drag::GroupClick { path, down, anchor };
+                if dist(down, pos) * self.ppu >= 4.0 {
+                    self.objsel.clear();
+                    self.group_sel.clear();
+                    if !self.mods.shift {
+                        self.selected.clear();
+                    }
+                    if let Some(id) = anchor {
+                        self.selected.insert(id);
+                    }
+                    self.drag = Drag::DupPending { srcs: vec![path], down, object: false };
+                    self.pointer_move(pos);
+                }
+            }
+            Drag::Lasso { mut points, objects, additive } => {
+                if points.last().is_none_or(|p| dist(*p, pos) * self.ppu >= 2.0) && points.len() < 4096 {
+                    points.push(pos);
+                }
+                self.drag = Drag::Lasso { points, objects, additive };
             }
             Drag::Marquee { start, base } => {
                 let (x0, y0) = (start[0].min(pos[0]), start[1].min(pos[1]));
@@ -4407,6 +4495,7 @@ impl Editor {
                 }
                 self.drag = Drag::ConvPull { aid, down };
             }
+            Drag::ViewZoom { start, .. } => self.drag = Drag::ViewZoom { start, current: pos },
             Drag::None => {}
         }
     }
@@ -4688,7 +4777,11 @@ impl Editor {
             return;
         }
         self.begin();
-        let new = self.clipboard.paste_into(&mut self.doc, offset.unwrap_or([0.0, 0.0]));
+        let new = self.clipboard.paste_into_remembering_layers(
+            &mut self.doc,
+            offset.unwrap_or([0.0, 0.0]),
+            self.paste_remembers_layers,
+        );
         self.objsel = new.into_iter().collect();
         self.group_sel = self.objsel.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
         self.selected.clear();
@@ -5460,3 +5553,9 @@ mod picker_tests {
         assert_eq!(ed.doc.paths[pi].fill.solid(), Some([0.5, 0.5, 0.5, 1.0]), "undo restores the pre-open fill");
     }
 }
+
+#[path = "command_wave.rs"]
+pub mod wave;
+
+#[path = "view_commands.rs"]
+pub mod view_commands;

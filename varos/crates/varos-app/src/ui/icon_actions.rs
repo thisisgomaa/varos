@@ -95,7 +95,13 @@ pub(super) const IA_PICKER_CLOSE: IconAction =
 
 /// Every panel icon action, for the tooltip/emission tests.
 #[cfg(test)]
-pub(super) const ICON_ACTIONS: [IconAction; 34] = [
+pub(super) const ICON_ACTIONS: [IconAction; 40] = [
+    IA_LAYER_NEW,
+    IA_AB_EARLIER,
+    IA_AB_LATER,
+    IA_AB_FIT_ART,
+    IA_AB_FIT_SELECTION,
+    IA_AB_CONVERT,
     IA_LAYER_GROUP,
     IA_LAYER_FILTER,
     IA_LAYER_DELETE,
@@ -180,3 +186,25 @@ pub(super) const IA_STROKE_PRESETS: IconAction =
 
 pub(super) const IA_LAYER_FILTER: IconAction =
     IconAction { key: "layer-filter", icon: Icon::ListFilter, label: "Filter layers by kind", hint: Hint::None };
+
+pub(super) const IA_LAYER_NEW: IconAction =
+    IconAction { key: "layer-new", icon: Icon::New, label: "New Layer (Option: New Sublayer)", hint: Hint::None };
+
+pub(super) const IA_AB_EARLIER: IconAction =
+    IconAction { key: "ab-earlier", icon: Icon::ChevronLeft, label: "Move artboard earlier", hint: Hint::None };
+pub(super) const IA_AB_LATER: IconAction =
+    IconAction { key: "ab-later", icon: Icon::ChevronRight, label: "Move artboard later", hint: Hint::None };
+pub(super) const IA_AB_FIT_ART: IconAction =
+    IconAction { key: "ab-fit-art", icon: Icon::Fit, label: "Fit artboard to artwork bounds", hint: Hint::None };
+pub(super) const IA_AB_FIT_SELECTION: IconAction = IconAction {
+    key: "ab-fit-selection",
+    icon: Icon::AlignSelection,
+    label: "Fit artboard to selected art",
+    hint: Hint::None,
+};
+pub(super) const IA_AB_CONVERT: IconAction = IconAction {
+    key: "ab-convert",
+    icon: Icon::ArtboardAdd,
+    label: "Convert selected art to artboards",
+    hint: Hint::None,
+};

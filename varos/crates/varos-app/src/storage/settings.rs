@@ -17,18 +17,24 @@ const SETTINGS_VERSION: u32 = 1;
 pub struct Settings {
     /// Autosave/recovery snapshots (§3.5/§3.6). On by default.
     pub recovery_enabled: bool,
+    #[serde(default)]
+    pub paste_remembers_layers: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { recovery_enabled: true }
+        Settings { recovery_enabled: true, paste_remembers_layers: false }
     }
 }
 
 impl Settings {
     /// Save atomically as `{"version":1,"recovery_enabled":…}`.
     pub fn save(&self, fs: &dyn FsPort, path: &Path) -> Result<WriteOutcome, WriteError> {
-        let doc = OnDisk { version: SETTINGS_VERSION, recovery_enabled: self.recovery_enabled };
+        let doc = OnDisk {
+            version: SETTINGS_VERSION,
+            recovery_enabled: self.recovery_enabled,
+            paste_remembers_layers: self.paste_remembers_layers,
+        };
         let bytes = serde_json::to_vec_pretty(&doc).expect("Settings always serializes");
         durable::write_replace(fs, path, &bytes, &new_nonce())
     }
@@ -38,6 +44,8 @@ impl Settings {
 struct OnDisk {
     version: u32,
     recovery_enabled: bool,
+    #[serde(default)]
+    paste_remembers_layers: bool,
 }
 
 #[derive(Deserialize)]
@@ -67,7 +75,10 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
         return (Settings::default(), Some(version_mismatch_warning(probe.version)));
     }
     match serde_json::from_slice::<OnDisk>(&bytes) {
-        Ok(doc) => (Settings { recovery_enabled: doc.recovery_enabled }, None),
+        Ok(doc) => (
+            Settings { recovery_enabled: doc.recovery_enabled, paste_remembers_layers: doc.paste_remembers_layers },
+            None,
+        ),
         Err(_) => corrupt(fs, path),
     }
 }
@@ -110,11 +121,21 @@ mod tests {
     fn settings_round_trip() {
         let d = TestDir::new("settings-roundtrip");
         let path = d.join("settings.json");
-        let s = Settings { recovery_enabled: false };
+        let s = Settings { recovery_enabled: false, paste_remembers_layers: true };
         s.save(&RealFs, &path).unwrap();
         let (loaded, warning) = load(&RealFs, &path);
         assert!(warning.is_none());
         assert_eq!(loaded, s);
+    }
+
+    #[test]
+    fn old_v1_settings_default_paste_remembers_layers_off() {
+        let d = TestDir::new("settings-old-paste");
+        let path = d.join("settings.json");
+        std::fs::write(&path, br#"{"version":1,"recovery_enabled":false}"#).unwrap();
+        let (s, warning) = load(&RealFs, &path);
+        assert!(warning.is_none());
+        assert!(!s.recovery_enabled && !s.paste_remembers_layers);
     }
 
     #[test]

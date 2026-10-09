@@ -989,7 +989,7 @@ impl Renderer {
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
-        let bg = build_bg(view, fw, fh);
+        let bg = build_bg(view, fw, fh, world.grid_step);
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
         let ov_start = fgv.len() as u32;
         fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh)); // editing chrome: constant screen size
@@ -1157,7 +1157,7 @@ impl Renderer {
         let tview = frame.texture.create_view(&Default::default());
         let prepared = scene.map(|(world, view)| {
             let (fw, fh) = (self.config.width as f32, self.config.height as f32);
-            let bg = build_bg(view, fw, fh);
+            let bg = build_bg(view, fw, fh, world.grid_step);
             let content_start = std::time::Instant::now();
             let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
             let content_elapsed = content_start.elapsed();

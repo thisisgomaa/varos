@@ -1,5 +1,42 @@
 use super::*;
 
+pub(crate) fn tools(ctx: &egui::Context) -> Vec<ToolBtn> {
+    let defs = [
+        (ToolKind::Object, LEGACY_SELECT, "Selection (V)", false),
+        (ToolKind::Direct, LEGACY_DIRECT, "Direct Selection (A); Option-click climbs groups", false),
+        (ToolKind::Artboard, LEGACY_ARTBOARD, "Artboard (Shift+O)", true),
+        (ToolKind::Pen, LEGACY_PEN, "Pen (P)", false),
+        (ToolKind::Rotate, LEGACY_ROTATE, "Rotate (R)", false),
+        (ToolKind::Scale, LEGACY_SCALE, "Scale (S)", true),
+        (ToolKind::Eyedropper, LEGACY_EYE, "Eyedropper (I)", false),
+    ];
+    let mut tools: Vec<_> = defs
+        .iter()
+        .enumerate()
+        .map(|(i, (kind, svg, tip, group_end))| ToolBtn {
+            kind: *kind,
+            tip,
+            tex: legacy_texture(ctx, &format!("ic-{i}"), svg, false),
+            group_end: *group_end,
+        })
+        .collect();
+    for (at, kind, icon, tip, group_end) in [
+        (2, ToolKind::Lasso, Icon::Lasso, "Lasso (Q); Shift adds; an object selection selects objects", false),
+        (5, ToolKind::Convert, Icon::PenTool, "Anchor Point (Shift+C)", false),
+        (6, ToolKind::AddAnchor, Icon::PenLine, "Add Anchor (+)", false),
+        (7, ToolKind::DeleteAnchor, Icon::PenOff, "Delete Anchor (-)", true),
+    ] {
+        tools.insert(at, ToolBtn { kind, tip, tex: icon.texture(ctx), group_end });
+    }
+    for (kind, icon, tip) in [
+        (ToolKind::Hand, Icon::Hand, "Hand (H)"),
+        (ToolKind::Zoom, Icon::ZoomIn, "Zoom (Z); Option-click zooms out; drag frames the area"),
+    ] {
+        tools.push(ToolBtn { kind, tex: icon.texture(ctx), tip, group_end: false });
+    }
+    tools
+}
+
 /// HAND 2 — the floating tool rail (§4.4), pinned INSIDE the board box: a normal box look (panel
 /// fill + hairline + rounded, NO shadow) floating over the canvas hole. Never a tile.
 pub(crate) fn board_rail(

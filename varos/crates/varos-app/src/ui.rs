@@ -35,6 +35,7 @@ use varos_app::shell::kit::icons::{
 };
 use varos_app::shell::kit::{self, Icon};
 mod fields;
+mod guide_field;
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 
@@ -211,26 +212,7 @@ impl Ui {
         install_fonts(&ctx);
         install_style(&ctx);
         disable_ui_keyboard_zoom(&ctx);
-        // rail singletons — Artboard sits with Selection + Direct Selection (Ahmed), then Pen, Eyedropper.
-        let defs: [(ToolKind, &str, &str, bool); 7] = [
-            (ToolKind::Object, LEGACY_SELECT, "Selection (V)", false),
-            (ToolKind::Direct, LEGACY_DIRECT, "Direct Selection (A)", false),
-            (ToolKind::Artboard, LEGACY_ARTBOARD, "Artboard (Shift+O)", true), // ends the selection group
-            (ToolKind::Pen, LEGACY_PEN, "Pen (P)", true),                      // ends the pen group
-            (ToolKind::Rotate, LEGACY_ROTATE, "Rotate (R)", false),            // transform group ↓
-            (ToolKind::Scale, LEGACY_SCALE, "Scale (S)", true),                // ends the transform group
-            (ToolKind::Eyedropper, LEGACY_EYE, "Eyedropper (I)", false),
-        ];
-        let tools = defs
-            .iter()
-            .enumerate()
-            .map(|(i, (kind, svg, tip, grp))| ToolBtn {
-                kind: *kind,
-                tip,
-                tex: legacy_texture(&ctx, &format!("ic-{i}"), svg, false),
-                group_end: *grp,
-            })
-            .collect();
+        let tools = rail::tools(&ctx);
         // shape tools collapse into ONE rail slot: left-click uses the current shape, right-click flyouts all four.
         let shape_defs: [(ToolKind, &str, &str); 4] = [
             (ToolKind::Rect, LEGACY_RECT, "Rectangle (M)"),
@@ -651,7 +633,7 @@ impl Ui {
                     }
                 }
             }
-            build_statusbar(root, absnap.active, absnap.count, view.zoom, ic_fit, &mut fit_request, status);
+            build_statusbar(root, (absnap.active, absnap.count), view.zoom, ic_fit, &mut fit_request, status, &mut ops);
             // ── Stage 4: the `.mid` region IS the box tree (BOX_SYSTEM_PLAN §4). The Board pane is
             // a HOLE showing the wgpu canvas below; the seam underlay paints the void around last
             // frame's hole (one-frame lag on resize, healed by the request_repaint below). ──
@@ -674,6 +656,7 @@ impl Ui {
                                 board_rulers(ui, inner, view, ppp, ruler_grid, ruler_origin, ruler_reset, &mut ops);
                                 inner = egui::Rect::from_min_max(inner.min + egui::vec2(RULER, RULER), inner.max);
                             }
+                            guide_field::show(ui, inner, view, ppp, ed, &mut ops);
                             if show_rail {
                                 board_rail(ui.ctx(), inner, tools, shapes, &mut shape_active, &snap, &mut ops);
                             }

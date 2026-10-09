@@ -80,7 +80,10 @@ fn only_export_pdf_advertises_api_12() {
     for tool in value["tools"].as_array().unwrap() {
         let api = &tool["inputSchema"]["properties"]["api"];
         if let Some(values) = api["enum"].as_array() {
-            assert_eq!(values.iter().any(|v| v == "1.2"), tool["name"] == "export_pdf");
+            assert_eq!(
+                values.iter().any(|v| v == "1.2"),
+                matches!(tool["name"].as_str(), Some("export_pdf" | "select" | "edit"))
+            );
         }
     }
 }
