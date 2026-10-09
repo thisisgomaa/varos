@@ -63,6 +63,10 @@ pub enum EditCommand {
     SetOpacity(f32),
     #[serde(rename = "SetStrokeWidth")]
     SetStrokeWidth(f32),
+    SetStrokeStyle {
+        ids: Vec<u32>,
+        style: crate::stroke::StrokeStyle,
+    },
     #[serde(rename = "SetClipExempt")]
     SetClipExempt(bool),
     #[serde(rename = "ApplyPaint")]
@@ -304,6 +308,23 @@ impl EditCommand {
             Self::SetObjectRotation(degrees) => ed.set_obj_rotation(degrees),
             Self::SetOpacity(opacity) => ed.set_opacity(opacity),
             Self::SetStrokeWidth(width) => set_stroke_width(ed, width),
+            Self::SetStrokeStyle { ids, style } => {
+                let command = Self::SetStrokeStyle { ids: ids.clone(), style: style.clone() };
+                if crate::bridge::check(&command, ed).is_err() {
+                    return;
+                }
+                if !ed.doc.paths.iter().any(|p| ids.contains(&p.id) && p.stroke_style != style) {
+                    return;
+                }
+                ed.begin();
+                for p in &mut ed.doc.paths {
+                    if ids.contains(&p.id) {
+                        p.stroke_style = style.clone();
+                    }
+                }
+                ed.dirty = true;
+                ed.commit();
+            }
             Self::SetClipExempt(exempt) => ed.set_clip_exempt(exempt),
             Self::ApplyPaint { target, color } => {
                 ed.set_paint_target(target);

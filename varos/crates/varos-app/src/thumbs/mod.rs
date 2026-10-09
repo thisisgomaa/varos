@@ -258,7 +258,7 @@ fn render_write(root: &Path, req: &Request) -> Result<PathBuf, String> {
 
 fn render_write_inner(root: &Path, req: &Request) -> Result<PathBuf, String> {
     fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    let raster = raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]);
+    let raster = raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]).into_result()?;
     let path = cache_path(root, &req.key);
     write_atomic(root, &path, &raster.encode_png()?)?;
     write_atomic(root, &mtime_path(root, &req.key), mtime_value(req.mtime).to_string().as_bytes())?;

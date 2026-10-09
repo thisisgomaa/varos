@@ -339,6 +339,9 @@ pub(crate) fn prepare_canvas_sample(m: &mut ColorPanel, ed: &Editor, view: View,
         [view.pan[0] - min[0], view.pan[1] - min[1]],
         view.zoom,
     );
+    let Ok(raster) = raster.into_result() else {
+        return;
+    };
     m.sampling = Some(CanvasSampling {
         key,
         raster,

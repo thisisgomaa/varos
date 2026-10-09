@@ -115,6 +115,7 @@ pub(crate) fn board_ctlbar(
                         bar_sep(ui);
                         ctl_chip(ui, s.fill, PaintTarget::Fill, s.fill_mixed, ops);
                         ctl_chip(ui, s.stroke, PaintTarget::Stroke, s.stroke_mixed, ops);
+                        stroke_mirror(ui, s, ic, ops);
                         fields::num(
                             ui,
                             74.0,
@@ -160,6 +161,7 @@ pub(crate) fn board_ctlbar(
                         bar_sep(ui);
                         ctl_chip(ui, s.fill, PaintTarget::Fill, s.fill_mixed, ops);
                         ctl_chip(ui, s.stroke, PaintTarget::Stroke, s.stroke_mixed, ops);
+                        stroke_mirror(ui, s, ic, ops);
                     } else {
                         // idle: the current tool + a quiet hint — the bar keeps its place. While the Pen is
                         // mid-draft the hint reflects the ACT, not the (still-empty) selection (P9).

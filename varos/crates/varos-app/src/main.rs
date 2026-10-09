@@ -1910,6 +1910,13 @@ fn main() {
                                 renderer.render_ui_cached(&jobs, &tdelta, &screen)
                             } else {
                                 let world = build_scene_in_view(ed, *view, [psz.width, psz.height]);
+                                if !world.errors.is_empty() {
+                                    lifecycle::Dialogs::notice(
+                                        &mut dialogs,
+                                        "Stroke cannot be drawn",
+                                        &world.errors.join("\n"),
+                                    );
+                                }
                                 renderer.render_ui(&world, *view, &jobs, &tdelta, &screen)
                             };
                             last_scene_signature = rendered.then_some(signature);

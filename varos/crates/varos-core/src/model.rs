@@ -2,6 +2,7 @@
 //! Stable u32 IDs (never Vec indices) so selection/active survive deletes & joins.
 
 use crate::geom::*;
+pub use crate::stroke::{ArrowAlign, ArrowHead, StrokeAlign, StrokeArrows, StrokeCap, StrokeJoin, StrokeStyle};
 use crate::units::DocUnits;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -216,6 +217,8 @@ pub struct Path {
     #[serde(default)]
     pub stroke: Paint,
     pub stroke_width: f32,
+    #[serde(default, skip_serializing_if = "StrokeStyle::is_default")]
+    pub stroke_style: StrokeStyle,
     /// extra hole contours (editable bezier anchors) — e.g. from boolean ops. A compound path: the
     /// outer `anchors` plus these inner rings, filled even-odd so holes cut through. Normally empty.
     pub holes: Vec<Vec<Anchor>>,
@@ -245,6 +248,7 @@ impl Path {
             fill: Paint::from_opt(fill),
             stroke: Paint::from_opt(stroke),
             stroke_width,
+            stroke_style: StrokeStyle::default(),
             holes: vec![],
             opacity: 1.0,
             hidden: false,
