@@ -294,6 +294,7 @@ impl Editor {
                 s.angle *= r;
                 s.shear *= r;
             }
+            crate::gradient_transform::map(&mut self.doc, pid, |p| s.map(p, o));
             let path = &mut self.doc.paths[pi];
             for a in path.anchors.iter_mut().chain(path.holes.iter_mut().flatten()) {
                 a.p = s.map(a.p, o);
@@ -319,8 +320,8 @@ impl Editor {
                 self.in_isolation(q.id)
                     && !self.doc.eff_hidden(q.id)
                     && !self.doc.eff_locked(q.id)
-                    && (!options.pick.fill || close(*p.appearance().fill(), *q.appearance().fill()))
-                    && (!options.pick.stroke || close(*p.appearance().stroke(), *q.appearance().stroke()))
+                    && (!options.pick.fill || close(p.appearance().fill().clone(), q.appearance().fill().clone()))
+                    && (!options.pick.stroke || close(p.appearance().stroke().clone(), q.appearance().stroke().clone()))
                     && (!options.pick.weight || (p.stroke_width - q.stroke_width).abs() <= options.weight)
                     && (!options.pick.opacity || (p.opacity - q.opacity).abs() <= options.opacity)
             })
@@ -340,11 +341,16 @@ impl Editor {
         self.refresh_obj_angle();
     }
     pub fn sample_options(&mut self, source: u32, pick: PickOptions, colour_only: bool) {
-        let Some(p) = self.doc.paths.iter().find(|p| p.id == source).cloned() else { return };
+        let Some(mut p) = self.doc.paths.iter().find(|p| p.id == source).cloned() else { return };
+        p.fill = p.appearance().fill().resolved(&self.doc);
+        p.stroke = p.appearance().stroke().resolved(&self.doc);
         let ids = self.selected_pids();
         if colour_only {
-            let colour = p.appearance().fill().solid().or(p.appearance().stroke().solid());
-            self.apply_paint(colour);
+            let paint = if p.fill.is_painted() { p.fill } else { p.stroke };
+            self.execute_ui(crate::EditCommand::Colour(crate::colour_commands::ColourCommand::Paint {
+                target: self.paint,
+                paint,
+            }));
             return;
         }
         if pick.fill {
@@ -358,8 +364,8 @@ impl Editor {
         }
         let changed = ids.iter().filter_map(|id| self.doc.pidx(*id)).any(|i| {
             let q = &self.doc.paths[i];
-            (pick.fill && *q.appearance().fill() != *p.appearance().fill())
-                || (pick.stroke && *q.appearance().stroke() != *p.appearance().stroke())
+            (pick.fill && q.appearance().fill().clone() != p.appearance().fill().clone())
+                || (pick.stroke && q.appearance().stroke().clone() != p.appearance().stroke().clone())
                 || (pick.weight && q.stroke_width != p.stroke_width)
                 || (pick.opacity && q.opacity != p.opacity)
         });
@@ -374,10 +380,10 @@ impl Editor {
             if let Some(i) = self.doc.pidx(id) {
                 let q = &mut self.doc.paths[i];
                 if pick.fill {
-                    q.fill = *p.appearance().fill();
+                    q.fill = p.appearance().fill().clone();
                 }
                 if pick.stroke {
-                    q.stroke = *p.appearance().stroke();
+                    q.stroke = p.appearance().stroke().clone();
                 }
                 if pick.weight {
                     q.stroke_width = p.stroke_width;

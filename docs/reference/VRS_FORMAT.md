@@ -505,3 +505,13 @@ The old `v5_future.vrs`/`future_v5_pdf.vrs` remain archived inputs to the frozen
 the current reader accepts their version then refuses their invalid model. The old-reader harness adds
 the base-7b48f2c v4 gate; plain v5 JSON/PDF and `doc:42` demonstrate refusal before typed decode.
 Native save retains editable centrelines/styles; export baking never overwrites authored paths.
+
+### Next-format gradient paints and document swatches (lane B)
+
+The writer in `feat/w2-gradients` emits `NEXT_GRADIENT_VERSION` (provisional 6 against the
+format-5 base; the moderator renumbers after the image lane). The normative keys, limits,
+identity migration, backward refusal, renderer/export behavior and new fixture locations are
+in [ADR-0008 next-gradients amendment](../adr/ADR-0008-amendment-next-gradients.md).
+`doc.swatches` is omitted when empty; null and solid array paints retain their original bytes.
+Tagged gradient/reference paints are refused under earlier version stamps before typed decoding.
+Frozen v4/v5 fixture files are unchanged. Whole container version stamps advance on Save.

@@ -1,4 +1,4 @@
-// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
+// ---- w2-gradients: Appearance routing and next-format paint integration ----
 //! The editor: transient interaction state + shared operations + the drag/undo engine.
 //! Tools (see `tools/`) define what a *press* does; the shared move/up engine handles the drag.
 
@@ -28,7 +28,7 @@ pub struct Mods {
     pub ctrl: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PaintTarget {
     #[serde(rename = "Fill")]
     Fill,
@@ -38,6 +38,7 @@ pub enum PaintTarget {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToolKind {
+    Gradient,
     Object,
     Direct,
     Pen,
@@ -423,6 +424,9 @@ struct SelectionState {
 
 #[derive(Clone)]
 pub struct Editor {
+    // Transient gradient gestures never enter the document.
+    pub gradient_tool: crate::tools::gradient::State,
+    pub colour_error: Option<String>,
     pub select_transform: crate::select_transform::State,
     pub last_error: Option<crate::guard::EngineError>,
     pub doc: Document,
@@ -505,6 +509,8 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            gradient_tool: Default::default(),
+            colour_error: None,
             select_transform: Default::default(),
             last_error: None,
             doc: Document::default(),
@@ -647,7 +653,8 @@ impl Editor {
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
             let p = &self.doc.paths[pi];
             if !self.doc.guide_paths.contains(&id) && !p.stroke_style.is_default() {
-                let in_fill = p.appearance().fill().solid().is_some() && self.doc.point_in_path(pi, lp);
+                let in_fill =
+                    p.appearance().fill().resolved_ref(&self.doc).is_painted() && self.doc.point_in_path(pi, lp);
                 let in_stroke = crate::stroke::evaluate(p, 0.25 / f64::from(self.ppu.max(0.0001)), &|| false)
                     .is_ok_and(|c| crate::stroke::evaluate::contains(&c.rings, lp, edge_r));
                 if (in_fill || in_stroke)
@@ -663,8 +670,9 @@ impl Editor {
                 continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
             }
             let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
-            let in_fill =
-                !guide && self.doc.paths[pi].appearance().fill().solid().is_some() && self.doc.point_in_path(pi, lp);
+            let in_fill = !guide
+                && self.doc.paths[pi].appearance().fill().resolved_ref(&self.doc).is_painted()
+                && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
             }
@@ -917,7 +925,7 @@ impl Editor {
                             .collect(),
                     )
                 });
-            let fill = p.appearance().fill().solid().is_some()
+            let fill = p.appearance().fill().resolved_ref(&self.doc).is_painted()
                 && touches(
                     std::iter::once(self.doc.world_outline_px(pi, self.ppu))
                         .chain(p.holes.iter().map(|h| self.doc.world_ring_px(h, pi, self.ppu)))
@@ -949,7 +957,7 @@ impl Editor {
         }
         // (b) centre-inside test in the path's LOCAL frame (map the rect centre back through the transform)
         let c = xf.inverse_apply([(x0 + x1) * 0.5, (y0 + y1) * 0.5]);
-        p.appearance().fill().solid().is_some() && self.doc.point_in_path(pi, c)
+        p.appearance().fill().resolved_ref(&self.doc).is_painted() && self.doc.point_in_path(pi, c)
     }
     /// Did a press land on a transform handle (scale) or a corner's rotate ring (just outside)?
     pub fn transform_hit(&self, pos: Pt) -> Option<TfHit> {
@@ -1018,6 +1026,8 @@ impl Editor {
         }
     }
     fn translate_path(&mut self, pi: usize, d: Pt) {
+        let pid = self.doc.paths[pi].id;
+        crate::gradient_transform::map(&mut self.doc, pid, |p| add(p, d));
         for a in &mut self.doc.paths[pi].anchors {
             a.p = add(a.p, d);
             a.hin = a.hin.map(|h| add(h, d));
@@ -1081,6 +1091,7 @@ impl Editor {
                     a.hin = a.hin.map(|h| xf.apply(h));
                     a.hout = a.hout.map(|h| xf.apply(h));
                 }
+                crate::gradient_transform::map(&mut self.doc, pid, |p| xf.apply(p));
                 for h in &mut self.doc.paths[pi].holes {
                     for a in h {
                         a.p = xf.apply(a.p);
@@ -1473,7 +1484,11 @@ impl Editor {
             return;
         }
         let bot = &self.doc.paths[sel[0]];
-        let (fill, stroke, sw) = (bot.appearance().fill().solid(), bot.appearance().stroke().solid(), bot.stroke_width); // result inherits bottom-most paint
+        let (fill, stroke, sw) = (
+            bot.appearance().fill().resolved(&self.doc),
+            bot.appearance().stroke().resolved(&self.doc),
+            bot.stroke_width,
+        ); // result inherits bottom-most paint
         let shapes: Vec<Vec<Vec<Seg>>> =
             sel.iter().map(|&pi| self.path_to_segs(pi)).filter(|s| !s.is_empty()).collect();
         if shapes.len() < 2 {
@@ -1501,7 +1516,12 @@ impl Editor {
                 }
             }
             let id = self.doc.nid();
-            self.doc.paths.push(Path { holes, ..Path::new(id, anchors, true, fill, stroke, sw) });
+            self.doc.paths.push(Path {
+                holes,
+                fill: fill.clone(),
+                stroke: stroke.clone(),
+                ..Path::new(id, anchors, true, None, None, sw)
+            });
             new_ids.push(id);
         }
         self.objsel = new_ids.into_iter().chain(ignored).collect();
@@ -1868,6 +1888,9 @@ impl Editor {
         let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
         let base = self.objsel_base();
         let tf = |p: Pt| if horizontal { [2.0 * cx - p[0], p[1]] } else { [p[0], 2.0 * cy - p[1]] };
+        for pid in self.objsel.iter().copied().collect::<Vec<_>>() {
+            crate::gradient_transform::map(&mut self.doc, pid, tf);
+        }
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -1932,6 +1955,9 @@ impl Editor {
         }
         let base = self.objsel_base();
         let tf = |p: Pt| [fx + (p[0] - fx) * sx + tx, fy + (p[1] - fy) * sy + ty];
+        for pid in self.objsel.iter().copied().collect::<Vec<_>>() {
+            crate::gradient_transform::map(&mut self.doc, pid, tf);
+        }
         for (aid, p0, hin0, hout0) in &base {
             if let Some(a) = self.doc.anchor_mut(*aid) {
                 a.p = tf(*p0);
@@ -2007,6 +2033,7 @@ impl Editor {
         if !no_scale {
             for pid in self.doc.node_paths(unit) {
                 if let Some(pi) = self.doc.pidx(pid) {
+                    crate::gradient_transform::map(&mut self.doc, pid, scale_local);
                     let apply = |a: &mut Anchor| {
                         a.p = scale_local(a.p);
                         a.hin = a.hin.map(scale_local);
@@ -2452,6 +2479,14 @@ impl Editor {
                         ab.y = by + d[1];
                     }
                 }
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    false,
+                    |p| add(p, d),
+                );
                 for (aid, p0, hin0, hout0) in &art {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
                         a.p = add(*p0, d);
@@ -3684,6 +3719,7 @@ impl Editor {
         self.pending.is_some()
     }
     fn clear_transient(&mut self) {
+        self.gradient_tool = Default::default();
         self.selected.clear();
         self.objsel.clear();
         self.group_sel.clear();
@@ -3698,6 +3734,7 @@ impl Editor {
     /// what still exists in the restored document (a selected path/anchor that the undo removed is dropped,
     /// never left dangling).
     fn clear_transient_keep_selection(&mut self) {
+        self.gradient_tool = Default::default();
         self.objsel.retain(|&p| self.doc.pidx(p).is_some());
         self.selected.retain(|&a| self.doc.anchor_address(a).is_some());
         self.absel.retain(|&i| i < self.doc.artboards.len());
@@ -3745,6 +3782,8 @@ impl Editor {
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
         self.stroke_error = None;
+        self.gradient_tool = Default::default();
+        self.colour_error = None;
         self.select_transform = Default::default();
         self.reselect.clear();
         self.reselect_state = None;
@@ -4100,6 +4139,7 @@ impl Editor {
         }
     }
     pub fn pointer_down(&mut self, pos: Pt) {
+        self.gradient_tool.geometry.clear();
         self.cursor = pos;
         self.begin();
         self.gesture_copy = false;
@@ -4109,6 +4149,9 @@ impl Editor {
         // a locked/hidden object is inert on canvas: drop it from the selection so grabbing the transform
         // frame can never move it (the hit-test already refuses to newly pick it). This is the REAL lock.
         self.prune_inert_selection();
+        if crate::tools::gradient::down(self, pos) {
+            return;
+        }
         if crate::tools::select_transform::down(self, pos) {
             return;
         }
@@ -4143,6 +4186,10 @@ impl Editor {
         }
     }
     pub fn pointer_up(&mut self) {
+        self.gradient_tool.geometry.clear();
+        if crate::tools::gradient::up(self) {
+            return;
+        }
         if crate::tools::select_transform::up(self) {
             return;
         }
@@ -4231,6 +4278,10 @@ impl Editor {
         }
     }
     pub fn pointer_move(&mut self, pos: Pt) {
+        if crate::tools::gradient::movement(self, pos) {
+            self.cursor = pos;
+            return;
+        }
         if crate::tools::select_transform::movement(self, pos) {
             self.cursor = pos;
             return;
@@ -4546,6 +4597,15 @@ impl Editor {
                 self.snap_guides = guides;
                 self.snap_hud = hud;
                 self.gesture_delta = d;
+                let pids = self.objsel.iter().copied().collect::<Vec<_>>();
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    false,
+                    |p| add(p, d),
+                );
                 // translate the LOCAL anchors by d …
                 for (aid, p0, hin0, hout0) in &base {
                     if let Some(a) = self.doc.anchor_mut(*aid) {
@@ -4602,6 +4662,15 @@ impl Editor {
                     let q2 = [pivot[0] + (q[0] - pivot[0]) * sx, pivot[1] + (q[1] - pivot[1]) * sy];
                     rotate_about(q2, [0.0, 0.0], angle)
                 };
+                let pids = self.objsel.iter().copied().collect::<Vec<_>>();
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    true,
+                    tf,
+                );
                 // A7: base is WORLD; write the scaled world point back THROUGH each unit's transform so a
                 // rotated object stays rotated (θ preserved) and the panel W/H tracks the true local dims.
                 for (aid, p0, hin0, hout0) in &base {
@@ -4688,6 +4757,15 @@ impl Editor {
                     sy = s;
                 }
                 let sc = |p: Pt| [pivot[0] + (p[0] - pivot[0]) * sx, pivot[1] + (p[1] - pivot[1]) * sy];
+                let pids = self.objsel.iter().copied().collect::<Vec<_>>();
+                crate::gradient_transform::live(
+                    &mut self.doc,
+                    self.pending.as_deref(),
+                    &mut self.gradient_tool.geometry,
+                    &pids,
+                    true,
+                    sc,
+                );
                 // A7: base is WORLD; write back through each unit's transform so θ is preserved.
                 for (aid, p0, hin0, hout0) in &base {
                     self.write_anchor_world(*aid, sc(*p0), hin0.map(sc), hout0.map(sc));
@@ -4717,6 +4795,9 @@ impl Editor {
 
     // ---------- tool/keys ----------
     pub fn set_tool(&mut self, t: ToolKind) {
+        if self.gradient_tool.drag.take().is_some() {
+            self.finish_document_setup();
+        }
         if t == ToolKind::Object {
             // promote anchor-selection to object-selection (Illustrator A→V), then drop anchor sel
             let pids: Vec<u32> = self.selected.iter().filter_map(|&aid| self.doc.pid_of_anchor(aid)).collect();
@@ -4769,6 +4850,10 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        if self.gradient_tool.drag.take().is_some() {
+            self.picker_cancel();
+        }
+        self.gradient_tool.geometry.clear();
         if self.select_transform.preview.is_some() {
             self.transform_end(true);
             self.select_transform.down = None;
@@ -5137,7 +5222,7 @@ impl Editor {
                     PaintTarget::Stroke => &mut self.doc.paths[pi].stroke,
                 };
                 if *current != paint {
-                    *current = paint;
+                    *current = paint.clone();
                     self.dirty = true;
                 }
             }
@@ -5651,12 +5736,12 @@ impl Editor {
     pub fn eyedrop(&mut self, pid: u32) {
         let (f, st, sw) = if let Some(pi) = self.doc.pidx(pid) {
             let p = &self.doc.paths[pi];
-            (p.appearance().fill().solid(), p.appearance().stroke().solid(), p.stroke_width)
+            (p.appearance().fill().resolved(&self.doc), p.appearance().stroke().resolved(&self.doc), p.stroke_width)
         } else {
             return;
         };
-        self.cur_fill = f;
-        self.cur_stroke = st;
+        self.cur_fill = f.solid();
+        self.cur_stroke = st.solid();
         self.cur_sw = sw;
         let pids = self.selected_pids();
         if pids.is_empty() {
@@ -5665,8 +5750,8 @@ impl Editor {
         self.begin();
         for q in pids {
             if let Some(pi) = self.doc.pidx(q) {
-                self.doc.paths[pi].fill = Paint::from_opt(f);
-                self.doc.paths[pi].stroke = Paint::from_opt(st);
+                self.doc.paths[pi].fill = f.clone();
+                self.doc.paths[pi].stroke = st.clone();
                 self.doc.paths[pi].stroke_width = sw;
             }
         }

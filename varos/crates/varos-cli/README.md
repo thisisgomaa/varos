@@ -143,3 +143,10 @@ Slice 4E/4D headless commands: `Pathfinder` takes `"divide"`, `"trim"`, `"merge"
 Use `SelectPaths` first in the existing `apply --batch` API 0.1 envelope. Attached `bridge edit`
 exposes corresponding snake-case verbs with explicit `ids` under API 1.2 only. Construction operations
 flatten curves; Scissors retains cubic handles. UI and fixed interactive eraser radius are provisional.
+
+Lane B, API 1.2: `apply` batches accept `Colour` (paint, swatches, reduce, recolor) after `SelectPaths`.
+Paint is null, an RGBA array, or `{"type":"gradient","value":...}` / `{"type":"swatch_ref","value":{"id":N}}`.
+Bridge's discoverable `colour` verb exposes the same command under `command` with explicit `ids`.
+`palette-import FILE PALETTE OUT.vrs` imports GPL/ASE/native JSON; `palette-export FILE OUT.gpl|ase|json`
+creates an exclusive destination. GPL/ASE refuse gradient/alpha loss; GPL also refuses global-linkage loss.
+Use native JSON for lossless palettes. Palette input is capped at 4 MiB; document table at 4096 entries.

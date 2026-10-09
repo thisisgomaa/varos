@@ -1,4 +1,5 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
+mod colour;
 mod document;
 use std::{
     ffi::OsString,
@@ -27,6 +28,8 @@ const VERBS: &[&str] = &[
     "clipboard-out",
     "save-as",
     "apply",
+    "palette-import",
+    "palette-export",
     "new",
     "diff",
 ];
@@ -222,6 +225,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("unknown subcommand {verb}; expected {}", VERBS.join(", ")).into());
     }
     match verb.as_str() {
+        "palette-import" | "palette-export" => colour::run(&verb, args).map_err(Into::into),
         "trace" => trace::run(args).map_err(Into::into),
         "import-svg" => {
             let a = parse(args, &["--out"], 1)?;

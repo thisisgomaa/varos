@@ -11,6 +11,7 @@
 //! mutated, and a refusal never touches the file on disk.
 
 pub mod error;
+mod gradient_keys;
 pub mod limits;
 pub mod migrate;
 mod stroke_keys;
@@ -19,7 +20,9 @@ pub mod validate;
 
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
-pub use migrate::{migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5};
+pub use migrate::{
+    migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_next_gradients,
+};
 pub use structure::check_structure;
 pub use validate::validate;
 
@@ -31,7 +34,9 @@ use std::path::Path;
 /// The format this build writes (the wrapper key `varos` and the PDF catalog's `/VAROS_SchemaVersion`).
 /// 3 (2026-10-04): board metadata — `doc.name`, `doc.description`, `doc.tags` (ADR-0008 amendment).
 /// 4 (2026-10-07): stable artboard ids — `doc.artboards[].id` (ADR-0008 amendment, Bridge slice 3).
-pub const FORMAT_VERSION: u32 = 5;
+// ---- w2-gradients: provisional next writer version; renumber at integration ----
+pub const NEXT_GRADIENT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = NEXT_GRADIENT_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -130,6 +135,9 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     }
     if version < ARTBOARD_ID_VERSION {
         refuse_newer_keys(json, version)?; // keys only, before any typed decode
+    }
+    if version < NEXT_GRADIENT_VERSION {
+        gradient_keys::refuse(json, version)?;
     }
     if version < 5 {
         stroke_keys::refuse(json, version)?;

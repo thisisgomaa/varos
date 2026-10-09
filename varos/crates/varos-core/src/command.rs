@@ -13,6 +13,8 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    // ---- w2-gradients ----
+    Colour(crate::colour_commands::ColourCommand),
     SetWandOptions(crate::select_transform::WandOptions),
     SetEyedropperOptions(crate::select_transform::PickOptions),
     Transform(crate::select_transform::Transform),
@@ -375,6 +377,8 @@ pub enum EditCommand {
 impl EditCommand {
     fn apply(self, ed: &mut Editor) {
         match self {
+            // Checked colour command dispatch.
+            Self::Colour(c) => crate::colour_commands::apply(ed, c),
             Self::SetWandOptions(options) => {
                 ed.select_transform.wand = options;
                 ed.select_transform.options_requested = true;

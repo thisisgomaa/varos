@@ -27,6 +27,8 @@ fn construction_tools(api: &str) -> Value {
             let mut extra = serde_json::Map::new();
             let mut ops = Vec::new();
             crate::select_transform::schemas(&mut extra, &mut ops);
+            // ---- w2-gradients ----
+            crate::colour::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -656,7 +658,13 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             }
             if name == "describe" {
                 if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
-                    fields.push(json!("stroke_style"));
+                    fields.extend([
+                        json!("stroke_style"),
+                        json!("swatches"),
+                        json!("palette_gpl"),
+                        json!("palette_ase"),
+                        json!("palette_native"),
+                    ]);
                 }
             }
             if name == "edit" {

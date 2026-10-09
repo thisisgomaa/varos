@@ -245,7 +245,11 @@ fn v4_reader_refuses_v5_before_decode() {
     for body in [raw.as_str(), pdf.as_str(), r#"{"varos":5,"doc":42}"#] {
         assert_eq!(
             v4_gate(body).unwrap_err(),
-            varos_core::format::LoadError::NewerVersion { found: 5, supported: 4 }.to_string()
+            varos_core::format::LoadError::NewerVersion {
+                found: serde_json::from_str::<serde_json::Value>(body).unwrap()["varos"].as_u64().unwrap() as u32,
+                supported: 4
+            }
+            .to_string()
         );
     }
     assert_eq!(

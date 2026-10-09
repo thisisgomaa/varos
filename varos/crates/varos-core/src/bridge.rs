@@ -44,7 +44,8 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
             if envelope.api != "1.2"
                 && matches!(
                     command,
-                    EditCommand::SetWandOptions(_)
+                    EditCommand::Colour(_)
+                        | EditCommand::SetWandOptions(_)
                         | EditCommand::SetEyedropperOptions(_)
                         | EditCommand::Transform(_)
                         | EditCommand::TransformBegin
@@ -67,6 +68,10 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
 /// Preconditions for the headless command path. Interactive callers retain `execute` unchanged.
 pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     use EditCommand::*;
+    // ---- w2-gradients ----
+    if let Colour(c) = command {
+        return crate::colour_commands::check(ed, c);
+    }
     if matches!(
         command,
         InsertTracedPaths { .. }
@@ -150,6 +155,7 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        Colour(c) => crate::colour_commands::check(ed, c),
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());

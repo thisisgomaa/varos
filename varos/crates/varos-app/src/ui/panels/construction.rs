@@ -37,6 +37,7 @@ pub(crate) fn construction_row(ui: &mut egui::Ui, pf: Result<(), &'static str>, 
 }
 pub(crate) fn construction_tools(ui: &mut egui::Ui, active: ToolKind, ops: &mut Vec<Op>) {
     for (tool, icon, label) in [
+        (ToolKind::Gradient, Icon::PickerGradient, "Gradient (G)"),
         (ToolKind::ShapeBuilder, Icon::PathMerge, "Shape Builder (Shift+M) — Alt-drag deletes"),
         (ToolKind::Scissors, Icon::PathScissors, "Scissors (C)"),
         (ToolKind::Knife, Icon::PathKnife, "Knife"),

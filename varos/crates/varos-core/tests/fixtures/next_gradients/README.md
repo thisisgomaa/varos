@@ -1,0 +1,1 @@
+Frozen next-format gradient fixtures. Version 6 is provisional; integrator renumbers in merge order. Do not regenerate for test failures. Solids in v4/v5 retain their original bytes; only the writer stamp migrates.

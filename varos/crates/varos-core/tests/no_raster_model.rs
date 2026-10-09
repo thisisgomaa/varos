@@ -6,6 +6,9 @@ fn walk(ty: &Type, defs: &HashMap<String, Vec<Type>>, seen: &mut HashSet<String>
     match ty {
         Type::Path(p) => {
             for seg in &p.path.segments {
+                if ["crate", "gradient", "swatches"].iter().any(|v| seg.ident == *v) {
+                    continue;
+                }
                 let name = seg.ident.to_string();
                 assert!(
                     !["u8", "i8", "Bytes", "ByteBuf", "Value"].contains(&name.as_str()),
@@ -50,6 +53,8 @@ fn serde_document_node_path_have_no_byte_blobs() {
         include_str!("../src/geom.rs"),
         include_str!("../src/units.rs"),
         include_str!("../src/stroke.rs"),
+        include_str!("../src/gradient.rs"),
+        include_str!("../src/swatches.rs"),
     ] {
         for item in syn::parse_file(source).unwrap().items {
             match item {

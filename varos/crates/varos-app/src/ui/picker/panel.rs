@@ -22,12 +22,22 @@ pub(crate) fn build_color_panel(
     m.mode = layout.mode;
     m.harmony = layout.harmony;
     let mut close = false;
-    let height = if m.tab == Tab::Sliders {
+    let height = if m.tab == Tab::Gradient {
+        t::GRADIENT_BODY_H + t::PICKER_HEADER_H
+    } else if m.tab == Tab::Sliders {
         t::PICKER_HEADER_H + sliders::body_height(m.mode) + t::PICKER_FIELD_ROW_H + t::PICKER_SWATCH_ROW_H
     } else {
         t::PICKER_H
     };
-    let height = height + if m.tab == Tab::Harmony { t::PICKER_HARMONY_STRIP_H + t::PICKER_HARMONY_ROW_H } else { 0.0 };
+    let height = height
+        + if m.tab == Tab::Harmony {
+            t::PICKER_HARMONY_STRIP_H
+                + t::PICKER_HARMONY_ROW_H
+                + t::COLOUR_GUIDE_ROW_H
+                    * harmony_rules::linked(m.harmony, [m.hsva[0], m.hsva[1], m.hsva[2]]).len() as f32
+        } else {
+            0.0
+        };
     let height = height + if layout.drawer_open { t::PICKER_DRAWER_H } else { 0.0 };
     let pos = layout
         .position
@@ -56,7 +66,7 @@ pub(crate) fn build_color_panel(
                     (Icon::PickerWheel, Some(Tab::Wheel), "Wheel"),
                     (Icon::PickerSliders, Some(Tab::Sliders), "Sliders"),
                     (Icon::PickerHarmony, Some(Tab::Harmony), "Harmony"),
-                    (Icon::PickerGradient, None, "Gradient — coming with the gradient engine"),
+                    (Icon::PickerGradient, Some(Tab::Gradient), "Gradient"),
                 ]
                 .into_iter()
                 .enumerate()
@@ -96,6 +106,9 @@ pub(crate) fn build_color_panel(
                     );
                     if response.on_hover_text(tip).clicked() {
                         if let Some(tab) = tab {
+                            if tab != m.tab {
+                                m.finish(ops);
+                            }
                             m.tab = tab;
                         }
                     }
@@ -153,11 +166,15 @@ pub(crate) fn build_color_panel(
                     wheel::show(ui, m, s, ops);
                 } else if m.tab == Tab::Sliders {
                     sliders::show(ui, m, s, layout, ops);
+                } else if m.tab == Tab::Gradient {
+                    gradient::show(ui, m, ops);
                 } else {
                     harmony::show(ui, m, s, layout, ops);
                 }
                 ui.add_space((t::PICKER_FIELD_ROW_H - t::FIELD_H) / 2.0);
-                fields::show(ui, m, ops, m.tab != Tab::Sliders);
+                if m.tab != Tab::Gradient {
+                    fields::show(ui, m, ops, m.tab != Tab::Sliders);
+                }
                 ui.add_space((t::PICKER_FIELD_ROW_H - t::FIELD_H) / 2.0);
                 drawer::show(ui, m, s, layout, ops);
             });

@@ -1,4 +1,4 @@
-// ---- Lane B: additive Appearance reader routing; persisted storage unchanged ----
+// ---- w2-gradients: Appearance routing and next-format paint integration ----
 //! Semantic checks on authored content. Structural checks run first; these checks never walk the
 //! tree recursively or repair it. Both load and save check authored values BEFORE normalization,
 //! so pruning a group or clearing a nested transform cannot hide an invalid number.
@@ -45,6 +45,7 @@ pub(crate) fn before_artboard_ids(doc: &Document) -> Result<(), Invalid> {
 /// Root paths/groups are permitted by move_is_legal(Before/After a root); do not require Layer roots.
 /// candidate_max is currently unused (no live-editor bound); do not invent a new file restriction.
 pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
+    crate::swatches::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;
     let index: HashMap<u32, _> = doc.nodes.iter().map(|n| (n.id, n)).collect();
     let mut leaves = HashSet::with_capacity(doc.paths.len());
     for n in &doc.nodes {

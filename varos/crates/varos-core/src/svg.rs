@@ -2,6 +2,7 @@
 //! No disk I/O. Coordinates remain world-space; viewBox equals artboard bounds. WholeBoard is
 //! the headless `--all` equivalent. Paint order/transforms/nearest clips mirror PDF; opacity
 //! follows scene::Group (isolation before knockout). SVG knockout uses a luminance mask.
+mod gradient;
 mod stroke;
 use crate::flatten::{control_bbox, Rect};
 use crate::format::{check_structure, validate::authored, Limits};
@@ -86,7 +87,7 @@ fn check_document(doc: &Document) -> Result<(), ExportError> {
             continue;
         }
         let b = control_bbox(doc, pi);
-        let pad = if p.appearance().stroke().solid().is_some() { crate::geom::painted_padding(p) } else { 0.0 };
+        let pad = if p.appearance().stroke().is_painted() { crate::geom::painted_padding(p) } else { 0.0 };
         let extent = [b.0 - pad, b.1 - pad, b.2 + pad, b.3 + pad];
         if extent.iter().any(|v| !v.is_finite())
             || !(extent[2] - extent[0]).is_finite()
@@ -165,15 +166,29 @@ pub fn export_svg_files_with_report(
     }
     let mut report = crate::ExportReport::default();
     let mut stroke_budget = crate::stroke::evaluate::StrokeBudget::default();
+    let paint_elements: usize = doc
+        .paths
+        .iter()
+        .flat_map(|p| [p.appearance().fill(), p.appearance().stroke()])
+        .map(|p| match p.resolved(doc) {
+            crate::model::Paint::Gradient(g) => g.stops.len().saturating_mul(34),
+            _ => 0,
+        })
+        .sum();
+    if paint_elements.saturating_mul(plan.pages.len()) > 1_000_000 {
+        return Err(ExportError::LimitExceeded);
+    }
     for p in &doc.paths {
-        if !p.stroke_style.is_default() {
+        if !p.stroke_style.is_default()
+            || matches!(p.appearance().stroke().resolved(doc), crate::model::Paint::Gradient(_))
+        {
             let coverage =
                 crate::stroke::evaluate(p, 0.01, &|| cancel.load(Ordering::Relaxed)).map_err(stroke_error)?;
             for _ in &plan.pages {
                 stroke_budget.charge(&coverage).map_err(stroke_error)?;
             }
             report.notes.extend(coverage.report.notes);
-            if !stroke::native(p) {
+            if !stroke::native(p) || matches!(p.appearance().stroke().resolved(doc), crate::model::Paint::Gradient(_)) {
                 report.notes.push(crate::ExportNote {
                     kind: "stroke_baked".into(),
                     object_id: Some(p.id),
@@ -227,10 +242,20 @@ fn drawable<'a>(doc: &Document, pi: usize, p: &'a Path) -> Option<Drawn<'a>> {
     if doc.eff_hidden(p.id) {
         return None;
     }
-    let fill = p.appearance().fill().solid().filter(|_| p.anchors.len() >= 3);
-    let stroke = p.appearance().stroke().solid().filter(|_| {
-        (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty())) && p.stroke_width > 0.0
-    });
+    let fill = p
+        .appearance()
+        .fill()
+        .resolved(doc)
+        .solid()
+        .or_else(|| p.fill.is_painted().then_some([1.; 4]))
+        .filter(|_| p.anchors.len() >= 3);
+    let stroke =
+        p.appearance().stroke().resolved(doc).solid().or_else(|| p.stroke.is_painted().then_some([1.; 4])).filter(
+            |_| {
+                (p.anchors.len() >= 2 || (!p.stroke_style.is_default() && !p.anchors.is_empty()))
+                    && p.stroke_width > 0.0
+            },
+        );
     if fill.is_none() && stroke.is_none() {
         return None;
     }
@@ -369,7 +394,11 @@ fn write_page(doc: &Document, page: &PageSpec, cancel: &AtomicBool) -> Result<St
                 }
             }
             open = ancestors;
-            if d.p.stroke_style.is_default() {
+            if matches!(d.p.appearance().fill().resolved_ref(doc), crate::model::Paint::Gradient(_))
+                || matches!(d.p.appearance().stroke().resolved_ref(doc), crate::model::Paint::Gradient(_))
+            {
+                gradient::paint(&mut out, d, doc)?;
+            } else if d.p.stroke_style.is_default() {
                 paint(&mut out, d);
             } else {
                 stroke::paint(&mut out, d)?;

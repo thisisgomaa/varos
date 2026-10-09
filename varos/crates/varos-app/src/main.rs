@@ -165,6 +165,7 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
     }
     let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
+        ToolKind::Gradient => CK::CrossRotate,
         ToolKind::Object if !idle => CK::Select, // marquee / guide drag
         ToolKind::Object => match ed.transform_hit(world) {
             Some(TfHit::Scale(i)) => resize_ck(i, ed.obj_angle),
@@ -264,6 +265,7 @@ fn rotate_ck(corner: u8, angle: f32) -> CK {
 /// The control bar's idle label for the current tool (`ui.rs`).
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
+        ToolKind::Gradient => "Gradient (G)",
         ToolKind::Pen => "Pen (P)",
         ToolKind::Direct => "Direct Select (A)",
         ToolKind::Object => "Select (V)",
@@ -394,6 +396,8 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
         "KeyS" => ed.set_tool(ToolKind::Scale),  // Scale tool (Illustrator S)
         "KeyE" if !shift => ed.set_tool(ToolKind::FreeTransform),
         "KeyY" if !shift => ed.set_tool(ToolKind::MagicWand),
+        // ---- w2-gradients ----
+        "KeyG" => ed.execute_ui(EditCommand::Colour(varos_core::colour_commands::ColourCommand::Tool)),
         "KeyI" => ed.set_tool(ToolKind::Eyedropper),
         "KeyO" => {
             if shift {
