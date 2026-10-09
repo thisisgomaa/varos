@@ -25,6 +25,7 @@
 //! All I/O goes through [`FsPort`] so tests inject failures at every step ([`FaultFs`]).
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -236,13 +237,16 @@ pub enum WriteError {
     Write(io::Error),
     Sync(io::Error),
     Replace(io::Error),
+    /// [`write_replace_cancellable`]: the flag was raised before the rename — the temp is removed and
+    /// the destination still holds its old bytes (or still does not exist).
+    Cancelled,
 }
 
 impl WriteError {
     /// The underlying OS error, if any.
     pub fn io_error(&self) -> Option<&io::Error> {
         match self {
-            WriteError::Folder | WriteError::ReadOnly => None,
+            WriteError::Folder | WriteError::ReadOnly | WriteError::Cancelled => None,
             WriteError::Create(e) | WriteError::Write(e) | WriteError::Sync(e) | WriteError::Replace(e) => Some(e),
         }
     }
@@ -252,6 +256,7 @@ impl WriteError {
         match self {
             WriteError::Folder => "The folder no longer exists.".to_string(),
             WriteError::ReadOnly => "The file is read-only.".to_string(),
+            WriteError::Cancelled => "The export was cancelled.".to_string(),
             WriteError::Create(e) | WriteError::Write(e) | WriteError::Sync(e) | WriteError::Replace(e) => io_reason(e),
         }
     }
@@ -321,6 +326,35 @@ pub const TEMP_NAME_MAX_BYTES: usize = 128;
 /// `nonce` makes the temp name unique — pass [`super::checksum::new_nonce`]; it must be a plain
 /// name fragment (no path separators).
 pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) -> Result<WriteOutcome, WriteError> {
+    write_replace_inner(fs, dest, bytes, nonce, None)
+}
+
+/// [`write_replace`] that can be called off (slice 0.6, the Export sheet's Cancel). `cancel` is checked
+/// before the temp is created, between [`WRITE_CHUNK`] slices of the bytes, after the sync and right
+/// before the rename; a raised flag removes the temp and returns [`WriteError::Cancelled`] with the
+/// destination untouched. The rename is the COMMIT boundary: once it has happened the write is done
+/// (a flag raised later changes nothing, and the caller reports the file as written).
+pub fn write_replace_cancellable(
+    fs: &dyn FsPort,
+    dest: &Path,
+    bytes: &[u8],
+    nonce: &str,
+    cancel: &AtomicBool,
+) -> Result<WriteOutcome, WriteError> {
+    write_replace_inner(fs, dest, bytes, nonce, Some(cancel))
+}
+
+/// How many bytes [`write_replace_cancellable`] writes between two looks at its flag.
+pub const WRITE_CHUNK: usize = 1 << 20;
+
+fn write_replace_inner(
+    fs: &dyn FsPort,
+    dest: &Path,
+    bytes: &[u8],
+    nonce: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<WriteOutcome, WriteError> {
+    let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     debug_assert!(!nonce.is_empty() && !nonce.contains(['/', '\\']), "nonce must be a plain name fragment");
     // 1. Resolve a symlink to its target (replace the target, keep the link).
     let dest = fs.resolve_link(dest).map_err(WriteError::Create)?;
@@ -344,6 +378,9 @@ pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) ->
 
     // 2–3. Unique temp in the same folder: copy permissions (before any byte lands, so a private
     // document is never readable through its temp), write, sync, close.
+    if cancelled() {
+        return Err(WriteError::Cancelled);
+    }
     let temp = temp_path(&dest, nonce);
     let mut w = fs.create_new(&temp).map_err(WriteError::Create)?;
     if let Some(p) = old_perms {
@@ -354,7 +391,17 @@ pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) ->
         let _ = fs.remove_file(&temp);
         Err(err)
     };
-    if let Err(e) = w.write_all(bytes).and_then(|_| w.flush()) {
+    // one `write_all` when nothing can call it off (the plain writer's behaviour, unchanged)
+    let chunk = if cancel.is_some() { WRITE_CHUNK } else { bytes.len().max(1) };
+    for part in bytes.chunks(chunk) {
+        if cancelled() {
+            return fail(w, WriteError::Cancelled);
+        }
+        if let Err(e) = w.write_all(part) {
+            return fail(w, WriteError::Write(e));
+        }
+    }
+    if let Err(e) = w.flush() {
         return fail(w, WriteError::Write(e));
     }
     if let Err(e) = w.sync_all() {
@@ -362,7 +409,11 @@ pub fn write_replace(fs: &dyn FsPort, dest: &Path, bytes: &[u8], nonce: &str) ->
     }
     drop(w);
 
-    // 4. Atomic replace.
+    // 4. Atomic replace — the commit boundary: a cancel seen here still leaves the old file.
+    if cancelled() {
+        let _ = fs.remove_file(&temp);
+        return Err(WriteError::Cancelled);
+    }
     if let Err(e) = fs.rename(&temp, &dest) {
         let _ = fs.remove_file(&temp);
         return Err(WriteError::Replace(e));
@@ -936,5 +987,108 @@ mod tests {
         assert_ne!(fingerprint(&RealFs, &dest), Some(fp));
         assert_eq!(fingerprint(&RealFs, &d.join("missing.vrs")), None);
         assert_eq!(fingerprint(&RealFs, d.path()), None, "a folder has no fingerprint");
+    }
+
+    /// A real disk whose Cancel arrives at one moment of the write: while the bytes are being
+    /// written (`on_write`) or while the temp is renamed into place (`on_rename`).
+    struct CancelDuring {
+        flag: std::sync::Arc<AtomicBool>,
+        on_write: bool,
+        on_rename: bool,
+    }
+    struct RaisingWriter(std::fs::File, std::sync::Arc<AtomicBool>);
+    impl Write for RaisingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.1.store(true, Ordering::Relaxed); // Cancel pressed mid-write
+            self.0.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.0.flush()
+        }
+    }
+    impl SyncWrite for RaisingWriter {
+        fn sync_all(&mut self) -> io::Result<()> {
+            full_sync(&self.0)
+        }
+    }
+    impl FsPort for CancelDuring {
+        fn create_new(&self, path: &Path) -> io::Result<Box<dyn SyncWrite>> {
+            let f = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+            if self.on_write {
+                return Ok(Box::new(RaisingWriter(f, self.flag.clone())));
+            }
+            Ok(Box::new(f))
+        }
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            let r = RealFs.rename(from, to);
+            if self.on_rename {
+                self.flag.store(true, Ordering::Relaxed); // Cancel lands just after the commit
+            }
+            r
+        }
+        fn sync_dir(&self, dir: &Path) -> io::Result<()> {
+            RealFs.sync_dir(dir)
+        }
+        fn remove_file(&self, path: &Path) -> io::Result<()> {
+            RealFs.remove_file(path)
+        }
+        fn remove_dir(&self, path: &Path) -> io::Result<()> {
+            RealFs.remove_dir(path)
+        }
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            RealFs.read(path)
+        }
+        fn metadata(&self, path: &Path) -> io::Result<FileMeta> {
+            RealFs.metadata(path)
+        }
+        fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+            RealFs.create_dir_all(path)
+        }
+        fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+            RealFs.read_dir(path)
+        }
+        fn set_permissions(&self, path: &Path, perms: std::fs::Permissions) -> io::Result<()> {
+            RealFs.set_permissions(path, perms)
+        }
+        fn resolve_link(&self, path: &Path) -> io::Result<PathBuf> {
+            RealFs.resolve_link(path)
+        }
+    }
+
+    /// Slice 0.6 (review R1): a Cancel during the write leaves no destination and no temp (a new
+    /// export) or the old bytes (a replace); the rename is the commit boundary — a Cancel after it
+    /// changes nothing, the file is written.
+    #[test]
+    fn a_cancel_before_the_rename_writes_nothing_and_after_it_is_too_late() {
+        let d = TestDir::new("dur-cancel");
+        let fresh = d.join("Export.pdf");
+        let big = vec![7u8; WRITE_CHUNK * 2 + 5]; // several chunks: the flag is seen between them
+        let fs = CancelDuring { flag: Default::default(), on_write: true, on_rename: false };
+        let err = write_replace_cancellable(&fs, &fresh, &big, &new_nonce(), &fs.flag).unwrap_err();
+        assert!(matches!(err, WriteError::Cancelled), "{err:?}");
+        assert_eq!(err.reason(), "The export was cancelled.");
+        assert!(!fresh.exists(), "no destination file");
+        assert!(temps(&d).is_empty(), "no temp file left");
+        // replacing an existing file: the old bytes survive the cancel
+        let (d2, dest) = setup("dur-cancel-old");
+        let fs = CancelDuring { flag: Default::default(), on_write: true, on_rename: false };
+        assert!(matches!(
+            write_replace_cancellable(&fs, &dest, NEW, &new_nonce(), &fs.flag),
+            Err(WriteError::Cancelled)
+        ));
+        assert_eq!(std::fs::read(&dest).unwrap(), OLD);
+        assert!(temps(&d2).is_empty());
+        // a single small write: the flag is still seen right before the rename
+        let fs = CancelDuring { flag: Default::default(), on_write: true, on_rename: false };
+        assert!(matches!(
+            write_replace_cancellable(&fs, &fresh, b"x", &new_nonce(), &fs.flag),
+            Err(WriteError::Cancelled)
+        ));
+        assert!(!fresh.exists() && temps(&d).is_empty());
+        // Cancel just after the rename: committed — the file is there and the write reports success
+        let fs = CancelDuring { flag: Default::default(), on_write: false, on_rename: true };
+        assert!(write_replace_cancellable(&fs, &fresh, &big, &new_nonce(), &fs.flag).is_ok());
+        assert_eq!(std::fs::read(&fresh).unwrap().len(), big.len());
+        assert!(temps(&d).is_empty());
     }
 }
