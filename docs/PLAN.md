@@ -166,6 +166,7 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | picker v3 (pre-plan) | done, owner-approved | `214e998` | Wheel/Sliders/Harmony/Mini |
 | 0.1 S0 render fixes | merged + installed, owner hand test pending | `5d422d5` | Exclude engine defect found by 0.3 and fixed in the same branch |
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
+| Night-shift group 1 (0.2, 0.9, 0.8, 0.7, 0.4, 0.5, 1.1, 1.5, 1.6, 1.7, 1.2, 1.3, 1.9, 1.10) | merged + installed `6d03c90`, provisional UI, owner review pending | `6d03c90` | GATE_LOG 2026-10-09 night shift |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
 | 0.2 Crash safety | implemented, pending review | uncommitted | Typed command panic rollback; Bridge staged rollback; runtime GPU health; core/Bridge no-panic ratchets 37/106; docs/CRASH_SAFETY.md |
