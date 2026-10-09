@@ -127,7 +127,7 @@ fn document_info_matches_legacy_counts() {
 fn schemas_are_opt_in() {
     assert_eq!(
         varos_bridge::mcp::tools_12()["tools"].as_array().unwrap().len(),
-        varos_bridge::mcp::tools()["tools"].as_array().unwrap().len() + 11
+        varos_bridge::mcp::tools()["tools"].as_array().unwrap().len() + 12
     );
     let schema = varos_bridge::mcp::tools_12();
     let tools = schema["tools"].as_array().unwrap();

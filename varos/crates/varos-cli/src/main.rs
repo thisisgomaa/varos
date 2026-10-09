@@ -18,6 +18,8 @@ use varos_core::{
 // The only CLI verb table. No desktop binary names or UI routing are changed.
 mod trace;
 const VERBS: &[&str] = &[
+    "new-document",
+    "export-screens",
     "trace",
     "import-svg",
     "describe",

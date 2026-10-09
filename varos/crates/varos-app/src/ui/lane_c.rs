@@ -17,7 +17,10 @@ use varos_core::{
     EditCommand, Editor, ToolKind, View,
 };
 fn button(ui: &mut egui::Ui, key: impl std::hash::Hash + std::fmt::Debug, label: &str) -> bool {
-    kit::action(ui, Control::new(Id::new(key), label), false).activated
+    let r = kit::action(ui, Control::new(Id::new(key), label), false);
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(Id::new(("lane-c-test-button", label)), r.response.rect));
+    r.activated
 }
 fn number(
     ui: &mut egui::Ui,
@@ -90,7 +93,7 @@ pub(super) fn sheets(
                     number(ui, "new-width", "Width", &mut s.width, 0.01..=1e6);
                     number(ui, "new-height", "Height", &mut s.height, 0.01..=1e6);
                     if button(ui, "new-unit", s.units.label()) {
-                        s.units = s.units.cycle();
+                        s.set_units(s.units.cycle());
                     }
                     let mut count = s.count as f32;
                     number(ui, "new-count", "Artboards", &mut count, 1.0..=100.0);
@@ -191,12 +194,22 @@ pub(super) fn sheets(
         });
     }
 }
-pub(super) fn corners(ctx: &egui::Context, ed: &mut Editor, view: &View, ppp: f32, hole: egui::Rect) {
+pub(super) fn corners(
+    ctx: &egui::Context,
+    ed: &mut Editor,
+    view: &View,
+    ppp: f32,
+    hole: egui::Rect,
+    sid: Option<SessionId>,
+) {
     if ed.tool != ToolKind::Direct {
         return;
     }
     let ids: Vec<_> = ed.selected_pids().into_iter().collect();
     for pid in ids {
+        if ed.doc.eff_locked(pid) || ed.doc.eff_hidden(pid) || !ed.in_isolation(pid) {
+            continue;
+        }
         let Some(pi) = ed.doc.pidx(pid) else { continue };
         let path = ed.doc.paths[pi].clone();
         let xf = ed.doc.unit_xform(pid);
@@ -212,7 +225,7 @@ pub(super) fn corners(ctx: &egui::Context, ed: &mut Editor, view: &View, ppp: f3
             if !hole.contains(pos) {
                 continue;
             }
-            let id = Id::new(("corner-widget", pid, corner.index));
+            let id = Id::new(("corner-widget", sid, pid, corner.index));
             let response = egui::Area::new(id)
                 .order(egui::Order::Foreground)
                 .fixed_pos(pos - egui::vec2(t::LIVE_CORNER_RADIUS, t::LIVE_CORNER_RADIUS))
@@ -229,6 +242,8 @@ pub(super) fn corners(ctx: &egui::Context, ed: &mut Editor, view: &View, ppp: f3
                     r
                 })
                 .inner;
+            #[cfg(test)]
+            ctx.data_mut(|d| d.insert_temp(Id::new(("lane-c-test-corner", corner.index)), response.rect));
             if response.drag_started() {
                 ed.begin();
                 ctx.data_mut(|d| d.insert_temp(id.with("initial"), param.radius));
@@ -248,12 +263,16 @@ pub(super) fn corners(ctx: &egui::Context, ed: &mut Editor, view: &View, ppp: f3
                 ed.finish_document_setup();
             }
             if response.clicked() {
-                ctx.data_mut(|d| d.insert_temp(Id::new("corner-field"), (pid, corner.index)));
+                ctx.data_mut(|d| d.insert_temp(Id::new(("corner-field", sid)), (pid, corner.index)));
             }
         }
     }
-    let id = Id::new("corner-field");
+    let id = Id::new(("corner-field", sid));
     if let Some((pid, index)) = ctx.data(|d| d.get_temp::<(u32, usize)>(id)) {
+        if !ed.selected_pids().contains(&pid) || ed.doc.eff_locked(pid) || ed.doc.eff_hidden(pid) {
+            ctx.data_mut(|d| d.remove::<(u32, usize)>(id));
+            return;
+        }
         let Some(pi) = ed.doc.pidx(pid) else { return };
         let path = ed.doc.paths[pi].clone();
         if index >= path.anchors.len() {
@@ -310,5 +329,90 @@ pub(super) fn scale_strokes(ui: &mut egui::Ui, on: bool, ops: &mut Vec<Op>) {
     c.icon = Some(kit::Icon::Link);
     if kit::action(ui, c, true).activated {
         ops.push(Op::DocumentSetup(EditCommand::SetScaleStrokes(!on)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn context() -> egui::Context {
+        let ctx = egui::Context::default();
+        varos_app::shell::fonts::install(&ctx);
+        t::apply(&ctx);
+        ctx
+    }
+    fn input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 900.))),
+            events,
+            ..Default::default()
+        }
+    }
+    fn pointer(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+    #[test]
+    fn new_sheet_create_emits_settings_document_and_keeps_quick_presets() {
+        let ctx = context();
+        ctx.data_mut(|d| d.insert_temp(Id::new("lane-c-new"), Settings { count: 3, bleed: 3., ..Default::default() }));
+        let mut commands = vec![];
+        for _ in 0..2 {
+            let _ = ctx.run_ui(input(vec![]), |ui| sheets(ui.ctx(), &mut commands, &mut vec![], None));
+        }
+        let pos = ctx.data(|d| d.get_temp::<egui::Rect>(Id::new(("lane-c-test-button", "Create")))).unwrap().center();
+        for pressed in [true, false] {
+            let _ = ctx.run_ui(input(vec![egui::Event::PointerMoved(pos), pointer(pos, pressed)]), |ui| {
+                sheets(ui.ctx(), &mut commands, &mut vec![], None)
+            });
+        }
+        let AppCommand::CreateDocument(s) = commands.remove(0) else { panic!("Create command missing") };
+        assert_eq!(s.document().unwrap().artboards.len(), 3);
+        assert!(s.document().unwrap().artboards[0].bleed > 0.);
+        assert!(ctx.data(|d| d.get_temp::<Settings>(Id::new("lane-c-new"))).is_none());
+        assert!(ctx
+            .data(|d| d.get_temp::<egui::Rect>(Id::new(("lane-c-test-button", varos_core::board::PRESETS[0].label))))
+            .is_some());
+    }
+    #[test]
+    fn corner_widget_drag_commits_one_undo_and_keeps_authored_anchors() {
+        let ctx = context();
+        let mut ed = Editor::new();
+        let pid = ed
+            .try_execute_created(EditCommand::AddShape {
+                kind: varos_core::model::ShapeKind::Rect,
+                bounds: [100., 100., 100., 80.],
+                parent: None,
+                fill: Some([1.; 4]),
+                stroke: None,
+                stroke_width: 0.,
+                opacity: 1.,
+                name: None,
+            })
+            .unwrap();
+        ed.set_tool(ToolKind::Direct);
+        ed.dsel_path = Some(pid);
+        let original = ed.doc.clone();
+        let view = View { pan: [0., 0.], zoom: 1. };
+        let hole = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 900.));
+        for _ in 0..2 {
+            let _ = ctx.run_ui(input(vec![]), |ui| corners(ui.ctx(), &mut ed, &view, 1., hole, Some(SessionId(1))));
+        }
+        let pos = ctx.data(|d| d.get_temp::<egui::Rect>(Id::new(("lane-c-test-corner", 0usize)))).unwrap().center();
+        for events in [
+            vec![egui::Event::PointerMoved(pos), pointer(pos, true)],
+            vec![egui::Event::PointerMoved(pos + egui::vec2(12., 12.))],
+            vec![pointer(pos + egui::vec2(12., 12.), false)],
+        ] {
+            let _ = ctx.run_ui(input(events), |ui| corners(ui.ctx(), &mut ed, &view, 1., hole, Some(SessionId(1))));
+        }
+        assert!(ed.doc.paths[0].corners[0].radius > 0.);
+        assert_eq!(ed.doc.paths[0].anchors, original.paths[0].anchors);
+        ed.execute(EditCommand::Undo).unwrap();
+        assert_eq!(ed.doc, original);
     }
 }

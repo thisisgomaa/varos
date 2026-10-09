@@ -198,10 +198,123 @@ fn allocation_and_invalid_edits_are_refused() {
 fn frozen_next_fixture_and_refusals() {
     let limits = Limits::DEFAULT;
     format::decode_model(include_bytes!("fixtures/lane_c/next_corners.json"), None, &limits).unwrap();
+    let live = format::decode_model(include_bytes!("fixtures/lane_c/next_live_round.json"), None, &limits).unwrap();
+    assert_eq!(live.doc.paths[0].corners[1].radius, 10.);
+    assert_ne!(varos_core::live_corners::evaluated(&live.doc.paths[0]).anchors, live.doc.paths[0].anchors);
     for b in [
         include_bytes!("fixtures/lane_c/refused_corners_on_v5.json").as_slice(),
         include_bytes!("fixtures/lane_c/refused_negative_radius.json").as_slice(),
     ] {
         assert!(format::decode_model(b, None, &limits).is_err());
     }
+}
+
+#[test]
+fn expand_rotated_group_keeps_every_fill_and_stroke_in_world_space() {
+    let mut e = ed();
+    let mut second = rect();
+    second.id = 20;
+    for a in &mut second.anchors {
+        a.id += 20;
+        a.p[0] += 140.;
+    }
+    e.doc.paths.push(second);
+    e.doc.ids = 30;
+    e.doc.sync_tree();
+    e.objsel.insert(20);
+    e.try_execute(EditCommand::GroupSelection).unwrap();
+    let unit = e.doc.unit_of(1).unwrap();
+    let xf = varos_core::model::Xform { rot: 0.7, ..Default::default() };
+    e.doc.set_node_xform(unit, xf);
+    let before = e.doc.clone();
+    let expected: Vec<_> = before
+        .paths
+        .iter()
+        .map(|p| path_advanced::outline(p).unwrap().anchors.iter().map(|a| xf.apply(a.p)).collect::<Vec<_>>())
+        .collect();
+    e.try_execute(EditCommand::PathAdvanced(Action::Expand)).unwrap();
+    assert_eq!(e.doc.paths.len(), 4);
+    assert!(e.doc.node_xform(unit).is_identity());
+    let strokes: Vec<_> = e.doc.paths.iter().filter(|p| p.fill == before.paths[0].stroke).collect();
+    for (stroke, expected) in strokes.iter().zip(expected) {
+        assert_eq!(stroke.anchors.iter().map(|a| a.p).collect::<Vec<_>>(), expected);
+    }
+    for p in &before.paths {
+        let fill = &e.doc.paths[e.doc.pidx(p.id).unwrap()];
+        assert_eq!(
+            fill.anchors.iter().map(|a| a.p).collect::<Vec<_>>(),
+            p.anchors.iter().map(|a| xf.apply(a.p)).collect::<Vec<_>>()
+        );
+    }
+    format::encode_model(&e.doc, &Limits::DEFAULT).unwrap();
+    e.execute(EditCommand::Undo).unwrap();
+    assert_eq!(e.doc, before);
+}
+
+#[test]
+fn offset_compound_hole_grows_and_shrinks_with_region() {
+    let mut p = rect();
+    p.holes = vec![[[30., 30.], [70., 30.], [70., 50.], [30., 50.]]
+        .into_iter()
+        .map(|p| Anchor { id: 0, p, hin: None, hout: None, smooth: false })
+        .collect()];
+    let inset = path_advanced::offset(&p, -5., StrokeJoin::Miter, 10.).unwrap();
+    let grow = path_advanced::offset(&p, 5., StrokeJoin::Miter, 10.).unwrap();
+    assert_eq!(bounds(&inset), [5., 5., 95., 75.]);
+    assert_eq!(bounds(&grow), [-5., -5., 105., 85.]);
+    assert_eq!(inset.holes.len(), 1);
+    assert_eq!(grow.holes.len(), 1);
+    let hole_bounds = |p: &Path| {
+        let mut h = p.clone();
+        h.anchors = h.holes.remove(0);
+        h.holes.clear();
+        bounds(&h)
+    };
+    assert_eq!(hole_bounds(&inset), [25., 25., 75., 55.]);
+    assert_eq!(hole_bounds(&grow), [35., 35., 65., 45.]);
+}
+
+#[test]
+fn expand_stroke_stays_adjacent_to_fill_and_inherits_clip_exemption() {
+    let mut e = ed();
+    let leaf = e.doc.node_of_path(1).unwrap();
+    e.doc.set_node_clip_exempt(leaf, true);
+    let mut second = rect();
+    second.id = 20;
+    for a in &mut second.anchors {
+        a.id += 20;
+    }
+    e.doc.paths.push(second);
+    e.doc.ids = 30;
+    e.doc.sync_tree();
+    e.try_execute(EditCommand::PathAdvanced(Action::Expand)).unwrap();
+    let layer = e.doc.node(e.doc.active_layer).unwrap();
+    let fill_index = layer.children.iter().position(|n| *n == leaf).unwrap();
+    let stroke_leaf = layer.children[fill_index - 1];
+    assert!(e.doc.node_clip_exempt(stroke_leaf));
+    assert_eq!(layer.children[fill_index - 2], e.doc.node_of_path(20).unwrap());
+}
+
+#[test]
+fn new_document_unit_change_preserves_size_spacing_and_bleed() {
+    let mut s = varos_core::new_document::Settings { count: 3, bleed: 3., ..Default::default() };
+    let before = s.document().unwrap();
+    s.set_units(varos_core::units::Unit::In);
+    let after = s.document().unwrap();
+    for (a, b) in before.artboards.iter().zip(&after.artboards) {
+        for (a, b) in [a.w, a.h, a.x, a.y, a.bleed].into_iter().zip([b.w, b.h, b.x, b.y, b.bleed]) {
+            assert!((a - b).abs() < 0.001);
+        }
+    }
+}
+#[test]
+fn outline_without_stroke_preserves_fill_and_history() {
+    let mut e = ed();
+    e.doc.paths[0].stroke = varos_core::model::Paint::None;
+    e.doc.paths[0].stroke_width = 0.;
+    let before = e.doc.clone();
+    let rev = e.rev;
+    e.try_execute(EditCommand::PathAdvanced(Action::Outline)).unwrap();
+    assert_eq!(e.doc, before);
+    assert_eq!(e.rev, rev);
 }

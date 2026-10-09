@@ -323,8 +323,8 @@ mod polish_pass_tests {
                 .height()
                 - PANEL_VERTICAL_MARGIN;
         });
-        const PROPERTIES_BEFORE: f32 = 368.0;
-        const PROPERTIES_AFTER: f32 = 357.0;
+        const PROPERTIES_BEFORE: f32 = 405.0; // includes the provisional scale-strokes row
+        const PROPERTIES_AFTER: f32 = 394.0;
         const PATHFINDER_BEFORE: f32 = 69.0;
         const PATHFINDER_AFTER: f32 = 105.0; // 4E provisional kit action rows
         assert_eq!((properties_before, properties_after), (PROPERTIES_BEFORE, PROPERTIES_AFTER));

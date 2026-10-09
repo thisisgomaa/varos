@@ -17,7 +17,7 @@ fn button(ui: &mut egui::Ui, key: impl std::hash::Hash + std::fmt::Debug, label:
     kit::action(ui, Control::new(Id::new(key), label), false).activated
 }
 fn toggle(ui: &mut egui::Ui, label: &str, value: &mut bool) -> bool {
-    let mut c = Control::new(Id::new(("advanced", label)), label);
+    let mut c = Control::new(ui.make_persistent_id(("advanced", label)), label);
     c.selected = *value;
     if kit::action(ui, c, false).activated {
         *value = !*value;
@@ -116,41 +116,7 @@ pub(super) fn draw(ui: &mut egui::Ui, sheet: &mut ExportSheet, running: bool) {
             }
         });
         if row.format == "svg" {
-            let mut expanded = ui.ctx().data(|d| d.get_temp::<bool>(Id::new(("svg-options", i)))).unwrap_or(false);
-            if toggle(ui, "SVG options", &mut expanded) {
-                ui.ctx().data_mut(|d| d.insert_temp(Id::new(("svg-options", i)), expanded));
-            }
-            if expanded {
-                let mut inline = row.svg.styling == varos_core::svg::options::Styling::Inline;
-                if toggle(ui, "Inline styling", &mut inline) {
-                    row.svg.styling = if inline {
-                        varos_core::svg::options::Styling::Inline
-                    } else {
-                        varos_core::svg::options::Styling::Attributes
-                    };
-                    changed = true;
-                }
-                let e = field::number_field(
-                    ui,
-                    NumberField {
-                        id: Id::new(("svg-decimals", i)),
-                        width: t::EXPORT_FIELD_W,
-                        label: Label::Letter("Decimals"),
-                        tip: "SVG decimal precision",
-                        value: row.svg.decimals as f32,
-                        decimals: 0,
-                        speed: 1.,
-                        range: 0.0..=8.0,
-                        disabled: false,
-                    },
-                );
-                if let Some(v) = e.commit.or(e.live) {
-                    row.svg.decimals = v as u8;
-                    changed = true;
-                }
-                changed |= toggle(ui, "Include IDs", &mut row.svg.ids);
-                changed |= toggle(ui, "Minify", &mut row.svg.minify);
-            }
+            changed |= svg_popover(ui, i, &mut row.svg);
         }
     }
     if let Some(i) = remove {
@@ -178,9 +144,31 @@ pub(super) fn draw(ui: &mut egui::Ui, sheet: &mut ExportSheet, running: bool) {
         s.range.clear();
         changed = true;
     }
-    changed |= toggle(ui, "Include bleed", &mut s.include_bleed);
+    let has_bleed = m
+        .boards
+        .assets
+        .iter()
+        .chain(m.selection.assets.iter())
+        .any(|a| a.doc.artboards.iter().any(|ab| varos_core::document_setup::bleed(ab).iter().any(|b| *b > 0.)));
+    let mut c = Control::new(Id::new("screen-bleed"), "Include bleed");
+    c.selected = s.include_bleed;
+    if !has_bleed {
+        c.availability = kit::Availability::Disabled("No bleed set");
+    }
+    if kit::action(ui, c, false).activated {
+        s.include_bleed = !s.include_bleed;
+        changed = true;
+    }
     changed |= toggle(ui, "Include artboard colour", &mut s.include_colour);
-    changed |= toggle(ui, "Whole board as one file", &mut s.whole_board);
+    let mut c = Control::new(Id::new("screen-whole-board"), "Whole board as one file");
+    c.selected = s.whole_board && !m.selection_tab;
+    if m.selection_tab {
+        c.availability = kit::Availability::Disabled("Use the Artboards tab to export the whole board");
+    }
+    if kit::action(ui, c, false).activated {
+        s.whole_board = !s.whole_board;
+        changed = true;
+    }
     changed |= toggle(ui, "Open folder after export", &mut s.open_folder);
     let label = match s.subfolders {
         Subfolders::None => "No sub-folders",
@@ -207,4 +195,77 @@ pub(super) fn draw(ui: &mut egui::Ui, sheet: &mut ExportSheet, running: bool) {
         kit::notice(ui, &reason);
     }
     m.preferences_dirty |= changed;
+}
+
+fn svg_popover(ui: &mut egui::Ui, index: usize, options: &mut varos_core::svg::options::Options) -> bool {
+    let owner = Id::new(("lane-c-svg-popover", index));
+    let anchor_id = owner.with("anchor");
+    let response = kit::action(ui, Control::new(owner.with("button"), "SVG options…"), false);
+    if response.activated {
+        ui.ctx().data_mut(|d| d.insert_temp(anchor_id, response.response.rect));
+        kit::toggle_menu_below(ui.ctx(), owner, response.response.rect);
+    }
+    if !kit::is_menu_open(ui.ctx(), owner) {
+        return false;
+    }
+    let ctx = ui.ctx();
+    let anchor = ctx.data(|d| d.get_temp::<egui::Rect>(anchor_id));
+    let mut changed = false;
+    let area = egui::Area::new(owner)
+        .order(egui::Order::Tooltip)
+        .fixed_pos(anchor.map(|r| r.left_bottom()).unwrap_or(ctx.content_rect().center()))
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(t::PANEL)
+                .stroke(egui::Stroke::new(t::KIT_STROKE, t::LINE2))
+                .corner_radius(t::r_box())
+                .inner_margin(t::KIT_PAD)
+                .show(ui, |ui| {
+                    ui.push_id(owner, |ui| {
+                        let mut inline = options.styling == varos_core::svg::options::Styling::Inline;
+                        if toggle(ui, "Inline styling", &mut inline) {
+                            options.styling = if inline {
+                                varos_core::svg::options::Styling::Inline
+                            } else {
+                                varos_core::svg::options::Styling::Attributes
+                            };
+                            changed = true;
+                        }
+                        let e = field::number_field(
+                            ui,
+                            NumberField {
+                                id: owner.with("decimals"),
+                                width: t::EXPORT_FIELD_W,
+                                label: Label::Letter("Decimals"),
+                                tip: "SVG decimal precision",
+                                value: options.decimals as f32,
+                                decimals: 0,
+                                speed: 1.,
+                                range: 0.0..=8.0,
+                                disabled: false,
+                            },
+                        );
+                        if let Some(v) = e.commit.or(e.live) {
+                            options.decimals = v as u8;
+                            changed = true;
+                        }
+                        changed |= toggle(ui, "Include IDs", &mut options.ids);
+                        changed |= toggle(ui, "Minify", &mut options.minify);
+                        if button(ui, owner.with("done"), "Done") {
+                            kit::close_menu(ctx);
+                        }
+                    });
+                });
+        });
+    let outside = ctx.input(|i| {
+        i.events.iter().any(|e| {
+            matches!(e, egui::Event::PointerButton { pos, pressed: true, .. }
+        if !area.response.rect.contains(*pos) && anchor.is_none_or(|r| !r.contains(*pos)))
+        })
+    });
+    let escape = !field::any_open(ctx) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if outside || escape {
+        kit::close_menu(ctx);
+    }
+    changed
 }
