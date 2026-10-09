@@ -4,3 +4,16 @@ varos-core/tests/boolean_props.rs adapts boolean area and membership identities 
 VectorCraft crates/pathops/tests/prop_pathops.rs @ a469568.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-core/src/geom/shapes.rs adapts shape generators from VectorCraft crates/geom/src/shapes.rs @ a469568.
+varos-core/src/geom/fit.rs adapts Schneider-style least-squares fitting and numerical helpers from
+VectorCraft crates/pathops/src/fit.rs @ a469568.
+varos-core/src/geom/edit.rs adapts simplify, smooth, subdivision, average and join algorithms from
+VectorCraft crates/pathops/src/edit.rs @ a469568; the conservative error certificate is Varos code.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-core/src/geom/kurbo.rs adapts absolute-handle / BezPath conversion from
+VectorCraft crates/geom/src/path.rs @ a469568.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
