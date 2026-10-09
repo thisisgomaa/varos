@@ -98,24 +98,24 @@ fn editor() -> Editor {
 fn set_board_name_is_one_undo_step_dirty_and_no_op_when_unchanged() {
     let mut ed = editor();
     let saved = ed.doc.clone();
-    ed.execute(EditCommand::SetBoardName(s("  شعار المقهى  ")));
+    ed.execute_ui(EditCommand::SetBoardName(s("  شعار المقهى  ")));
     assert_eq!(ed.doc.name, "شعار المقهى", "edges cleaned");
     assert_eq!(ed.rev, 1, "one undo step");
     assert!(!ed.doc.content_eq(&saved), "the name is content: the document is dirty");
 
-    ed.execute(EditCommand::SetBoardName(s("شعار المقهى")));
+    ed.execute_ui(EditCommand::SetBoardName(s("شعار المقهى")));
     assert_eq!(ed.rev, 1, "unchanged → no undo step");
-    ed.execute(EditCommand::SetBoardName(s(" شعار المقهى\u{200F}")));
+    ed.execute_ui(EditCommand::SetBoardName(s(" شعار المقهى\u{200F}")));
     assert_eq!(ed.rev, 1, "unchanged after cleaning → no undo step");
 
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.name, "");
     assert!(ed.doc.content_eq(&saved), "undo back to the checkpoint reads clean");
-    ed.execute(EditCommand::Redo);
+    ed.execute_ui(EditCommand::Redo);
     assert_eq!(ed.doc.name, "شعار المقهى");
 
     // an empty name is a real edit (back to "use the file stem")
-    ed.execute(EditCommand::SetBoardName(s("   ")));
+    ed.execute_ui(EditCommand::SetBoardName(s("   ")));
     assert_eq!(ed.doc.name, "");
     assert_eq!(ed.rev, 4);
 }
@@ -123,23 +123,23 @@ fn set_board_name_is_one_undo_step_dirty_and_no_op_when_unchanged() {
 #[test]
 fn set_board_description_and_tags_are_undoable_single_steps() {
     let mut ed = editor();
-    ed.execute(EditCommand::SetBoardDescription(s(" Brand mark, round two. ")));
+    ed.execute_ui(EditCommand::SetBoardDescription(s(" Brand mark, round two. ")));
     assert_eq!(ed.doc.description, "Brand mark, round two.");
     assert_eq!(ed.rev, 1);
-    ed.execute(EditCommand::SetBoardTags(tags(&[" client ", "Client", "", "عربي"])));
+    ed.execute_ui(EditCommand::SetBoardTags(tags(&[" client ", "Client", "", "عربي"])));
     assert_eq!(ed.doc.tags, tags(&["client", "عربي"]));
     assert_eq!(ed.rev, 2, "the whole tag list is ONE step");
-    ed.execute(EditCommand::SetBoardTags(tags(&["CLIENT", "client", "عربي"])));
+    ed.execute_ui(EditCommand::SetBoardTags(tags(&["CLIENT", "client", "عربي"])));
     assert_eq!(ed.doc.tags, tags(&["CLIENT", "عربي"]), "a respelling is a change");
     assert_eq!(ed.rev, 3);
-    ed.execute(EditCommand::SetBoardTags(tags(&["CLIENT", "عربي", "  "])));
+    ed.execute_ui(EditCommand::SetBoardTags(tags(&["CLIENT", "عربي", "  "])));
     assert_eq!(ed.rev, 3, "same list after cleaning → no-op");
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.tags, tags(&["client", "عربي"]));
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert!(ed.doc.tags.is_empty());
     assert_eq!(ed.doc.description, "Brand mark, round two.", "undo walks back one step at a time");
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert_eq!(ed.doc.description, "");
 }
 
@@ -181,16 +181,19 @@ fn checked_edits_with_valid_input_are_one_undo_step_each() {
     typed.push(s("T0"));
     assert_eq!(ed.try_set_board_tags(typed), Ok(()));
     assert_eq!((ed.doc.tags.len(), ed.rev), (16, 3));
-    ed.execute(EditCommand::Undo);
+    ed.execute_ui(EditCommand::Undo);
     assert!(ed.doc.tags.is_empty());
     assert_eq!(ed.doc.description, "Round two");
 }
 
 #[test]
 #[cfg(debug_assertions)]
-#[should_panic(expected = "SetBoard* carried an invalid value")]
-fn the_replay_command_only_carries_valid_values() {
-    editor().execute(EditCommand::SetBoardName("a".repeat(121)));
+fn invalid_replay_returns_an_internal_error_and_restores_document() {
+    let mut ed = editor();
+    let before = ed.doc.clone();
+    let error = ed.execute(EditCommand::SetBoardName("a".repeat(121))).unwrap_err();
+    assert!(matches!(error, varos_core::EngineError::Internal { .. }));
+    assert_eq!(ed.doc, before);
 }
 
 #[test]

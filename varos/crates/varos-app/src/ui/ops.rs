@@ -76,7 +76,7 @@ pub(crate) enum Op {
 /// burger's View rows) are written back FIRST, then the panels' ops — so a panel's `ToggleSnapping`
 /// in the same frame wins over the band's snapshot. A non-undoable mode flag (`SetSnapConfig`).
 pub(crate) fn apply_frame(ed: &mut Editor, snap: varos_core::model::SnapConfig, ops: Vec<Op>) {
-    ed.execute(EditCommand::SetSnapConfig(snap));
+    ed.execute_ui(EditCommand::SetSnapConfig(snap));
     apply_ops(ed, ops);
 }
 
@@ -154,29 +154,29 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
         match op {
             Op::Tool(t) => ed.set_tool(t),
             Op::SetBBox(x, y, width, height, anchor_x, anchor_y) => {
-                ed.execute(EditCommand::SetObjectBounds { x, y, width, height, anchor_x, anchor_y })
+                ed.execute_ui(EditCommand::SetObjectBounds { x, y, width, height, anchor_x, anchor_y })
             }
-            Op::SetRot(degrees) => ed.execute(EditCommand::SetObjectRotation(degrees)),
-            Op::SetOpacity(opacity) => ed.execute(EditCommand::SetOpacity(opacity)),
-            Op::SetClipExempt(exempt) => ed.execute(EditCommand::SetClipExempt(exempt)),
-            Op::SetStrokeW(width) => ed.execute(EditCommand::SetStrokeWidth(width)),
-            Op::Paint(target, color) => ed.execute(EditCommand::ApplyPaint { target, color }),
+            Op::SetRot(degrees) => ed.execute_ui(EditCommand::SetObjectRotation(degrees)),
+            Op::SetOpacity(opacity) => ed.execute_ui(EditCommand::SetOpacity(opacity)),
+            Op::SetClipExempt(exempt) => ed.execute_ui(EditCommand::SetClipExempt(exempt)),
+            Op::SetStrokeW(width) => ed.execute_ui(EditCommand::SetStrokeWidth(width)),
+            Op::Paint(target, color) => ed.execute_ui(EditCommand::ApplyPaint { target, color }),
             Op::PaintFocus(target) => ed.set_paint_target(target),
-            Op::SwapColors => ed.execute(EditCommand::SwapColors),
-            Op::DefaultPaint => ed.execute(EditCommand::DefaultPaint),
+            Op::SwapColors => ed.execute_ui(EditCommand::SwapColors),
+            Op::DefaultPaint => ed.execute_ui(EditCommand::DefaultPaint),
             Op::OpenMini(..) | Op::OpenPicker(_) => {} // UI-only: taken out by apply_picker_frame (opens the panel after the frame); never reaches here
             Op::PickerLive(..) if !ed.transaction_open() => {}
             Op::PickerLive(target, color) => match target {
-                MTarget::Paint(target) => ed.execute(EditCommand::PickerLivePaint { target, color }),
+                MTarget::Paint(target) => ed.execute_ui(EditCommand::PickerLivePaint { target, color }),
                 MTarget::Ab(id) => {
                     if let Some(index) = ed.doc.artboard_index(id) {
-                        ed.execute(EditCommand::PickerLiveArtboard { index, color });
+                        ed.execute_ui(EditCommand::PickerLiveArtboard { index, color });
                     }
                 }
             },
             Op::PickerBegin => ed.picker_begin(),
             Op::PickerCommit(target, color) => {
-                ed.execute(EditCommand::PickerCommit {
+                ed.execute_ui(EditCommand::PickerCommit {
                     current: match target {
                         MTarget::Paint(t) => Some(t),
                         MTarget::Ab(_) => None,
@@ -200,7 +200,7 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
                             }
                         }
                     }
-                    ed.execute(EditCommand::PickerCommit {
+                    ed.execute_ui(EditCommand::PickerCommit {
                         current: match target {
                             MTarget::Paint(t) => Some(t),
                             MTarget::Ab(_) => None,
@@ -210,66 +210,66 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
                 }
             }
             Op::PickerFinish => ed.commit(),
-            Op::PickerCancel => ed.execute(EditCommand::PickerCancel),
+            Op::PickerCancel => ed.execute_ui(EditCommand::PickerCancel),
             Op::PickerClose => {}
             Op::LayerSelectSet(nids) => ed.layer_select_set(&nids),
             Op::LayerToggle(n) => ed.layer_toggle(n),
-            Op::LayerEye(node) => ed.execute(EditCommand::ToggleNodeHidden(node)),
-            Op::LayerLock(node) => ed.execute(EditCommand::ToggleNodeLocked(node)),
+            Op::LayerEye(node) => ed.execute_ui(EditCommand::ToggleNodeHidden(node)),
+            Op::LayerLock(node) => ed.execute_ui(EditCommand::ToggleNodeLocked(node)),
             // a `<Path>` row shows `Path::name`, not its leaf node's name — rename what the row reads
             Op::LayerRename(node, name) => match ed.doc.node(node).map(|n| n.kind) {
-                Some(varos_core::model::NodeKind::Path(path)) => ed.execute(EditCommand::RenamePath { path, name }),
-                _ => ed.execute(EditCommand::RenameNode { node, name }),
+                Some(varos_core::model::NodeKind::Path(path)) => ed.execute_ui(EditCommand::RenamePath { path, name }),
+                _ => ed.execute_ui(EditCommand::RenameNode { node, name }),
             },
-            Op::LayerGroup => ed.execute(EditCommand::GroupSelection),
-            Op::LayerDeleteSel => ed.execute(EditCommand::DeleteLayerSelection),
+            Op::LayerGroup => ed.execute_ui(EditCommand::GroupSelection),
+            Op::LayerDeleteSel => ed.execute_ui(EditCommand::DeleteLayerSelection),
             Op::LayerMove(srcs, target, zone) => {
                 let position = match zone {
                     0 => varos_core::model::DropPos::Before,
                     1 => varos_core::model::DropPos::Into,
                     _ => varos_core::model::DropPos::After,
                 };
-                ed.execute(EditCommand::MoveLayer { sources: srcs, target, position });
+                ed.execute_ui(EditCommand::MoveLayer { sources: srcs, target, position });
             }
             Op::LayerMoveBoard(sources, source_board, target_board) => {
-                ed.execute(EditCommand::MoveLayerToBoard { sources, source_board, target_board })
+                ed.execute_ui(EditCommand::MoveLayerToBoard { sources, source_board, target_board })
             }
-            Op::AbEye(index) => ed.execute(EditCommand::ToggleArtboardHidden(index)),
-            Op::AbLock(index) => ed.execute(EditCommand::ToggleArtboardLocked(index)),
+            Op::AbEye(index) => ed.execute_ui(EditCommand::ToggleArtboardHidden(index)),
+            Op::AbLock(index) => ed.execute_ui(EditCommand::ToggleArtboardLocked(index)),
             Op::LayerDupMove(srcs, target, zone) => {
                 let position = match zone {
                     0 => varos_core::model::DropPos::Before,
                     1 => varos_core::model::DropPos::Into,
                     _ => varos_core::model::DropPos::After,
                 };
-                ed.execute(EditCommand::DuplicateMoveLayer { sources: srcs, target, position });
+                ed.execute_ui(EditCommand::DuplicateMoveLayer { sources: srcs, target, position });
             }
-            Op::Flip(horizontal) => ed.execute(EditCommand::Flip(horizontal)),
-            Op::Align(mode, target) => ed.execute(EditCommand::Align { mode, target }),
-            Op::Distribute(axis) => ed.execute(EditCommand::Distribute(axis)),
-            Op::Bool(operation) => ed.execute(EditCommand::Boolean(operation)),
-            Op::AbActive(index) => ed.execute(EditCommand::SetActiveArtboard(index)),
+            Op::Flip(horizontal) => ed.execute_ui(EditCommand::Flip(horizontal)),
+            Op::Align(mode, target) => ed.execute_ui(EditCommand::Align { mode, target }),
+            Op::Distribute(axis) => ed.execute_ui(EditCommand::Distribute(axis)),
+            Op::Bool(operation) => ed.execute_ui(EditCommand::Boolean(operation)),
+            Op::AbActive(index) => ed.execute_ui(EditCommand::SetActiveArtboard(index)),
             Op::AbRect(index, x, y, width, height) => {
-                ed.execute(EditCommand::SetArtboardRect { index, x, y, width, height })
+                ed.execute_ui(EditCommand::SetArtboardRect { index, x, y, width, height })
             }
-            Op::AbName(index, name) => ed.execute(EditCommand::RenameArtboard { index, name }),
+            Op::AbName(index, name) => ed.execute_ui(EditCommand::RenameArtboard { index, name }),
             Op::AbColorId(id, color) => {
                 if let Some(index) = ed.doc.artboard_index(id) {
-                    ed.execute(EditCommand::SetArtboardColor { index, color });
+                    ed.execute_ui(EditCommand::SetArtboardColor { index, color });
                 }
             }
-            Op::AbColor(index, color) => ed.execute(EditCommand::SetArtboardColor { index, color }),
-            Op::AbClip(index) => ed.execute(EditCommand::ToggleArtboardClip(index)),
-            Op::AbOrient(index) => ed.execute(EditCommand::OrientArtboard(index)),
-            Op::AbAdd => ed.execute(EditCommand::AddArtboard),
-            Op::AbDup(index) => ed.execute(EditCommand::DuplicateArtboard(index)),
-            Op::AbDel(index) => ed.execute(EditCommand::DeleteArtboard(index)),
-            Op::AbCount(count) => ed.execute(EditCommand::SetArtboardCount(count)),
-            Op::AbMoveArt(enabled) => ed.execute(EditCommand::SetMoveArtWithArtboard(enabled)),
-            Op::RulerOrigin(Some(point)) => ed.execute(EditCommand::SetRulerOrigin(point)),
+            Op::AbColor(index, color) => ed.execute_ui(EditCommand::SetArtboardColor { index, color }),
+            Op::AbClip(index) => ed.execute_ui(EditCommand::ToggleArtboardClip(index)),
+            Op::AbOrient(index) => ed.execute_ui(EditCommand::OrientArtboard(index)),
+            Op::AbAdd => ed.execute_ui(EditCommand::AddArtboard),
+            Op::AbDup(index) => ed.execute_ui(EditCommand::DuplicateArtboard(index)),
+            Op::AbDel(index) => ed.execute_ui(EditCommand::DeleteArtboard(index)),
+            Op::AbCount(count) => ed.execute_ui(EditCommand::SetArtboardCount(count)),
+            Op::AbMoveArt(enabled) => ed.execute_ui(EditCommand::SetMoveArtWithArtboard(enabled)),
+            Op::RulerOrigin(Some(point)) => ed.execute_ui(EditCommand::SetRulerOrigin(point)),
             Op::RulerOrigin(None) => ed.clear_ruler_origin_preview(),
             Op::GuidePreview(vertical, p) => ed.set_guide_preview(vertical, p),
-            Op::GuideCommit => ed.execute(EditCommand::CommitGuide),
+            Op::GuideCommit => ed.execute_ui(EditCommand::CommitGuide),
             // the field parsed with the same core checks, so a refusal here cannot happen; if it did, the
             // checked setter changes nothing (no undo step, not dirty)
             Op::BoardName(name) => {
@@ -281,10 +281,10 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::BoardTags(tags) => {
                 let _ = ed.try_set_board_tags(tags);
             }
-            Op::Units(unit) => ed.execute(EditCommand::SetUnits(unit)),
+            Op::Units(unit) => ed.execute_ui(EditCommand::SetUnits(unit)),
             Op::FitArtboard(_) => {} // UI-only, intercepted by run
-            Op::ToggleGuidesLock => ed.execute(EditCommand::ToggleGuidesLocked),
-            Op::ToggleSmartGuides => ed.execute(EditCommand::ToggleSmartGuides),
+            Op::ToggleGuidesLock => ed.execute_ui(EditCommand::ToggleGuidesLocked),
+            Op::ToggleSmartGuides => ed.execute_ui(EditCommand::ToggleSmartGuides),
             Op::ToggleSnapPoint | Op::ToggleSnapGrid => {
                 let mut snap = ed.doc.snap;
                 if matches!(op, Op::ToggleSnapPoint) {
@@ -292,10 +292,10 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
                 } else {
                     snap.grid = !snap.grid;
                 }
-                ed.execute(EditCommand::SetSnapConfig(snap));
+                ed.execute_ui(EditCommand::SetSnapConfig(snap));
             }
             // Applied after SetSnapConfig so the panel toggle is not clobbered by the frame snapshot.
-            Op::ToggleSnapping => ed.execute(EditCommand::ToggleSnapping),
+            Op::ToggleSnapping => ed.execute_ui(EditCommand::ToggleSnapping),
             Op::ToggleGuides => ed.toggle_guides_visibility(),
             Op::ToggleRulers => ed.toggle_rulers_visibility(),
             Op::Field(op) => apply_ops(ed, vec![*op]),

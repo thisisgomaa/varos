@@ -277,7 +277,21 @@ impl Service {
         req: &Request,
         cancelled: &AtomicBool,
     ) -> Reply {
-        let mut reply = self.handle_inner(host, ctx, req, cancelled);
+        // Read-only requests need no editor rollback checkpoint.
+        let snapshot =
+            req.mutation().and_then(|_| req.board()).and_then(|b| host.access(b).ok().map(|a| a.editor.clone()));
+        let result = varos_core::guard::catch_panic(|| self.handle_inner(host, ctx, req, cancelled));
+        let mut reply = match result {
+            Ok(reply) => reply,
+            Err(error) => {
+                if let (Some(board), Some(snapshot)) = (req.board(), snapshot) {
+                    if let Ok(a) = host.access(board) {
+                        *a.editor = snapshot;
+                    }
+                }
+                Reply::failure(Error::new("internal", error.to_string()))
+            }
+        };
         if let Some((id, _)) = req.mutation() {
             if sequence(id).is_ok() {
                 reply.request_id = Some(id.into());
@@ -311,10 +325,13 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+        if ![API, "1.1"].contains(&req.api())
+            && !(req.api() == "1.2"
+                && matches!(req, Request::ExportPdf(_) | Request::Edit(_) | Request::Capabilities(_)))
+        {
             return Reply::failure(Error::new(
                 "unsupported",
-                "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
+                "Bridge API must be 1.0 or 1.1 (capabilities, edit and export_pdf also support 1.2)",
             ));
         }
         if ctx.epoch != self.epoch {
@@ -392,6 +409,16 @@ impl Service {
                         v["api_by_tool"] = json!({"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
                         v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
+                    }
+                    if req.api() == "1.2" {
+                        if let Some(v) = r.result.as_mut() {
+                            v["api"] = json!("1.2");
+                            v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
+                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
+                            if let Some(verbs) = v["edit_verbs"].as_array_mut() {
+                                verbs.extend([json!("clip"), json!("release_clip")]);
+                            }
+                        }
                     }
                     Ok(r)
                 }
@@ -477,6 +504,11 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
+                    if v.api != "1.2"
+                        && ops.iter().any(|op| matches!(op, Operation::Clip { .. } | Operation::ReleaseClip { .. }))
+                    {
+                        return Err(Error::new("unsupported", "clip and release_clip require API 1.2"));
+                    }
                     let a = host.access(&v.board)?;
                     if v.api == "1.1" {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
@@ -535,6 +567,8 @@ impl Service {
                             leaves[index.min(leaves.len() - 1)].error(Error::new(
                                 if reason == "active gesture" {
                                     "busy"
+                                } else if reason.starts_with("internal error:") {
+                                    "internal"
                                 } else if reason.starts_with("cancelled") {
                                     "cancelled"
                                 } else {
@@ -1536,6 +1570,60 @@ mod observation_tests {
         }
     }
     #[test]
+    fn board_describe_uses_observation_without_rollback_access() {
+        struct ReadHost(Fake, usize);
+        impl Host for ReadHost {
+            fn boards(&self) -> Vec<BoardInfo> {
+                self.0.boards()
+            }
+            fn prepare(&mut self, _: &str, mutation: bool) -> Result<(), Error> {
+                assert!(!mutation);
+                Ok(())
+            }
+            fn observation_access(&mut self, board: &str) -> Result<BoardAccess<'_>, Error> {
+                self.0.access(board)
+            }
+            fn access(&mut self, board: &str) -> Result<BoardAccess<'_>, Error> {
+                self.1 += 1;
+                self.0.access(board)
+            }
+        }
+        let mut host = ReadHost(Fake(Editor::new()), 0);
+        let mut service = Service::new("read-test".into());
+        let request: Request = serde_json::from_value(json!({"tool":"describe","arguments":{
+            "api":"1.0","board":"b1"
+        }}))
+        .unwrap();
+        let context = Context { epoch: "read-test".into(), client: "tester".into() };
+        for _ in 0..10 {
+            let reply = service.handle(&mut host, &context, request.clone(), &AtomicBool::new(false));
+            assert!(reply.ok, "{reply:?}");
+        }
+        assert_eq!(host.1, 10, "one dirty-state read per request; no checkpoint access");
+    }
+    #[test]
+    fn staged_panic_is_structured_and_does_not_publish() {
+        let mut host = Fake(Editor::new());
+        let before = host.0.doc.clone();
+        let revision = host.0.rev;
+        let mut service = Service::new("panic-test".into());
+        let request: Request = serde_json::from_value(json!({"tool":"edit","arguments":{
+            "api":"1.2","request_id":"r1","board":"b1","expected_rev":revision,
+            "ops":[{"verb":"add_shape","kind":"rect","bounds":[0,0,20,20],"fill":"#FF0000FF"},
+                   {"verb":"rename","ids":["path:1"],"name":"__forced_adapter_panic__"}]
+        }}))
+        .unwrap();
+        let context = Context { epoch: "panic-test".into(), client: "tester".into() };
+        let reply = service.handle(&mut host, &context, request, &AtomicBool::new(false));
+        assert!(!reply.ok);
+        let error = reply.error.unwrap();
+        assert_eq!(error.code, "internal");
+        assert!(error.reason.contains("forced adapter panic"));
+        assert_eq!(host.0.doc, before);
+        assert_eq!(host.0.rev, revision);
+        assert!(!host.0.history_available(false));
+    }
+    #[test]
     fn ids_pages_fit_text_and_missing_journal_resyncs() {
         let ids: Vec<_> = (1..=950).map(|n| format!("path:{n}")).collect();
         let mut r = Reply::success(
@@ -1591,10 +1679,10 @@ mod observation_tests {
             service.observe(&mut host);
         }
         assert_eq!(service.fingerprints, 1);
-        host.0.execute(varos_core::EditCommand::ToggleSnapping);
+        host.0.execute_ui(varos_core::EditCommand::ToggleSnapping);
         service.observe(&mut host);
         assert_eq!(service.fingerprints, 2, "settings outside Editor.rev must still be observed");
-        host.0.execute(varos_core::EditCommand::SetBoardName("changed".into()));
+        host.0.execute_ui(varos_core::EditCommand::SetBoardName("changed".into()));
         service.observe(&mut host);
         assert_eq!(service.fingerprints, 3);
     }

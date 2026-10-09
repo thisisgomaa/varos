@@ -992,3 +992,28 @@ fn a_huge_single_page_export_stops_soon_after_cancel() {
     let lag = stopped.saturating_duration_since(raised);
     assert!(lag < Duration::from_millis(100), "stopped {lag:?} after Cancel (full write {full:?})");
 }
+
+#[test]
+fn clipping_command_matches_frozen_pdf_page_streams() {
+    use varos_core::{EditCommand, Editor};
+    fn streams(bytes: &[u8]) -> Vec<Vec<u8>> {
+        let pdf = load(bytes);
+        pdf.get_pages().values().map(|id| pdf.get_page_content(*id).unwrap()).collect()
+    }
+    let mut doc = rich_doc();
+    let group = doc.clip_group_of(4).unwrap();
+    doc.release_clip(group);
+    doc.ungroup(&[4, 5]);
+    let mut ed = Editor::new();
+    ed.replace_doc(doc);
+    ed.execute(EditCommand::SelectPaths(vec![4, 5])).unwrap();
+    ed.execute(EditCommand::ClipMake).unwrap();
+    let bytes = export(&ed.doc, ExportScope::AllVisibleArtboards);
+    let golden = std::fs::read(fixture("native_rich.pdf")).unwrap();
+    assert_eq!(streams(&bytes), streams(&golden));
+    assert_eq!(media_boxes(&bytes), media_boxes(&golden));
+    ed.execute(EditCommand::Undo).unwrap();
+    assert_ne!(streams(&export(&ed.doc, ExportScope::AllVisibleArtboards)), streams(&golden));
+    ed.execute(EditCommand::Redo).unwrap();
+    assert_eq!(streams(&export(&ed.doc, ExportScope::AllVisibleArtboards)), streams(&golden));
+}

@@ -125,6 +125,10 @@ pub enum EditCommand {
     },
     #[serde(rename = "GroupSelection")]
     GroupSelection,
+    ClipMake,
+    ClipRelease,
+    #[cfg(test)]
+    ForcedPanic,
     #[serde(rename = "UngroupSelection")]
     UngroupSelection,
     #[serde(rename = "DeleteLayerSelection")]
@@ -321,6 +325,17 @@ impl EditCommand {
             Self::RenameNode { node, name } => ed.layer_rename(node, name),
             Self::RenamePath { path, name } => rename_path(ed, path, name),
             Self::GroupSelection => ed.group_selection(),
+            Self::ClipMake => ed.clip_make(),
+            Self::ClipRelease => ed.clip_release(),
+            #[cfg(test)]
+            Self::ForcedPanic => {
+                ed.begin();
+                ed.doc.paths.clear();
+                ed.objsel.clear();
+                ed.dirty = true;
+                ed.commit();
+                panic!("forced command panic");
+            }
             Self::UngroupSelection => ed.ungroup_selection(),
             Self::DeleteLayerSelection => ed.layer_delete_selection(),
             Self::MoveLayer { sources, target, position } => ed.layer_move(&sources, target, position),
@@ -389,15 +404,26 @@ impl EditCommand {
 }
 
 impl Editor {
-    /// Checked headless path; existing interactive `execute` callers keep their behavior.
+    /// Checked headless path; interactive callers use the error-retaining `execute_ui` facade.
     pub fn try_execute(&mut self, command: EditCommand) -> Result<(), String> {
         crate::bridge::check(&command, self)?;
-        self.execute(command);
-        Ok(())
+        self.execute(command).map_err(|e| e.to_string())
     }
 
     /// Checked creation returns the actual allocated identity, never a guessed counter.
     pub fn try_execute_created(&mut self, command: EditCommand) -> Result<u32, String> {
+        // Immutable history handles bound rollback cost independently of retained artwork.
+        let snapshot = self.clone();
+        self.clipping_enablement.get_mut().take();
+        match crate::guard::catch_panic(|| self.execute_created_inner(command)) {
+            Ok(result) => result,
+            Err(error) => {
+                *self = snapshot;
+                Err(error.to_string())
+            }
+        }
+    }
+    fn execute_created_inner(&mut self, command: EditCommand) -> Result<u32, String> {
         crate::bridge::check(&command, self)?;
         match command {
             EditCommand::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
@@ -460,11 +486,27 @@ impl Editor {
     }
 
     /// Execute one deterministic edit through the core-owned command boundary.
-    pub fn execute(&mut self, command: EditCommand) {
-        command.apply(self);
-        // One invariant gate for every command, including commands whose geometry changes artboard
-        // membership (and therefore effective hidden/locked state) without touching a node flag.
-        self.prune_inert_selection();
+    pub fn execute_ui(&mut self, command: EditCommand) {
+        if let Err(error) = self.execute(command) {
+            self.last_error = Some(error);
+        }
+    }
+
+    /// Fallible command boundary. The interactive facade retains errors for its existing notice path.
+    pub fn execute(&mut self, command: EditCommand) -> Result<(), crate::EngineError> {
+        // Immutable history handles bound rollback cost independently of retained artwork.
+        let snapshot = self.clone();
+        self.clipping_enablement.get_mut().take();
+        let result = crate::guard::catch_panic(|| {
+            command.apply(self);
+            // One invariant gate for every command, including commands whose geometry changes artboard
+            // membership (and therefore effective hidden/locked state) without touching a node flag.
+            self.prune_inert_selection();
+        });
+        if result.is_err() {
+            *self = snapshot;
+        }
+        result
     }
 
     pub fn set_paint_target(&mut self, target: PaintTarget) {
@@ -493,7 +535,7 @@ impl Editor {
     pub fn try_set_board_name(&mut self, typed: &str) -> Result<(), board::Reject> {
         let name = board::clean_text(typed);
         board::check_name(&name)?;
-        self.execute(EditCommand::SetBoardName(name));
+        self.execute_ui(EditCommand::SetBoardName(name));
         Ok(())
     }
 
@@ -501,7 +543,7 @@ impl Editor {
     pub fn try_set_board_description(&mut self, typed: &str) -> Result<(), board::Reject> {
         let text = board::clean_text(typed);
         board::check_description(&text)?;
-        self.execute(EditCommand::SetBoardDescription(text));
+        self.execute_ui(EditCommand::SetBoardDescription(text));
         Ok(())
     }
 
@@ -510,7 +552,7 @@ impl Editor {
     pub fn try_set_board_tags(&mut self, typed: Vec<String>) -> Result<(), board::Reject> {
         let tags = board::normalize_tags(typed);
         board::check_tags(&tags)?;
-        self.execute(EditCommand::SetBoardTags(tags));
+        self.execute_ui(EditCommand::SetBoardTags(tags));
         Ok(())
     }
 }

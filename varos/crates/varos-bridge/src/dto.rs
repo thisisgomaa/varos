@@ -228,6 +228,12 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         local: Option<String>,
     },
+    Clip {
+        ids: Vec<String>,
+    },
+    ReleaseClip {
+        ids: Vec<String>,
+    },
     Ungroup {
         ids: Vec<String>,
     },
@@ -381,6 +387,8 @@ impl Operation {
             | Self::Align { ids, .. }
             | Self::Distribute { ids, .. }
             | Self::Group { ids, .. }
+            | Self::Clip { ids }
+            | Self::ReleaseClip { ids }
             | Self::Ungroup { ids }
             | Self::Order { ids, .. } => ids,
         }

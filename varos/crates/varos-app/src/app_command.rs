@@ -50,6 +50,7 @@ pub enum WindowCmd {
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    Clip(SessionId, bool),
     /// Authenticated local attachment; processed on the UI thread through the same FIFO.
     Bridge(Box<varos_bridge::ipc::Pending>),
     /// DFS S6: File ▸ Export ▸ PDF…, the top-bar Export button and the burger's Export… row — show

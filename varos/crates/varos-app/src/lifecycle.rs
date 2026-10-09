@@ -258,7 +258,7 @@ impl Lifecycle<'_> {
             AppCommand::ReorderDocument(id, slot) => {
                 self.ws.reorder(id, slot);
             }
-            AppCommand::Window(_) | AppCommand::Bridge(_) => {}
+            AppCommand::Clip(_, _) | AppCommand::Window(_) | AppCommand::Bridge(_) => {}
         }
         Effect::default()
     }
@@ -1236,7 +1236,7 @@ mod tests {
             r.s.put("/d/original.vrs", art([1.0; 4]));
             let id = r.open("/d/original.vrs");
             if dirty {
-                r.ed(id).execute(EditCommand::SetBoardName("changed".into()));
+                r.ed(id).execute_ui(EditCommand::SetBoardName("changed".into()));
             }
             let path = r.get(id).path.clone();
             let key = r.get(id).key.clone();
@@ -1332,7 +1332,7 @@ mod tests {
             let ab = &s.editor.doc.artboards[0];
             assert_eq!((ab.w, ab.h), (w, h), "{preset:?}");
             assert!(!s.is_dirty_exact() && s.path.is_none(), "{preset:?}: a clean Untitled board");
-            r.ed(id).execute(EditCommand::Undo);
+            r.ed(id).execute_ui(EditCommand::Undo);
             assert_eq!(r.get(id).editor.doc.artboards.len(), 1, "{preset:?}: undo cannot remove the preset page");
         }
         let names = r.names();
@@ -1345,7 +1345,7 @@ mod tests {
         let mut r = Rig::new();
         let id = r.active();
         assert_eq!(r.names(), ["Untitled-1"]);
-        r.ed(id).execute(EditCommand::SetBoardName("شعار / v2".into()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName("شعار / v2".into()));
         assert_eq!(r.names(), ["شعار / v2"], "a named, unsaved board shows its name at once");
         assert_eq!(crate::host::window_title(&r.get(id).display_name(), r.get(id).is_dirty()), "شعار / v2* — Varos");
         r.script([Ans::Pick(None)]);
@@ -1355,7 +1355,7 @@ mod tests {
         r.run(AppCommand::Save(id));
         assert_eq!(r.prompts(), ["save-as شعار - v2.vrs in -"]);
         assert_eq!(r.names(), ["شعار / v2"], "the board name still wins over the file stem");
-        r.ed(id).execute(EditCommand::SetBoardName(String::new()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName(String::new()));
         assert_eq!(r.names(), ["logo"], "no board name → the file stem");
     }
 
@@ -1380,8 +1380,8 @@ mod tests {
         assert_eq!(r.s.recent.entries()[0].name, "Logo");
 
         // an unsaved edit never reaches Recent, not even when the open tab is focused again
-        r.ed(a).execute(EditCommand::SetBoardTags(vec!["draft".into()]));
-        r.ed(a).execute(EditCommand::AddArtboard);
+        r.ed(a).execute_ui(EditCommand::SetBoardTags(vec!["draft".into()]));
+        r.ed(a).execute_ui(EditCommand::AddArtboard);
         r.open("/d/a.vrs");
         assert_eq!(cached(&r), Some(want.clone()), "focusing an open tab keeps the on-disk summary");
 
@@ -1453,9 +1453,9 @@ mod tests {
         let mut r = Rig::new();
         r.s.put("/d/a.vrs", art(RED));
         let a = r.open("/d/a.vrs");
-        r.ed(a).execute(EditCommand::SetBoardName("Written".into()));
+        r.ed(a).execute_ui(EditCommand::SetBoardName("Written".into()));
         let (_, jobs) = r.bg(AppCommand::Save(a));
-        r.ed(a).execute(EditCommand::SetBoardName("Typed after".into())); // while the save is on the worker
+        r.ed(a).execute_ui(EditCommand::SetBoardName("Typed after".into())); // while the save is on the worker
         for job in jobs {
             r.land(job);
         }
@@ -1629,7 +1629,7 @@ mod tests {
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")));
         assert!(s.editor.doc == doc && s.editor.rev == rev && s.editor.objsel == sel);
         assert!(s.is_dirty_exact());
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert!(!r.get(a).is_dirty_exact(), "the history is intact: undo still returns to the saved state");
     }
 
@@ -1879,7 +1879,7 @@ mod tests {
         r.run(AppCommand::Save(a));
         draw(r.ed(a), BLUE);
         assert!(r.get(a).is_dirty() && r.ws.tabs()[0].dirty);
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert!(!r.get(a).is_dirty() && !r.ws.tabs()[0].dirty, "undo back to the saved content: no dot");
         // …so Close and Quit ask nothing
         assert_eq!(r.run(AppCommand::Quit), Effect { exit: true, ..Effect::default() });
@@ -1906,15 +1906,15 @@ mod tests {
         assert_eq!(r.active(), a);
         assert_eq!(fills(&r.get(a).editor), [Some(RED)], "each tab shows only its own art");
         assert_eq!(fills(&r.get(b).editor), [Some(BLUE)]);
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert!(r.get(a).editor.doc.paths.is_empty(), "⌘Z in A undoes A's square");
         assert_eq!(fills(&r.get(b).editor), [Some(BLUE)], "…and only A's");
         assert_eq!(r.get(b).editor.rev, rev_b);
         assert!(!r.get(a).is_dirty_exact() && r.get(b).is_dirty_exact());
         r.run(AppCommand::ActivateDocument(b));
-        r.ed(b).execute(EditCommand::Undo);
+        r.ed(b).execute_ui(EditCommand::Undo);
         assert!(r.get(b).editor.doc.paths.is_empty());
-        r.ed(a).execute(EditCommand::Redo);
+        r.ed(a).execute_ui(EditCommand::Redo);
         assert_eq!(fills(&r.get(a).editor), [Some(RED)], "A's redo stack survived the switches");
     }
 
@@ -2135,7 +2135,7 @@ mod tests {
         {
             let ed = r.ed(a);
             ed.objsel = ed.doc.paths.iter().map(|p| p.id).collect();
-            ed.execute(EditCommand::Copy);
+            ed.execute_ui(EditCommand::Copy);
         }
         r.run(AppCommand::NewBoard);
         let b = r.active();
@@ -2146,7 +2146,7 @@ mod tests {
         assert_eq!(r.prompts(), ["ask Untitled-1"]);
         assert_eq!(r.active(), b);
         assert_eq!(r.get(b).editor.clipboard().len(), 1, "…and survives closing the tab that held it");
-        r.ed(b).execute(EditCommand::Paste { offset: None });
+        r.ed(b).execute_ui(EditCommand::Paste { offset: None });
         assert_eq!(fills(&r.get(b).editor), [Some(RED)], "pasting into the other tab works");
     }
 
@@ -2870,7 +2870,7 @@ mod tests {
         let fp = Fingerprint { len: 42, modified: None };
         r.s.fingerprints.insert(p("/d/bridge.vrs"), fp);
         let id = r.open("/d/bridge.vrs");
-        r.ed(id).execute(EditCommand::SetBoardName("written".into()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName("written".into()));
         let (_, jobs) = r.bg(AppCommand::Save(id));
         let job = one(jobs);
         let ticket = r.get(id).saving.as_ref().unwrap().ticket;
@@ -2880,7 +2880,7 @@ mod tests {
             home: std::env::temp_dir(),
             expected: Some((p("/d/bridge.vrs"), Some(fp))),
         }));
-        r.ed(id).execute(EditCommand::SetBoardName("later human".into()));
+        r.ed(id).execute_ui(EditCommand::SetBoardName("later human".into()));
         r.land(job);
         assert_eq!(r.s.doc("/d/bridge.vrs").name, "written");
         assert!(r.get(id).is_dirty_exact());
@@ -2971,7 +2971,7 @@ mod tests {
         assert_eq!(s.path.as_deref(), Some(Path::new("/d/a.vrs")), "same file, same tab");
         assert!(!s.is_dirty_exact(), "clean after the revert");
         assert_eq!(r.ids(), [a]);
-        r.ed(a).execute(EditCommand::Undo);
+        r.ed(a).execute_ui(EditCommand::Undo);
         assert_eq!(fills(&r.get(a).editor), [Some(RED)], "history starts over: nothing to undo");
         // a file that cannot be read changes nothing
         draw(r.ed(a), BLUE);

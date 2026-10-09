@@ -4,7 +4,10 @@
 pub mod board;
 pub mod boolean;
 pub mod clipboard;
+mod clipping;
 pub mod command;
+pub mod guard;
+pub use guard::EngineError;
 pub mod editor;
 pub mod flatten;
 pub mod format;

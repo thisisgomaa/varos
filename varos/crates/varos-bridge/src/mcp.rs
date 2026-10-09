@@ -226,6 +226,33 @@ pub fn tools() -> Value {
     },"inputSchema":schemas[*name]})).collect();
     json!({"tools":tools})
 }
+/// Explicit 1.2 discovery; the default tool table and its 1.0/1.1 contracts stay frozen.
+pub fn tools_for_api(api: &str) -> Value {
+    let mut table = tools();
+    if api != "1.2" {
+        return table;
+    }
+    if let Some(rows) = table["tools"].as_array_mut() {
+        for row in rows {
+            match row["name"].as_str() {
+                Some("capabilities") => {
+                    row["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"})
+                }
+                Some("edit") => {
+                    row["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"]});
+                    let defs = &mut row["inputSchema"]["$defs"]["operation"]["anyOf"];
+                    if let Some(ops) = defs.as_array_mut() {
+                        for verb in ["clip", "release_clip"] {
+                            ops.push(object(json!({"verb":{"const":verb},"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string"}}}), &["verb","ids"]));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    table
+}
 fn rpc_result(id: Value, result: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"result":result})
 }
@@ -343,7 +370,7 @@ pub fn serve<T: Transport>(
             }
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
-            "tools/list" => rpc_result(id, tools()),
+            "tools/list" => rpc_result(id, tools_for_api(params["api"].as_str().unwrap_or("1.0"))),
             "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }

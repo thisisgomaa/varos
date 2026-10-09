@@ -273,6 +273,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::F12 => E::F12,
         K::Digit0 => E::Num0,
         K::Digit1 => E::Num1,
+        K::Digit7 => E::Num7,
         K::Equal => E::Equals,
         K::Minus => E::Minus,
         K::Semicolon => E::Semicolon,

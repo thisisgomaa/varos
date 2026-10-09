@@ -76,6 +76,7 @@ impl ToolKind {
     }
 }
 
+#[derive(Clone)]
 pub enum Drag {
     None,
     PenNew { aid: u32, down: Pt, broken: bool },
@@ -122,6 +123,7 @@ pub enum TfAgain {
 /// Artboard-tool drag state — kept STRICTLY separate from `Drag` (the object/anchor engine) so the two
 /// can never cross-grab (the no-cross-grab guarantee). `Move` carries the artwork base when "move artwork
 /// with artboard" is on, so the page and the art on it translate together.
+#[derive(Clone)]
 pub enum AbDrag {
     None,
     // `pids` = the traveling art's path ids (excluded from snap targets while the page moves)
@@ -392,7 +394,9 @@ fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
     true
 }
 
+#[derive(Clone)]
 pub struct Editor {
+    pub last_error: Option<crate::guard::EngineError>,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
@@ -448,9 +452,10 @@ pub struct Editor {
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
     clipboard: Clipboard,
     id_high_water: u32,
-    undo: Vec<Document>,
-    redo: Vec<Document>,
-    pending: Option<Document>,
+    undo: Vec<std::sync::Arc<Document>>,
+    redo: Vec<std::sync::Arc<Document>>,
+    pending: Option<std::sync::Arc<Document>>,
+    pub(crate) clipping_enablement: std::cell::RefCell<Option<crate::clipping::Enablement>>,
 }
 
 impl Default for Editor {
@@ -462,6 +467,7 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            last_error: None,
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
@@ -504,6 +510,7 @@ impl Editor {
             undo: vec![],
             redo: vec![],
             pending: None,
+            clipping_enablement: Default::default(),
         }
     }
 
@@ -1909,6 +1916,9 @@ impl Editor {
 
     // ---------- grouping (Ctrl+G / Ctrl+Shift+G) ----------
     pub fn group_selection(&mut self) {
+        self.group_selection_with_clip(None);
+    }
+    pub(crate) fn group_selection_with_clip(&mut self, mask: Option<u32>) {
         if self.objsel.len() < 2 {
             return;
         }
@@ -1929,9 +1939,16 @@ impl Editor {
             self.bake_selected_units();
         }
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
-        if let Some(gid) = self.doc.group(&pids) {
+        let group = if let Some(mask) = mask { self.doc.clip_group(&pids, mask) } else { self.doc.group(&pids) };
+        if let Some(gid) = group {
             self.group_sel.clear();
             self.group_sel.insert(gid);
+            if let Some(mask) = mask {
+                if let Some(i) = self.doc.pidx(mask) {
+                    self.doc.paths[i].fill = crate::model::Paint::None;
+                    self.doc.paths[i].stroke = crate::model::Paint::None;
+                }
+            }
             if let Some(x0) = common {
                 // world image unchanged: every member read x0 before; now the group applies it instead.
                 for (u, _) in &units {
@@ -3390,11 +3407,7 @@ impl Editor {
         self.redo.clear();
     }
     pub fn history_preview(&self, redo: bool) -> Option<&Document> {
-        if redo {
-            self.redo.last()
-        } else {
-            self.undo.last()
-        }
+        if redo { self.redo.last() } else { self.undo.last() }.map(std::sync::Arc::as_ref)
     }
     pub fn history_available(&self, redo: bool) -> bool {
         if redo {
@@ -3407,7 +3420,8 @@ impl Editor {
     // ---------- history ----------
     pub fn begin(&mut self) {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
-        self.pending = Some(self.doc.clone());
+        self.clipping_enablement.get_mut().take();
+        self.pending = Some(std::sync::Arc::new(self.doc.clone()));
         self.doc.ids = self.id_high_water;
         self.dirty = false;
     }
@@ -3430,16 +3444,16 @@ impl Editor {
     }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
-            self.redo.push(self.doc.clone());
-            self.restore_keeping_prefs(s);
+            self.redo.push(std::sync::Arc::new(self.doc.clone()));
+            self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
     }
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
-            self.undo.push(self.doc.clone());
-            self.restore_keeping_prefs(s);
+            self.undo.push(std::sync::Arc::new(self.doc.clone()));
+            self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
@@ -4830,7 +4844,7 @@ impl Editor {
     /// preview leaves NO history entry.
     pub fn picker_cancel(&mut self) {
         if let Some(doc) = self.pending.take() {
-            self.doc = doc;
+            self.doc = std::sync::Arc::unwrap_or_clone(doc);
         }
         self.dirty = false;
     }
@@ -5458,5 +5472,98 @@ mod picker_tests {
         ed.undo();
         let pi = ed.doc.pidx(7).unwrap();
         assert_eq!(ed.doc.paths[pi].fill.solid(), Some([0.5, 0.5, 0.5, 1.0]), "undo restores the pre-open fill");
+    }
+}
+
+#[cfg(test)]
+mod crash_boundary_tests {
+    use super::*;
+    use crate::{EditCommand, EngineError};
+    #[test]
+    fn panic_restores_document_selection_revision_and_both_history_stacks() {
+        let mut ed = Editor::new();
+        ed.execute(EditCommand::AddShape {
+            kind: ShapeKind::Rect,
+            bounds: [0., 0., 40., 40.],
+            parent: None,
+            fill: Some([1.; 4]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+        let pid = ed.doc.paths[0].id;
+        ed.execute(EditCommand::SelectPaths(vec![pid])).unwrap();
+        ed.execute(EditCommand::SetStrokeWidth(8.)).unwrap();
+        ed.execute(EditCommand::Undo).unwrap();
+        let before = ed.clone();
+        assert_eq!(
+            ed.execute(EditCommand::ForcedPanic),
+            Err(EngineError::Internal { what: "forced command panic".into() })
+        );
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.objsel, before.objsel);
+        assert_eq!(ed.selected, before.selected);
+        assert_eq!(ed.group_sel, before.group_sel);
+        assert_eq!(ed.undo, before.undo);
+        assert_eq!(ed.redo, before.redo);
+        assert_eq!(ed.pending, before.pending);
+        assert_eq!(ed.rev, before.rev);
+        ed.execute(EditCommand::Redo).unwrap();
+        assert_eq!(ed.doc.paths[0].stroke_width, 8.);
+    }
+    #[test]
+    fn rollback_checkpoint_shares_all_retained_history_and_pending_snapshots() {
+        let mut ed = Editor::new();
+        for i in 0..200 {
+            ed.begin();
+            ed.doc.name = format!("revision {i}");
+            ed.dirty = true;
+            ed.commit();
+        }
+        ed.undo();
+        ed.begin();
+        let before = ed.clone();
+        for (a, b) in ed.undo.iter().zip(&before.undo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+        for (a, b) in ed.redo.iter().zip(&before.redo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+        assert!(std::sync::Arc::ptr_eq(ed.pending.as_ref().unwrap(), before.pending.as_ref().unwrap()));
+        assert!(ed.execute(EditCommand::ForcedPanic).is_err());
+        assert_eq!(ed.undo.len(), 199);
+        assert_eq!(ed.redo.len(), 1);
+        assert_eq!(ed.doc, before.doc);
+        for (a, b) in ed.undo.iter().zip(&before.undo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+    }
+    #[test]
+    fn panicking_batch_discards_the_staged_copy() {
+        let mut ed = Editor::new();
+        ed.doc.name = "original".into();
+        let before = ed.clone();
+        let error =
+            ed.execute_batch(vec![EditCommand::SetBoardName("staged".into()), EditCommand::ForcedPanic]).unwrap_err();
+        assert_eq!(error.index, 1);
+        assert!(error.reason.starts_with("internal error:"));
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.undo, before.undo);
+        assert_eq!(ed.redo, before.redo);
+        assert_eq!(ed.objsel, before.objsel);
+        assert_eq!(ed.rev, before.rev);
+    }
+    #[test]
+    fn panic_preserves_an_open_transaction() {
+        let mut ed = Editor::new();
+        ed.begin();
+        ed.doc.name = "unfinished".into();
+        let before = ed.clone();
+        assert!(ed.execute(EditCommand::ForcedPanic).is_err());
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.pending, before.pending);
+        assert!(ed.transaction_open());
     }
 }

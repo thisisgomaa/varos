@@ -168,3 +168,5 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
+| 0.2 Crash safety | implemented, pending review | uncommitted | Typed command panic rollback; Bridge staged rollback; runtime GPU health; core/Bridge no-panic ratchets 37/106; docs/CRASH_SAFETY.md |
+| 0.9 Clipping mask ⌘7 | implemented, pending review | uncommitted | Core commands, API 1.2 clip/release_clip, CLI apply/attached edit, native/burger mirrors, undo and headless parity |
