@@ -91,7 +91,7 @@ fn setup_opt_in_invalid_atomic_and_history() {
     let reply = invoke(&mut s, &mut h, "edit", args);
     assert!(reply.ok, "{:?}", reply.error);
     assert_eq!(h.editor.doc.units.ppi, 300.0);
-    h.editor.execute(varos_core::EditCommand::Undo);
+    h.editor.execute(varos_core::EditCommand::Undo).unwrap();
     assert_eq!(h.editor.doc.units.ppi, 72.0);
     let rev = h.editor.rev;
     let reply = invoke(
