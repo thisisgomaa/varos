@@ -977,3 +977,4 @@ fn command_rows(ui: &mut egui::Ui, id: SessionId, cmds: &mut Vec<AppCommand>) ->
 }
 #[path = "status.rs"]
 mod status;
+pub(crate) use status::CanvasHint;

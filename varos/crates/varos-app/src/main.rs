@@ -2278,12 +2278,8 @@ fn main() {
                                     [psz.width, psz.height],
                                     SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
                                 );
-                                if !world.errors.is_empty() {
-                                    lifecycle::Dialogs::notice(
-                                        &mut dialogs,
-                                        "Stroke cannot be drawn",
-                                        &world.errors.join("\n"),
-                                    );
+                                if gui.canvas_hint.observe(s.id, ed.rev, &world.report) {
+                                    gui.repaint_at = Some(Instant::now());
                                 }
                                 renderer.render_ui(&world, *view, &jobs, &tdelta, &screen)
                             };
