@@ -121,6 +121,21 @@ pub trait DocStore {
             .map(|_| SaveOutcome::Durable)
             .map_err(|e| varos_bridge::Error::new("io_error", e))
     }
+    /// Screens use fresh destinations and preserve the cancellation boundary.
+    fn export_fresh(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<ExportWrite, String> {
+        if self.exists(path) {
+            return Err("Destination appeared during export; nothing replaced.".into());
+        }
+        self.write_export(path, bytes, cancel)
+    }
+    fn export_folder(&mut self, _folder: &Path) -> Result<(), String> {
+        Ok(())
+    }
     /// The file's identity: absolute + canonical path (the parent canonicalised for a file that does
     /// not exist yet), plus device/inode on unix.
     fn key(&self, path: &Path) -> FileKey;
@@ -240,8 +255,27 @@ impl Lifecycle<'_> {
             }
             AppCommand::SaveCopy(id) => self.save_copy(id),
             AppCommand::Revert(id) => self.revert(id),
-            AppCommand::ShowExport(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
+            AppCommand::ShowExport(_) | AppCommand::ShowExportPdfPreset(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
             AppCommand::ExportPdf(id, scope, ticket) => return self.export(id, scope, ticket),
+            AppCommand::ExportScreens(id, jobs) => {
+                let Some(s) = self.ws.get_mut(id) else { return Effect::default() };
+                if !s.exports.is_empty() {
+                    return Effect::default();
+                }
+                let mut effect = Effect::default();
+                for job in &jobs {
+                    s.exports.push(std::time::Instant::now());
+                    effect.exports.push(ExportEvent::Started {
+                        sid: id,
+                        ticket: job.job.ticket,
+                        cancel: job.job.cancel.clone(),
+                    });
+                }
+                for job in jobs {
+                    effect.exports.extend(self.queue(FileJob::Screen(Box::new(job))).exports);
+                }
+                return effect;
+            }
             AppCommand::FileDone(done) => return self.file_done(*done),
             AppCommand::CloseDocument(id) => self.close(id),
             AppCommand::CloseAll => self.close_all(),
@@ -716,7 +750,14 @@ impl Lifecycle<'_> {
             ExportResult::Cancelled => ExportEvent::Cancelled { sid, ticket },
             ExportResult::Failed(reason) => {
                 let reason = reason.trim().trim_end_matches('.');
-                self.dialogs.notice("Couldn't export PDF.", &format!("{reason}. Your document has not changed."));
+                self.dialogs.notice(
+                    if done.job.dest.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+                        "Couldn't export PDF."
+                    } else {
+                        "Couldn't export."
+                    },
+                    &format!("{reason}. Your document has not changed."),
+                );
                 ExportEvent::Ended { sid, ticket }
             }
             ExportResult::NeedsReplaceConfirm => {

@@ -158,9 +158,16 @@ fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
     // slice 0.6: Export Selection… beside it, also without a key (Illustrator has none)
     let export: Vec<&Entry> =
         items.iter().filter(|e| matches!(e, Entry::Item { id, .. } if id.contains("export"))).collect();
-    assert_eq!(export.len(), 2, "PDF… and Export Selection…");
+    assert_eq!(export.len(), 3, "Export…, PDF… preset and Export Selection…");
     assert!(
-        matches!(export[0], Entry::Item { label: "PDF\u{2026}", accel: None, cmd: MenuCmd::File(FileCmd::Export), .. }),
+        matches!(export[0], Entry::Item { accel: Some(a), cmd: MenuCmd::File(FileCmd::Export), .. } if *a == cmd_alt(KeyCode::KeyE).unwrap())
+    );
+    let export = &export[1..];
+    assert!(
+        matches!(
+            export[0],
+            Entry::Item { label: "PDF\u{2026}", accel: None, cmd: MenuCmd::File(FileCmd::ExportPdfPreset), .. }
+        ),
         "{:?}",
         export[0]
     );
@@ -200,6 +207,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
         ("file.closeall", cmd_alt(KeyCode::KeyW).unwrap(), FileCmd::CloseAll),
         ("file.savecopy", cmd_alt(KeyCode::KeyS).unwrap(), FileCmd::SaveCopy),
         ("file.revert", fkey(KeyCode::F12).unwrap(), FileCmd::Revert),
+        ("file.export", cmd_alt(KeyCode::KeyE).unwrap(), FileCmd::Export),
     ];
     for (id, accel, fc) in want {
         assert!(rows.iter().any(|&(i, a, f)| i == id && a == accel && f == fc), "File menu misses {id}");
@@ -250,7 +258,8 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
 }
 
 /// The rows slice 0.6 added after the split; everything else is the pre-split table.
-const ADDED_AFTER_SPLIT: &[&str] = &["file.closeall", "file.savecopy", "file.revert", "file.exportselection"];
+const ADDED_AFTER_SPLIT: &[&str] =
+    &["file.closeall", "file.savecopy", "file.revert", "file.exportselection", "file.export"];
 
 fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, Vec<Entry>)> {
     fn strip(v: Vec<Entry>) -> Vec<Entry> {
@@ -258,6 +267,9 @@ fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, V
             .filter(|e| !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str())))
             .map(|e| match e {
                 Entry::Sub { label, items } => Entry::Sub { label, items: strip(items) },
+                Entry::Item { id, label, accel, cmd: MenuCmd::File(FileCmd::ExportPdfPreset), check } => {
+                    Entry::Item { id, label, accel, cmd: MenuCmd::File(FileCmd::Export), check }
+                }
                 e => e,
             })
             .collect()
@@ -303,6 +315,7 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.savecopy",
             "file.revert",
             "---",
+            "file.export",
             "sub Export",
             "file.exportselection",
         ]

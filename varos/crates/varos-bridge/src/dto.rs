@@ -21,6 +21,8 @@ pub enum Request {
     Save(FileEffect),
     SaveAs(FileEffect),
     ExportPdf(FileEffect),
+    ExportSvg(FileEffect),
+    ExportRaster(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -504,6 +506,16 @@ pub struct FileEffect {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ppi: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transparent: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<u8>,
 }
 impl Request {
     /// Wire tool name (for audit records; never carries arguments).
@@ -520,6 +532,8 @@ impl Request {
             Self::Save(_) => "save",
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
+            Self::ExportSvg(_) => "export_svg",
+            Self::ExportRaster(_) => "export_raster",
         }
     }
     pub fn api(&self) -> &str {
@@ -532,14 +546,16 @@ impl Request {
             Self::History(v) => &v.api,
             Self::RequestStatus(v) => &v.api,
             Self::Snapshot(v) => &v.api,
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => &v.api,
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some(&v.board),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => {
+                Some(&v.board)
+            }
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -551,7 +567,9 @@ impl Request {
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) => Some((&v.request_id, v.expected_rev)),
+            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => {
+                Some((&v.request_id, v.expected_rev))
+            }
             _ => None,
         }
     }

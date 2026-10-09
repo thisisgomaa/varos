@@ -365,6 +365,66 @@ impl DocStore for DiskStore {
     ) -> Result<crate::lifecycle::ExportWrite, String> {
         export_write(&varos_app::storage::durable::RealFs, path, bytes, cancel)
     }
+    fn export_folder(&mut self, folder: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(folder).map_err(|e| e.to_string())
+    }
+    fn export_fresh(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::lifecycle::ExportWrite, String> {
+        #[cfg(unix)]
+        {
+            let canonical = path
+                .parent()
+                .ok_or("Missing export folder.")?
+                .canonicalize()
+                .map_err(|e| e.to_string())?
+                .join(path.file_name().ok_or("Missing filename.")?);
+            let path = canonical.as_path();
+            let fs = crate::bridge_fs::Pinned::new(path, None, true).map_err(|e| e.bridge().reason)?;
+            use varos_app::storage::{
+                checksum::new_nonce,
+                durable::{write_replace_cancellable, WriteError},
+            };
+            match write_replace_cancellable(&fs, path, bytes, &new_nonce(), cancel) {
+                Ok(_) => Ok(crate::lifecycle::ExportWrite::Written),
+                Err(WriteError::Cancelled) => Ok(crate::lifecycle::ExportWrite::Cancelled),
+                Err(error) => Err(error.reason()),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // Encode/write into a sibling temp; hard-link publication is exclusive and is the commit boundary.
+            use std::io::Write;
+            use std::sync::atomic::Ordering;
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(crate::lifecycle::ExportWrite::Cancelled);
+            }
+            let parent = path.parent().ok_or("Missing export folder.")?;
+            let temp = parent.join(format!(".varos-export-{}.tmp", varos_app::storage::checksum::new_nonce()));
+            let result = (|| {
+                let mut file =
+                    std::fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|e| e.to_string())?;
+                for chunk in bytes.chunks(64 * 1024) {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Ok(crate::lifecycle::ExportWrite::Cancelled);
+                    }
+                    file.write_all(chunk).map_err(|e| e.to_string())?;
+                }
+                file.sync_all().map_err(|e| e.to_string())?;
+                drop(file);
+                if cancel.load(Ordering::Relaxed) {
+                    return Ok(crate::lifecycle::ExportWrite::Cancelled);
+                }
+                std::fs::hard_link(&temp, path).map_err(|e| e.to_string())?;
+                Ok(crate::lifecycle::ExportWrite::Written)
+            })();
+            let _ = std::fs::remove_file(temp);
+            result
+        }
+    }
     fn read_existing(&mut self, path: &Path) -> Option<Vec<u8>> {
         let meta = std::fs::metadata(path).ok()?;
         if !meta.is_file() || meta.len() > varos_pdf::HAS_MODEL_SCAN_CAP as u64 {

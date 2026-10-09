@@ -38,6 +38,7 @@ struct Request {
     snapshot: Arc<Document>,
     mtime: SystemTime,
     panic_for_test: bool,
+    asset: Option<varos_raster::export::Asset>,
 }
 
 /// One worker with at most 16 distinct keys queued. Re-requests replace the per-key latest slot.
@@ -99,7 +100,19 @@ impl ThumbService {
     }
 
     pub fn request(&self, key: ThumbKey, snapshot: Arc<Document>, mtime: SystemTime) {
-        self.enqueue(Request { key, snapshot, mtime, panic_for_test: false });
+        self.enqueue(Request { key, snapshot, mtime, panic_for_test: false, asset: None });
+    }
+
+    /// Export cards reuse the same bounded thumbnail worker, PNG cache and eviction policy.
+    pub fn request_export(&self, key: ThumbKey, asset: varos_raster::export::Asset, mtime: SystemTime) -> bool {
+        if matches!(self.lookup(&key, mtime), Some(Lookup::Fresh(_))) {
+            return true;
+        }
+        if self.latest.lock().map_or(true, |pending| pending.len() >= QUEUE_LIMIT) {
+            return false;
+        }
+        self.enqueue(Request { key, snapshot: asset.doc.clone(), mtime, panic_for_test: false, asset: Some(asset) });
+        true
     }
 
     fn enqueue(&self, req: Request) {
@@ -258,9 +271,25 @@ fn render_write(root: &Path, req: &Request) -> Result<PathBuf, String> {
 
 fn render_write_inner(root: &Path, req: &Request) -> Result<PathBuf, String> {
     fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    let raster = raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]);
+    let bytes = if let Some(asset) = &req.asset {
+        let options = varos_raster::export::Options {
+            format: varos_raster::export::Format::Png,
+            scale: (varos_app::shell::tokens::EXPORT_CARD_W / asset.page.rect[2].max(asset.page.rect[3])).min(64.0),
+            ..Default::default()
+        };
+        if let Some(index) = asset.page.artboard {
+            let side = varos_app::shell::tokens::EXPORT_CARD_W as u32;
+            raster::rasterize_artboard(asset.doc.clone(), index, [side, side])
+                .ok_or("Invalid thumbnail page.")?
+                .encode_png()?
+        } else {
+            varos_raster::export::encode(asset, &options, &AtomicBool::new(false))?.bytes
+        }
+    } else {
+        raster::rasterize(req.snapshot.clone(), [raster::WIDTH, raster::HEIGHT]).encode_png()?
+    };
     let path = cache_path(root, &req.key);
-    write_atomic(root, &path, &raster.encode_png()?)?;
+    write_atomic(root, &path, &bytes)?;
     write_atomic(root, &mtime_path(root, &req.key), mtime_value(req.mtime).to_string().as_bytes())?;
     evict(root, LIMIT);
     Ok(path)
@@ -383,6 +412,7 @@ mod tests {
             snapshot: Arc::new(Document::default()),
             mtime: UNIX_EPOCH,
             panic_for_test: true,
+            asset: None,
         });
         let _ = wait_for(&service, UNIX_EPOCH);
         let next = UNIX_EPOCH + Duration::from_secs(1);
@@ -400,7 +430,13 @@ mod tests {
                 let key = ThumbKey(i.to_string());
                 latest.insert(
                     key.clone(),
-                    Request { key, snapshot: Arc::new(Document::default()), mtime: UNIX_EPOCH, panic_for_test: false },
+                    Request {
+                        key,
+                        snapshot: Arc::new(Document::default()),
+                        mtime: UNIX_EPOCH,
+                        panic_for_test: false,
+                        asset: None,
+                    },
                 );
             }
             assert_eq!(latest.len(), QUEUE_LIMIT);

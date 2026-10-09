@@ -84,6 +84,8 @@ pub fn legacy_texture(ctx: &Context, name: &str, inner: &str, filled: bool) -> O
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
+    ExportGrid,
+    ExportCheck,
     // ── Start / Home / Recent ──
     Home,
     New,
@@ -187,7 +189,7 @@ pub enum Icon {
     HarmonyMono,
 }
 impl Icon {
-    pub const ALL: [Icon; 56] = [
+    pub const ALL: [Icon; 58] = [
         Self::Home,
         Self::New,
         Self::Open,
@@ -244,6 +246,8 @@ impl Icon {
         Self::HarmonyTetradic,
         Self::HarmonySquare,
         Self::HarmonyMono,
+        Self::ExportGrid,
+        Self::ExportCheck,
     ];
 
     /// The icon's name and its embedded SVG: the upstream Lucide file, or — for [`Icon::is_original`] —
@@ -260,6 +264,8 @@ impl Icon {
             };
         }
         match self {
+            Self::ExportGrid => svg!("grid-2x2"),
+            Self::ExportCheck => svg!("check"),
             Self::Home => svg!("house"),
             Self::New => svg!("file-plus"),
             Self::Open => svg!("folder-open"),

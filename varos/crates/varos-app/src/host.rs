@@ -46,6 +46,7 @@ pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Optio
         (KeyCode::KeyS, false, false) => FileCmd::Save,
         (KeyCode::KeyS, true, false) => FileCmd::SaveAs,
         (KeyCode::KeyS, false, true) => FileCmd::SaveCopy,
+        (KeyCode::KeyE, false, true) => FileCmd::Export,
         (KeyCode::KeyW, false, false) => FileCmd::CloseTab,
         (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
         (KeyCode::KeyQ, false, false) => FileCmd::Quit,
@@ -76,6 +77,7 @@ pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppComm
         FileCmd::SaveCopy => AppCommand::SaveCopy(active?),
         FileCmd::Revert => AppCommand::Revert(active?),
         FileCmd::Export => AppCommand::ShowExport(active?),
+        FileCmd::ExportPdfPreset => AppCommand::ShowExportPdfPreset(active?),
         FileCmd::ExportSelection => AppCommand::ShowExportSelection(active?),
         FileCmd::CloseTab => AppCommand::CloseDocument(active?),
         FileCmd::CloseAll => {
@@ -524,8 +526,10 @@ pub fn run_lifecycle(
                 | AppCommand::SaveCopy(_)
                 | AppCommand::Revert(_)
                 | AppCommand::ShowExport(_)
+                | AppCommand::ShowExportPdfPreset(_)
                 | AppCommand::ShowExportSelection(_)
                 | AppCommand::ExportPdf(..)
+                | AppCommand::ExportScreens(..)
         )
     {
         return Ran::default();
@@ -582,8 +586,10 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
             | C::SaveCopy(_)
             | C::Revert(_)
             | C::ShowExport(_)
+            | C::ShowExportPdfPreset(_)
             | C::ShowExportSelection(_)
             | C::ExportPdf(..)
+            | C::ExportScreens(..)
             | C::NewBoard
             | C::NewWithPreset(_)
             | C::Home

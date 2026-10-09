@@ -84,3 +84,28 @@ fn only_export_pdf_advertises_api_12() {
         }
     }
 }
+
+#[test]
+fn new_export_verbs_require_12_and_retain_report_in_completed_receipt() {
+    for tool in ["export_svg", "export_raster"] {
+        for api in ["1.0", "1.1", "1.2"] {
+            let mut host = ExportHost {
+                editor: Editor::new(),
+                report: ExportReport {
+                    notes: vec![ExportNote { kind: "fidelity".into(), object_id: None, message: "Export note".into() }],
+                },
+                completed: true,
+            };
+            let mut service = Service::new("exports".into());
+            let ctx = Context { epoch: "exports".into(), client: "export-client".into() };
+            let request = varos_bridge::mcp::decode_tool(tool,json!({"api":api,"board":"b1","request_id":"r1","expected_rev":0,"path":"/granted/file.svg","scope":"whole_board"})).unwrap();
+            let reply = service.handle(&mut host, &ctx, request, &AtomicBool::new(false));
+            assert_eq!(reply.ok, api == "1.2", "{reply:?}");
+            if api == "1.2" {
+                let status = varos_bridge::mcp::decode_tool("request_status", json!({"request_id":"r1"})).unwrap();
+                let reply = service.handle(&mut host, &ctx, status, &AtomicBool::new(false));
+                assert_eq!(reply.result.unwrap()["receipt"]["result"]["report"]["notes"][0]["message"], "Export note");
+            }
+        }
+    }
+}
