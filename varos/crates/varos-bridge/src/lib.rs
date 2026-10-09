@@ -1,4 +1,5 @@
 //! API 1.0/1.1 adapters. No window, GPU, provider or filesystem editing dependency.
+// ---- Lane G ----
 pub mod cli;
 pub mod conn;
 mod design;
@@ -7,6 +8,7 @@ mod economy;
 pub mod files;
 pub mod ipc;
 pub mod mcp;
+pub mod release;
 pub mod service;
 pub use dto::{Error, Reply, Request};
 pub use service::{BoardAccess, BoardInfo, Context, Host, Service};

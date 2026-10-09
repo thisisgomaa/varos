@@ -10,6 +10,8 @@ fn page() -> usize {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    // ---- Lane G ----
+    Release(crate::release::Request),
     // ---- Lane F ----
     Help(crate::application::HelpRequest),
     Preferences(crate::application::Preferences),
@@ -929,6 +931,8 @@ impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
         match self {
+            // ---- Lane G ----
+            Self::Release(_) => "release",
             Self::Help(_) => "help",
             Self::Preferences(_) => "preferences",
             Self::Shortcuts(_) => "shortcuts",
@@ -967,6 +971,8 @@ impl Request {
     pub fn api(&self) -> &str {
         match self {
             Self::Capabilities(v) | Self::WindowMemory(v) | Self::ListVerbs(v) => &v.api,
+            // ---- Lane G ----
+            Self::Release(v) => &v.api,
             Self::Help(v) => &v.api,
             Self::Preferences(v) => &v.api,
             Self::Shortcuts(v) => &v.api,

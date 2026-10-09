@@ -106,6 +106,8 @@ pub struct Ui {
     /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
     panel_column: Option<egui::Rangef>,
+    // ---- Lane G ----
+    pub release: crate::release_ui::State,
     // ---- Lane F ----
     pub phase9: crate::phase9::State,
     pub document_sheet: Option<crate::document_ui::Sheet>,
@@ -205,11 +207,17 @@ impl Ui {
     }
 }
 impl Ui {
+    // ---- Lane G ----
+    pub fn accessibility_context(&self) -> egui::Context {
+        self.ctx.clone()
+    }
     pub fn toggle_panel(&mut self, p: varos_app::shell::PanelId) {
         self.shell.toggle_panel(p);
     }
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
+        // ---- Lane G ----
+        ctx.enable_accesskit();
         install_fonts(&ctx);
         install_style(&ctx);
         disable_ui_keyboard_zoom(&ctx);
@@ -245,6 +253,8 @@ impl Ui {
             recovery: Default::default(),
             file_status: String::new(),
             canvas_hint: Default::default(),
+            // ---- Lane G ----
+            release: Default::default(),
             phase9: Default::default(),
             document_sheet: None,
             export_sheet: None,
@@ -462,6 +472,9 @@ impl Ui {
         // `egui_focus_seed`
         let raw = self.state.egui_input_mut();
         raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
+        // ---- Lane G ----
+        #[cfg(target_os = "macos")]
+        varos_app::accessibility_macos::drain(&mut self.state.egui_input_mut().events);
         let input = self.state.take_egui_input(window);
         set_doc_salt(&self.ctx, self.doc_active); // per-widget edit state stays inside its document
         layout::prepare_picker_input(
@@ -579,6 +592,8 @@ impl Ui {
             lane_c::sheets(ctx, &mut app_cmds, &mut ops, doc_active);
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
+            // ---- Lane G ----
+            self.release.draw(ctx, &mut app_cmds);
             self.phase9.draw(ctx, &mut app_cmds, doc_active);
             crate::document_ui::draw(ctx, &mut self.document_sheet, ed, doc_active, &mut ops);
             build_statusbar(root, (absnap.active, absnap.count), view.zoom, ic_fit, &mut fit_request, status, &mut ops);
@@ -777,6 +792,11 @@ impl Ui {
             out.platform_output.cursor_icon = egui::CursorIcon::Default;
             out
         };
+        // ---- Lane G ----
+        #[cfg(target_os = "macos")]
+        if let Some(tree) = &out.platform_output.accesskit_update {
+            varos_app::accessibility_macos::publish(window, &self.ctx, tree);
+        }
         self.state.handle_platform_output(window, out.platform_output);
         // Stage 4: publish the canvas hole. Logical for the pointer test, physical for main.rs's view
         // fits. A changed hole (box resized/dragged) repaints once more so the underlay catches up.

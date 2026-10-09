@@ -395,6 +395,15 @@ fn edit_text<T: PartialEq>(
         te = te.hint_text(f.hint);
     }
     ui.put(inner, te);
+    // ---- Lane G ----
+    super::super::accessibility::emit(
+        ui,
+        id,
+        if rows > 1 { accesskit::Role::MultilineTextInput } else { accesskit::Role::TextInput },
+        if f.hint.is_empty() { "Text" } else { f.hint },
+        Some(&buf),
+        ui.is_enabled(),
+    );
     if enter {
         ctx.memory_mut(|m| m.surrender_focus(id));
     }
@@ -449,12 +458,19 @@ pub struct NumberField<'a> {
 /// drag to scrub (↔), click to type (value pre-selected). While typing: ↑/↓ ±1, ⇧ ±10, Ctrl ±0.1 (A20);
 /// commits by the K3 law.
 pub fn number_field(ui: &mut Ui, f: NumberField<'_>) -> Edit<f32> {
-    number_field_with(ui, f, false, None)
+    number_labeled(ui, f, false, None)
 }
 /// Compact picker value: no label column, right-aligned numeric ink; identical K3 behaviour.
 /// An optional arrow step overrides the modifier ladder (e.g. one Web-safe step).
 pub fn number_value(ui: &mut Ui, f: NumberField<'_>, arrow_step: Option<f32>) -> Edit<f32> {
-    number_field_with(ui, f, true, arrow_step)
+    number_labeled(ui, f, true, arrow_step)
+}
+// ---- Lane G: preserve semantics after egui's editing TextEdit updates the same node ----
+fn number_labeled(ui: &mut Ui, f: NumberField<'_>, compact: bool, arrow_step: Option<f32>) -> Edit<f32> {
+    let (id, name, enabled) = (f.id, f.tip, !f.disabled && ui.is_enabled());
+    let out = number_field_with(ui, f, compact, arrow_step);
+    super::super::accessibility::emit(ui, id, accesskit::Role::SpinButton, name, None, enabled);
+    out
 }
 fn number_field_with(ui: &mut Ui, f: NumberField<'_>, compact: bool, arrow_step: Option<f32>) -> Edit<f32> {
     let ctx = ui.ctx().clone();
@@ -487,6 +503,13 @@ fn number_field_with(ui: &mut Ui, f: NumberField<'_>, compact: bool, arrow_step:
     let decimals = f.decimals;
     let fmt = move |v: f32| format!("{v:.decimals$}");
     let shown = fmt(f.value);
+    // ---- Lane G ----
+    super::super::accessibility::emit(ui, id, accesskit::Role::SpinButton, f.tip, Some(&shown), !f.disabled);
+    ui.ctx().accesskit_node_builder(id, |node| {
+        node.set_numeric_value(f.value as f64);
+        node.set_min_numeric_value(lo as f64);
+        node.set_max_numeric_value(hi as f64);
+    });
     let mut sess = load(&ctx, id);
     if sess.is_some() && (f.disabled || escaped(ui)) {
         end(&ctx, id);
