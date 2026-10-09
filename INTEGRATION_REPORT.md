@@ -78,6 +78,73 @@ Cmd+Y Outline · Opt+Cmd+Y Pixel Preview · Shift+F Presentation Mode · T Type 
 
 ---
 
+# Wave 2 — stage 2 integration (`integ/w2`, 2026-10-09)
+
+Merged in order on top of the shipped stage 1 + v8 pin: `166f4c2` images · `a9a072e` gradients ·
+`7b823c1` export-paths · `6334126` app · `7a00f36` format-9 finalisation. Nothing pushed.
+
+## Formats (binding numbers)
+- v6 images · v7 gradients + swatches · v8 text (already stamped) · **v9 Live Corners + Lane F preview
+  (one bump; the preview is container-only — PDF-catalog `/VAROS_Preview` + `/VAROS_PreviewVersion`, no
+  model key, no JSON-reader impact — kept in v9)**. `FORMAT_VERSION = 9`; literal pins in
+  `varos-core/tests/format_pin.rs` (renamed from `format_v8_pin.rs`).
+- Named pure chain `migrate_v5_to_v6` → `migrate_v6_to_v7` (no validation) → `migrate_v7_to_v8` →
+  `migrate_v8_to_v9`; the temporary v5→v8 / v6→v8 identities are gone. Gates compose (<6 images,
+  <7 gradients/swatches, <8 text, <9 corners and preview keys). Bridge 1.2 `readable_vrs` derives from
+  the migration table. Document key order: images, assets, raster_effects_ppi, swatches, text_boxes, paths, ….
+- Fixtures: v6-images stay 6 (load migrated, re-save byte-identical apart from the stamp; refused-future
+  → 10); next_gradients 6 → 7 (future → 10) + new `refused/v6_gradient`, `v6_swatches`; text_next
+  refuse_newer → 10 (PDF via lopdf) + new `refuse_text_in_v7`; lane_c 6 → 9 + new
+  `refused_corners_on_v8`, `refused_future` (10); quicklook next-preview 6 → 9, future-v7 → future-v10,
+  new `refuse-v8-stamp`. SHA256SUMS/README regenerated where present. Frozen v6-era PDF goldens
+  (image writer, gradient paints) compare with stamps normalised only. Refusal tests assert specific errors.
+- Frozen mixed v9 fixture `fixtures/v9/mixed.{json,vrs}` (image + gradient + swatch + corners + text).
+  Old-reader gates v4–v8 frozen in raw JSON and PDF (`old_reader_harness.rs`, `format_v9.rs`); took the
+  gradients lane's version-dynamic stroke_v5/format_v2/board_meta/artboard_ids/old_reader_harness.
+- Docs: VRS_FORMAT "Wave-2 formats 6–9" + table rows 6–9; ADR-0008 images/gradients/live-corners
+  amendments; PLAN bump schedule (v6–v9 stamped).
+
+## Semantic clashes resolved
+- Stroke seam: `stroke::canvas_seam` IS main's `stroke/canvas.rs` hotfix path (cache/cap/back-off,
+  world rings) on canvas and strict evaluation for export; solid AND gradient strokes use it; the canvas
+  cache now keys on Live Corners.
+- SVG: one `paint_drawn` dispatch (gradient → solid → stroke style) shared by the vector writer and the
+  image companions (no white gradients in image docs); Lane C precision threaded through.
+- PDF: one writer (`write_pages_impl`) — text outlined → live corners resolved → gradient budget; gradient
+  paint before `paint_item` in image documents; image + gradient-form XObjects both registered. No parallel
+  image writer remains.
+- Prim audit: `Image` + `GradientFill` covered in tess, raster, opacity folding, bounds; no wildcard drops.
+- View × images: Outline draws image boxes + diagonals; Navigator/eyedropper rasters lend the BlobStore.
+- Text × images/gradients: PDF/SVG/raster deliverables outline text in image documents too.
+- Tools-ui: drawing tools inherit current (gradient/swatch) paints; Gradient tool (G) in the kit rail.
+- Import × images: ONE Place… on ⇧⌘P routes rasters to the image job and SVG/PDF/AI/DXF to the
+  import job; a bitmap-only pasteboard pastes as an image, vector/internal flavours keep Lane H order.
+- App × view: ONE canvas colour setting (Preferences `canvas_colour`; View presets write it; MatchUi =
+  #141313; stage-1 `canvas_color` files migrate on read). History ceiling retires image resources.
+  Quick Look preview also for image documents. Clipboard/copy/cut/transform carry paths + images + text.
+- Bridge: all lanes' verbs/tools registered (regression `wave_two_extended_verbs_are_all_listed_and_schematised`);
+  1.2 projection: structured options → `{type:object}`, shared extended-verb enum, one schema instruction.
+
+## Keyboard
+Illustrator parity, no losers beyond Place: ⇧⌘P is the unified Place… (Lane H's artwork-only row kept
+keyless). New: G Gradient, ⌘K Preferences, ⌥⇧⌘K Keyboard Shortcuts. Duplicate mac-menu key arms removed.
+
+## Final gates (after `7a00f36`)
+fmt PASS · dep directions PASS · workspace 2,241 passed / 0 failed / 15 ignored (145 suites) · clippy
+native + x86_64-pc-windows-msvc `-D warnings` clean · shell ratchets 3/3, ui.rs 805/843 · Bridge 1.0/1.1
+fixtures byte-identical (23,993 B), 1.2 = 23,879/24,000 B · wasm32 varos-text PASS · vendor cosmic-text
+PASS / egui_tiles SKIP · PLAN Progress table: only additions (+14 rows) and the revised bump schedule line.
+
+## Notes
+- Lane-authored test renames (not merge drops): stroke_v5 future_v6 → frozen_v6_refusals…, gradients
+  pin → gradient_format_number_is_pinned, quicklook future_v7 → quicklook_future_refusal…, picker
+  drawer test → drawer_and_all_tabs_are_read_only… (gradients lane), settings unreadable test →
+  unknown_settings_toggle… (app lane), svg_place_row → artwork_place_row… (import lane).
+- 1.2 tools/list headroom is 121 B; the next 1.2 tool needs another projection step.
+- Native GPU/visual acceptance, owner design review and Windows runtime remain unverified (no GUI run).
+
+---
+
 # Previous integration report (wave g2), kept for history
 
 ## feat/p2-stroke
