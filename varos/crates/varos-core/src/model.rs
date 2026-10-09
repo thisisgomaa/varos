@@ -1170,7 +1170,7 @@ impl Document {
     pub fn node(&self, id: u32) -> Option<&Node> {
         self.nodes.iter().find(|n| n.id == id)
     }
-    fn node_mut(&mut self, id: u32) -> Option<&mut Node> {
+    pub(crate) fn node_mut(&mut self, id: u32) -> Option<&mut Node> {
         self.nodes.iter_mut().find(|n| n.id == id)
     }
     /// The leaf node representing a path.
@@ -1601,7 +1601,7 @@ impl Document {
     }
     /// Detach a node from its parent (or roots) and drop it from the arena. Children are NOT touched —
     /// callers re-home them first when that matters.
-    fn remove_node(&mut self, id: u32) {
+    pub(crate) fn remove_node(&mut self, id: u32) {
         match self.node(id).and_then(|n| n.parent) {
             Some(par) => {
                 if let Some(pn) = self.node_mut(par) {

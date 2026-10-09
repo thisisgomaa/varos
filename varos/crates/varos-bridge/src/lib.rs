@@ -65,3 +65,5 @@ pub fn expanded_ops(edit: &dto::Edit) -> Vec<dto::Operation> {
         Err(_) => edit.ops.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
     }
 }
+
+mod select_transform;

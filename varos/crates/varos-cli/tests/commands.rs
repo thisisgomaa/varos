@@ -721,3 +721,28 @@ fn diff_keeps_sub_decimal_geometry_changes_despite_describe_rounding() {
     );
     assert_eq!(varos_core::bridge::diff(&doc, &changed)["changed"][0]["id"], "path:10");
 }
+
+#[test]
+fn tools_12_headless_apply_reflect_each_and_layers() {
+    let scratch = Scratch::new();
+    let input = fixture(FIXTURES[0]);
+    let doc = varos_pdf::load_vrs(&input).unwrap();
+    let id = doc.paths[0].id;
+    let batch = scratch.path("tools.json");
+    let out = scratch.path("tools.vrs");
+    std::fs::write(&batch,json!({"api":"1.2","commands":[{"SelectPaths":[id]},{"Transform":{"reflect":90,"movement":[20,0],"each":true}}]}).to_string()).unwrap();
+    cli(
+        &[
+            "apply".as_ref(),
+            input.as_os_str(),
+            "--batch".as_ref(),
+            batch.as_os_str(),
+            "--out".as_ref(),
+            out.as_os_str(),
+        ],
+        true,
+    );
+    let changed = varos_pdf::load_vrs(&out).unwrap();
+    assert_ne!(changed.paths[0].anchors, doc.paths[0].anchors);
+    assert_eq!(changed.paths.len(), doc.paths.len());
+}

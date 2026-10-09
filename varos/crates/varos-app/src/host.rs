@@ -232,6 +232,8 @@ pub enum HostAction {
 /// A document action a key or a menu row raises (not a lifecycle command).
 #[derive(Clone, Copy)]
 pub enum DocAction {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Slice4a(&'static str),
     /// A document shortcut key (`main.rs`'s `doc_key`) with the modifiers held when it was pressed.
     Key(KeyCode, Mods),
     /// A View-menu snapping row (formerly the magnet quick-menu's).
@@ -376,6 +378,7 @@ pub fn open_paths_command(paths: Vec<PathBuf>, origin: OpenOrigin) -> Option<App
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuRoute {
+    Slice4a(&'static str),
     /// A command for the one dispatch (File rows, Quit, the Window rows).
     App(AppCommand),
     /// A ⌘-row: the keyboard's own shortcut path (handed to a focused text field instead).
@@ -390,6 +393,7 @@ pub enum MenuRoute {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // the native menu bar is macOS-only
 pub fn menu_route(cmd: MenuCmd, active: Option<SessionId>) -> Option<MenuRoute> {
     Some(match cmd {
+        MenuCmd::Slice4a(name) => MenuRoute::Slice4a(name),
         MenuCmd::File(f) => MenuRoute::App(to_app_command(f, active)?),
         MenuCmd::Key(k) => MenuRoute::Key(k),
         MenuCmd::Plain(code) => MenuRoute::Plain(code),
@@ -1236,6 +1240,7 @@ mod tests {
                 HostAction::App(c) => format!("{c:?}"),
                 HostAction::Doc(DocAction::Key(code, _)) => format!("Key({code:?})"),
                 HostAction::Doc(DocAction::Snap(row)) => format!("Snap({row:?})"),
+                HostAction::Doc(DocAction::Slice4a(name)) => format!("Slice4a({name})"),
             })
             .collect()
     }

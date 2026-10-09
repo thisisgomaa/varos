@@ -14,7 +14,7 @@ use varos_core::{
 fn fail(reason: impl Into<String>) -> Error {
     Error::new("invalid_argument", reason)
 }
-fn canonical(id: &str) -> Result<(&str, u32), Error> {
+pub(crate) fn canonical(id: &str) -> Result<(&str, u32), Error> {
     let (kind, value) = id.split_once(':').ok_or_else(|| fail("use path:N or node:N"))?;
     let n = value.parse::<u32>().map_err(|_| fail("id suffix must be u32"))?;
     if n == 0 || format!("{kind}:{n}") != id || !["path", "node"].contains(&kind) {
@@ -192,6 +192,50 @@ pub(crate) fn apply_design_op(
     expanded: &mut usize,
     affected: &mut BTreeSet<String>,
 ) -> Result<Option<u32>, Error> {
+    if op.slice4a() {
+        let mut resolved = op.clone();
+        let ids = match &mut resolved {
+            Operation::Transform { ids, .. }
+            | Operation::MagicWand { ids, .. }
+            | Operation::Eyedropper { ids, .. }
+            | Operation::Isolation { ids, .. }
+            | Operation::Layers { ids, .. } => Some(ids),
+            _ => None,
+        };
+        if let Some(ids) = ids {
+            for id in ids {
+                if id.starts_with('$') {
+                    *id = locals
+                        .get(id)
+                        .cloned()
+                        .ok_or_else(|| Error::new("not_found", "unknown request-local target"))?;
+                }
+            }
+        }
+        if let Operation::Eyedropper { source, .. } = &mut resolved {
+            if source.starts_with('$') {
+                *source = locals
+                    .get(source)
+                    .cloned()
+                    .ok_or_else(|| Error::new("not_found", "unknown request-local source"))?;
+            }
+        }
+        let count = resolved
+            .ids()
+            .iter()
+            .map(|id| {
+                let (kind, n) = canonical(id)?;
+                Ok(if kind == "path" { 1 } else { ed.doc.node_paths(n).len() })
+            })
+            .collect::<Result<Vec<usize>, Error>>()?
+            .into_iter()
+            .sum::<usize>();
+        *expanded += count;
+        if *expanded > MAX_TARGETS {
+            return Err(Error::new("limit_exceeded", "batch expanded targets exceed 1000"));
+        }
+        return crate::select_transform::apply(ed, &resolved, affected);
+    }
     if op.is_page_verb() {
         return apply_artboard_op(ed, op, locals, affected).map(|()| None);
     }

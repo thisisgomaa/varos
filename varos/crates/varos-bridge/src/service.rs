@@ -311,7 +311,13 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+        if ![API, "1.1"].contains(&req.api())
+            && !(req.api() == "1.2"
+                && matches!(
+                    req,
+                    Request::ExportPdf(_) | Request::Edit(_) | Request::Capabilities(_) | Request::Select(_)
+                ))
+        {
             return Reply::failure(Error::new(
                 "unsupported",
                 "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
@@ -392,6 +398,20 @@ impl Service {
                         v["api_by_tool"] = json!({"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
                         v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
+                    }
+                    if req.api() == "1.2" {
+                        if let Some(v) = r.result.as_mut() {
+                            v["api"] = json!("1.2");
+                            v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
+                            v["slice4a_verbs"] =
+                                json!(["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]);
+                            if let Some(verbs) = v["edit_verbs"].as_array_mut() {
+                                verbs.extend(
+                                    ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"]
+                                        .map(|verb| json!(verb)),
+                                );
+                            }
+                        }
                     }
                     Ok(r)
                 }
@@ -477,8 +497,11 @@ impl Service {
                 Request::Edit(v) => {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
+                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a()) {
+                        return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
+                    }
                     let a = host.access(&v.board)?;
-                    if v.api == "1.1" {
+                    if v.api == "1.1" || v.api == "1.2" {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.

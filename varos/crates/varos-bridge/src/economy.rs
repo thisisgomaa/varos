@@ -94,7 +94,7 @@ struct Repeat {
 
 /// First normalize and bound all work, before accessing the allocator/staging editor.
 pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
-    let economy = edit.api == "1.1";
+    let economy = edit.api == "1.1" || edit.api == "1.2";
     if !economy && (edit.defaults.is_some() || edit.receipt.is_some()) {
         return Err(invalid("defaults and receipt require API 1.1"));
     }
@@ -225,7 +225,10 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
-        if !crate::EDIT_VERBS.contains(&verb) {
+        if !crate::EDIT_VERBS.contains(&verb)
+            && !(economy
+                && ["transform", "magic_wand", "eyedropper", "isolation", "layers", "tool_options"].contains(&verb))
+        {
             return Err(Error::new("unsupported", "edit verb is not enabled in this slice"));
         }
         let mut op: Operation = serde_json::from_value(normalized).map_err(|e| invalid(e.to_string()))?;

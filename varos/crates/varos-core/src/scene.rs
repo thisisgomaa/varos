@@ -82,6 +82,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     }
 
     let mut state = std::collections::hash_map::DefaultHasher::new();
+    ed.select_transform.isolation.hash(&mut state);
     ed.rev.hash(&mut state);
     frame.hash(&mut state);
     point_hash(view.pan, &mut state);
@@ -550,7 +551,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
     // with no clip group produces byte-identical `groups`. A clip just feeds it a different pair of
     // accumulators (MASKS_PLAN §2.4: members reuse every branch, they only land in a different vec).
     let emit_object = |pi: usize, p: &Path, geom: &PathGeometry, groups: &mut Vec<Group>, open: &mut Vec<Prim>| {
-        let o = p.opacity;
+        let o = p.opacity * if ed.in_isolation(p.id) { 1.0 } else { 0.25 };
         let s_alpha = p.stroke.solid().map_or(1.0, |c| c[3]);
         let vclip = view_clip[pi];
         let mut fp = fill_prims(pi, geom, vclip);
@@ -711,7 +712,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         }
     }
     // object-selection transform frame (oriented — rotates with the selection) + 8 handles
-    if ed.tool == ToolKind::Object && !matches!(ed.drag, Drag::ObjMarquee { .. }) {
+    if matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform) && !matches!(ed.drag, Drag::ObjMarquee { .. }) {
         if let (Some(c), Some(hs)) = (ed.frame_corners(), ed.frame_handles()) {
             s.overlay.push(Prim::Stroke {
                 pts: vec![c[0], c[1], c[2], c[3], c[0]],
@@ -726,7 +727,9 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         }
     }
     // Rotate/Scale: the transform pivot (bullseye) — the origin a drag transforms around; click to move it
-    if matches!(ed.tool, ToolKind::Rotate | ToolKind::Scale) && !ed.objsel.is_empty() {
+    if matches!(ed.tool, ToolKind::Rotate | ToolKind::Scale | ToolKind::Reflect | ToolKind::Shear)
+        && !ed.objsel.is_empty()
+    {
         if let Some(c) = ed.pivot_point() {
             s.overlay.push(Prim::Disc { c, r: 6.0, color: WHITE });
             s.overlay.push(Prim::Disc { c, r: 4.5, color: ACCENT });
@@ -794,7 +797,11 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
     }
     // handles: every SELECTED anchor shows its own direction handles (Illustrator). A whole-path / hover
     // selection shows none — grabbing a segment selects its two endpoints, so both reveal handles naturally.
-    let mut show: HashSet<u32> = if ed.tool == ToolKind::Object { HashSet::new() } else { ed.selected.clone() };
+    let mut show: HashSet<u32> = if matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform) {
+        HashSet::new()
+    } else {
+        ed.selected.clone()
+    };
     if ed.tool == ToolKind::Pen {
         if let Some(ap) = ed.active {
             if let Some(pi) = ed.doc.pidx(ap) {
@@ -837,7 +844,10 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
     }
     // anchor markers — only on SELECTED paths (never on mere hover), and not in object mode — outer + hole anchors
     for p in &ed.doc.paths {
-        if ed.doc.eff_hidden(p.id) || !ed.path_selected(p.id) || ed.tool == ToolKind::Object {
+        if ed.doc.eff_hidden(p.id)
+            || !ed.path_selected(p.id)
+            || matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform)
+        {
             continue;
         }
         let xf = ed.doc.unit_xform(p.id); // A7 seam: markers at WORLD anchor positions (identity ⇒ today)
@@ -903,7 +913,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         }
     }
     // ---- CENTER POINT of the object selection (Illustrator "Show Center"), tied to the 9-pt reference ----
-    if ed.tool == ToolKind::Object && !ed.objsel.is_empty() {
+    if matches!(ed.tool, ToolKind::Object | ToolKind::FreeTransform) && !ed.objsel.is_empty() {
         if let Some((x0, y0, x1, y1)) = ed.obj_bbox() {
             s.overlay.push(Prim::Disc { c: [(x0 + x1) * 0.5, (y0 + y1) * 0.5], r: 2.5, color: ACCENT });
         }

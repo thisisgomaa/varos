@@ -159,6 +159,35 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    ToolOptions {
+        #[serde(default)]
+        wand: Option<varos_core::select_transform::WandOptions>,
+        #[serde(default)]
+        eyedropper: Option<varos_core::select_transform::PickOptions>,
+    },
+    Transform {
+        ids: Vec<String>,
+        spec: varos_core::select_transform::Transform,
+    },
+    MagicWand {
+        ids: Vec<String>,
+        options: varos_core::select_transform::WandOptions,
+        mode: varos_core::select_transform::SelectMode,
+    },
+    Eyedropper {
+        ids: Vec<String>,
+        source: String,
+        options: varos_core::select_transform::PickOptions,
+        colour_only: bool,
+    },
+    Isolation {
+        ids: Vec<String>,
+        exit: bool,
+    },
+    Layers {
+        ids: Vec<String>,
+        action: varos_core::select_transform::LayerAction,
+    },
     AddShape {
         kind: ShapeKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -359,9 +388,22 @@ pub enum Order {
     Back,
 }
 impl Operation {
+    pub fn slice4a(&self) -> bool {
+        matches!(
+            self,
+            Self::ToolOptions { .. }
+                | Self::Transform { .. }
+                | Self::MagicWand { .. }
+                | Self::Eyedropper { .. }
+                | Self::Isolation { .. }
+                | Self::Layers { .. }
+        )
+    }
+
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::AddShape { .. }
+            Self::ToolOptions { .. }
+            | Self::AddShape { .. }
             | Self::AddPath { .. }
             | Self::AddArtboard { .. }
             | Self::ResizeArtboard { .. }
@@ -372,7 +414,12 @@ impl Operation {
             | Self::SetArtboardColor { .. }
             | Self::SetArtboardClip { .. }
             | Self::SetActiveArtboard { .. } => &[],
-            Self::Move { ids, .. }
+            Self::Transform { ids, .. }
+            | Self::MagicWand { ids, .. }
+            | Self::Eyedropper { ids, .. }
+            | Self::Isolation { ids, .. }
+            | Self::Layers { ids, .. }
+            | Self::Move { ids, .. }
             | Self::SetPaint { ids, .. }
             | Self::Resize { ids, .. }
             | Self::Rotate { ids, .. }

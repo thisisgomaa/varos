@@ -3051,7 +3051,7 @@ fn economy_actual_mcp_stdio_matches_cli_and_bounded_schema() {
     let schema = varos_bridge::mcp::tools();
     let edit = schema["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
     let schema = &edit["inputSchema"];
-    assert_eq!(schema["properties"]["api"]["enum"], json!(["1.0", "1.1"]));
+    assert_eq!(schema["properties"]["api"]["enum"], json!(["1.0", "1.1", "1.2"]));
     assert!(schema["$defs"].get("repeat4").is_none());
     assert_eq!(schema["$defs"]["repeat3"]["properties"]["ops"]["items"]["anyOf"].as_array().unwrap().len(), 1);
 }
