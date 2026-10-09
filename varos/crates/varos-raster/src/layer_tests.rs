@@ -139,7 +139,9 @@ fn cache_uses_object_revision_zoom_and_size_and_idle_is_zero_work() {
     assert_eq!(first.passes, 3);
     dst.fill([0.0; 4]);
     let expected = dst.clone();
-    let idle = renderer.render(&[], [3, 3], 1.0, Limits::default(), &mut dst, |_, _| panic!("idle draw")).unwrap();
+    let idle = renderer
+        .render::<varos_core::Prim>(&[], [3, 3], 1.0, Limits::default(), &mut dst, |_, _| panic!("idle draw"))
+        .unwrap();
     assert_eq!(idle, Report::default());
     assert_eq!(dst, expected);
     assert_eq!(renderer.render(&list(1), [3, 3], 1.001, Limits::default(), &mut dst, paint).unwrap().cache_hits, 1);

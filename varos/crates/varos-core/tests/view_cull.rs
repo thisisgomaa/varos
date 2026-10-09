@@ -498,6 +498,8 @@ fn treatments(groups: &[Group]) -> Vec<char> {
             Group::Isolated { .. } => vec!['I'],
             Group::Knockout(_) => vec!['K'],
             Group::Opaque(_) => vec!['O'],
+            // ---- Lane A ----
+            Group::Composite { .. } => vec!['A'],
         })
         .collect()
 }

@@ -32,10 +32,13 @@ fn frozen_gate(body: &[u8], supported: u32) -> Result<u32, LoadError> {
 
 #[test]
 fn mixed_v9_round_trips_and_pins_document_key_order() {
-    assert_eq!(FORMAT_VERSION, 9);
+    assert_eq!(FORMAT_VERSION, 10);
     let loaded = decode_model(JSON, None, &Limits::DEFAULT).unwrap();
-    assert_eq!((loaded.source_version, loaded.migrated), (9, false));
-    assert_eq!(encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(), JSON);
+    assert_eq!((loaded.source_version, loaded.migrated), (9, true));
+    assert_eq!(
+        encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().replacen("\"varos\":10", "\"varos\":9", 1).as_bytes(),
+        JSON
+    );
     let value: serde_json::Value = serde_json::from_slice(JSON).unwrap();
     let keys: Vec<&str> = value["doc"].as_object().unwrap().keys().map(String::as_str).collect();
     // serde_json's Map keeps insertion order only with preserve_order; compare the raw byte order.
@@ -52,11 +55,29 @@ fn mixed_v9_round_trips_and_pins_document_key_order() {
 }
 
 #[test]
-fn mixed_v9_container_reopens_with_resources_and_rewrites_identically() {
+fn mixed_v9_container_reopens_and_preserves_objects_across_v10_rewrite() {
     let loaded = varos_pdf::load_vrs_bytes(VRS, &Limits::DEFAULT).unwrap();
     assert_eq!(loaded.doc, decode_model(JSON, None, &Limits::DEFAULT).unwrap().doc);
     assert!(loaded.blobs.get(&loaded.doc.images[0].blob).is_some());
-    assert_eq!(varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap(), VRS);
+    // ---- Lane A: PDF offsets and the model stamp grow; every appearance/resource object is frozen ----
+    let bytes = varos_pdf::images::write_vrs(&loaded.doc, &loaded.blobs, &Limits::DEFAULT).unwrap();
+    assert_eq!(embedded_model_json(&bytes).replacen("\"varos\":10", "\"varos\":9", 1).as_bytes(), JSON);
+    let old = lopdf::Document::load_mem(VRS).unwrap();
+    let new = lopdf::Document::load_mem(&bytes).unwrap();
+    let model = old.catalog().unwrap().get(b"VAROS_Model").unwrap().as_reference().unwrap();
+    assert_eq!(old.objects.len(), new.objects.len());
+    for (id, object) in &old.objects {
+        if *id == model {
+            continue;
+        }
+        let mut old_object = object.clone();
+        let mut new_object = new.objects.get(id).unwrap().clone();
+        if let (Ok(a), Ok(b)) = (old_object.as_dict_mut(), new_object.as_dict_mut()) {
+            a.remove(b"VAROS_SchemaVersion");
+            b.remove(b"VAROS_SchemaVersion");
+        }
+        assert_eq!(old_object, new_object, "object {id:?}");
+    }
 }
 
 #[test]

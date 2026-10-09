@@ -73,3 +73,7 @@ mod gradient_transform;
 pub mod actions;
 mod command_labels;
 pub mod registry;
+
+// ---- Lane A ----
+pub mod appearance_edits;
+pub mod appearance_scene;

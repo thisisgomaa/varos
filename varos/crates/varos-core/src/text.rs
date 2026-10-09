@@ -192,6 +192,8 @@ pub fn add(ed: &mut Editor, mut text: TextBox, parent: Option<u32>) -> Result<u3
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     });
     if let Some(n) = ed.doc.node_mut(parent) {

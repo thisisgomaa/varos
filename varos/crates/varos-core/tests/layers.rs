@@ -175,6 +175,8 @@ fn selection_square_moves_and_copies_art_across_layers() {
             clip_exempt: false,
             xform: Xform::default(),
             role: GroupRole::Normal,
+            // ---- Lane A ----
+            look: None,
             mask_child: None,
         });
         d.roots.insert(0, id);
@@ -323,6 +325,8 @@ fn a_second_layer_receives_new_drawings() {
             clip_exempt: false,
             xform: Xform::default(),
             role: GroupRole::Normal,
+            // ---- Lane A ----
+            look: None,
             mask_child: None,
         });
         d.roots.insert(0, id); // above Layer 1

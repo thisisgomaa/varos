@@ -201,6 +201,16 @@ pub(crate) fn apply_design_op(
     affected: &mut BTreeSet<String>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<u32>, Error> {
+    // ---- Lane A ----
+    if matches!(op, Operation::Appearance { .. } | Operation::Mask { .. }) {
+        *expanded += 1;
+        if *expanded > crate::MAX_OPS {
+            return Err(fail("limit_exceeded: expanded operations"));
+        }
+        crate::appearance::apply(ed, op)?;
+        affected.extend(crate::appearance::affected(op));
+        return Ok(None);
+    }
     // ---- Lane D: resolve locals and cap expanded targets before drawing ----
     if op.drawing() {
         let targets = op

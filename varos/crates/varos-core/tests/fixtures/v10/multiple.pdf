@@ -1,0 +1,314 @@
+%PDF-1.7
+%€€€€
+
+8 0 obj
+<<
+  /Length 401
+  /Type /XObject
+  /Subtype /Form
+  /BBox [0 0 1080 1080]
+  /Group <<
+    /Type /Group
+    /S /Transparency
+    /I true
+    /K false
+    /CS /DeviceRGB
+  >>
+  /Resources <<
+    /XObject <<>>
+    /ExtGState <<
+      /GS0 5 0 R
+      /GS1 6 0 R
+      /GS2 7 0 R
+    >>
+    /Shading <<>>
+  >>
+>>
+stream
+q
+/GS0 gs
+1 0 0 rg
+0 1080 m
+0 1080 40 1080 40 1080 c
+40 1080 40 1040 40 1040 c
+40 1040 0 1040 0 1040 c
+0 1040 0 1080 0 1080 c
+h
+f*
+Q
+q
+/GS0 gs
+0 0 1 rg
+0 1080 m
+0 1080 40 1080 40 1080 c
+40 1080 40 1040 40 1040 c
+40 1040 0 1040 0 1040 c
+0 1040 0 1080 0 1080 c
+h
+f*
+Q
+q
+/GS1 gs
+0 1 0 RG
+8 w
+0 1080 m
+0 1080 40 1080 40 1080 c
+40 1080 40 1040 40 1040 c
+40 1040 0 1040 0 1040 c
+0 1040 0 1080 0 1080 c
+h
+S
+Q
+endstream
+endobj
+
+9 0 obj
+<<
+  /Length 15
+  /Type /XObject
+  /Subtype /Form
+  /BBox [0 0 1080 1080]
+  /Group <<
+    /Type /Group
+    /S /Transparency
+    /I true
+    /K false
+    /CS /DeviceRGB
+  >>
+  /Resources <<
+    /XObject <<
+      /Ap8 8 0 R
+    >>
+    /ExtGState <<
+      /GS0 5 0 R
+      /GS1 6 0 R
+      /GS2 7 0 R
+    >>
+    /Shading <<>>
+  >>
+>>
+stream
+/GS2 gs
+/Ap8 Do
+endstream
+endobj
+
+11 0 obj
+<<
+  /Length 139
+  /Type /XObject
+  /Subtype /Form
+  /BBox [0 0 1080 1080]
+  /Group <<
+    /Type /Group
+    /S /Transparency
+    /I true
+    /K false
+    /CS /DeviceRGB
+  >>
+  /Resources <<
+    /XObject <<
+      /Ap8 8 0 R
+      /Ap9 9 0 R
+    >>
+    /ExtGState <<
+      /GS0 5 0 R
+      /GS1 6 0 R
+      /GS2 7 0 R
+      /GS3 10 0 R
+    >>
+    /Shading <<>>
+  >>
+>>
+stream
+q
+/GS3 gs
+1 0 0 rg
+10 1080 m
+10 1080 30 1080 30 1080 c
+30 1080 30 1060 30 1060 c
+30 1060 10 1060 10 1060 c
+10 1060 10 1080 10 1080 c
+h
+f*
+Q
+endstream
+endobj
+
+12 0 obj
+<<
+  /Length 16
+  /Type /XObject
+  /Subtype /Form
+  /BBox [0 0 1080 1080]
+  /Group <<
+    /Type /Group
+    /S /Transparency
+    /I true
+    /K false
+    /CS /DeviceRGB
+  >>
+  /Resources <<
+    /XObject <<
+      /Ap8 8 0 R
+      /Ap9 9 0 R
+      /Ap11 11 0 R
+    >>
+    /ExtGState <<
+      /GS0 5 0 R
+      /GS1 6 0 R
+      /GS2 7 0 R
+      /GS3 10 0 R
+    >>
+    /Shading <<>>
+  >>
+>>
+stream
+/Ap9 Do
+/Ap11 Do
+endstream
+endobj
+
+13 0 obj
+<<
+  /Length 49
+>>
+stream
+1 J
+1 j
+q
+1 1 1 rg
+0 0 1080 1080 re
+f*
+Q
+/Ap12 Do
+endstream
+endobj
+
+14 0 obj
+<<
+  /Type /Page
+  /Parent 2 0 R
+  /MediaBox [0 0 1080 1080]
+  /Contents 13 0 R
+  /Resources <<
+    /ExtGState <<
+      /GS0 5 0 R
+      /GS1 6 0 R
+      /GS2 7 0 R
+      /GS3 10 0 R
+    >>
+    /XObject <<
+      /Ap8 8 0 R
+      /Ap9 9 0 R
+      /Ap11 11 0 R
+      /Ap12 12 0 R
+    >>
+  >>
+>>
+endobj
+
+5 0 obj
+<<
+  /Type /ExtGState
+  /ca 1
+  /CA 0
+>>
+endobj
+
+6 0 obj
+<<
+  /Type /ExtGState
+  /ca 0
+  /CA 1
+>>
+endobj
+
+7 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.8
+  /CA 0.8
+>>
+endobj
+
+10 0 obj
+<<
+  /Type /ExtGState
+  /ca 0.5
+  /CA 0
+>>
+endobj
+
+2 0 obj
+<<
+  /Type /Pages
+  /Kids [14 0 R]
+  /Count 1
+>>
+endobj
+
+3 0 obj
+<<
+  /Length 2477
+  /Type /EmbeddedFile
+  /Subtype /application#2Fjson
+>>
+stream
+{"varos":10,"doc":{"name":"","description":"","tags":[],"paths":[{"stack":[{"Base":["Fill",{"opacity":1.0,"visible":true,"blend":"Normal"}]},{"Base":["Stroke",{"opacity":1.0,"visible":true,"blend":"Normal"}]},{"Fill":{"paint":[0.0,0.0,1.0,1.0],"opts":{"opacity":1.0,"visible":true,"blend":"Normal"}}},{"Stroke":{"paint":[0.0,1.0,0.0,1.0],"width":8.0,"style":{},"opts":{"opacity":1.0,"visible":true,"blend":"Normal"}}}],"id":10,"anchors":[{"id":100,"p":[0.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":101,"p":[40.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":102,"p":[40.0,40.0],"hin":null,"hout":null,"smooth":false},{"id":103,"p":[0.0,40.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[1.0,0.0,0.0,1.0],"stroke":null,"stroke_width":2.0,"holes":[],"opacity":0.8,"hidden":false,"locked":false,"name":null},{"id":20,"anchors":[{"id":200,"p":[10.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":201,"p":[30.0,0.0],"hin":null,"hout":null,"smooth":false},{"id":202,"p":[30.0,20.0],"hin":null,"hout":null,"smooth":false},{"id":203,"p":[10.0,20.0],"hin":null,"hout":null,"smooth":false}],"closed":true,"fill":[1.0,0.0,0.0,1.0],"stroke":null,"stroke_width":2.0,"holes":[],"opacity":0.5,"hidden":false,"locked":false,"name":null}],"groups":[],"group_of":{},"nodes":[{"id":1,"kind":"Layer","name":"Layer 1","parent":null,"children":[1002,1001],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":1001,"kind":{"Path":10},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"},{"id":1002,"kind":{"Path":20},"name":"","parent":1,"children":[],"hidden":false,"locked":false,"color":null,"clip_exempt":false,"role":"Normal"}],"roots":[1],"active_layer":1,"ids":1002,"units":{"ppi":72.0,"display":"Px"},"artboards":[],"active":0,"move_art_with_ab":true,"snap":{"enabled":true,"smart":true,"radius_px":8.0,"candidate_max":8,"show_candidates":true,"force_pixel_align":false,"move_whole_px":false,"grid":false,"grid_lines":true,"baseline_grid":false,"guides":true,"artboard":true,"artboard_mids":true,"margins":false,"margin_mids":false,"visible_only":true,"object_bounds":true,"bbox_mids":true,"gaps_and_sizes":true,"key_points":true,"object_geometry":true,"segment_mids":true,"path_intersections":true,"pixel_bounds":false,"alignment_guides":true,"equal_spacing":true,"equal_size":true,"grid_spacing":72.0},"ruler_origin":[0.0,0.0],"guides":[],"guides_locked":false}}
+endstream
+endobj
+
+4 0 obj
+<<
+  /Type /Filespec
+  /F (model.varos.json)
+  /UF (model.varos.json)
+  /EF <<
+    /F 3 0 R
+  >>
+  /AFRelationship /Source
+  /Desc (Varos editable model (source of truth))
+>>
+endobj
+
+1 0 obj
+<<
+  /Type /Catalog
+  /Pages 2 0 R
+  /Names <<
+    /EmbeddedFiles <<
+      /Names [(model.varos.json) 4 0 R]
+    >>
+  >>
+  /AF [4 0 R]
+  /VAROS_Model 3 0 R
+  /VAROS_SchemaVersion 10
+>>
+endobj
+
+xref
+0 15
+0000000000 65535 f
+0000005607 00000 n
+0000002766 00000 n
+0000002831 00000 n
+0000005416 00000 n
+0000002531 00000 n
+0000002588 00000 n
+0000002645 00000 n
+0000000016 00000 n
+0000000761 00000 n
+0000002706 00000 n
+0000001141 00000 n
+0000001682 00000 n
+0000002118 00000 n
+0000002221 00000 n
+trailer
+<<
+  /Size 15
+  /Root 1 0 R
+>>
+startxref
+5808
+%%EOF

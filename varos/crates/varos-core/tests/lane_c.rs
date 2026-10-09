@@ -220,8 +220,8 @@ fn frozen_next_fixture_and_refusals() {
         .unwrap_err();
     assert_eq!(negative, LoadError::Invalid(Invalid::NonFinite { what: "path 10 corners".into() }));
     assert_eq!(
-        format::decode_model(include_bytes!("fixtures/lane_c/refused_future.json"), None, &limits).unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: format::FORMAT_VERSION }
+        format::decode_model(include_bytes!("fixtures/lane_c/refused_future_v11.json"), None, &limits).unwrap_err(),
+        LoadError::NewerVersion { found: 11, supported: format::FORMAT_VERSION }
     );
 }
 

@@ -31,6 +31,8 @@ fn leaf(id: u32, kind: NodeKind, parent: Option<u32>) -> Node {
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     }
 }

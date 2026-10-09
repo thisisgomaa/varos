@@ -45,6 +45,8 @@ pub(crate) fn before_artboard_ids(doc: &Document) -> Result<(), Invalid> {
 /// Root paths/groups are permitted by move_is_legal(Before/After a root); do not require Layer roots.
 /// candidate_max is currently unused (no live-editor bound); do not invent a new file restriction.
 pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
+    // ---- Lane A ----
+    crate::appearance_edits::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;
     // ---- w2-images ----
     crate::images::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     // ---- w2-gradients ----
@@ -67,13 +69,13 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         }
         let bad_mask = |reason| Invalid::BadMask { group: n.id, reason };
         match n.role {
-            role if role.is_mask_group() && role != GroupRole::Clip => {
+            role if role.is_mask_group() && role != GroupRole::Clip && role != GroupRole::MaskAlpha => {
                 return Err(bad_mask("soft masks are not supported"))
             }
             GroupRole::Normal if n.mask_child.is_some() => {
                 return Err(bad_mask("an ordinary node cannot have a mask shape"))
             }
-            GroupRole::Clip => {
+            GroupRole::Clip | GroupRole::MaskAlpha => {
                 if n.kind != NodeKind::Group {
                     return Err(bad_mask("only a group can clip its children"));
                 }

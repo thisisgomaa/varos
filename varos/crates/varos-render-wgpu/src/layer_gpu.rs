@@ -1,7 +1,7 @@
 //! Encoder-only layer passes; no window, submission, or work on an empty list.
 //! Adapted map-pass structure from PhotoCraft gpu/src/compose.wgsl @ 4cb7cf3.
 //! Copyright (c) 2026 ArtCraft Team and contributors. MIT OR Apache-2.0. See NOTICE.
-use crate::layers::{self, Blend, CacheKey, Limits, Prim, Report};
+use crate::layers::{self, Blend, CacheKey, LayerPrim as Prim, Limits, Report};
 
 use wgpu::util::DeviceExt;
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -180,15 +180,15 @@ impl GpuLayers {
     /// (including previous effects); bump revision when that input changes. Target pan/size changes
     /// must also change revision. Budget charges actual RGBA16F storage.
     #[allow(clippy::too_many_arguments)]
-    pub fn record(
+    pub fn record<D>(
         &mut self,
         d: &wgpu::Device,
         e: &mut wgpu::CommandEncoder,
         target: &wgpu::Texture,
-        prims: &[Prim],
+        prims: &[Prim<D>],
         zoom: f32,
         limits: Limits,
-        mut draw: impl FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView, &varos_core::Prim),
+        mut draw: impl FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView, &D),
     ) -> Result<Report, String> {
         let size = [target.width(), target.height()];
         let steps = layers::plan_storage(prims, size, zoom, limits, 8)?;

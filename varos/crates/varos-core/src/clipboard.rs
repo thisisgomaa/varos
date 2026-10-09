@@ -76,7 +76,7 @@ impl Clipboard {
                 let mut node = doc.node_of_path(i.id);
                 while let Some(id) = node {
                     let Some(n) = doc.node(id) else { break };
-                    if n.role == GroupRole::Clip {
+                    if n.role.is_mask_group() {
                         if let Some(mask) = n.mask_child {
                             all.extend(doc.node_paths(mask));
                         }
@@ -156,6 +156,8 @@ impl Clipboard {
                 clip_exempt: false,
                 xform: Default::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             roots.push((doc.pidx(pid).unwrap_or(0), spare));
@@ -232,6 +234,14 @@ impl Clipboard {
                     let mut p = doc.paths[pi].clone();
                     p.fill = p.fill.resolved(doc);
                     p.stroke = p.stroke.resolved(doc);
+                    // ---- Lane A ----
+                    for entry in &mut p.stack {
+                        if let crate::appearance::StackItem::Fill { paint, .. }
+                        | crate::appearance::StackItem::Stroke { paint, .. } = entry
+                        {
+                            *paint = paint.resolved(doc);
+                        }
+                    }
                     p
                 })
                 .collect(),
@@ -279,6 +289,8 @@ impl Clipboard {
                             clip_exempt: false,
                             xform: Default::default(),
                             role: GroupRole::Normal,
+                            // ---- Lane A ----
+                            look: None,
                             mask_child: None,
                         });
                         if let Some(parent) = parent {
@@ -362,6 +374,8 @@ impl Clipboard {
                         .unwrap_or_else(|| hosts.get(&n.id).copied().unwrap_or(host)),
                 ),
                 children: n.children.iter().filter_map(|c| nmap.get(c).copied()).collect(),
+                // ---- Lane A ----
+                look: n.look,
                 mask_child: n.mask_child.and_then(|m| nmap.get(&m).copied()),
                 xform,
                 ..n.clone()

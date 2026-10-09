@@ -718,6 +718,13 @@ pub fn preferences_pasteboard(colour: crate::storage::preferences::CanvasColour)
     [rgb[0] as f32 / 255.0, rgb[1] as f32 / 255.0, rgb[2] as f32 / 255.0, 1.0]
 }
 
+// ---- Lane A: provisional appearance list, existing kit dimensions ----
+pub const APPEARANCE_LABEL_W: f32 = 66.0;
+pub const APPEARANCE_OPACITY_W: f32 = 58.0;
+pub const APPEARANCE_CHANNEL_W: f32 = 54.0;
+pub const APPEARANCE_SWATCH_W: f32 = 26.0;
+pub const APPEARANCE_BADGE_W: f32 = 44.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

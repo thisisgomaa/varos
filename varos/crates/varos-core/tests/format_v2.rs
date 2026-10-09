@@ -41,6 +41,8 @@ fn group_node(id: u32, parent: Option<u32>, children: Vec<u32>) -> Node {
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     }
 }
@@ -172,7 +174,8 @@ fn tiny(f: impl FnOnce(&mut Limits)) -> Limits {
 #[test]
 fn new_saves_write_the_current_format() {
     // format 4 since 2026-10-07 (artboard ids); this file's other checks keep their v2-era names
-    assert_eq!(FORMAT_VERSION, varos_core::format::CORNERS_VERSION);
+    // ---- Lane A ----
+    assert_eq!(FORMAT_VERSION, varos_core::format::APPEARANCE_VERSION);
     assert_eq!(VRS_VERSION, FORMAT_VERSION, "the old constant is an alias");
     assert_eq!(MIN_READ_VERSION, 1);
     for (name, d) in corpus() {
