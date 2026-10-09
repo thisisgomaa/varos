@@ -680,6 +680,7 @@ pub const CANVAS_LIGHT: [u8; 3] = [210, 208, 206];
 pub const CANVAS_MID: [u8; 3] = [95, 92, 89];
 
 pub const NAVIGATOR_PROXY: [u32; 2] = [224, 126];
+pub const NAVIGATOR_IMAGE_TINT: Color32 = Color32::WHITE;
 
 #[cfg(test)]
 mod tests {

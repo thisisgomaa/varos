@@ -113,6 +113,18 @@ fn view_depth_discovery_and_staged_publication() {
             json!({"api":"1.2","board":"b1","request_id":format!("r{}",i+1),"expected_rev":rev,"ops":[{"verb":"view","ids":[],"action":{"depth":action}}]}),
         );
         assert!(r.ok, "{r:?}");
+        if i == 5 {
+            assert!(
+                h.editor.doc.snap.force_pixel_align,
+                "standalone Snap to Pixel must publish without an authored edit"
+            );
+        }
+        if i == 6 {
+            assert!(
+                h.editor.doc.snap.move_whole_px,
+                "standalone Move Whole Pixels must publish without an authored edit"
+            );
+        }
     }
     assert!(h.editor.view_depth.outline && h.editor.view_depth.pixel_preview && h.editor.view_depth.trim);
     assert!(!h.editor.view_depth.presentation);

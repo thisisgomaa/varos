@@ -16,12 +16,14 @@ struct VO { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
  let local=in.p.xy-preview.camera.xy;
  let pixel=floor(local/step);
  let sample_px=(pixel+vec2<f32>(0.5))*step+preview.camera.xy;
- var color=textureSample(t,s,clamp(sample_px/size,vec2<f32>(0.0),vec2<f32>(1.0)));
- if preview.camera.w>0.0 && step>=2.0 {
-   let edge=local-pixel*step;
-   if min(edge.x,edge.y)<1.0 { color=mix(color,preview.color,0.45); }
+ // Keep the single scene-owned pixel grid at full screen resolution. Sampling
+ // only cell centers would erase the hairlines at the document-pixel edges.
+ // The source texture already carries the artboard clip in Trim view.
+ let edge=local-pixel*step;
+ if preview.camera.w>0.0 && step>=2.0 && min(edge.x,edge.y)<1.0 {
+   return textureSample(t,s,in.uv);
  }
- return color;
+ return textureSample(t,s,clamp(sample_px/size,vec2<f32>(0.0),vec2<f32>(1.0)));
 }
 "#;
 pub fn parameters(step: Option<f32>, view: varos_core::geom::View, color: [f32; 4]) -> [f32; 8] {

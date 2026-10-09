@@ -298,6 +298,10 @@ fn tool_name(t: ToolKind) -> &'static str {
 /// `canvas_centre` = the centre of the visible drawing area (physical px): the point the keyboard
 /// zooms (⌘= / ⌘− / ⌘1) keep fixed, so the view never jumps away from the work.
 fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ctrl: bool, shift: bool, alt: bool) {
+    // ---- Lane E ----
+    if crate::view_modes::presentation_key(ed, code, ctrl, shift, alt) {
+        return;
+    }
     if !shortcuts::parity::is_bound(code, ctrl, shift, alt) {
         return;
     }
@@ -2139,7 +2143,16 @@ fn main() {
                         // generic "consumed" (which is true for an Arabic-layout char, swallowing V/A/P/…).
                         // The Color Picker is a floating palette: the canvas stays fully usable beside it,
                         // Esc goes to a hovered picker, focused field, menu or tab drag first.
-                        if gui.wants_keyboard() { /* typing into a field — keys go to egui */
+                        if ed.view_depth.presentation && event.state == ElementState::Pressed {
+                            crate::view_modes::presentation_key(
+                                ed,
+                                &format!("{code:?}"),
+                                keyboard.held().ctrl,
+                                keyboard.held().shift,
+                                keyboard.held().alt,
+                            );
+                            redraw!("presentation-key");
+                        } else if gui.wants_keyboard() { /* typing into a field — keys go to egui */
                         } else if (gui.picker_owns_escape() || gui.picking_screen() || gui.tab_drag_active())
                             && matches!(code, KeyCode::Escape)
                         {

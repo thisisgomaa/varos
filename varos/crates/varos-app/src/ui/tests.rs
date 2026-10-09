@@ -559,6 +559,7 @@ mod layer_rename_tests {
 
     fn path_row(id: u32, name: &str) -> LRow {
         LRow {
+            outlined: false,
             id,
             depth: 0,
             kind: LKind::Path,
