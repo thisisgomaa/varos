@@ -132,7 +132,8 @@ mod scene_tests {
         ed.doc.artboards.push(Artboard { w: 100.0, h: 100.0, page_color: None, ..Default::default() });
         let plain = crate::build_scene(&ed, 1.0);
         ed.execute(crate::EditCommand::SetTransparencyGrid(true)).unwrap();
-        let style = crate::scene::SceneStyle { checkerboard: [[0.1; 4], [0.2; 4]] };
+        let style =
+            crate::scene::SceneStyle { checkerboard: [[0.1; 4], [0.2; 4]], outline: [0.5; 4], canvas: [0.1; 4] };
         let draw = |ed: &crate::Editor| {
             crate::scene::build_scene_in_view_styled(ed, crate::View::identity(), [1000, 1000], style)
         };

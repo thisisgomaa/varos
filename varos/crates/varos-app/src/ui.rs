@@ -71,7 +71,10 @@ use style::*;
 // ───────────────────────────── icon actions (icon stage 1) ─────────────────────────────
 mod icon_actions;
 mod isolation;
+// ---- Lane E ----
+mod navigator;
 pub(crate) mod select_transform;
+mod view_modes;
 use icon_actions::*;
 /// A window action the custom title bar asks the host (winit) to perform.
 pub enum WinAction {
@@ -484,6 +487,9 @@ impl Ui {
         if self.home {
             return self.run_home(window, maximized);
         }
+        if ed.view_depth.presentation {
+            return self.run_presentation(window);
+        }
         // host seed of egui's focus flag from winit (startup, activation, un-occlusion alike) — see
         // `egui_focus_seed`
         let raw = self.state.egui_input_mut();
@@ -534,6 +540,7 @@ impl Ui {
             let rows = build_layer_rows(ed, &self.lay_collapsed, &self.lay_search, filter, &mut self.layer_thumb_cache);
             layer_rows_cache = Some(LayerRowsCache { key: rows_key, rows });
         }
+        let navigator_canvas = self.board_hole.unwrap_or_else(|| self.ctx.content_rect());
         let layer_rows = &layer_rows_cache.as_ref().expect("layers cache is populated above").rows;
         let layer_icons = &self.layer_icons;
         let mut lay_search = std::mem::take(&mut self.lay_search);
@@ -668,6 +675,18 @@ impl Ui {
                                 &mut lay_collapsed,
                                 &mut lay_drag,
                                 &mut lay_anchor,
+                                &mut ops,
+                            );
+                            true
+                        }
+                        P::Navigator => {
+                            navigator::draw(
+                                ui,
+                                ed,
+                                view,
+                                ppp,
+                                navigator_canvas,
+                                doc_active.map_or(0, |s| s.0),
                                 &mut ops,
                             );
                             true

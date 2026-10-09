@@ -25,6 +25,9 @@ fn enabled() -> bool {
 /// App-wide settings, persisted across launches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
+    // ---- Lane E ----
+    #[serde(default = "default_canvas")]
+    pub canvas_color: [u8; 3],
     /// Autosave/recovery snapshots (§3.5/§3.6). On by default.
     pub recovery_enabled: bool,
     #[serde(default)]
@@ -38,6 +41,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            canvas_color: default_canvas(),
             recovery_enabled: true,
             paste_remembers_layers: false,
             autosave_enabled: true,
@@ -57,6 +61,7 @@ impl Settings {
         }
         let doc = OnDisk {
             version: SETTINGS_VERSION,
+            canvas_color: self.canvas_color,
             recovery_enabled: self.recovery_enabled,
             paste_remembers_layers: self.paste_remembers_layers,
             autosave_enabled: self.autosave_enabled,
@@ -92,6 +97,8 @@ impl Settings {
 
 #[derive(Serialize, Deserialize)]
 struct OnDisk {
+    #[serde(default = "default_canvas")]
+    canvas_color: [u8; 3],
     version: u32,
     recovery_enabled: bool,
     #[serde(default)]
@@ -131,6 +138,7 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
     match serde_json::from_slice::<OnDisk>(&bytes) {
         Ok(doc) if valid_autosave_interval(doc.autosave_interval_seconds) => (
             Settings {
+                canvas_color: doc.canvas_color,
                 recovery_enabled: doc.recovery_enabled,
                 paste_remembers_layers: doc.paste_remembers_layers,
                 autosave_enabled: doc.autosave_enabled,
@@ -160,6 +168,11 @@ fn corrupt(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
         let _ = fs.rename(path, &bad);
     }
     (Settings::default(), Some("Settings were damaged and have been reset.".to_string()))
+}
+
+// ---- Lane E ----
+fn default_canvas() -> [u8; 3] {
+    crate::shell::tokens::CANVAS_DARK
 }
 
 #[cfg(test)]
@@ -199,6 +212,7 @@ mod tests {
         let d = TestDir::new("settings-roundtrip");
         let path = d.join("settings.json");
         let s = Settings {
+            canvas_color: [210, 208, 206],
             recovery_enabled: false,
             paste_remembers_layers: true,
             autosave_enabled: false,

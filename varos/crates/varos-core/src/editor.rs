@@ -451,6 +451,10 @@ pub struct Editor {
     pub key_object: Option<u32>,
     pub distribute_gap: f32,
     pub paste_remembers_layers: bool,
+    // ---- Lane E ----
+    pub view_depth: crate::view_depth::ViewDepth,
+    pub requested_canvas: Option<[u8; 3]>,
+    pub requested_pan: Option<Pt>,
     pub requested_zoom: Option<f32>,
     /// Group nodes selected as groups (not merely individual descendant paths). Hidden unlocked
     /// descendants are carried only by structural operations; ordinary edits still target `objsel`.
@@ -535,6 +539,10 @@ impl Editor {
             key_object: None,
             distribute_gap: 0.0,
             paste_remembers_layers: false,
+            // ---- Lane E ----
+            view_depth: Default::default(),
+            requested_canvas: None,
+            requested_pan: None,
             requested_zoom: None,
             group_sel: HashSet::new(),
             absel: BTreeSet::new(),
@@ -2924,7 +2932,13 @@ impl Editor {
     /// return the adjusted delta + the alignment guides + a live HUD label. Pure (reads doc + ppu + cfg).
     /// Tolerance is SCREEN px (÷ ppu) so it feels identical at every zoom. No-op delta when snapping is off.
     pub fn snap_move(&self, bbox0: (f32, f32, f32, f32), d: Pt) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
-        self.snap_move_lines(bbox0, d, self.snap_target_lines(), true)
+        let (d, guides, hud) = self.snap_move_lines(bbox0, d, self.snap_target_lines(), true);
+        let q = self.pixel_motion([bbox0.0, bbox0.1], d);
+        if q != d {
+            (q, vec![], Some((self.cursor, format!("X {:.2}   Y {:.2}", bbox0.0 + q[0], bbox0.1 + q[1]))))
+        } else {
+            (d, guides, hud)
+        }
     }
     /// Snap a moving BOARD's rect: targets = every other visible page + artwork (its traveling art
     /// excluded) + guides. No equal-gap pass (that reads object rows); same feel otherwise.
@@ -3039,7 +3053,10 @@ impl Editor {
     /// Snap a single world point's X and/or Y to target lines (object/artboard edges & centres), with a
     /// grid / pixel fallback. Returns the snapped point + alignment guides. Drives the resize (Scale) handle.
     pub fn snap_xy(&self, w: Pt, want_x: bool, want_y: bool) -> (Pt, Vec<SnapGuide>) {
-        self.snap_xy_lines(w, want_x, want_y, self.snap_target_lines())
+        let (p, guides) = self.snap_xy_lines(w, want_x, want_y, self.snap_target_lines());
+        let q = self.pixel_point(p);
+        let snapped = [if want_x { q[0] } else { p[0] }, if want_y { q[1] } else { p[1] }];
+        (snapped, if snapped != p { vec![] } else { guides })
     }
     /// Point-snap for the ARTBOARD tool (resize handle / create corner): targets = every visible page
     /// except `skip` (pass `usize::MAX` to keep them all) + artwork + guides.
@@ -3385,6 +3402,16 @@ impl Editor {
     /// corners — or the artboard, drawing the guide line; (3) grid is the fallback. Independent of Smart
     /// Guides (this is "Snap to Point"); only the dragged anchors themselves are excluded as targets.
     pub fn snap_anchor(&self, base_pts: &[Pt], d: Pt) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
+        let (d, guides, hud) = self.snap_anchor_unquantized(base_pts, d);
+        let base = base_pts.first().copied().unwrap_or(self.cursor);
+        let q = self.pixel_motion(base, d);
+        if q != d {
+            (q, vec![], Some((self.cursor, format!("X {:.2}   Y {:.2}", base[0] + q[0], base[1] + q[1]))))
+        } else {
+            (d, guides, hud)
+        }
+    }
+    fn snap_anchor_unquantized(&self, base_pts: &[Pt], d: Pt) -> (Pt, Vec<SnapGuide>, Option<(Pt, String)>) {
         let cfg = &self.doc.snap;
         let first = base_pts.first().copied().unwrap_or(self.cursor);
         let hud = |p: Pt| Some((self.cursor, format!("X {:.0}   Y {:.0}", p[0], p[1])));
@@ -3550,6 +3577,11 @@ impl Editor {
         staged.reselect_state = self.reselect_state.clone();
         staged.key_object = self.key_object;
         staged.distribute_gap = self.distribute_gap;
+        // ---- Lane E ----
+        staged.view_depth = self.view_depth.clone();
+        staged.requested_pan = self.requested_pan;
+        staged.requested_zoom = self.requested_zoom;
+        staged.requested_canvas = self.requested_canvas;
         staged.paste_remembers_layers = self.paste_remembers_layers;
         staged.cur_fill = self.cur_fill;
         staged.cur_stroke = self.cur_stroke;
@@ -3580,6 +3612,11 @@ impl Editor {
         if staged.drawing.options_requested {
             self.drawing.options = staged.drawing.options;
         }
+        // ---- Lane E ----
+        self.view_depth = staged.view_depth;
+        self.requested_pan = staged.requested_pan;
+        self.requested_zoom = staged.requested_zoom;
+        self.requested_canvas = staged.requested_canvas;
         self.select_transform.isolation = staged.select_transform.isolation;
         self.select_transform.located = staged.select_transform.located;
         if staged.select_transform.options_requested {
@@ -3771,6 +3808,11 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        // ---- Lane E ----
+        self.view_depth = Default::default();
+        self.requested_pan = None;
+        self.requested_zoom = None;
+        self.requested_canvas = None;
         self.stroke_error = None;
         self.select_transform = Default::default();
         self.drawing = Default::default();
@@ -4128,6 +4170,9 @@ impl Editor {
         }
     }
     pub fn pointer_down(&mut self, pos: Pt) {
+        if self.view_depth.presentation {
+            return;
+        }
         self.cursor = pos;
         self.begin();
         self.gesture_copy = false;
@@ -4266,6 +4311,9 @@ impl Editor {
         }
     }
     pub fn pointer_move(&mut self, pos: Pt) {
+        if self.view_depth.presentation {
+            return;
+        }
         if crate::drawing::movement(self, pos) {
             self.cursor = pos;
             return;
@@ -4290,6 +4338,18 @@ impl Editor {
         if matches!(self.drag, Drag::None) {
             self.hover_path = self.path_under(pos);
             self.hover_snap(pos); // A10: phantom snap point before the first click of a drawing tool
+            if self.tool == ToolKind::Pen && self.doc.snap.smart {
+                if let Some((pid, a)) = self
+                    .active
+                    .and_then(|id| self.doc.paths.iter().find(|p| p.id == id))
+                    .and_then(|p| p.anchors.last().map(|a| (p.id, a)))
+                {
+                    self.snap_hud = Some(crate::view_depth::drawing_readout(
+                        self.doc.unit_xform(pid).apply(a.p),
+                        self.pixel_point(pos),
+                    ));
+                }
+            }
         }
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Construction { mut points, delete } => {
@@ -4427,7 +4487,9 @@ impl Editor {
                 self.dirty = true;
             }
             Drag::Shape { start, pid, kind } => {
+                let pos = self.pixel_point(pos);
                 let anchors = self.shape_anchors(kind, start, pos);
+                self.snap_hud = self.doc.snap.smart.then(|| crate::view_depth::drawing_readout(start, pos));
                 if let Some(pi) = self.doc.pidx(pid) {
                     self.doc.paths[pi].anchors = anchors;
                 }
@@ -4584,6 +4646,11 @@ impl Editor {
                 };
                 self.snap_guides = guides;
                 self.snap_hud = hud;
+                let q = self.pixel_motion(base_world.first().copied().unwrap_or([0.0, 0.0]), d);
+                if q != d {
+                    self.snap_guides.clear();
+                }
+                let d = q;
                 self.gesture_delta = d;
                 // translate the LOCAL anchors by d …
                 for (aid, p0, hin0, hout0) in &base {
