@@ -2,6 +2,12 @@
 
 # w2-text — Lane G: Text programme P2–P4
 
+Lane H — w2-import wave 2; committed pre-review baseline 5f8e19e; fix-round edits uncommitted.
+Status: implemented (provisional UI, owner design review pending).
+Retains PDF/AI static paths/clips/rotation/dashes, ASCII DXF layers/arcs/polylines/exact clamped splines, clipboard/Open/Place/drop, CLI/Bridge.
+Explicit losses/refusals retained: text/images omitted; bitmap prerequisite absent; unsupported PDF profiles/DXF entities/DWG refuse; CLI output never replaces an existing file.
+No persisted keys, format bump, migration, new dependencies or attribution changes.
+
 - Status: implemented (provisional UI, owner design review pending); fix-round changes uncommitted.
 - Product: editable point/area styled text, Type tool/IME/carets, Type properties, cached outlines, PDF/SVG, Bridge 1.2 and CLI.
 - Seam: core owns serializable text; varos-text-layout owns shaping/outlines; core → text remains forbidden.
@@ -58,3 +64,17 @@ No git writes, push, merge, GUI launch or installation; native/heat/Windows-runt
 - Gates: workspace 1,919 passed / 0 failed / 15 ignored (113 suites); fmt, dependency directions, native/Windows clippy -D warnings, UI ratchets 3/3 and Bridge contracts/ratchets 94 passed, 4 ignored.
 - Evidence: /tmp/w2-text-fix-*.log; 254 fixture/ratchet files byte-identical to HEAD; text hashes 5/5; ui.rs 830/843, ratchets unchanged.
 - No git writes, GUI launch, install, push or merge; independent re-review, native GUI/IME, Windows runtime and owner Arabic/design acceptance remain unverified.
+
+P1: restored non-import file-effect dispatch; distinct-handler regression covers Save/SaveAs/exports/Print/Copy/Cut.
+P1: PDF CTM computes both coordinates from original X/Y before crop offsets; non-diagonal regression added.
+P2: clipboard/Bridge conversion runs on existing IO worker; cancellation, generation, revision, active-board and busy publication checks preserve atomicity.
+Bridge imports return accepted tickets; request_status retains completion report, committed revision and undo count.
+P2: provisional desktop PDF page chooser and DXF declared-unit/mm/point choices are carried in Job options before conversion.
+Keyboard/menu Paste and Paste in Place always defer to host queue; immediate-action bypass regression added.
+Six new headless regressions cover dispatch/receipts, geometry, queued Bridge cancellation, clipboard atomicity, page/unit conversion and shortcut deferral.
+PASS: fmt; dependency directions; workspace 1909 passed/0 failed/15 existing ignored; native + Windows clippy -D warnings; ratchets 3/3; Bridge fixtures 99 passed/4 ignored.
+Compatibility: all 250 protected fixtures/UI/token/ratchet files byte-identical to b3d39ee; ui.rs remains 811/843.
+Evidence: /tmp/w2-import-fix-round-*.log; compatibility /tmp/w2-import-fix-round-compat.json.
+Shared-file changes limited to dispatch/dialog seams and tests; main.rs worker routing is delimited; kit/tokens/ratchets unchanged.
+Disagreements: none. Sibling image/gradient merges still require semantic integration checks.
+No git writes, commit, push, merge, GUI or install; new independent review and owner/native interoperability/complex fidelity tests remain pending.

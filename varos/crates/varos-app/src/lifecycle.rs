@@ -49,6 +49,13 @@ pub enum ExternalChoice {
 }
 
 pub trait Dialogs {
+    // ---- Lane H ----
+    fn import_options(&mut self, _path: &Path) -> Option<varos_import::ImportOptions> {
+        Some(varos_import::ImportOptions { loss_policy: varos_import::LossPolicy::AllowReported, ..Default::default() })
+    }
+    fn accept_import_losses(&mut self, _notes: &[String]) -> bool {
+        false
+    }
     fn confirm_discard_recovery(&mut self, _name: &str) -> bool {
         false
     }
@@ -271,25 +278,11 @@ impl Lifecycle<'_> {
             AppCommand::NewWithPreset(preset) => {
                 self.ws.new_untitled_with(varos_core::board::new_board_with_preset(preset));
             }
+            // ---- Lane H: common Place/drop publication ----
             AppCommand::PlaceSvg(id) => {
-                if let Some(path) = self.dialogs.pick_place_svg() {
-                    match self.store.import_svg(&path) {
-                        Ok((doc, notes)) => {
-                            if let Some(s) = self.ws.get_mut(id) {
-                                if let Err(e) = varos_core::placement::check(&s.editor, &doc) {
-                                    self.dialogs.open_failed(&file_name(&path), &e);
-                                    return Effect::default();
-                                }
-                                s.editor.execute_ui(varos_core::EditCommand::PlaceArtwork(Box::new(doc)));
-                            }
-                            if !notes.is_empty() {
-                                self.dialogs.notice("SVG import losses", &notes.join("\n"));
-                            }
-                        }
-                        Err(e) => self.dialogs.open_failed(&file_name(&path), &e),
-                    }
-                }
+                if let Some(path) = self.dialogs.pick_place_svg() { self.place_foreign(id, path); }
             }
+            AppCommand::PlaceFile(id, path) => self.place_foreign(id, path),
             AppCommand::NewTemplate => {
                 if let Some(folder) = varos_app::storage::paths::AppLayout::current().map(|l| l.templates()) {
                     if let Err(e) = std::fs::create_dir_all(&folder) {
@@ -418,10 +411,50 @@ impl Lifecycle<'_> {
             self.open_one(path, Some(&old));
         }
     }
+    // ---- Lane H: normalized candidate + report accepted before any mutation ----
+    fn place_foreign(&mut self, id: SessionId, path: PathBuf) {
+        if self.jobs.is_some() {
+            if let Some(s) = self.ws.get(id) {
+                let Some(options) = self.dialogs.import_options(&path) else { return };
+                let target = crate::import_jobs::Target::Place { sid: id, rev: s.editor.rev };
+                self.queue(FileJob::Import(crate::import_jobs::Job {
+                    options,
+                    ..crate::import_jobs::Job::new(path, target)
+                }));
+            }
+            return;
+        }
+        match self.store.import_svg(&path) {
+            Ok((doc, notes)) => {
+                if !notes.is_empty() && !self.dialogs.accept_import_losses(&notes) {
+                    return;
+                }
+                if let Some(s) = self.ws.get_mut(id) {
+                    if let Err(e) = varos_core::placement::check(&s.editor, &doc) {
+                        self.dialogs.open_failed(&file_name(&path), &e);
+                        return;
+                    }
+                    s.editor.execute_ui(varos_core::EditCommand::PlaceArtwork(Box::new(doc)));
+                }
+            }
+            Err(e) => self.dialogs.open_failed(&file_name(&path), &e),
+        }
+    }
     fn open_one(&mut self, path: PathBuf, old: Option<&Path>) {
-        if crate::svg_import::is_svg(&path) {
+        if crate::foreign_import::is_foreign(&path) {
+            if self.jobs.is_some() {
+                let Some(options) = self.dialogs.import_options(&path) else { return };
+                self.queue(FileJob::Import(crate::import_jobs::Job {
+                    options,
+                    ..crate::import_jobs::Job::new(path, crate::import_jobs::Target::Open)
+                }));
+                return;
+            }
             match self.store.import_svg(&path) {
                 Ok((doc, notes)) => {
+                    if !notes.is_empty() && !self.dialogs.accept_import_losses(&notes) {
+                        return;
+                    }
                     self.ws.new_imported(doc);
                     if !notes.is_empty() {
                         self.dialogs.notice("SVG import losses", &notes.join("\n"));
@@ -592,6 +625,10 @@ impl Lifecycle<'_> {
     /// A background job finished: apply it to its tab (a closed tab is ignored, a stale ticket too).
     fn file_done(&mut self, done: FileDone) -> Effect {
         match done {
+            FileDone::Import(done) => {
+                crate::import_jobs::complete(done, self.ws, &mut *self.dialogs);
+                Effect::default()
+            }
             FileDone::Template(done) => {
                 crate::template_jobs::complete(done, self.ws);
                 Effect::default()
@@ -626,7 +663,8 @@ impl Lifecycle<'_> {
                         FileDone::Autosaved(_)
                         | FileDone::Bridge { .. }
                         | FileDone::CopySaved(_)
-                        | FileDone::Template(_) => unreachable!(),
+                        | FileDone::Template(_)
+                        | FileDone::Import(_) => unreachable!(),
                     }
                 } else {
                     let ids: Vec<_> = self.ws.sessions().iter().map(|s| s.id).collect();

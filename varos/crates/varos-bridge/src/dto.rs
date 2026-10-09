@@ -26,6 +26,9 @@ pub enum Request {
     ExportPdf(FileEffect),
     /// API 1.2 only; import source under the files scope, placed into board.
     ImportSvg(FileEffect),
+    // ---- Lane H ----
+    ImportFile(FileEffect),
+    ImportClipboard(FileEffect),
     ExportSvg(FileEffect),
     ExportRaster(FileEffect),
     SaveTemplate(FileEffect),
@@ -879,6 +882,8 @@ impl Request {
             Self::SaveAs(_) => "save_as",
             Self::ExportPdf(_) => "export_pdf",
             Self::ImportSvg(_) => "import_svg",
+            Self::ImportFile(_) => "import_file",
+            Self::ImportClipboard(_) => "import_clipboard",
             Self::ExportSvg(_) => "export_svg",
             Self::ExportRaster(_) => "export_raster",
             Self::SaveTemplate(_) => "save_template",
@@ -908,6 +913,8 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportClipboard(v)
+            | Self::ImportFile(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => &v.api,
         }
@@ -925,6 +932,8 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportClipboard(v)
+            | Self::ImportFile(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
@@ -947,6 +956,8 @@ impl Request {
             | Self::NewFromTemplate(v)
             | Self::Print(v)
             | Self::Copy(v)
+            | Self::ImportClipboard(v)
+            | Self::ImportFile(v)
             | Self::ImportSvg(v)
             | Self::Cut(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,

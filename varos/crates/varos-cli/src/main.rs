@@ -19,12 +19,18 @@ use varos_core::{
 mod trace;
 // ---- Lane G ----
 mod text;
+// ---- Lane H ----
+mod import;
 const VERBS: &[&str] = &[
     "view-depth",
     "add-text",
     "set-text",
     "trace",
     "import-svg",
+    "import",
+    "import-pdf",
+    "import-ai",
+    "import-dxf",
     "describe",
     "snapshot",
     "export-pdf",
@@ -66,6 +72,10 @@ fn response(action: impl FnOnce() -> Result<Value, Failure> + std::panic::Unwind
     }
 }
 fn main() {
+    // ---- Lane H ----
+    if varos_import::worker::worker_main() {
+        return;
+    }
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("bridge") => {
@@ -234,6 +244,7 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
     match verb.as_str() {
         "add-text" | "set-text" => text::run(&verb, args).map_err(Into::into),
         "trace" => trace::run(args).map_err(Into::into),
+        "import" | "import-pdf" | "import-ai" | "import-dxf" => import::run(&verb, args).map_err(Into::into),
         "import-svg" => {
             let a = parse(args, &["--out"], 1)?;
             let out = required(a.out, "--out")?;
