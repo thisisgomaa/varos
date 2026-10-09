@@ -941,6 +941,19 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     out
 }
 
+/// Wave-3 edit verbs (appearance, effects/width, colour management, typography) that API 1.2
+/// tools/list does not inline; `list_verbs` + `schema` are their only discovery path (integration w3).
+pub const WAVE3_DISCOVERY_ONLY: &[&str] = &[
+    "appearance",
+    "mask",
+    "live_effects",
+    "width_profile",
+    "width_tool",
+    "expand_live",
+    "colour_management",
+    "typography",
+];
+
 /// API 1.2 publishes core schemas and an index of extended edit operations.
 /// Discovery never changes the typed decoder or execution path.
 pub fn tools_for(api: &str) -> Value {
@@ -978,7 +991,10 @@ pub fn tools_for(api: &str) -> Value {
                     let expanded = expand_schema(op, &root);
                     let verb = schema_verb(&expanded);
                     // ---- Lane E: Phase 11: discovery only, no inline bytes ----
-                    if verb.is_some_and(|v| crate::live::VERBS.contains(&v)) {
+                    // integration w3 projection step: every wave-3 verb follows the live lane's rule —
+                    // listed by list_verbs, parameters from schema, decoded and validated as before, but
+                    // never inlined in tools/list (keeps 1.2 under 24,000 B as verbs keep arriving).
+                    if verb.is_some_and(|v| crate::live::VERBS.contains(&v) || WAVE3_DISCOVERY_ONLY.contains(&v)) {
                         continue;
                     }
                     if verb.is_none_or(core_verb) {

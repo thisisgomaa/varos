@@ -23,6 +23,48 @@ Bridge 1.2 discovers appearance/mask through list_verbs/schema; legacy fixtures 
 The integrator rechains this step with the later optional wave-3 keys.
 
 ## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — base writer **9**
+## Lane H format 14 — worktree contract (2026-10-10, integration pending)
+
+This lane writes JSON `varos:14` and PDF `/VAROS_SchemaVersion 14`. The integrated
+baseline below remains v9. `Document.typography` is optional, defaults empty, and
+is omitted when empty. Existing plain-document keys and their order are unchanged.
+
+| Key | Wire value and constraints |
+|---|---|
+| `typography.frames` | Map from TextBox object IDs to frame records; at most 4,096, no dangling IDs. |
+| `frames[id].binding` | `null`, `{"Area":{"path":ID,"inset":N}}`, or `{"Path":{"path":ID,"start":N,"end":N,"offset":N,"flip":BOOL,"effect":"Rainbow" or "Skew"}}`. Path ID must exist. Area needs a closed path. Inset/start/end are finite 0–1,000,000; offset is finite ±1,000,000. |
+| `frames[id].binding_origin` | Optional `[x,y]`, omitted when absent; finite coordinates bounded to ±10,000,000. Captures the text anchor when binding. Composition converts live boundary world geometry into text-unit coordinates, then adds `text.frame - binding_origin`. Absence preserves legacy binding placement. Joint boundary/text translation and clipboard offset move this origin too. |
+| `frames[id].next` | Optional next TextBox ID; one incoming link, no cycles, no independent target source; path text cannot be threaded. Story source stays in its root. |
+| `frames[id].characters` | Up to 4,096 `{start,end,name}` assignments: nonempty UTF-8 byte ranges in the source, resolved named character style. Source edits remap ranges. |
+| `frames[id].paragraph` | Optional named paragraph style. |
+| `frames[id].features` | Up to 64 four-ASCII-alphanumeric OpenType tags, integer values 0–65,535. Required Arabic `rlig/ccmp/locl/curs/mark/mkmk` cannot be disabled. |
+| `typography.characters` | Up to 1,024 names mapping to `{parent: NAME or null, style: TextStyle or null}`. Whole-style inheritance; no per-field cascading. |
+| `typography.paragraphs` | Up to 1,024 names mapping to `{parent: NAME or null, style: ParaStyle or null}`. Line height 1.3–20. |
+
+Names are nonempty trimmed UTF-8, at most 128 bytes. Parent references must resolve;
+cycles or chains with no definition are refused. All applied and unused definitions
+are validated using the existing TextStyle/ParaStyle rules. Typography records reject
+unknown fields. Optional frame members default to null/empty; default records may
+serialize those members explicitly. No variable-axis key is supported.
+
+`migrate_v13_to_v14` is a named pure identity migration for pre-typography documents;
+it refuses a nonempty typography sidecar under era 13. A typography key under any
+stamp <14 is refused before typed decode, including an empty key. Frozen v14 JSON,
+PDF, SHA-256 and refusal fixtures live in `varos-core/tests/fixtures/v14/`.
+
+**Isolated-lane limitation:** this checkout reads 1–9 and 14, temporarily bridges
+9→14, and refuses reserved 10–13 plus versions >14 before typed decode. It does
+not claim to read sibling wave-3 schemas. The integrator must replace the bridge
+and reserved-version guard with the real ordered v9→10→11→12→13→14 migrations;
+identity placeholders here would falsely advertise support for absent sibling keys.
+
+Native containers retain all editable source. Deliverable PDF substitutes eligible
+opaque straight text with subset TrueType/CID CFF fonts and logical ToUnicode;
+page/clip-ineligible glyphs are not emitted as text. Curved, translucent, variable,
+or licence-restricted fonts use reported outlines. SVG remains outlines by default.
+Font packages require permitted redistribution and contain hashes and licences.
+
+## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — integrated baseline writer **9**
 
 Final numbers, binding merge order: **6** images · **7** gradients + swatches · **8** editable text ·
 **9** Live Corners + the optional Quick Look preview (one bump). At wave-2 integration, `FORMAT_VERSION = CORNERS_VERSION = 9`;
@@ -59,7 +101,7 @@ legacy-key, Arabic-tracking, future-JSON/PDF refusal cases, with SHA256SUMS (res
 `mixed.json` and `refuse_arabic_tracking.json` → 8; `refuse_newer.json`/`.pdf` → 10; `refuse_text_in_v5.json`
 stays 5; new `refuse_text_in_v7.json`).
 The PDF tests exercise the frozen v5 reader gate against current text output before typed decode.
-Native files retain editable source; PDF/SVG deliverables report **text exported as outlines**.
+Native files retain editable source; this v8-era writer outlined PDF/SVG text. The v14 lane adds eligible PDF text embedding (below).
 
 ## Implementation status — Lane F preview (2026-10-09, merged)
 

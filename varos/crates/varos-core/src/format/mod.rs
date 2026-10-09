@@ -70,7 +70,11 @@ pub const COLOUR_VERSION: u32 = 12;
 // ---- Lane E: Phase 11 ----
 /// 13 (2026-10-10, wave 3): live objects — `NodeKind::Live{Blend,Repeat,Envelope}`.
 pub const LIVE_VERSION: u32 = 13;
-pub const FORMAT_VERSION: u32 = LIVE_VERSION;
+// ---- Lane H ----
+/// 14 (2026-10-10, wave 3): typography — `doc.typography` (named styles, OpenType features, threaded
+/// area text / type on a path; text P5–P8).
+pub const TYPOGRAPHY_VERSION: u32 = 14;
+pub const FORMAT_VERSION: u32 = TYPOGRAPHY_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -200,6 +204,8 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     crate::colour_format::refuse(json, version)?;
     // ---- Lane E: Phase 11 ----
     crate::live::refuse_older_keys(json, version)?;
+    // ---- Lane H ----
+    crate::typography_format::refuse(json, version)?;
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let mut doc = file.doc;
     let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);

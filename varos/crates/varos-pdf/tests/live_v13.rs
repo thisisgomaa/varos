@@ -1,4 +1,6 @@
 //! Frozen v13 authored containers and evaluated-only deliverables.
+#[path = "support/native_era.rs"]
+mod native_era;
 use std::sync::atomic::AtomicBool;
 use varos_core::{
     format::{self, Invalid, Limits, LoadError},
@@ -9,12 +11,24 @@ const VRS: &[u8] = include_bytes!("../../varos-core/tests/fixtures/v13/live.vrs"
 #[test]
 fn frozen_live_json_and_pdf_reopen_editably_and_rewrite_identically() {
     let loaded = format::decode_model(JSON, None, &Limits::DEFAULT).unwrap();
-    assert_eq!((loaded.source_version, loaded.migrated), (13, false));
+    assert_eq!((loaded.source_version, loaded.migrated), (13, format::FORMAT_VERSION > 13));
     assert!(live::has_live(&loaded.doc));
-    assert_eq!(format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().as_bytes(), JSON);
+    // integration w3: the frozen v13 body re-saves byte-identical apart from the writer stamp
+    let current = format!("\"varos\":{}", format::FORMAT_VERSION);
+    assert_eq!(
+        format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap().replacen(&current, "\"varos\":13", 1).as_bytes(),
+        JSON
+    );
     let native = varos_pdf::load_vrs_bytes(VRS, &Limits::DEFAULT).unwrap();
     assert_eq!(native.doc, loaded.doc);
-    assert_eq!(varos_pdf::write_pdf_checked(&native.doc, &Limits::DEFAULT).unwrap(), VRS);
+    assert_eq!(
+        native_era::restamp(
+            &varos_pdf::write_pdf_checked(&native.doc, &Limits::DEFAULT).unwrap(),
+            format::FORMAT_VERSION,
+            13
+        ),
+        VRS
+    );
 }
 #[test]
 fn evaluated_exports_match_expand_and_keep_authored_model() {

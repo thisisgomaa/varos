@@ -103,3 +103,5 @@ mod effects;
 // ---- end Lane B w3-effects ----
 // ---- w3-cmyk ----
 mod colour_management;
+// ---- Lane H ----
+mod typography;

@@ -16,6 +16,7 @@ fn walk(ty: &Type, defs: &HashMap<String, Vec<Type>>, seen: &mut HashSet<String>
                     "stroke",
                     "colour_management",
                     "live",
+                    "typography",
                 ]
                 .iter()
                 .any(|v| seg.ident == *v)
@@ -42,7 +43,7 @@ fn walk(ty: &Type, defs: &HashMap<String, Vec<Type>>, seen: &mut HashSet<String>
                     }
                 } else {
                     assert!(
-                        ["Vec", "HashMap", "Option", "String", "bool", "u16", "u32", "usize", "f32", "f64"]
+                        ["Vec", "HashMap", "BTreeMap", "Option", "String", "bool", "u16", "u32", "usize", "f32", "f64"]
                             .contains(&name.as_str()),
                         "classify new model type before allowing it: {name}"
                     );
@@ -64,6 +65,7 @@ fn serde_document_node_path_have_no_byte_blobs() {
     for source in [
         include_str!("../src/model.rs"),
         include_str!("../src/text.rs"),
+        include_str!("../src/typography.rs"),
         include_str!("../src/images/metadata.rs"),
         include_str!("../src/geom.rs"),
         include_str!("../src/units.rs"),

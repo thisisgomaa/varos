@@ -724,6 +724,9 @@ pub const APPEARANCE_OPACITY_W: f32 = 58.0;
 pub const APPEARANCE_CHANNEL_W: f32 = 54.0;
 pub const APPEARANCE_SWATCH_W: f32 = 26.0;
 pub const APPEARANCE_BADGE_W: f32 = 44.0;
+// ---- Lane H: provisional type-on-path bracket handles ----
+pub const TEXT_PATH_BRACKET_HALF: f32 = 8.0;
+pub const TEXT_PATH_HIT_RADIUS: f32 = 8.0;
 
 #[cfg(test)]
 mod tests {
