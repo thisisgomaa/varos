@@ -8,7 +8,7 @@ clones as a **reference corpus** and may borrow ideas and, under the rules below
 | Repo | What | License | Local clone (outside this repo, never committed) | Pinned |
 |---|---|---|---|---|
 | https://github.com/storytold/vectorcraft | Illustrator-class vector editor, eframe/egui + `vello_cpu`, 21 crates, MCP + JSON control channel | MIT OR Apache-2.0 | `~/Documents/AI workspace/reference/artcraft/vectorcraft` | `a469568` (2026-10-09) |
-| https://github.com/storytold/photocraft | Photoshop-class raster editor, 24 crates (gpu, raster, cms, codecs, raw, psd, tablet…) | Apache-2.0 | `~/Documents/AI workspace/reference/artcraft/photocraft` | `4cb7cf3` (2026-10-09) |
+| https://github.com/storytold/photocraft | Photoshop-class raster editor, 24 crates (gpu, raster, cms, codecs, raw, psd, tablet…) | MIT OR Apache-2.0 (`Cargo.toml`, `NOTICE`; GitHub shows only Apache) | `~/Documents/AI workspace/reference/artcraft/photocraft` | `4cb7cf3` (2026-10-09) |
 
 Siblings not cloned: `pdfcraft` (Acrobat-class), `craft-fonts`.
 
