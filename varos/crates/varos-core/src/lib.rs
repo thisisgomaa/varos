@@ -19,6 +19,8 @@ pub mod scene;
 pub mod stroke;
 pub mod svg;
 pub mod tools;
+// ---- Lane D: drawing tools ----
+pub mod drawing;
 pub mod units;
 
 pub use boolean::BoolOp;

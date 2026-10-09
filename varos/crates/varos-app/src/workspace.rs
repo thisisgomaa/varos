@@ -277,6 +277,10 @@ impl DocumentSession {
     /// and reverts any unaccepted eyedropper sample before the document settles.
     pub fn settle(&mut self) {
         let ed = &mut self.editor;
+        // ---- Lane D: publish clicked Curvature points before a file/tab command ----
+        if !ed.drawing.curvature.is_empty() {
+            varos_core::drawing::finish(ed, false);
+        }
         if !matches!(ed.drag, Drag::None) || !matches!(ed.ab_drag, AbDrag::None) || ed.transaction_open() {
             ed.pointer_up();
             // With the Artboard tool `pointer_up` ends only the board drag; never leave a stale
@@ -658,6 +662,22 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lane_d_settle_finishes_curvature_before_file_or_tab_commands() {
+        let mut ws = super::Workspace::new();
+        let s = ws.active_mut().unwrap();
+        s.editor.set_tool(varos_core::ToolKind::Curvature);
+        for p in [[10., 10.], [50., 20.], [100., 10.]] {
+            s.editor.pointer_down(p);
+            s.editor.pointer_up();
+        }
+        assert!(s.editor.doc.paths.is_empty());
+        s.settle();
+        assert_eq!(s.editor.doc.paths.len(), 1);
+        assert_eq!(s.editor.rev, 1);
+        assert!(s.editor.drawing.curvature.is_empty());
+    }
+
     use super::*;
     use varos_core::editor::ToolKind;
     use varos_core::model::{Anchor, Artboard, Path as VPath};

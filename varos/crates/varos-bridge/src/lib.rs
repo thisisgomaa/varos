@@ -71,6 +71,8 @@ pub fn expanded_ops(edit: &dto::Edit) -> Vec<dto::Operation> {
 }
 
 mod select_transform;
+// ---- Lane D ----
+mod drawing;
 pub mod storage_paths;
 
 pub mod templates;
