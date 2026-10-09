@@ -42,6 +42,7 @@ pub(crate) fn board_rail(
                         divider(ui);
                     }
                 }
+                construction_tools(ui, s.tool, ops);
                 divider(ui);
                 fill_stroke_control(ui, s, ops); // Illustrator's fill/stroke box at the rail foot
             });

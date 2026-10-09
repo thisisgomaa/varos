@@ -148,7 +148,20 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     let mut out = Vec::new();
     let mut targets = 0;
     for (index, op) in edit.ops.iter().enumerate() {
-        walk(op, &edit.api, economy, &defaults, 0, [0.0, 0.0], "", index, &[], &mut out, &mut targets)?;
+        walk(
+            op,
+            &edit.api,
+            economy,
+            edit.api == "1.2",
+            &defaults,
+            0,
+            [0.0, 0.0],
+            "",
+            index,
+            &[],
+            &mut out,
+            &mut targets,
+        )?;
     }
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
@@ -160,6 +173,7 @@ fn walk(
     v: &Value,
     api: &str,
     economy: bool,
+    construction: bool,
     defaults: &Map<String, Value>,
     depth: usize,
     delta: [f32; 2],
@@ -195,6 +209,7 @@ fn walk(
                         child,
                         api,
                         economy,
+                        construction,
                         defaults,
                         depth + 1,
                         offset,
@@ -238,7 +253,10 @@ fn walk(
         if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
             return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
         }
-        if !crate::EDIT_VERBS.contains(&verb) && !(api == "1.2" && verb == "set_stroke_style") {
+        if !crate::EDIT_VERBS.contains(&verb)
+            && !(api == "1.2" && verb == "set_stroke_style")
+            && !(construction && crate::CONSTRUCTION_VERBS.contains(&verb))
+        {
             return Err(Error::new("unsupported", "edit verb is not enabled in this slice"));
         }
         let mut op: Operation = serde_json::from_value(normalized).map_err(|e| invalid(e.to_string()))?;

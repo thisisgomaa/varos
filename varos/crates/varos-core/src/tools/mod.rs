@@ -28,6 +28,8 @@ pub fn get(kind: ToolKind) -> &'static dyn Tool {
         ToolKind::Rect | ToolKind::Ellipse | ToolKind::Triangle | ToolKind::Polygon => &shapes::Shapes,
         // The Artboard tool is handled by `Editor::ab_down` before `get` is ever called — this arm only
         // keeps the match exhaustive (the value is never used).
-        ToolKind::Artboard => &object::Object,
+        ToolKind::ShapeBuilder | ToolKind::Scissors | ToolKind::Knife | ToolKind::Eraser | ToolKind::Artboard => {
+            &object::Object
+        }
     }
 }

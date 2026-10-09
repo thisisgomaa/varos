@@ -178,6 +178,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 
     let cursor_drives_scene = !matches!(ed.drag, Drag::None)
         || !matches!(ed.ab_drag, crate::editor::AbDrag::None)
+        || ed.tool == ToolKind::ShapeBuilder
         || (ed.tool == ToolKind::Pen && ed.active.is_some())
         || ed.origin_preview.is_some()
         || ed.guide_preview.is_some();
@@ -988,6 +989,22 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
 
     s.report = stroke_report.into_inner();
     s.errors = stroke_errors.into_inner();
+    if ed.tool == ToolKind::ShapeBuilder {
+        for shape in ed.construction_highlight() {
+            let rings: Vec<Vec<Pt>> =
+                shape.iter().map(|r| r.iter().map(|p| [p[0] as f32, p[1] as f32]).collect()).collect();
+            s.overlay.push(Prim::Fill { rings: rings.clone(), color: ACCENT_FILL });
+            for mut pts in rings {
+                if let Some(first) = pts.first().copied() {
+                    pts.push(first);
+                }
+                s.overlay.push(Prim::Stroke { pts, width: 1.0, color: ACCENT, clip: None });
+            }
+        }
+    }
+    if let Drag::Construction { points, .. } = &ed.drag {
+        s.overlay.push(Prim::Stroke { pts: points.clone(), width: 1.0, color: ACCENT, clip: None });
+    }
     s
 }
 

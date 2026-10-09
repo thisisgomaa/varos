@@ -56,6 +56,10 @@ pub const EDIT_VERBS: &[&str] = &[
     "set_active_artboard",
 ];
 
+/// Opt-in API 1.2 operations; the legacy edit verb catalogue above stays frozen.
+pub const CONSTRUCTION_VERBS: &[&str] =
+    &["pathfinder", "shape_builder", "scissors", "knife", "eraser", "divide_objects_below"];
+
 /// Expanded, ordered leaf operations of an edit (API 1.1 defaults/tuples/repeat applied; API 1.0 as-is).
 /// Used by the host's agent-presence overlay, which needs the creation order; never fails — an
 /// invalid batch yields the 1.0 ops that parse, and an unparsable batch yields nothing.
