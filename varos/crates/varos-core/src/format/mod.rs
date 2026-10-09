@@ -26,8 +26,8 @@ pub mod validate;
 pub use error::{Invalid, LoadError, SaveRefused};
 pub use limits::{LimitKind, Limits};
 pub use migrate::{
-    migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5, migrate_v5_to_v6, migrate_v6_to_v7,
-    migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10, readable_versions,
+    migrate_v11_to_v12, migrate_v12_to_v13, migrate_v1_to_v2, migrate_v2_to_v3, migrate_v3_to_v4, migrate_v4_to_v5,
+    migrate_v5_to_v6, migrate_v6_to_v7, migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10, readable_versions,
 };
 pub use structure::check_structure;
 pub use validate::validate;
@@ -67,7 +67,10 @@ pub const EFFECTS_VERSION: u32 = 11;
 // ---- w3-cmyk ----
 /// 12 (2026-10-10, wave 3): explicit colour sources — managed paints, `colour_mode`, `output_profile`.
 pub const COLOUR_VERSION: u32 = 12;
-pub const FORMAT_VERSION: u32 = COLOUR_VERSION;
+// ---- Lane E: Phase 11 ----
+/// 13 (2026-10-10, wave 3): live objects — `NodeKind::Live{Blend,Repeat,Envelope}`.
+pub const LIVE_VERSION: u32 = 13;
+pub const FORMAT_VERSION: u32 = LIVE_VERSION;
 /// The first format whose writer emits the board metadata keys (`name`, `description`, `tags`).
 pub const BOARD_META_VERSION: u32 = 3;
 /// The first format whose writer emits a stable `id` on every artboard.
@@ -195,6 +198,8 @@ pub fn decode_model(json: &[u8], container_version: Option<u32>, limits: &Limits
     crate::text_format::refuse_legacy_text(json, version)?;
     // ---- w3-cmyk ----
     crate::colour_format::refuse(json, version)?;
+    // ---- Lane E: Phase 11 ----
+    crate::live::refuse_older_keys(json, version)?;
     let file: VrsFile = serde_json::from_slice(json).map_err(|e| LoadError::malformed(&e))?;
     let mut doc = file.doc;
     let released_legacy_masks = version == 1 && migrate::release_broken_clips(&mut doc);

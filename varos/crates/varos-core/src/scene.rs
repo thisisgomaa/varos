@@ -428,6 +428,15 @@ fn build_scene_impl(
     canvas: bool,
     artwork_only: bool,
 ) -> Scene {
+    // integration w3: evaluation order live → effects (→ corners → stroke → appearance stack)
+    // ---- Lane E: Phase 11 ----
+    let evaluated;
+    let ed = if crate::live::has_live(&ed.doc) {
+        evaluated = crate::live::scene_editor(ed);
+        &evaluated
+    } else {
+        ed
+    };
     // ---- Lane B w3-effects ----
     let resolved_editor = if ed
         .doc

@@ -362,6 +362,8 @@ pub enum NodeKind {
     Image(u32),
     // ---- Lane G: text data ----
     Text(u32),
+    // ---- Lane E: Phase 11 ----
+    Live(crate::live::Kind),
 }
 
 /// Where a dragged row lands relative to the target row (the 3-zone drag model).
@@ -1367,7 +1369,8 @@ impl Document {
             let n = self.node(cur)?;
             match n.parent {
                 Some(p) => {
-                    if matches!(self.node(p)?.kind, NodeKind::Group) {
+                    // ---- Lane E: Phase 11 ----
+                    if matches!(self.node(p)?.kind, NodeKind::Group | NodeKind::Live(_)) {
                         top = Some(p);
                     }
                     cur = p;
@@ -1386,7 +1389,8 @@ impl Document {
         for _ in 0..4096 {
             let Some(c) = cur else { break };
             let Some(n) = self.node(c) else { break };
-            if matches!(n.kind, NodeKind::Group) {
+            // ---- Lane E: Phase 11 ----
+            if matches!(n.kind, NodeKind::Group | NodeKind::Live(_)) {
                 top = Some(c);
             }
             cur = n.parent;
@@ -1649,7 +1653,8 @@ impl Document {
             let mut cur = self.node_of_path(s).and_then(|n| self.node(n)).and_then(|n| n.parent);
             while let Some(g) = cur {
                 let Some(gn) = self.node(g) else { break };
-                if !matches!(gn.kind, NodeKind::Group) {
+                // ---- Lane E: Phase 11 ----
+                if !matches!(gn.kind, NodeKind::Group | NodeKind::Live(_)) {
                     break;
                 }
                 if !gset.contains(&g) {
@@ -1711,6 +1716,14 @@ impl Document {
                     mask_child: None,
                 });
                 leafmap.insert(old_leaf, nl);
+            }
+        }
+        // ---- Lane E: Phase 11: copies retain live parameters and own their spine ----
+        for (&old, &new) in &gmap {
+            if let Some(NodeKind::Live(kind)) = self.node(old).map(|n| n.kind) {
+                if let Some(n) = self.node_mut(new) {
+                    n.kind = NodeKind::Live(crate::live::remap_kind(kind, &pmap));
+                }
             }
         }
         // 3b) remap each copied clip group's `mask_child` through the id maps — the mask is either a
@@ -1956,9 +1969,9 @@ impl Document {
             let empty: Vec<u32> = self
                 .nodes
                 .iter()
-                // ---- Lane A: keep an empty targeted mask container ----
+                // ---- Lane A: keep an empty targeted mask container; Lane E: empty live containers go too ----
                 .filter(|n| {
-                    matches!(n.kind, NodeKind::Group)
+                    matches!(n.kind, NodeKind::Group | NodeKind::Live(_))
                         && n.children.is_empty()
                         && !self.nodes.iter().any(|p| p.role.is_mask_group() && p.mask_child == Some(n.id))
                 })

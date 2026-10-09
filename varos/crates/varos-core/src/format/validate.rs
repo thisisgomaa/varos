@@ -48,6 +48,8 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
     // ---- Lane A ----
     crate::appearance_edits::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;
     // ---- w2-images ----
+    // ---- Lane E: Phase 11 ----
+    crate::live::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     crate::images::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     // ---- w2-gradients ----
     crate::swatches::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;

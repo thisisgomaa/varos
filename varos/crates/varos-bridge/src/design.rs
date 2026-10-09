@@ -246,6 +246,10 @@ pub(crate) fn apply_design_op(
         return Ok(None);
     }
     // ---- Lane C ----
+    // ---- Lane E: Phase 11 ----
+    if op.live() {
+        return crate::live::apply(ed, op, locals, affected, expanded);
+    }
     if op.lane_c() {
         return crate::path_advanced::apply(ed, op, locals, affected, expanded);
     }

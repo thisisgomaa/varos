@@ -22,6 +22,8 @@ pub(crate) const GROUPS: &[&[ToolKind]] = &[
     &[ToolKind::Scale, ToolKind::Shear, ToolKind::FreeTransform],
     // w2-gradients: the Gradient tool (G) in the kit rail (integration w2: the old construction strip is gone)
     &[ToolKind::Gradient],
+    // ---- Lane E: Phase 11 ----
+    &[ToolKind::Blend],
     &[ToolKind::Eyedropper, ToolKind::MagicWand],
     &[ToolKind::ShapeBuilder],
     &[ToolKind::Scissors, ToolKind::Knife, ToolKind::Eraser],
@@ -80,6 +82,7 @@ fn icon(tool: ToolKind) -> Icon {
         ToolKind::Text => Icon::Type,
         ToolKind::Gradient => Icon::PickerGradient,
         ToolKind::Hand => Icon::Hand,
+        ToolKind::Blend => Icon::Link,
         ToolKind::Zoom => Icon::ZoomIn,
         ToolKind::Lasso => Icon::Lasso,
         ToolKind::Pen | ToolKind::Convert => Icon::PenTool,

@@ -37,7 +37,9 @@ pub fn map(doc: &mut Document, pid: u32, f: impl Fn(Pt) -> Pt) {
         }
     }
     materialize(&mut doc.paths[i], paints);
-    doc.paths[i].map_gradient_placement(f);
+    doc.paths[i].map_gradient_placement(&f);
+    // ---- Lane E: mesh placement follows baked geometry ----
+    crate::live::map_mesh(doc, pid, f);
 }
 pub fn live(
     doc: &mut Document,
@@ -47,6 +49,8 @@ pub fn live(
     world: bool,
     f: impl Fn(Pt) -> Pt,
 ) {
+    // ---- Lane E: snapshot-based mesh placement ----
+    crate::live::map_mesh_gesture(doc, base, pids, world, &f);
     for pid in pids {
         let Some(i) = doc.pidx(*pid) else { continue };
         let source = base.filter(|b| b.pidx(*pid).is_some()).unwrap_or(doc);

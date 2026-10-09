@@ -135,3 +135,8 @@ VectorCraft (ArtCraft Team and contributors, 2026), MIT OR Apache-2.0:
 core effects/effects_warp adapt effects/src/{distort,warp,stylize,util}.rs and doc/src/live.rs;
 width_profile/width_geometry/width_geometry_helpers adapt doc/src/appearance.rs, effects/src/stroke/width.rs, geom/src/bez.rs.
 // ---- end Lane B w3-effects ----
+// ---- Lane E: Phase 11 ----
+varos-core/src/live/{mod,evaluate}.rs adapts interpolation, containers and spine placement
+from VectorCraft doc/src/blend.rs:35-380, doc/src/live.rs and engine/src/cmd/live.rs:27-117
+@ a469568. Copyright (c) 2026 ArtCraft Team. MIT OR Apache-2.0;
+see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.

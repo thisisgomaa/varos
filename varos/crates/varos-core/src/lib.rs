@@ -15,6 +15,8 @@ pub mod flatten;
 pub mod format;
 pub mod geom;
 pub mod model;
+// ---- Lane E: Phase 11 ----
+pub mod live;
 pub mod planar;
 pub mod scene;
 // ---- Lane E ----

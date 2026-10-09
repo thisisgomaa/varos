@@ -42,6 +42,7 @@ pub(crate) fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Text => "Type (T)",
         ToolKind::Gradient => "Gradient (G)",
         ToolKind::Hand => "Hand (H)",
+        ToolKind::Blend => "Blend (W)",
         ToolKind::Zoom => "Zoom (Z)",
         ToolKind::Eyedropper => "Eyedropper (I)",
         ToolKind::Rotate => "Rotate (R)",

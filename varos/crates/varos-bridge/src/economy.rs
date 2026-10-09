@@ -270,7 +270,9 @@ fn walk(
             return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
         }
         // ---- Lane D: opt-in drawing verb expansion ----
+        // ---- Lane E: Phase 11 ----
         if !crate::EDIT_VERBS.contains(&verb)
+            && !(api == "1.2" && crate::live::VERBS.contains(&verb))
             && !(construction && crate::drawing::VERBS.contains(&verb))
             // ---- Lane A ----
             && !(api == "1.2" && ["appearance", "mask"].contains(&verb))
