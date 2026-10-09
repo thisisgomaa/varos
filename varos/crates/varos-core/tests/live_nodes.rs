@@ -294,3 +294,123 @@ fn repeated_invalid_source_command_returns_error_and_preserves_document_and_hist
     assert_eq!(ed.doc, before);
     assert_eq!(ed.history_depths(), history);
 }
+
+#[test]
+fn replacement_spine_restores_root_ownership_and_roundtrips() {
+    let (mut ed, node, _) = setup(Kind::Blend { spine: None, steps: 1, orientation: Orientation::Page });
+    // Exercise the legal root-level container rather than the default layer host.
+    let parent = ed.doc.node(node).unwrap().parent.unwrap();
+    ed.doc.nodes.iter_mut().find(|n| n.id == parent).unwrap().children.retain(|id| *id != node);
+    ed.doc.nodes.iter_mut().find(|n| n.id == node).unwrap().parent = None;
+    ed.doc.roots.push(node);
+    let mut spines = Vec::new();
+    for x in [20., 30.] {
+        let id = rectangle(&mut ed, x);
+        let i = ed.doc.pidx(id).unwrap();
+        ed.doc.paths[i].closed = false;
+        ed.doc.paths[i].anchors.truncate(2);
+        live::execute(&mut ed, Action::Spine { node, path: id }).unwrap();
+        spines.push(id);
+    }
+    let released = ed.doc.node_of_path(spines[0]).unwrap();
+    assert_eq!(ed.doc.node(released).unwrap().parent, None);
+    assert!(ed.doc.roots.contains(&released));
+    let limits = varos_core::format::Limits::default();
+    let bytes = varos_core::format::encode_model(&ed.doc, &limits).unwrap();
+    assert!(varos_core::format::decode_model(bytes.as_bytes(), None, &limits).is_ok());
+    ed.execute(EditCommand::Undo).unwrap();
+    assert_eq!(ed.doc.node(released).unwrap().parent, Some(node));
+}
+
+#[test]
+fn make_preserves_global_fill_and_stroke_links_through_release() {
+    use varos_core::{model::Paint, swatches::Swatch};
+    let mut ed = Editor::new();
+    let path = rectangle(&mut ed, 0.);
+    let swatch = ed.doc.nid();
+    ed.doc.swatches.push(Swatch {
+        id: swatch,
+        name: "Global".into(),
+        paint: Paint::Solid([1., 0., 0., 1.]),
+        global: true,
+        group: String::new(),
+    });
+    let i = ed.doc.pidx(path).unwrap();
+    ed.doc.paths[i].fill = Paint::SwatchRef { id: swatch };
+    ed.doc.paths[i].stroke = Paint::SwatchRef { id: swatch };
+    live::execute(
+        &mut ed,
+        Action::Make {
+            paths: vec![path],
+            kind: Kind::Repeat { repeat: Repeat::Grid { rows: 1, cols: 2, gap: [0., 0.] } },
+        },
+    )
+    .unwrap();
+    let node = live::selected_node(&ed).unwrap();
+    let red = evaluated(&ed, node);
+    ed.doc.swatches[0].paint = Paint::Solid([0., 0., 1., 1.]);
+    let blue = evaluated(&ed, node);
+    assert!(!Arc::ptr_eq(&red, &blue));
+    assert!(blue
+        .iter()
+        .all(|p| p.fill == Paint::Solid([0., 0., 1., 1.]) && p.stroke == Paint::Solid([0., 0., 1., 1.])));
+    live::execute(&mut ed, Action::Release { node }).unwrap();
+    assert_eq!(ed.doc.paths[i].fill, Paint::SwatchRef { id: swatch });
+    assert_eq!(ed.doc.paths[i].stroke, Paint::SwatchRef { id: swatch });
+}
+
+#[test]
+fn mesh_transform_copy_and_offset_paste_follow_visible_geometry() {
+    use varos_core::{clipboard::Clipboard, select_transform::Transform};
+    let (mut ed, node, ids) =
+        setup(Kind::Envelope { envelope: Envelope::Mesh { points: [[0., 0.], [10., 0.], [0., 10.], [10., 10.]] } });
+    ed.execute_targeted_batch(vec![varos_core::bridge::TargetEdit::Move { paths: ids.clone(), delta: [100., 50.] }])
+        .unwrap();
+    assert_eq!(evaluated(&ed, node)[0].anchors[0].p, [100., 50.]);
+    let clip = Clipboard::capture(&ed.doc, &ids);
+    let pasted = clip.paste_into(&mut ed.doc, [20., 30.]);
+    let pasted_node = ed.doc.unit_of(pasted[0]).unwrap();
+    assert_eq!(evaluated(&ed, pasted_node)[0].anchors[0].p, [120., 80.]);
+    ed.objsel = ids.iter().copied().collect();
+    ed.try_execute(EditCommand::Transform(Transform {
+        scale: [2., 3.],
+        origin: Some([100., 50.]),
+        movement: [5., 7.],
+        copy: true,
+        ..Default::default()
+    }))
+    .unwrap();
+    let copied = live::selected_node(&ed).unwrap();
+    assert_ne!(copied, node);
+    assert_eq!(evaluated(&ed, copied)[0].anchors[0].p, [105., 57.]);
+    assert_eq!(evaluated(&ed, copied)[0].anchors[128].p, [125., 87.]);
+    assert_eq!(evaluated(&ed, node)[0].anchors[0].p, [100., 50.]);
+}
+
+#[test]
+fn multisource_mesh_gesture_restarts_from_snapshot_and_undo_restores() {
+    use varos_core::select_transform::Transform;
+    let mut ed = Editor::new();
+    let a = rectangle(&mut ed, 0.);
+    let b = rectangle(&mut ed, 10.);
+    live::execute(
+        &mut ed,
+        Action::Make {
+            paths: vec![a, b],
+            kind: Kind::Envelope { envelope: Envelope::Mesh { points: [[0., 0.], [20., 0.], [0., 10.], [20., 10.]] } },
+        },
+    )
+    .unwrap();
+    let node = live::selected_node(&ed).unwrap();
+    let before = ed.doc.clone();
+    ed.try_execute(EditCommand::TransformBegin).unwrap();
+    for delta in [[10., 20.], [30., 40.]] {
+        ed.try_execute(EditCommand::TransformLive(Transform { movement: delta, ..Default::default() })).unwrap();
+    }
+    assert_eq!(evaluated(&ed, node)[0].anchors[0].p, [30., 40.]);
+    ed.try_execute(EditCommand::TransformCommit).unwrap();
+    ed.execute(EditCommand::Undo).unwrap();
+    assert_eq!(ed.doc, before);
+    ed.execute(EditCommand::Redo).unwrap();
+    assert_eq!(evaluated(&ed, node)[0].anchors[0].p, [30., 40.]);
+}

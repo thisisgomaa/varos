@@ -234,8 +234,6 @@ pub fn apply(ed: &mut Editor, action: Action) -> Result<(), String> {
                 let xf = doc.unit_xform(*pid);
                 if let Some(i) = doc.pidx(*pid) {
                     let mut p = doc.paths[i].clone();
-                    p.fill = p.appearance().fill().resolved(&doc);
-                    p.stroke = p.appearance().stroke().resolved(&doc);
                     map_path(&mut p, |pt| xf.apply(pt));
                     doc.paths[i] = p;
                 }
@@ -311,6 +309,8 @@ pub fn apply(ed: &mut Editor, action: Action) -> Result<(), String> {
                     }
                     if let Some(p) = parent.and_then(|p| doc.node_mut(p)) {
                         p.children.insert(0, id);
+                    } else {
+                        doc.roots.insert(0, id);
                     }
                 }
             }
@@ -333,6 +333,7 @@ pub fn apply(ed: &mut Editor, action: Action) -> Result<(), String> {
         }
         Action::Isolate { .. } => return Ok(()),
     };
+    crate::format::check_structure(&doc, &crate::format::Limits::default()).map_err(|e| e.to_string())?;
     doc.sync_tree();
     validate(&doc)?;
     for n in &doc.nodes {
@@ -538,4 +539,58 @@ pub(crate) fn remap_kind(mut kind: Kind, paths: &std::collections::HashMap<u32, 
         *spine = spine.and_then(|id| paths.get(&id).copied());
     }
     kind
+}
+
+/// Mesh placement follows baked source geometry once per owning node.
+pub(crate) fn map_mesh(doc: &mut Document, pid: u32, f: impl Fn(Pt) -> Pt) {
+    let Some(leaf) = doc.node_of_path(pid) else { return };
+    let Some(owner) = doc.node(leaf).and_then(|n| n.parent) else { return };
+    if doc.node_paths(owner).first().copied() != Some(pid) {
+        return;
+    }
+    if let Some(n) = doc.node_mut(owner) {
+        if let NodeKind::Live(kind) = n.kind {
+            n.kind = NodeKind::Live(map_mesh_kind(kind, f));
+        }
+    }
+}
+pub(crate) fn map_mesh_kind(kind: Kind, f: impl Fn(Pt) -> Pt) -> Kind {
+    match kind {
+        Kind::Envelope { envelope: Envelope::Mesh { points } } => {
+            Kind::Envelope { envelope: Envelope::Mesh { points: points.map(f) } }
+        }
+        kind => kind,
+    }
+}
+/// Recompute pointer transforms from the transaction snapshot, avoiding cumulative drift.
+pub(crate) fn map_mesh_gesture(
+    doc: &mut Document,
+    base: Option<&Document>,
+    pids: &[u32],
+    world: bool,
+    f: impl Fn(Pt) -> Pt,
+) {
+    let source = base.unwrap_or(doc);
+    let mapped: Vec<_> = source
+        .nodes
+        .iter()
+        .filter_map(|n| {
+            let NodeKind::Live(kind @ Kind::Envelope { envelope: Envelope::Mesh { .. } }) = n.kind else { return None };
+            let members = source.node_paths(n.id);
+            if members.is_empty() || !members.iter().all(|pid| pids.contains(pid)) {
+                return None;
+            }
+            let source_xf = source.unit_xform(members[0]);
+            let dest_xf = doc.unit_xform(members[0]);
+            Some((
+                n.id,
+                map_mesh_kind(kind, |p| if world { dest_xf.inverse_apply(f(source_xf.apply(p))) } else { f(p) }),
+            ))
+        })
+        .collect();
+    for (id, kind) in mapped {
+        if let Some(n) = doc.node_mut(id) {
+            n.kind = NodeKind::Live(kind);
+        }
+    }
 }
