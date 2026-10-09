@@ -46,6 +46,8 @@ mod colour_tools;
 mod control_bar;
 mod controls;
 mod home;
+// ---- Lane G ----
+mod lane_g;
 mod layout;
 mod menus;
 pub(crate) mod ops;
@@ -462,6 +464,9 @@ impl Ui {
         view: View,
         maximized: bool,
     ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
+        // ---- Lane G: drain native actions before selecting any render mode ----
+        #[cfg(target_os = "macos")]
+        varos_app::accessibility_macos::drain(&mut self.state.egui_input_mut().events);
         if self.home {
             return self.run_home(window, maximized);
         }
@@ -472,9 +477,6 @@ impl Ui {
         // `egui_focus_seed`
         let raw = self.state.egui_input_mut();
         raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
-        // ---- Lane G ----
-        #[cfg(target_os = "macos")]
-        varos_app::accessibility_macos::drain(&mut self.state.egui_input_mut().events);
         let input = self.state.take_egui_input(window);
         set_doc_salt(&self.ctx, self.doc_active); // per-widget edit state stays inside its document
         layout::prepare_picker_input(
@@ -569,7 +571,7 @@ impl Ui {
         };
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
         let text_tool = &mut self.text_tool;
-        let out = self.ctx.run_ui(input, |root| {
+        let (out, release_cmds) = lane_g::frame(&self.ctx, input, &mut self.release, |root| {
             let ctx = root.ctx().clone();
             let ctx = &ctx;
             build_topbar(
@@ -592,8 +594,6 @@ impl Ui {
             lane_c::sheets(ctx, &mut app_cmds, &mut ops, doc_active);
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
-            // ---- Lane G ----
-            self.release.draw(ctx, &mut app_cmds);
             self.phase9.draw(ctx, &mut app_cmds, doc_active);
             crate::document_ui::draw(ctx, &mut self.document_sheet, ed, doc_active, &mut ops);
             build_statusbar(root, (absnap.active, absnap.count), view.zoom, ic_fit, &mut fit_request, status, &mut ops);
@@ -742,6 +742,7 @@ impl Ui {
                 prepare_canvas_sample(m, ed, view, ppp, hole);
             }
         });
+        app_cmds.extend(release_cmds);
         self.color_panel = color_panel;
         self.refpt = refpt;
         self.lock = lock;
@@ -793,11 +794,7 @@ impl Ui {
             out
         };
         // ---- Lane G ----
-        #[cfg(target_os = "macos")]
-        if let Some(tree) = &out.platform_output.accesskit_update {
-            varos_app::accessibility_macos::publish(window, &self.ctx, tree);
-        }
-        self.state.handle_platform_output(window, out.platform_output);
+        lane_g::platform(&mut self.state, window, &self.ctx, out.platform_output);
         // Stage 4: publish the canvas hole. Logical for the pointer test, physical for main.rs's view
         // fits. A changed hole (box resized/dragged) repaints once more so the underlay catches up.
         if new_hole != self.board_hole {

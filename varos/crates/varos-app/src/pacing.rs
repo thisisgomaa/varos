@@ -18,6 +18,22 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+// ---- Lane G: only immediate requests may bypass the stored egui deadline ----
+#[derive(Clone, Default)]
+pub struct ImmediateRepaint(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl ImmediateRepaint {
+    pub fn request(&self, delay: Duration) -> bool {
+        if !delay.is_zero() {
+            return false;
+        }
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+        true
+    }
+    pub fn take(&self) -> bool {
+        self.0.swap(false, std::sync::atomic::Ordering::AcqRel)
+    }
+}
+
 /// How the loop waits after a pass (mirrors winit's `ControlFlow` without depending on it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
@@ -325,5 +341,33 @@ mod tests {
         let mut off = FrameStats::new(false, t0);
         off.frame();
         assert!(off.counters().is_quiet() && off.tick(t0 + 5_000 * MS).is_none(), "disabled = no-op");
+    }
+}
+
+#[cfg(test)]
+mod lane_g_tests {
+    use super::*;
+    #[test]
+    fn delayed_repaints_wait_and_immediate_worker_requests_wake_once() {
+        let ctx = egui::Context::default();
+        let signal = ImmediateRepaint::default();
+        let callback = signal.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            callback.request(info.delay);
+        });
+        for _ in 0..3 {
+            let _ = ctx.run_ui(Default::default(), |_| {});
+        }
+        signal.take();
+        let now = Instant::now();
+        ctx.request_repaint_after(Duration::from_millis(500));
+        assert!(!signal.take());
+        let deadline = now + Duration::from_millis(500);
+        assert_eq!(plan(now, Some(deadline), &[], false), Plan { redraw: false, flow: Flow::WaitUntil(deadline) });
+        let worker_ctx = ctx.clone();
+        std::thread::spawn(move || worker_ctx.request_repaint()).join().unwrap();
+        assert!(signal.take());
+        assert!(!signal.take());
+        assert!(plan(deadline, Some(deadline), &[], false).redraw);
     }
 }

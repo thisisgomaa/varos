@@ -173,6 +173,12 @@ impl State {
         }
         ctx.request_repaint();
     }
+    #[cfg(test)]
+    pub(crate) fn completed_for_test(sheet: Sheet) -> Self {
+        let (send, receive) = mpsc::channel();
+        send.send(Ok(sheet)).expect("test receiver is live");
+        Self { sheet: Some(Sheet::Checking), pending: Some(receive) }
+    }
     pub fn draw(&mut self, ctx: &egui::Context, commands: &mut Vec<AppCommand>) {
         if let Some(receiver) = &self.pending {
             match receiver.try_recv() {
