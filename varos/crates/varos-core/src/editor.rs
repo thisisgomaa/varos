@@ -5220,6 +5220,9 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        // ---- Lane B w3-effects ----
+        crate::width_tool::cancel(self);
+        // ---- end Lane B w3-effects ----
         if self.image_drag.take().is_some() {
             if let Some(before) = self.pending.take() {
                 self.doc = std::sync::Arc::unwrap_or_clone(before);

@@ -72,9 +72,32 @@ fn frozen_v11_embedded_pdf_and_old_reader_refusal() {
     let bytes = varos_pdf::write_pdf_checked(&d, &Limits::DEFAULT).unwrap();
     let loaded = varos_pdf::load_vrs_bytes(&bytes, &Limits::DEFAULT).unwrap();
     assert_eq!(loaded.source_version, 11);
-    // Frozen v9 reader's pure header gate refuses v11 before any model decoding.
-    let value: serde_json::Value =
-        serde_json::from_slice(include_bytes!("../../varos-core/tests/fixtures/w3-effects/v11-effects.json")).unwrap();
-    let found = value["varos"].as_u64().unwrap();
-    assert!(found > 9);
+    let expected = Err(varos_core::format::LoadError::NewerVersion { found: 11, supported: 9 });
+    let json = include_bytes!("../../varos-core/tests/fixtures/w3-effects/v11-effects.json");
+    assert_eq!(frozen_v9_header_gate(json), expected);
+    assert_eq!(frozen_v9_header_gate(br#"{"varos":11,"doc":"invalid"}"#), expected);
+    let pdf = lopdf::Document::load_mem(&bytes).unwrap();
+    let catalog = pdf.catalog().unwrap();
+    let version = catalog.get(b"VAROS_SchemaVersion").unwrap().as_i64().unwrap() as u32;
+    assert_eq!(frozen_v9_version_gate(version), expected);
+    let (_, model) = pdf.dereference(catalog.get(b"VAROS_Model").unwrap()).unwrap();
+    assert_eq!(frozen_v9_header_gate(&model.as_stream().unwrap().content), expected);
+    assert_eq!(frozen_v9_header_gate(br#"{"varos":9,"doc":"invalid"}"#), Ok(9));
+    assert_eq!(frozen_v9_version_gate(9), Ok(9));
+}
+// Frozen v9 predecode header/catalog gates adapted from that reader, not an old binary.
+fn frozen_v9_version_gate(found: u32) -> Result<u32, varos_core::format::LoadError> {
+    if found > 9 {
+        Err(varos_core::format::LoadError::NewerVersion { found, supported: 9 })
+    } else {
+        Ok(found)
+    }
+}
+fn frozen_v9_header_gate(bytes: &[u8]) -> Result<u32, varos_core::format::LoadError> {
+    #[derive(serde::Deserialize)]
+    struct Head {
+        varos: u32,
+    }
+    let head: Head = serde_json::from_slice(bytes).unwrap();
+    frozen_v9_version_gate(head.varos)
 }

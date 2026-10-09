@@ -360,3 +360,88 @@ fn displaced_and_overlapping_copies_hit_the_authored_object() {
     }];
     assert_eq!(e.path_under([70., 60.]), Some(10));
 }
+
+#[test]
+fn expand_document_budget_refuses_atomically_without_redispatch() {
+    let mut e = ed();
+    e.doc.paths.clear();
+    e.objsel.clear();
+    for id in 100..141 {
+        let mut p = rect();
+        p.id = id;
+        p.effects = vec![Effect::Transform {
+            copies: 1000,
+            movement: [1., 0.],
+            scale: [1., 1.],
+            rotate: 0.,
+            reflect: [false, false],
+        }];
+        e.doc.paths.push(p);
+        e.objsel.insert(id);
+    }
+    e.doc.ids = 200;
+    e.doc.sync_tree();
+    let before = e.doc.clone();
+    let rev = e.rev;
+    let ids = (100..141).collect::<Vec<_>>();
+    assert!(varos_core::effects_document::expand(&mut e, &ids).unwrap_err().contains("geometry limits"));
+    assert!(e.try_execute(EditCommand::LiveEffects(Action::Expand { ids })).is_err());
+    assert!(e.try_execute(EditCommand::PathAdvanced(varos_core::path_advanced::Action::Expand)).is_err());
+    // Also exercise the direct UI route, which must return without recursive re-entry.
+    e.path_advanced(varos_core::path_advanced::Action::Expand);
+    assert_eq!(e.doc, before);
+    assert_eq!(e.rev, rev);
+}
+#[test]
+fn direct_selected_expand_leaves_group_sibling_untouched() {
+    for copies in [0, 2] {
+        let mut e = ed();
+        let mut sibling = rect();
+        sibling.id = 40;
+        for a in &mut sibling.anchors {
+            a.id += 40;
+        }
+        e.doc.paths.push(sibling.clone());
+        e.doc.ids = 100;
+        e.doc.sync_tree();
+        e.doc.group(&[10, 40]);
+        e.objsel.clear();
+        e.selected.insert(11);
+        e.doc.paths.iter_mut().find(|p| p.id == 10).unwrap().effects = vec![Effect::Transform {
+            copies,
+            movement: [20., 0.],
+            scale: [1., 1.],
+            rotate: 0.,
+            reflect: [false, false],
+        }];
+        let before = e.doc.clone();
+        let rev = e.rev;
+        e.try_execute(EditCommand::PathAdvanced(varos_core::path_advanced::Action::Expand)).unwrap();
+        assert_eq!(e.doc.paths.iter().find(|p| p.id == 40), Some(&sibling));
+        assert_eq!(e.rev, rev + 1);
+        assert!(e.doc.paths.iter().all(|p| p.effects.is_empty()));
+        e.undo();
+        assert_eq!(e.doc, before);
+    }
+}
+#[test]
+fn escape_cancels_width_drag_before_release_without_history() {
+    for profile in [None, Some(WidthProfile::lens())] {
+        let mut e = ed();
+        e.doc.paths[0].closed = false;
+        e.doc.paths[0].anchors.truncate(2);
+        e.doc.paths[0].stroke_style.width_profile = profile;
+        e.try_execute(EditCommand::LiveEffects(Action::Tool)).unwrap();
+        let before = e.doc.clone();
+        let rev = e.rev;
+        e.pointer_down([70., 20.]);
+        e.pointer_move([70., 5.]);
+        assert_ne!(e.doc, before);
+        e.escape();
+        assert!(e.width_tool.drag.is_none());
+        assert!(!e.transaction_open());
+        e.pointer_up();
+        assert_eq!(e.doc, before);
+        assert_eq!(e.rev, rev);
+    }
+}

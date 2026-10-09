@@ -88,6 +88,11 @@ pub fn check(ed: &Editor, action: Action) -> Result<(), String> {
     if ids.is_empty() {
         return Err("Select paths first".into());
     }
+    // ---- Lane B w3-effects ----
+    if matches!(action, Action::Expand) {
+        crate::effects_document::bake_selected(&ed.doc, &ids.iter().copied().collect::<Vec<_>>())?;
+    }
+    // ---- end Lane B w3-effects ----
     for id in ids {
         let p = ed.doc.paths.iter().find(|p| p.id == id).ok_or("unknown path")?;
         if ed.doc.eff_locked(id) || ed.doc.eff_hidden(id) || !ed.in_isolation(id) {
@@ -125,7 +130,7 @@ impl Editor {
                 .iter()
                 .any(|id| self.doc.pidx(*id).is_some_and(|i| !self.doc.paths[i].effects.is_empty()))
         {
-            crate::effects_document::expand_appearance(self);
+            let _ = crate::effects_document::expand_appearance(self);
             return;
         }
         // ---- end Lane B w3-effects ----

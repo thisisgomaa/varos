@@ -339,6 +339,9 @@ pub fn check(ed: &Editor, action: &Action) -> Result<(), String> {
     if ids.is_empty() || ids.len() > 1000 {
         return Err("effects require 1–1000 paths".into());
     }
+    if matches!(action, Action::Expand { .. }) {
+        crate::effects_document::bake_selected(&ed.doc, ids)?;
+    }
     for id in ids {
         let p = ed.doc.paths.iter().find(|p| p.id == *id).ok_or("unknown path")?;
         if p.locked || ed.doc.eff_locked(*id) {
@@ -408,7 +411,7 @@ pub fn apply(ed: &mut Editor, action: Action) {
             return;
         }
         Action::Expand { ids } => {
-            crate::effects_document::expand(ed, ids);
+            let _ = crate::effects_document::expand(ed, ids);
             return;
         }
         _ => {}

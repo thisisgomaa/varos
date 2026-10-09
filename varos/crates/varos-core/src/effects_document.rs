@@ -8,6 +8,8 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 #[derive(Default)]
 struct Cache {
+    #[cfg(test)]
+    evaluations: usize,
     entries: Vec<(Path, Vec<Path>)>,
     anchors: usize,
 }
@@ -27,6 +29,10 @@ pub fn resolved_many(p: &Path) -> Result<Vec<Path>, String> {
     let parts = effects::evaluate_many(p)?;
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
+        #[cfg(test)]
+        {
+            c.evaluations += 1;
+        }
         c.entries.retain(|(key, _)| key.id != p.id);
         c.anchors = c.entries.iter().map(|(key, parts)| count(key) + parts.iter().map(count).sum::<usize>()).sum();
         let cost = count(p) + parts.iter().map(count).sum::<usize>();
@@ -39,7 +45,7 @@ pub fn resolved_many(p: &Path) -> Result<Vec<Path>, String> {
     });
     Ok(parts)
 }
-fn materialize(doc: &mut Document, id: u32, mut parts: Vec<Path>) -> Result<(), String> {
+fn materialize(doc: &mut Document, id: u32, mut parts: Vec<Path>) -> Result<Vec<u32>, String> {
     let pi = doc.pidx(id).ok_or("unknown path")?;
     let leaf = doc.node_of_path(id).ok_or("missing path leaf")?;
     if parts.len() > 1 && doc.is_mask_source(id) {
@@ -55,7 +61,7 @@ fn materialize(doc: &mut Document, id: u32, mut parts: Vec<Path>) -> Result<(), 
     }
     if parts.len() == 1 {
         doc.paths[pi] = parts.remove(0);
-        return Ok(());
+        return Ok(vec![id]);
     }
     let original = doc.node(leaf).cloned().ok_or("missing path leaf")?;
     let mut children = vec![];
@@ -84,8 +90,9 @@ fn materialize(doc: &mut Document, id: u32, mut parts: Vec<Path>) -> Result<(), 
         node.children = children;
     }
     doc.paths.remove(pi);
+    let targets = parts.iter().map(|p| p.id).collect();
     doc.paths.extend(parts);
-    Ok(())
+    Ok(targets)
 }
 pub fn document(source: &Document) -> Result<Cow<'_, Document>, String> {
     if source.paths.iter().all(|p| p.corners.is_empty() && p.effects.is_empty()) {
@@ -106,50 +113,99 @@ pub fn document(source: &Document) -> Result<Cow<'_, Document>, String> {
     doc.sync_tree();
     Ok(Cow::Owned(doc))
 }
-pub fn expand(ed: &mut Editor, ids: &[u32]) {
+/// Prepare atomically and return only leaves replacing explicitly requested paths.
+pub(crate) fn bake_selected(source: &Document, ids: &[u32]) -> Result<(Document, Vec<u32>), String> {
+    let ids: std::collections::BTreeSet<_> = ids.iter().copied().collect();
     let prepared = ids
         .iter()
-        .filter_map(|id| ed.doc.pidx(*id).map(|i| (*id, &ed.doc.paths[i])))
-        .map(|(id, p)| Ok((id, resolved_many(p)?)))
-        .collect::<Result<Vec<_>, String>>();
-    let Ok(prepared) = prepared else { return };
-    let untouched = ed.doc.paths.iter().filter(|p| !ids.contains(&p.id));
+        .map(|id| {
+            let i = source.pidx(*id).ok_or("unknown path")?;
+            Ok((*id, resolved_many(&source.paths[i])?))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let untouched = source.paths.iter().filter(|p| !ids.contains(&p.id));
     let paths = untouched.clone().count() + prepared.iter().map(|(_, p)| p.len()).sum::<usize>();
     let anchors = untouched.map(count).sum::<usize>() + prepared.iter().flat_map(|(_, p)| p).map(count).sum::<usize>();
-    let nodes = ed.doc.nodes.len() + prepared.iter().filter(|(_, p)| p.len() > 1).map(|(_, p)| p.len()).sum::<usize>();
+    let nodes = source.nodes.len() + prepared.iter().filter(|(_, p)| p.len() > 1).map(|(_, p)| p.len()).sum::<usize>();
     let limits = crate::format::Limits::DEFAULT;
     if paths > limits.max_paths || anchors > limits.max_anchors || nodes > limits.max_nodes {
-        return;
+        return Err("resolved live-object document exceeds format geometry limits".into());
     }
-    let mut doc = ed.doc.clone();
+    let mut doc = source.clone();
+    let mut targets = Vec::new();
     for (id, parts) in prepared {
-        if materialize(&mut doc, id, parts).is_err() {
-            return;
-        }
+        targets.extend(materialize(&mut doc, id, parts)?);
     }
     doc.sync_tree();
-    if doc.content_eq(&ed.doc) {
-        return;
+    Ok((doc, targets))
+}
+pub fn expand(ed: &mut Editor, ids: &[u32]) -> Result<(), String> {
+    let (doc, _) = bake_selected(&ed.doc, ids)?;
+    if !doc.content_eq(&ed.doc) {
+        ed.begin();
+        ed.doc = doc;
+        ed.dirty = true;
+        ed.commit();
     }
-    ed.begin();
-    ed.doc = doc;
-    ed.dirty = true;
-    ed.commit();
+    Ok(())
 }
 
 /// Object > Expand resolves all live copies before outlining their strokes, in one publication.
-pub fn expand_appearance(ed: &mut Editor) {
+pub fn expand_appearance(ed: &mut Editor) -> Result<(), String> {
     let ids: Vec<_> = ed.selected_pids().into_iter().collect();
     let mut stage = ed.clone();
-    expand(&mut stage, &ids);
-    let targets: Vec<_> = ids.iter().flat_map(|id| stage.doc.group_members(*id)).collect();
+    let (doc, targets) = bake_selected(&ed.doc, &ids)?;
+    stage.doc = doc;
+    stage.selected.clear();
+    stage.group_sel.clear();
     stage.objsel = targets.into_iter().collect();
+    crate::path_advanced::check(&stage, crate::path_advanced::Action::Expand)?;
     stage.path_advanced(crate::path_advanced::Action::Expand);
     if stage.doc.content_eq(&ed.doc) {
-        return;
+        return Ok(());
     }
     ed.begin();
     ed.doc = stage.doc;
     ed.dirty = true;
     ed.commit();
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn production_cache_reuses_idle_and_invalidates_authored_edits() {
+        CACHE.with(|c| *c.borrow_mut() = Cache::default());
+        let mut p = Path::new(
+            10,
+            vec![
+                crate::model::Anchor { id: 11, p: [0., 0.], hin: None, hout: None, smooth: false },
+                crate::model::Anchor { id: 12, p: [100., 0.], hin: None, hout: None, smooth: false },
+            ],
+            false,
+            None,
+            Some([1., 0., 0., 1.]),
+            10.,
+        );
+        p.effects.push(effects::Effect::Transform {
+            copies: 1,
+            movement: [20., 0.],
+            scale: [1., 1.],
+            rotate: 0.,
+            reflect: [false, false],
+        });
+        let first = resolved_many(&p).unwrap();
+        for _ in 0..10 {
+            assert_eq!(resolved_many(&p).unwrap(), first);
+        }
+        assert_eq!(CACHE.with(|c| c.borrow().evaluations), 1);
+        p.anchors[0].p[0] = 2.;
+        assert_ne!(resolved_many(&p).unwrap(), first);
+        p.stroke_width = 20.;
+        assert_eq!(resolved_many(&p).unwrap()[0].stroke_width, 20.);
+        p.effects.push(effects::Effect::Offset { delta: 2., join: crate::stroke::StrokeJoin::Round, miter: 10. });
+        resolved_many(&p).unwrap();
+        assert_eq!(CACHE.with(|c| (c.borrow().evaluations, c.borrow().entries.len())), (4, 1));
+    }
 }
