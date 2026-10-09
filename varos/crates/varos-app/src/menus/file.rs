@@ -17,7 +17,11 @@ pub(super) fn rows() -> Vec<Entry> {
         file_key("file.savecopy", "Save a Copy\u{2026}", cmd_alt(K::KeyS), FileCmd::SaveCopy),
         file_key("file.revert", "Revert", fkey(K::F12), FileCmd::Revert),
         Entry::Sep,
-        Entry::Sub { label: "Export", items: vec![file_row("file.export.pdf", "PDF\u{2026}", FileCmd::Export)] },
+        file_key("file.export", "Export\u{2026}", cmd_alt(K::KeyE), FileCmd::Export),
+        Entry::Sub {
+            label: "Export",
+            items: vec![file_row("file.export.pdf", "PDF\u{2026}", FileCmd::ExportPdfPreset)],
+        },
         file_row("file.exportselection", "Export Selection\u{2026}", FileCmd::ExportSelection),
     ]
 }

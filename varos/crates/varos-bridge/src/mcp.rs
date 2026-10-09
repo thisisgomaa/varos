@@ -336,6 +336,7 @@ pub fn tools_for_api(api: &str) -> Value {
             }
         }
     }
+    append_export_tools(&mut table);
     table
 }
 fn rpc_result(id: Value, result: Value) -> Value {
@@ -456,7 +457,11 @@ pub fn serve<T: Transport>(
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
             "tools/list" => rpc_result(id, tools_for_api(params["api"].as_str().unwrap_or("1.0"))),
-            "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
+            "tools/call"
+                if params["name"]
+                    .as_str()
+                    .is_none_or(|name| !TOOLS.contains(&name) && !["export_svg", "export_raster"].contains(&name)) =>
+            {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }
             "tools/call" => {
@@ -522,4 +527,55 @@ pub fn serve<T: Transport>(
         let _ = worker.join();
     }
     Ok(())
+}
+
+/// Explicit API 1.2 discovery. Legacy tools/list remains byte-identical.
+fn append_export_tools(result: &mut Value) {
+    let Some(list) = result.get_mut("tools").and_then(Value::as_array_mut) else { return };
+    for name in ["export_svg", "export_raster"] {
+        let mut properties = json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer","minimum":0},"path":{"type":"string"},"scope":{"type":"string","description":"all_visible_artboards, whole_board, artwork_bounds, selection or artboard:N"}});
+        if name == "export_raster" {
+            properties["format"] = json!({"enum":["png","jpeg","webp","tiff"],"default":"png"});
+            properties["scale"] = json!({"type":"number","exclusiveMinimum":0,"maximum":64,"default":1});
+            properties["ppi"] = json!({"type":"number","exclusiveMinimum":0,"maximum":4608});
+            properties["quality"] = json!({"type":"integer","minimum":0,"maximum":100,"default":90});
+            properties["transparent"] = json!({"type":"boolean","default":true});
+        }
+        list.push(json!({"name":name,"description":"Queue revision-pinned deliverables with ExportReport; fresh destination only. Additional artboards are written beside path under their artboard names.","inputSchema":object(properties,&["api","board","request_id","expected_rev","path","scope"])}));
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    #[test]
+    fn api_12_discovery_unifies_export_and_command_lanes() {
+        for api in ["1.0", "1.1"] {
+            assert_eq!(tools_for_api(api), tools());
+            assert!(!tools_for_api(api)["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| { matches!(row["name"].as_str(), Some("export_svg" | "export_raster")) }));
+        }
+        let table = tools_for_api("1.2");
+        let rows = table["tools"].as_array().unwrap();
+        let mut names = std::collections::HashSet::new();
+        for row in rows {
+            assert!(names.insert(row["name"].as_str().unwrap()), "duplicate tool: {row}");
+        }
+        for name in ["export_pdf", "export_svg", "export_raster", "capabilities", "select", "edit"] {
+            assert!(names.contains(name), "missing {name}");
+        }
+        for name in ["export_svg", "export_raster"] {
+            let row = rows.iter().find(|row| row["name"] == name).unwrap();
+            assert_eq!(row["inputSchema"]["properties"]["api"]["const"], "1.2");
+        }
+        let edit = rows.iter().find(|row| row["name"] == "edit").unwrap();
+        let operations = edit["inputSchema"]["$defs"]["operation"]["anyOf"].as_array().unwrap();
+        for verb in ["clip", "release_clip", "view", "object", "anchor_type", "distribute_mode", "distribute_spacing"] {
+            assert_eq!(operations.iter().filter(|op| op["properties"]["verb"]["const"] == verb).count(), 1, "{verb}");
+        }
+    }
 }

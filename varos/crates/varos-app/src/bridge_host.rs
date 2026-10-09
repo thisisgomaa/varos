@@ -99,13 +99,21 @@ impl Host for Desktop<'_> {
         }
         let id = session(&request.board)?;
         let s = self.ws.get(id).ok_or_else(|| Error::new("not_found", "board closed"))?;
-        if verb != "export_pdf" && s.saving.is_some() {
+        if !verb.starts_with("export_") && s.saving.is_some() {
             return Err(Error::new("busy", "save in progress"));
         }
         let mut snapshot = s.editor.doc.clone();
         let ticket = crate::file_jobs::next_ticket();
         let home = varos_bridge::conn::fsutil::user_home_dir()
             .map_err(|e| Error::new("io_error", format!("user home unavailable: {e}")))?;
+        let extension = match verb {
+            "export_svg" => "svg",
+            "export_raster" => varos_raster::export::Format::parse(request.format.as_deref().unwrap_or("png"))
+                .map_err(|e| Error::new("invalid_argument", e))?
+                .extension(),
+            "export_pdf" => "pdf",
+            _ => "vrs",
+        };
         let expected =
             if verb == "save" {
                 Some((
@@ -123,11 +131,21 @@ impl Host for Desktop<'_> {
             let path = std::path::PathBuf::from(
                 request.path.as_ref().ok_or_else(|| Error::new("invalid_argument", "path required"))?,
             );
-            varos_bridge::files::validate_path(&path, if verb == "export_pdf" { "pdf" } else { "vrs" })?;
+            varos_bridge::files::validate_path(&path, extension)?;
             path
         };
-        varos_bridge::files::validate_path(&dest, if verb == "export_pdf" { "pdf" } else { "vrs" })?;
-        let inner = if verb == "export_pdf" {
+        varos_bridge::files::validate_path(&dest, extension)?;
+        let inner = if matches!(verb, "export_svg" | "export_raster") {
+            FileJob::Screen(Box::new(crate::export_ui::bridge_job(
+                id,
+                ticket,
+                &snapshot,
+                &s.editor.selected_pids(),
+                dest.clone(),
+                request,
+                verb,
+            )?))
+        } else if verb == "export_pdf" {
             let scope = match request.scope.as_deref() {
                 Some("all_visible_artboards") => varos_pdf::ExportScope::AllVisibleArtboards,
                 Some("artwork_bounds") => varos_pdf::ExportScope::ArtworkBounds,
@@ -435,6 +453,11 @@ mod tests {
             ("export_pdf", "/Library/export.pdf", "scope_refused"),
         ] {
             let request = varos_bridge::dto::FileEffect {
+                format: None,
+                scale: None,
+                ppi: None,
+                quality: None,
+                transparent: None,
                 api: "1.0".into(),
                 request_id: "r1".into(),
                 board: board.clone(),

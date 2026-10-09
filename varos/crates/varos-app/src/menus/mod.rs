@@ -59,6 +59,7 @@ pub enum FileCmd {
     SaveCopy,
     Revert,
     Export,
+    ExportPdfPreset,
     ExportSelection,
     Quit,
 }
@@ -86,7 +87,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
         | FileCmd::Save
         | FileCmd::SaveAs
         | FileCmd::SaveCopy
-        | FileCmd::Export => s.active,
+        | FileCmd::Export
+        | FileCmd::ExportPdfPreset => s.active,
     }
 }
 
@@ -267,6 +269,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::KeyA => E::A,
         K::KeyC => E::C,
         K::KeyD => E::D,
+        K::KeyE => E::E,
         K::KeyG => E::G,
         K::KeyJ => E::J,
         K::KeyN => E::N,

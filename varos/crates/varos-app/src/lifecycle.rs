@@ -118,8 +118,26 @@ pub trait DocStore {
     fn export_guarded(&mut self, path: &Path, bytes: &[u8]) -> Result<SaveOutcome, varos_bridge::Error> {
         let never = std::sync::atomic::AtomicBool::new(false); // a Bridge export has no Cancel
         self.write_export(path, bytes, &never)
-            .map(|_| SaveOutcome::Durable)
+            .map(|outcome| match outcome {
+                ExportWrite::Unconfirmed(reason) => SaveOutcome::ReplacedUnconfirmed(reason),
+                _ => SaveOutcome::Durable,
+            })
             .map_err(|e| varos_bridge::Error::new("io_error", e))
+    }
+    /// Screens use fresh destinations and preserve the cancellation boundary.
+    fn export_fresh(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<ExportWrite, String> {
+        if self.exists(path) {
+            return Err("Destination appeared during export; nothing replaced.".into());
+        }
+        self.write_export(path, bytes, cancel)
+    }
+    fn export_folder(&mut self, _folder: &Path) -> Result<(), String> {
+        Ok(())
     }
     /// The file's identity: absolute + canonical path (the parent canonicalised for a file that does
     /// not exist yet), plus device/inode on unix.
@@ -159,10 +177,12 @@ pub trait DocStore {
 }
 
 /// How [`DocStore::write_export`] ended without an error.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExportWrite {
     /// The destination holds the PDF (the rename happened: the export is done).
     Written,
+    /// Published, but directory sync failed; the sheet must show the warning.
+    Unconfirmed(String),
     /// Cancelled before the rename: the destination is untouched, the temp removed.
     Cancelled,
 }
@@ -246,8 +266,27 @@ impl Lifecycle<'_> {
             }
             AppCommand::SaveCopy(id) => self.save_copy(id),
             AppCommand::Revert(id) => self.revert(id),
-            AppCommand::ShowExport(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
+            AppCommand::ShowExport(_) | AppCommand::ShowExportPdfPreset(_) | AppCommand::ShowExportSelection(_) => {} // host-owned: the Export sheet
             AppCommand::ExportPdf(id, scope, ticket) => return self.export(id, scope, ticket),
+            AppCommand::ExportScreens(id, jobs) => {
+                let Some(s) = self.ws.get_mut(id) else { return Effect::default() };
+                if !s.exports.is_empty() {
+                    return Effect::default();
+                }
+                let mut effect = Effect::default();
+                for job in &jobs {
+                    s.exports.push(std::time::Instant::now());
+                    effect.exports.push(ExportEvent::Started {
+                        sid: id,
+                        ticket: job.job.ticket,
+                        cancel: job.job.cancel.clone(),
+                    });
+                }
+                for job in jobs {
+                    effect.exports.extend(self.queue(FileJob::Screen(Box::new(job))).exports);
+                }
+                return effect;
+            }
             AppCommand::FileDone(done) => return self.file_done(*done),
             AppCommand::CloseDocument(id) => self.close(id),
             AppCommand::CloseAll => self.close_all(),
@@ -703,17 +742,24 @@ impl Lifecycle<'_> {
     ///
     /// Slice 0.6: a written PDF is reported as `ExportEvent::Finished` — the Export sheet shows it with
     /// Show in Finder (the host notices it when no sheet does); a cancelled export ends silently.
-    fn export_done(&mut self, done: ExportDone) -> Effect {
+    fn export_done(&mut self, mut done: ExportDone) -> Effect {
         let name = file_name(&done.job.dest);
         let (sid, ticket) = (done.job.sid, done.job.ticket);
         let Some(s) = self.ws.get_mut(sid) else {
-            if done.result == ExportResult::Exported {
-                self.dialogs.notice(&format!("Exported {name}"), "");
+            match &done.result {
+                ExportResult::Exported => self.dialogs.notice(&format!("Exported {name}"), ""),
+                ExportResult::ExportedUnconfirmed(reason) => {
+                    self.dialogs.notice(&format!("Exported {name}; durability unconfirmed"), reason)
+                }
+                _ => {}
             }
             return Effect::default();
         };
         if !s.exports.is_empty() {
             s.exports.remove(0);
+        }
+        if let ExportResult::ExportedUnconfirmed(reason) = &done.result {
+            file_jobs::durability_note(&mut done.report, &done.job.dest, reason);
         }
         let event = match done.result {
             ExportResult::Exported | ExportResult::ExportedUnconfirmed(_) => {
@@ -722,7 +768,14 @@ impl Lifecycle<'_> {
             ExportResult::Cancelled => ExportEvent::Cancelled { sid, ticket },
             ExportResult::Failed(reason) => {
                 let reason = reason.trim().trim_end_matches('.');
-                self.dialogs.notice("Couldn't export PDF.", &format!("{reason}. Your document has not changed."));
+                self.dialogs.notice(
+                    if done.job.dest.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+                        "Couldn't export PDF."
+                    } else {
+                        "Couldn't export."
+                    },
+                    &format!("{reason}. Your document has not changed."),
+                );
                 ExportEvent::Ended { sid, ticket }
             }
             ExportResult::NeedsReplaceConfirm => {
@@ -2474,6 +2527,40 @@ mod tests {
         let a = r.open(path);
         draw(r.ed(a), RED);
         a
+    }
+
+    #[test]
+    fn unconfirmed_export_reaches_done_with_durability_warning() {
+        let mut r = Rig::new();
+        let sid = two_boards(&mut r, "/d/a.vrs");
+        let doc = r.get(sid).editor.doc.clone();
+        let mut sheet = crate::export_ui::ExportSheet::new(sid, &doc, &std::collections::HashSet::new(), None, false);
+        let ticket = sheet.start().unwrap();
+        sheet.minimal.remaining = 2;
+        for (index, result) in
+            [ExportResult::ExportedUnconfirmed("directory sync failed".into()), ExportResult::Exported]
+                .into_iter()
+                .enumerate()
+        {
+            let job = ExportJob {
+                sid,
+                ticket,
+                dest: p(&format!("/out/{index}.svg")),
+                doc: Arc::new(doc.clone()),
+                plan: varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::AllVisibleArtboards).unwrap(),
+                replace_confirmed: false,
+                cancel: Default::default(),
+            };
+            let (effect, _) = r.bg(AppCommand::FileDone(Box::new(FileDone::Exported(ExportDone {
+                job,
+                result,
+                report: Default::default(),
+            }))));
+            assert!(sheet.on_event(&effect.exports[0]));
+        }
+        let crate::export_ui::Phase::Done { report, .. } = &sheet.phase else { panic!("not done") };
+        assert!(crate::export_ui::report_text(report).unwrap().contains("durability could not be confirmed"));
+        assert_eq!(report.notes.iter().filter(|n| n.kind == "durability").count(), 1);
     }
 
     #[test]
