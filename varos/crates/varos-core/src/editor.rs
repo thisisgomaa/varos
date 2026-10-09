@@ -452,9 +452,10 @@ pub struct Editor {
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
     clipboard: Clipboard,
     id_high_water: u32,
-    undo: Vec<Document>,
-    redo: Vec<Document>,
-    pending: Option<Document>,
+    undo: Vec<std::sync::Arc<Document>>,
+    redo: Vec<std::sync::Arc<Document>>,
+    pending: Option<std::sync::Arc<Document>>,
+    pub(crate) clipping_enablement: std::cell::RefCell<Option<crate::clipping::Enablement>>,
 }
 
 impl Default for Editor {
@@ -509,6 +510,7 @@ impl Editor {
             undo: vec![],
             redo: vec![],
             pending: None,
+            clipping_enablement: Default::default(),
         }
     }
 
@@ -3405,11 +3407,7 @@ impl Editor {
         self.redo.clear();
     }
     pub fn history_preview(&self, redo: bool) -> Option<&Document> {
-        if redo {
-            self.redo.last()
-        } else {
-            self.undo.last()
-        }
+        if redo { self.redo.last() } else { self.undo.last() }.map(std::sync::Arc::as_ref)
     }
     pub fn history_available(&self, redo: bool) -> bool {
         if redo {
@@ -3422,7 +3420,8 @@ impl Editor {
     // ---------- history ----------
     pub fn begin(&mut self) {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
-        self.pending = Some(self.doc.clone());
+        self.clipping_enablement.get_mut().take();
+        self.pending = Some(std::sync::Arc::new(self.doc.clone()));
         self.doc.ids = self.id_high_water;
         self.dirty = false;
     }
@@ -3445,16 +3444,16 @@ impl Editor {
     }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
-            self.redo.push(self.doc.clone());
-            self.restore_keeping_prefs(s);
+            self.redo.push(std::sync::Arc::new(self.doc.clone()));
+            self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
     }
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
-            self.undo.push(self.doc.clone());
-            self.restore_keeping_prefs(s);
+            self.undo.push(std::sync::Arc::new(self.doc.clone()));
+            self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
@@ -4845,7 +4844,7 @@ impl Editor {
     /// preview leaves NO history entry.
     pub fn picker_cancel(&mut self) {
         if let Some(doc) = self.pending.take() {
-            self.doc = doc;
+            self.doc = std::sync::Arc::unwrap_or_clone(doc);
         }
         self.dirty = false;
     }
@@ -5513,6 +5512,33 @@ mod crash_boundary_tests {
         assert_eq!(ed.rev, before.rev);
         ed.execute(EditCommand::Redo).unwrap();
         assert_eq!(ed.doc.paths[0].stroke_width, 8.);
+    }
+    #[test]
+    fn rollback_checkpoint_shares_all_retained_history_and_pending_snapshots() {
+        let mut ed = Editor::new();
+        for i in 0..200 {
+            ed.begin();
+            ed.doc.name = format!("revision {i}");
+            ed.dirty = true;
+            ed.commit();
+        }
+        ed.undo();
+        ed.begin();
+        let before = ed.clone();
+        for (a, b) in ed.undo.iter().zip(&before.undo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+        for (a, b) in ed.redo.iter().zip(&before.redo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+        assert!(std::sync::Arc::ptr_eq(ed.pending.as_ref().unwrap(), before.pending.as_ref().unwrap()));
+        assert!(ed.execute(EditCommand::ForcedPanic).is_err());
+        assert_eq!(ed.undo.len(), 199);
+        assert_eq!(ed.redo.len(), 1);
+        assert_eq!(ed.doc, before.doc);
+        for (a, b) in ed.undo.iter().zip(&before.undo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
     }
     #[test]
     fn panicking_batch_discards_the_staged_copy() {

@@ -186,8 +186,9 @@ impl MacMenu {
     /// Slice 0.6: Revert (a file with unsaved changes) and Export Selection (a selection) follow the
     /// active document every frame (only the ones that differ are written).
     pub fn sync_clip_rows(&self, ed: &varos_core::Editor, active: bool) {
+        let (make, release_enabled) = ed.clipping_enablement();
         for (release, item) in &self.clip_rows {
-            item.set_enabled(active && if *release { ed.clip_release_enabled() } else { ed.clip_make_enabled() });
+            item.set_enabled(active && if *release { release_enabled } else { make });
         }
     }
     pub fn sync_file_rows(&self, state: crate::menus::DocMenuState) {

@@ -1,10 +1,13 @@
 //! Burger mirror of Object > Clipping Mask; uses the existing painted menu kit.
 use super::*;
 pub(super) fn seed(ctx: &egui::Context, ed: &Editor) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("clip-enabled"), (ed.clip_make_enabled(), ed.clip_release_enabled())));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("varos.object.clipping.enablement"), ed.clipping_enablement()));
 }
 pub(super) fn rows(ui: &mut egui::Ui, active: Option<SessionId>, cmds: &mut Vec<AppCommand>) -> bool {
-    let state = ui.ctx().data(|d| d.get_temp::<(bool, bool)>(egui::Id::new("clip-enabled"))).unwrap_or_default();
+    let state = ui
+        .ctx()
+        .data(|d| d.get_temp::<(bool, bool)>(egui::Id::new("varos.object.clipping.enablement")))
+        .unwrap_or_default();
     let mut hit = false;
     for (release, enabled, label, shortcut) in [
         (false, state.0, "Clipping Mask > Make", shortcut_label("7")),

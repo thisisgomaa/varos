@@ -277,7 +277,9 @@ impl Service {
         req: &Request,
         cancelled: &AtomicBool,
     ) -> Reply {
-        let snapshot = req.board().and_then(|b| host.access(b).ok().map(|a| a.editor.clone()));
+        // Read-only requests need no editor rollback checkpoint.
+        let snapshot =
+            req.mutation().and_then(|_| req.board()).and_then(|b| host.access(b).ok().map(|a| a.editor.clone()));
         let result = varos_core::guard::catch_panic(|| self.handle_inner(host, ctx, req, cancelled));
         let mut reply = match result {
             Ok(reply) => reply,
@@ -1566,6 +1568,38 @@ mod observation_tests {
         fn access(&mut self, _: &str) -> Result<BoardAccess<'_>, Error> {
             Ok(BoardAccess { editor: &mut self.0, dirty: false })
         }
+    }
+    #[test]
+    fn board_describe_uses_observation_without_rollback_access() {
+        struct ReadHost(Fake, usize);
+        impl Host for ReadHost {
+            fn boards(&self) -> Vec<BoardInfo> {
+                self.0.boards()
+            }
+            fn prepare(&mut self, _: &str, mutation: bool) -> Result<(), Error> {
+                assert!(!mutation);
+                Ok(())
+            }
+            fn observation_access(&mut self, board: &str) -> Result<BoardAccess<'_>, Error> {
+                self.0.access(board)
+            }
+            fn access(&mut self, board: &str) -> Result<BoardAccess<'_>, Error> {
+                self.1 += 1;
+                self.0.access(board)
+            }
+        }
+        let mut host = ReadHost(Fake(Editor::new()), 0);
+        let mut service = Service::new("read-test".into());
+        let request: Request = serde_json::from_value(json!({"tool":"describe","arguments":{
+            "api":"1.0","board":"b1"
+        }}))
+        .unwrap();
+        let context = Context { epoch: "read-test".into(), client: "tester".into() };
+        for _ in 0..10 {
+            let reply = service.handle(&mut host, &context, request.clone(), &AtomicBool::new(false));
+            assert!(reply.ok, "{reply:?}");
+        }
+        assert_eq!(host.1, 10, "one dirty-state read per request; no checkpoint access");
     }
     #[test]
     fn staged_panic_is_structured_and_does_not_publish() {
