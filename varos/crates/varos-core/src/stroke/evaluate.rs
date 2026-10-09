@@ -203,6 +203,9 @@ pub fn evaluate(path: &Path, tolerance: f64, cancelled: &dyn Fn() -> bool) -> Re
     if cancelled() {
         return Err(StrokeError::Cancelled);
     }
+    // ---- Lane C: resolve authored live corners for every stroke consumer ----
+    let resolved = crate::live_corners::evaluated(path);
+    let path = &resolved;
     let s = &path.stroke_style;
     let align = if !path.closed && s.align != StrokeAlign::Center {
         note(&mut result.report, path.id, "stroke_align_open_center");

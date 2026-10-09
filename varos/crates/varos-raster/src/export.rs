@@ -122,12 +122,33 @@ pub fn plan(doc: &Document, scope: &Scope) -> Result<Vec<Asset>, String> {
 }
 
 pub fn encode(asset: &Asset, options: &Options, cancel: &AtomicBool) -> Result<Output, String> {
+    encode_inner(asset, options, cancel, None)
+}
+// ---- Lane C: shared advanced SVG encoding for app, Bridge and CLI ----
+pub fn encode_with_svg_options(
+    asset: &Asset,
+    options: &Options,
+    cancel: &AtomicBool,
+    svg_options: &svg::options::Options,
+) -> Result<Output, String> {
+    svg_options.validate()?;
+    encode_inner(asset, options, cancel, Some(svg_options))
+}
+fn encode_inner(
+    asset: &Asset,
+    options: &Options,
+    cancel: &AtomicBool,
+    svg_options: Option<&svg::options::Options>,
+) -> Result<Output, String> {
     options.validate()?;
     check_cancel(cancel)?;
     // Validate caller-supplied pages and documents before allocation or traversal.
     let plan = svg::ExportPlan { scope: svg::ExportScope::WholeBoard, pages: vec![asset.page.clone()] };
-    let (svg_files, mut report) =
-        svg::export_svg_files_with_report(&asset.doc, &plan, cancel).map_err(|e| e.to_string())?;
+    let (svg_files, mut report) = match svg_options.filter(|_| options.format == Format::Svg) {
+        Some(svg_options) => svg::export_svg_files_with_options(&asset.doc, &plan, cancel, svg_options),
+        None => svg::export_svg_files_with_report(&asset.doc, &plan, cancel),
+    }
+    .map_err(|e| e.to_string())?;
     let bytes = match options.format {
         Format::Svg => svg_files.into_iter().next().ok_or("No export page.")?.bytes,
         Format::Pdf => return Err("PDF encoding belongs to varos-pdf; the host uses the same page plan.".into()),

@@ -154,16 +154,20 @@ fn next_format_roundtrip_and_refusals_preserve_frozen_old_bytes() {
 #[test]
 fn cache_tracks_corner_changes() {
     let mut e = ed();
-    let cache = varos_core::flatten::FlattenCache::default();
-    let _ = cache;
-    let a = varos_core::flatten::flatten_path(&e.doc, 0, 1.);
+    let mut cache = varos_core::flatten::FlattenCache::default();
+    let a = cache.geometry(&e.doc, 0, 1.);
+    assert!(std::sync::Arc::ptr_eq(&a, &cache.geometry(&e.doc, 0, 1.)));
+    assert_eq!(cache.stats(), (1, 1));
     e.try_execute(EditCommand::SetCorners {
         path: 1,
         corners: vec![CornerParam { radius: 10., kind: Kind::Round }; 4],
     })
     .unwrap();
-    let b = varos_core::flatten::flatten_path(&e.doc, 0, 1.);
+    let b = cache.geometry(&e.doc, 0, 1.);
     assert_ne!(a, b);
+    assert_eq!(*b, varos_core::flatten::flatten_path(&e.doc, 0, 1.));
+    assert_eq!(cache.stats(), (1, 2));
+    assert!(std::sync::Arc::ptr_eq(&b, &cache.geometry(&e.doc, 0, 1.)));
 }
 #[test]
 fn new_document_command_has_one_undo() {
@@ -317,4 +321,49 @@ fn outline_without_stroke_preserves_fill_and_history() {
     e.try_execute(EditCommand::PathAdvanced(Action::Outline)).unwrap();
     assert_eq!(e.doc, before);
     assert_eq!(e.rev, rev);
+}
+
+#[test]
+fn live_corner_stroke_outline_and_expand_match_baked_geometry() {
+    for kind in [Kind::Round, Kind::Inverted, Kind::Chamfer] {
+        for dashed in [false, true] {
+            let mut e = ed();
+            let p = &mut e.doc.paths[0];
+            p.corners = vec![CornerParam { radius: 20., kind }; 4];
+            p.stroke_style.join = StrokeJoin::Bevel;
+            if dashed {
+                p.stroke_style.dash = vec![12., 6.];
+            }
+            let baked = varos_core::live_corners::evaluated(p);
+            let expected = stroke::evaluate(&baked, 0.01, &|| false).unwrap().rings;
+            assert_eq!(stroke::evaluate(p, 0.01, &|| false).unwrap().rings, expected);
+            let outlined = path_advanced::outline(p).unwrap();
+            assert_eq!(outlined, path_advanced::outline(&baked).unwrap());
+            e.try_execute(EditCommand::PathAdvanced(Action::Expand)).unwrap();
+            let expanded_stroke = e.doc.paths.last().unwrap();
+            let rings: Vec<_> = std::iter::once(&expanded_stroke.anchors)
+                .chain(&expanded_stroke.holes)
+                .map(|r| r.iter().map(|a| a.p).collect::<Vec<_>>())
+                .collect();
+            assert_eq!(rings, expected);
+        }
+    }
+}
+
+#[test]
+fn expand_refuses_translucent_compositing_atomically_but_allows_single_paint() {
+    for (opacity, stroke_alpha) in [(0.5, 1.), (1., 0.5)] {
+        let mut e = ed();
+        e.doc.paths[0].opacity = opacity;
+        e.doc.paths[0].stroke = varos_core::model::Paint::Solid([1., 0., 0., stroke_alpha]);
+        let before = e.doc.clone();
+        let err = e.try_execute(EditCommand::PathAdvanced(Action::Expand)).unwrap_err();
+        assert!(err.to_string().contains("compositing"));
+        assert_eq!(e.doc, before);
+        e.execute(EditCommand::Undo).unwrap();
+        assert_eq!(e.doc, before);
+        e.doc.paths[0].fill = varos_core::model::Paint::None;
+        e.try_execute(EditCommand::PathAdvanced(Action::Expand)).unwrap();
+        assert_eq!(e.doc.paths.last().unwrap().opacity, opacity);
+    }
 }

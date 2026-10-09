@@ -93,6 +93,15 @@ pub fn check(ed: &Editor, action: Action) -> Result<(), String> {
         if ed.doc.is_mask_source(id) && matches!(action, Action::Outline | Action::Expand) {
             return Err("Release the clipping mask before converting its source stroke".into());
         }
+        // Splitting paint into siblings cannot preserve object isolation or stroke knockout.
+        if matches!(action, Action::Expand)
+            && p.fill.solid().is_some()
+            && p.stroke.solid().is_some_and(|c| p.stroke_width > 0. && (p.opacity < 1. || c[3] < 1.))
+        {
+            return Err(
+                "Expand cannot preserve translucent fill/stroke compositing; outline the stroke separately".into()
+            );
+        }
         match action {
             Action::Outline | Action::Expand => {
                 outline(p)?;

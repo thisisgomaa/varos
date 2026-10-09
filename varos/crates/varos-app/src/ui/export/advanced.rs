@@ -181,10 +181,18 @@ pub(super) fn draw(ui: &mut egui::Ui, sheet: &mut ExportSheet, running: bool) {
         s.subfolders = [Subfolders::None, Subfolders::Scale, Subfolders::Format][i];
         changed = true;
     }
+    if m.selection_tab {
+        s.pdf_single = false;
+        kit::notice(ui, "Selection PDFs export as separate files to preserve each asset");
+    }
     let label = if s.pdf_single { "PDF: single file" } else { "PDF: per artboard" };
-    if let Some(i) =
-        super::paint::dropdown(ui, "screen-pdf-pages", label, &["PDF: single file", "PDF: per artboard"], false)
-    {
+    if let Some(i) = super::paint::dropdown(
+        ui,
+        "screen-pdf-pages",
+        label,
+        &["PDF: single file", "PDF: per artboard"],
+        m.selection_tab,
+    ) {
         s.pdf_single = i == 0;
         changed = true;
     }

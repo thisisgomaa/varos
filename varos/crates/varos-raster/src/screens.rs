@@ -137,6 +137,11 @@ impl Advanced {
                 continue;
             }
             let single = format == Format::Pdf && self.pdf_single;
+            if single && pages.iter().any(|a| a.doc != pages[0].doc) {
+                return Err(
+                    "Single PDF requires one shared document snapshot; export Selection as separate files".into()
+                );
+            }
             let targets = if single { vec![pages[0].clone()] } else { pages.clone() };
             for asset in targets {
                 let stem = format!("{}{}", self.prefix, if single { "Artboards" } else { &asset.name });
@@ -232,6 +237,18 @@ mod tests {
         s.prefix.clear();
         s.rows[0].scale = f32::NAN;
         assert!(s.expand(&assets(), &Default::default()).is_err());
+    }
+    #[test]
+    fn single_pdf_refuses_different_page_snapshots() {
+        let mut assets = assets();
+        std::sync::Arc::make_mut(&mut assets[1].doc).artboards[0].name = "Different snapshot".into();
+        let s = Advanced {
+            rows: vec![Row { format: "pdf".into(), ..Default::default() }],
+            pdf_single: true,
+            ..Default::default()
+        };
+        assert!(s.expand(&assets, &Default::default()).unwrap_err().contains("shared document snapshot"));
+        assert_eq!(Advanced { pdf_single: false, ..s }.expand(&assets, &Default::default()).unwrap().len(), 2);
     }
     #[test]
     fn persisted_settings_roundtrip() {

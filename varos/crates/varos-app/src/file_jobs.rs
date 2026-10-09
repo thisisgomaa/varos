@@ -596,16 +596,13 @@ fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: b
             })
             .map_err(|e| e.to_string())
         } else {
-            varos_raster::export::encode(&screen.asset, &screen.options, screen.job.cancel.flag())
+            varos_raster::export::encode_with_svg_options(
+                &screen.asset,
+                &screen.options,
+                screen.job.cancel.flag(),
+                &screen.svg_options,
+            )
         };
-        // ---- Lane C ----
-        let encoded = encoded.and_then(|mut output| {
-            if screen.options.format == varos_raster::export::Format::Svg && screen.svg_options != Default::default() {
-                let svg = std::str::from_utf8(&output.bytes).map_err(|e| e.to_string())?;
-                output.bytes = screen.svg_options.apply(svg)?.into_bytes();
-            }
-            Ok(output)
-        });
         let output = match encoded {
             Ok(output) => output,
             Err(reason) => {
