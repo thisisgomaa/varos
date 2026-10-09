@@ -137,6 +137,8 @@ fn shape_fallback(
     let mut buffer = scratch.harfrust_buffer.take().unwrap_or_default();
     // Reset all segment properties even when the scratch buffer is reused.
     buffer.clear();
+    // Varos: retain the shaping oracle for Arabic elongation, including cached runs.
+    buffer.set_flags(harfrust::BufferFlags::PRODUCE_SAFE_TO_INSERT_TATWEEL);
     let attrs = attrs_list.get_span(start_run);
     if let Some(language) = attrs.language.clone() {
         buffer.set_language((*language).clone());
@@ -236,6 +238,7 @@ fn shape_fallback(
         glyphs.push(ShapeGlyph {
             start: start_glyph,
             unsafe_to_break: info.unsafe_to_break(),
+            safe_to_insert_tatweel: info.safe_to_insert_tatweel(),
             end: end_run, // Set later
             x_advance,
             y_advance,
@@ -612,6 +615,7 @@ fn shape_skip_glyphs(
                 ShapeGlyph {
                     start: chr_idx + start_run,
                     unsafe_to_break: false,
+                    safe_to_insert_tatweel: false,
                     end: chr_idx + start_run + codepoint.len_utf8(),
                     x_advance,
                     y_advance: 0.0,
@@ -649,6 +653,8 @@ fn override_fake_italic(
 pub struct ShapeGlyph {
     /// HarfRust requires reshaping on both sides of this cluster boundary.
     pub unsafe_to_break: bool,
+    /// HarfRust safe insertion boundary, in logical source byte space.
+    pub safe_to_insert_tatweel: bool,
     pub start: usize,
     pub end: usize,
     pub x_advance: f32,

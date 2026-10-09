@@ -1,0 +1,11 @@
+{
+  "composer.rs": {
+    "production_unwrap_calls": 0
+  },
+  "kashida.rs": {
+    "production_unwrap_calls": 0
+  },
+  "paths.rs": {
+    "production_unwrap_calls": 0
+  }
+}

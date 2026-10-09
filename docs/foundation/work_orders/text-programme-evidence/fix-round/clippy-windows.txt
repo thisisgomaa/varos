@@ -1,0 +1,3 @@
+    Checking varos-text v0.1.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/text-programme/varos/crates/varos-text)
+    Checking varos-app v0.1.0 (/Users/gomaa/Documents/AI workspace/varos/.claude/worktrees/text-programme/varos/crates/varos-app)
+    Finished `dev` profile [unoptimized] target(s) in 3.92s
