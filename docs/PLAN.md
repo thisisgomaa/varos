@@ -1,168 +1,166 @@
-> **Status:** current — execution map for the owner agreement on 2026-10-06: two parallel tracks and one fixed cycle; completed-code evidence retained below. Accepted ADRs, the charter and STATUS retain their authority.
-# خطة Varos الحالية
+> **Status:** current — the single execution map, approved by the owner 2026-10-09 (plan mode). Governed by `docs/foundation/FOUNDATION_CHARTER.md` §3. Previous map: `docs/reference/PLAN_HISTORY_2026-10-09.md`. Progress per slice is recorded in the **Progress** section at the end and in `docs/foundation/GATE_LOG.md`.
 
-دي نقطة البداية للشغل الجديد. [STATUS](foundation/STATUS.md) يقول إيه الموجود فعلًا، والصفحة دي تحدد كل جزء رايح فين وإزاي نعتبره خلص. تفاصيل التنفيذ والاختبارات تفضل في أمر العمل الأصلي؛ السجل القديم محفوظ، لكنه مش قائمة مهام تتنفّذ تاني.
+# Varos — the execution plan (ordered, no dates)
 
-## الحالة بالمختصر
+## Context
+- Owner (Ahmed), 2026-10-09: colour picker v3 is complete, installed and approved. He asked for ONE complete, ordered plan built from a full product inventory and his answers to the planning questions, then autonomous execution by the moderator (Fable) with Codex Sol 6.1 / Opus workers, Figma options for every visible piece (he picks, tweaks and finalises), gates + independent review per slice, Mac install after each merge, owner hand test after install.
+- His answers (memory `feedback-planning-answers-2026-10-09` + this session): borrow from VectorCraft/PhotoCraft case by case (code as-is when excellent and it fits, with attribution; never eframe / CPU renderer / their chrome; no silent export fallbacks); appearance = Figma-like smart multi fill/stroke, designed with him first, NOT at the start; masks = a container on the layer/group row, draw any vector inside, alpha or clip, several per row, plus Illustrator ⌘7 (confirmed «أيوه ده المعنى بالظبط»); raster effects at the very end; PDF export with ppi options like the famous apps; **export and print before the stroke engine**; **stroke engine before gradients**; **Place = embed by default + Link option**; **CMYK/ICC/PDF-X committed as a late phase**; **Autosave writes into the file itself** (not only recovery copies); text/typography LAST as its own programme; v5 ordering, rail flyouts, tools order = tech lead's call; plan = order only, no dates.
+- Inputs verified against code at `main` `b1de865`: gap inventories (files/import/export/canvas; tools/paint/layers/app) in `docs/reference/gap/GAP_1_FILES_IO_CANVAS.md` and `GAP_2_TOOLS_PAINT_LAYERS_APP.md`; `docs/reference/APPEARANCE_MASKS_STUDY.md` (+ study A/B/C); `EXTERNAL_PRIOR_ART_SURVEY.md`; `EXTERNAL_PRIOR_ART.md` (borrowing rules).
+- Path keys: `c/`=`varos/crates/varos-core/src/`, `a/`=`varos-app/src/`, `r/`=`varos-render-wgpu/src/`, `p/`=`varos-pdf/src/`, `b/`=`varos-bridge/src/`, `ras/`=`varos-raster/src/`; `VC/`=`~/Documents/AI workspace/reference/artcraft/vectorcraft/crates/`@a469568, `VCe/`=`VC/engine/src/cmd/`, `PC/`=`…/photocraft/crates/`@4cb7cf3.
 
-- الأساس الحالي مستمر: Rust + Winit/Egui/WGPU، أربع crates، والـcore مستقل عن الواجهة.
-- Mac هو البناء الرسمي حاليًا؛ Windows فحص توافق كود بس (قرار المالك، اتأكد 2026-10-06).
-- كل شغل فرع Codex القديم (Start/Home/Recent، الحفظ الآمن والاسترجاع F1/F2، S5-C/D/E، الخطوط، الكيت) **دخل `main`** يوم 2026-10-04 في `2cb072a` بعد مراجعة مجمّعة وإصلاحاتها (`e772f16`). بعده دخلوا: فتح `.vrs` من Finder على الماك S4 (`221310f`)، تصدير PDF والحفظ في الخلفية S6-B/C (`bd4e552`)، صيغة الملفات v3 للبورد (`380bf05`)، صفحة Start v2 (`6405dc9`)، تقسيم `ui.rs` P3 (`d882454`)، الشريط العلوي 4b (`19611ae`)، وحزمة التظبيطات الـ12 (`7adee37`).
-- المالك جرّب في النافذة الحقيقية 2026-10-06: الشريط العلوي 4b والتظبيطات الـ12 «كله شغال»؛ الاسترجاع بعد Force Quit شغال بس شريط الاسترجاع ظهر متأخر ~٣٠ ثانية (اتصلح في `736feba`) وشكله مش عاجبه (اتبدل بكارت في `1532637`؛ مستني عين المالك)؛ دبل كليك على `.vrs` من Finder شغال؛ File ▸ Export ▸ PDF شغال.
-- آخر بوابات مسجلة على `main` (`1532637`): **1086 نجح / 0 فشل / 8 متجاهل**، clippy ماك + هدف Windows نضيف، fmt نضيف ([GATE_LOG](foundation/GATE_LOG.md) 2026-10-06). ده دليل اختبارات، مش دليل شكل.
-- دعم الماسكات موجود في الموديل والرندر وPDF؛ إنشاء الماسك من الواجهة لسه ناقص. قص الأرتبورد متاح، ودي ميزة مختلفة.
-- الواجهة العربية لسه مقفولة: الخط موجود بس الكتابة العربية في الخانات مكسورة في egui ([UI_SYSTEM §8](specs/UI_SYSTEM.md#8-arabic--rtl-gate-owner-piece)).
+## Principles of ordering
+1. Basics before power: export, Place, stroke options, print PDF, the Select menu land before appearance stacks, live objects, colour management, raster effects, text.
+2. Unlock order = dependency order: S0 fixes → export/print → stroke engine → image object → tools → gradients → appearance/masks → import → view → app → live objects → CMYK → raster fx → text.
+3. At most one format bump per phase; the bump slice carries every new key of that phase with its render + export + Bridge behaviour (no dormant fields, ADR-0010:103). Numbers are taken by the first merged writer; docs say "next bump" until merge.
+4. Owner-visible value every phase; every slice ends with a hand test the owner can do after install.
+5. Lift first where the survey says COPY/ADAPT (attribution header + `varos/NOTICE` on the first borrow; our headless tests before landing); BUILD the renderer (WGSL), PDF, SVG, UI.
+6. Design-first: rows marked Figma=yes cannot start code before the owner picks from Figma options.
+7. Agent-native: every capability = `EditCommand` (`c/command.rs`) + Bridge verb (API 1.2 opt-in; 1.0/1.1 fixtures byte-frozen) + CLI where headless.
+8. Laws every slice: box system/tokens/kit untouched; Illustrator keys only; heat (idle = Wait); ratchets never raised; gates + author≠reviewer + owner hand test; stage by name; push main after each merge; install only when `pgrep -x varos` is empty.
 
-## معنى الحالات
+## Phases and slices
+Columns: Lift · Dep · Bump · ADR/spec · Figma · Size · Owner exit test.
 
-| الحالة | معناها |
-|---|---|
-| ✅ مدموج + اتشاف | الكود في `main` **والمالك شافه في النافذة الحقيقية** (التاريخ مذكور). |
-| مدموج | الكود موجود في `main` واختباراته نجحت؛ الناقص (تجربة المالك أو جزء معيّن) مكتوب باسمه جنبه. |
-| وحدة جاهزة | منطق واختبارات موجودين، لكن دورة الاستخدام في التطبيق لسه ناقصة. |
-| ناقص | متطلب واضح له تنفيذ أو ربط لم يكتمل. |
-| مقترح | محتاج تصميم/مراجعة أو قرار؛ مش تكليف ببنائه كله. |
-| مؤجل | محفوظ للمستقبل، ومش شرط للمرحلة الحالية. |
+### Phase 0 — Fix first, crash safety, export wiring (no bump)
+| # | Slice | What | Lift | Dep | Bump | ADR/spec | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.1 | S0 render fixes | clip opacity inside masks (`r/tess.rs` group_draws), clip bit for StrokeCov/Knockout (`r/lib.rs` draw_steps), full-paint `scene_signature`/`thumb_key`, one `painted_extent()` for cull+hit, `is_mask_group()` instead of `== GroupRole::Clip`, no-raster-in-Document guard test, empty `ExportReport` type | BUILD | — | no | study §4 | no | M | 50 % object inside a mask looks 50 %; translucent stroke cut by the mask |
+| 0.2 | Crash safety | panic guard + doc/selection rollback at `Editor::execute`/Bridge batch; wgpu device-lost/uncaptured-error watch → readable "GPU stopped" state; no-panic clippy lints as a ratchet on core+bridge | COPY `VC/engine/src/guard.rs`, `PC/gpu/src/health.rs` | — | no | note | no | S–M | forced-panic test leaves the document intact |
+| 0.3 | Boolean oracles | proptest identities for the 4 Pathfinder modes | ADAPT `VC/pathops/tests/prop_pathops.rs` | — | no | dep review | no | S | n/a |
+| 0.4 | SVG export wired | File ▸ Export ▸ SVG (artboard/active/all), CLI `export-svg`, Bridge `export_svg`; export sheet gets a format chooser | ours `c/svg.rs` | 0.1 | no | — | **yes** (export sheet v2) | S+sheet | export SVG, open in browser + Figma |
+| 0.5 | Raster export | PNG via `ras/rasterize_artboard` (scale/ppi, transparent bg); JPEG/WebP/TIFF/BMP/GIF via `image`; fidelity warnings in the report | ADAPT `VCe/fileio/encode.rs:434-449`, `PC/codecs/src/fidelity.rs:160` | 0.4 | no | dep review | yes (same sheet) | M | @2x transparent PNG; JPEG quality |
+| 0.6 | File menu basics | Save a Copy ⌥⌘S (reuse Bridge path), Revert, Close All ⌥⌘W, Export Selection, Export Cancel + Show in Finder; split `a/chrome.rs` menu tables into `menus/` | ADAPT `VCe/fileio/save.rs:55,511`, `docmenu.rs:203` | — | no | — | no | S | each row works |
+| 0.7 | View quick wins | Fit All ⌥⌘0, typed zoom %, Zoom (Z) + Hand (H), Make/Release/Clear Guides + typed position, Show Grid ⌘' + spacing (reads `grid_spacing`), artboard reorder in panel + Fit to Art + Convert to Artboards | ADAPT `VCe/docmenu.rs:123,150`, `layer.rs:142`, `menucmds.rs:155` | — | no | — | yes (grid prefs, zoom field) | M | ⌘' real grid; Z/H tools |
+| 0.8 | Command wiring wave | Select menu (Same ×10, Inverse, Next Above/Below, Reselect, All on Artboard); Lock/Hide ⌘2/⌘3 + Unlock/Show All; Distribute 6 + Spacing + key object; Join ⌘J/Average/Reverse/Add Anchor Points/Clean Up; Compound Path ⌘8/⌥⇧⌘8; New Layer/Sublayer, Paste Remembers Layers, Send to Current Layer; Expand Transform wired; Group Selection + Lasso (Q); Anchor tool ⇧C + Add/Delete anchor exposed; shortcut parity table as data + test | ADAPT `VCe/select.rs:22-145`, `object.rs:85-176`, `VC/pathops/src/edit.rs:299-346`, `VC/tools/src/xform/wand.rs:49,67`; COPY `VC/tools/src/catalog.rs:20-140` as data | — | no | — | yes (rail: 3 new tool slots) | M (2 PRs) | Select ▸ Same Fill; ⌘2; ⌘8; ⌘J |
+| 0.9 | Clipping mask ⌘7 | Make/Release ⌘7/⌥⌘7 + Bridge verbs on existing `clip_group` (`c/model.rs:1360,1375`) | ours | 0.1 | no | LAYERS_VISION §3.2 note | no | S–M | shape over art → ⌘7 → clipped; PDF matches |
 
-## خريطة التنفيذ
+### Phase 1 — File basics, print-ready PDF, autosave (no bump)
+| # | Slice | What | Lift | Dep | Bump | ADR/spec | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|---|---|
+| 1.1 | Document Setup | sheet: units, ppi (first UI for `DocUnits.ppi`), bleed (reads `c/model.rs:376`), transparency-grid toggle; red bleed guide on canvas | ADAPT `VCe/docsetup.rs` | — | no | short spec | **yes** | M | 3 mm bleed → red line |
+| 1.2 | PDF options | presets (Print/Press/Smallest), MediaBox⊇BleedBox⊇TrimBox, crop/registration marks, image ppi options (72/150/300/custom), compression; report lists every degradation | BUILD on `p/write.rs:274`; ideas `VC/pdf/src/presets.rs:56-83`, `marks.rs` | 1.1 | no | SAVE_EXPORT_PLAN §8 lite | **yes** | M | TrimBox in Preview; marks |
+| 1.3 | Print ⌘P | export PDF → macOS print panel | IDEA `VCe/print.rs:38` | 1.2 | no | — | no | S–M | ⌘P prints |
+| 1.4 | New Document dialog | category presets, size/units, artboard count, bleed, raster-effects ppi (RGB only until Phase 12) | ADAPT `VCe/newdoc.rs:19,125` | 1.1 | no | — | **yes** | M | ⌘N → 3 A4 artboards with bleed |
+| 1.5 | Document Info | objects/colours/artboards (links/fonts later) | ADAPT `VCe/docinfo.rs:16` | — | no | — | yes | S | counts match |
+| 1.6 | Templates | Save as Template / New from Template by folder convention (opens Untitled) | ADAPT `VCe/fileio/save.rs:56`, `load.rs:281` | — | no | — | yes (Start row) | S | opens Untitled |
+| 1.7 | Window memory | window size/position persisted | BUILD | — | no | — | no | S | relaunch restores |
+| 1.8 | Export for Screens | `{artboard × scale × format × suffix}` job on the IO worker; SVG options | ADAPT `VCe/fileio/screens.rs:1-5`, `VC/svg/src/lib.rs:191-216` | 0.4, 0.5 | no | — | **yes** | M | 1x/2x PNG + SVG per artboard |
+| 1.9 | OS clipboard out | Copy publishes PDF + SVG + PNG flavours (NSPasteboard via `objc2`) | ADAPT `VCe/clipboard/flavours.rs:1-7` | 0.4, 0.5 | no | — | no | S–M | ⌘C → ⌘V in Figma/Keynote |
+| 1.10 | **Autosave to file** (owner) | preference (on/off, interval, default on), writes the open file atomically on the IO worker after N s of inactivity, never while a gesture/transaction is open, dirty dot clears, Revert = escape hatch; recovery copies stay | BUILD on `core/file.rs` atomic write + `a/storage/scheduler.rs` | 0.6 (Revert), 9.1 pref store (minimal pref first) | no | short spec (when it must NOT write) | yes (pref row + status hint) | M | edit, wait, relaunch → changes are in the file |
 
-دي الخريطة المتفق عليها مع أحمد يوم **2026-10-06**، على أساس [رؤية Varos](VISION_AI_NATIVE.md): **مسارين بالتوازي، مش طابور واحد**. ترتيب القطع جوه كل مسار ثابت حسب التبعيات؛ الأرقام بين المسارين مش معناها إنهم لازم يخلصوا مع بعض. الترتيب ده اعتماد للاتجاه، مش ادعاء إن الميزات اتبنت أو إن ADR جديد اتقبل.
+### Phase 2 — Stroke engine (**v5**)
+| # | Slice | What | Lift | Dep | Bump | ADR/spec | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|---|---|
+| 2.0 | kurbo + adapter | `kurbo` into varos-core (pure), `Anchor`↔`BezPath` adapter, `NOTICE` created | ADAPT `VC/geom/src/path.rs:33` | — | no | ADR note "kurbo" + dep review | no | S | n/a |
+| 2.1 | **v5 StrokeStyle** | `StrokeStyle{cap, join, miter, dash[], phase, align_corners, align Centre/Inside/Outside, arrows{start,end,scale}}` on Path; GPU outline-to-fill via `kurbo::stroke` (`r/tess.rs:131-149`); PDF native caps/joins/dash (`p/write.rs:211,395`), arrows as fills; SVG attrs; CPU raster; hit/cull via `painted_extent`; Bridge 1.2 fields; migration v4→v5 + fixtures + refusal first | ADAPT `VC/effects/src/stroke.rs`, `stroke/dash.rs`; COPY `stroke/arrow.rs`; `PC/vector/src/stroke.rs:101` | 2.0, 0.1 | **v5** | StrokeStyle spec + ADR-0008 amendment + VRS_FORMAT §5 | no | L | v4 files unchanged; Bridge sets a dashed stroke; PDF shows it |
+| 2.2 | Stroke section UI | Properties ▸ Stroke: weight, cap/join/miter, align, dash editor, arrowheads + scale; control-bar mirror | BUILD (kit) | 2.1 | no | — | **yes** | M | dashed arrowed inside-aligned stroke; ⌘Z per field |
+| 2.3 | Outline Stroke / Offset Path / Expand | Object ▸ Path ▸ Outline Stroke, Offset Path sheet, Object ▸ Expand; Transform "scale strokes" | ADAPT `VC/pathops/src/offset.rs:45,79`, `VC/effects/src/stroke/outline.rs`, `VCe/expand.rs:36` | 2.1 | no | — | yes (Offset sheet) | M | outline a dashed arrow → editable fills |
 
-### المسار A — الذكاء
+### Phase 3 — Image object, Place, links, Package (**v6**)
+| # | Slice | What | Lift | Dep | Bump | ADR/spec | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|---|---|
+| 3.0 | ADR-0014 raster object + links | `NodeKind::Image{blob_key,w,h,xform,link,placement}`, blob table (mime/bytes/proxy), link info (abs+rel path, mtime, hash, proxy), undo rule (bytes refcounted outside clone stacks), texture budget, PDF/SVG image rules; **Place default = embed, Link toggle** (owner) | ADAPT `VC/doc/src/node.rs:326-340`, `lib.rs:512-520`, `VC/doc/src/links.rs:22` | — | — | **ADR-0014** | no | S (doc) | owner reads summary |
+| 3.1 | **v6 image object** | model + limits + migration + fixtures; wgpu textures (mips, budget, no idle upload); CPU raster; PDF image XObject (+ppi downsample from 1.2); SVG `<image>`; Bridge 1.2 `add_image`/describe; undo RAM measured | ADAPT model; BUILD render/PDF | 3.0, 2.1 | **v6** | ADR-0014 | no | L | Bridge places a PNG; reopen; PDF/SVG carry it |
+| 3.2 | Decoders | PNG/JPEG/GIF/WebP/TIFF/BMP via `image` with size limits before allocation; EXIF orientation + file ppi | COPY `PC/codecs/src/lib.rs:39-55`, `orientation.rs:161-198`, `VCe/fileio/ppi.rs` | 3.1 | no | dep review | no | M | 6000 px JPEG at its ppi, rotated right |
+| 3.3 | Place, drop, paste | File ▸ Place ⇧⌘P (click or drag-to-size), Finder drop (`DroppedFile`), paste bitmap; Place sheet embed/link | ADAPT `VCe/place/mod.rs` | 3.2 | no | — | **yes** | M | drop a JPEG; ⌘V a screenshot |
+| 3.4 | Image transform + crop | reuse `Xform`/opacity; on-canvas Crop box stored as the existing Clip group | ADAPT `VCe/menucmds.rs:110,532` | 3.1 | no | — | **yes** | M | rotate + crop; release |
+| 3.5 | Links panel | relink/update/go to/embed/unembed, missing/modified badges, effective ppi | ADAPT `VCe/links.rs:38-56,962,1034` | 3.3 | no | — | **yes** | L | move a file → badge → Relink |
+| 3.6 | Package | File ▸ Package: `Links/` + report (fonts when text exists) | ADAPT `VCe/package.rs:1-16` | 3.5 | no | — | yes | M | Package folder in Finder |
+| 3.7 | Rasterize + ppi | Object ▸ Rasterize (ppi, bg) via varos-raster; Document Raster Effects ppi | ADAPT `VCe/menucmds.rs:92,370` | 3.1 | no | — | yes | S–M | rasterize a group at 300 ppi |
+| 3.8 | Image Trace | presets + panel; quantise→despeckle→contours→DP→cubic fit | ADAPT `VC/trace/src/lib.rs:35-37,209-290` | 3.1, 4C | no | — | **yes** | M | trace a logo → paths |
+| 3.9 | Optional codecs | HEIC via ImageIO; PSD flattened | IDEA `PC/heif`; ADAPT `PC/psd` composite | 3.2 | no | — | no | M | only when asked |
 
-| الترتيب | القطعة | الحالة وحدود التسليم | دليل الإقفال |
-|---|---|---|---|
-| A1 | ADR للـVaros Bridge | مقترح — أول قطعة. يحدد عقد الأوامر (~٢٠ فعل)، الملخصات والـdiffs، IDs ثابتة، snapshot صغير عند الطلب، batch = خطوة undo واحدة، ربط البورد الحي مقابل التشغيل من غير نافذة، وإصدارات الـAPI. يوضح استخدام Claude Code / Codex CLI بحساب المستخدم، من غير مفاتيح إجبارية أو خدمة مدفوعة من Varos. | قرار مكتوب ومراجع يشوفه أحمد؛ يحدد صراحة إزاي يحل محل [ADR-0004](adr/ADR-0004-v1-schema-policy.md)، من غير اعتبار الرؤية وحدها تعديلًا للـADR المقبول. |
-| A2 | أول شريحة Bridge | مقترح — MCP server بـ**٥ أفعال** محددين في الـADR، على بورد مفتوح في التطبيق. نفس أوامر التحرير ونفس undo؛ مفيش تحكم بكليكات وصور الواجهة. **2026-10-07: اتبنت ودخلت** (`77f446a`): MCP + CLI متوصلين بالبرنامج المفتوح عبر socket محلي؛ capabilities / list_boards / describe / select / edit (move, set_paint) / history / request_status؛ مراجعة Opus + تصليحات؛ اختبارات الـsocket الحقيقية نجحت على الماك. **✅ اتشاف 2026-10-07:** أحمد وصّل Claude Code بالبرنامج المفتوح (`tools/mac/bridge-connect.sh`)، الوكيل وصف البورد وحرّك ولوّن مسارين في طلب واحد، و⌘Z رجّعهم مع بعض. الشريحة التانية (أشكال/محاذاة/تجميع/لقطة) شغالة. | **أحمد يجرب بنفسه من Claude Code على بورد حي**؛ يشوف التعديل، يرجعه بـ⌘Z ويحفظه. اختبارات الربط تتسجل منفصلة عن تجربته. |
-| A3 | Bridge كامل | مقترح — حوالي **٢٠ فعل + CLI** من نفس التنفيذ؛ ملخصات وdiffs وأوامر بمعنى واضح بدل إعادة إرسال البورد كله. **2026-10-07: شريحة 2 (أشكال/محاذاة/توزيع/تجميع/ترتيب/لقطة) وشريحة 3 (آرت بورد بأرقام ثابتة، صيغة v4) دخلوا** (`a5f687b`, `8fd8659`, `0c912eb`)؛ الوكيل بنى Poster وInstagram Story على بورد المالك المفتوح من بره، كل واحدة = ⌘Z واحدة. **2026-10-07 مساءً: شريحة 4 دخلت** (`30c34b1`): add_path، زوايا دائرية، ترتيب/نسخ/لون/قص الآرت بورد، وصلاحية `files` (مقفولة افتراضيًا) للحفظ/حفظ نسخة/تصدير PDF جوه مجلد يسمح بيه المالك؛ **2026-10-08: قرار المالك فتح الثقة لكل وكيل بنفس uid، حتى الحفظ؛ بوابات الاقتران والصلاحيات ومجلدات الإخراج اتشالت (ADR-0011 Amendment 3).** **2026-10-08: تعديل اقتصاد التوكنات في ADR-0009 اتقبل بتفويض المالك؛ شرائح 1–2 اتنفذت واتحققت في worktree من غير commit/push: API 1.1 defaults/tuples/repeat وقراءات/receipts أصغر؛ نفس الـ201 عملية بالهندسة/الطلاء/الترتيب، 7,960 بايت مقابل سقف 9,364.** الـSHA لسه مستني commit؛ bars/inline group/clone مؤجلين لشريحة 3. توفير توكنات الموديل وتكلفة الصور ومراجعة المالك لسه غير متحققين؛ اختبارات sockets مقفولة بـEPERM في الـsandbox. التالي: هيستوري لكل AI للمراجعة وقياس التوكنات. | نستخدمه إحنا في شغل Varos اليومي، وأحمد يشوف نتيجته؛ **توفير التوكنات يتقاس** على نفس مهام الشغل قبل/بعد، بأرقام وطريقة قياس مكتوبة، من غير نسبة مفترضة. |
-| A3-presence | حضور الوكيل على اللوحة | قرار المالك 2026-10-08: حدود AGENT للصفحة وتسميات متراصة بعد كل تعديل مثبت (٤ ثواني)، وحدود عناصر متدرجة من تعديلات FIFO وإيصالاتها؛ تحديد الإنسان له الأولوية. **دخلت على main 2026-10-08** (`b729775`؛ مراجعة Opus)؛ من غير تغيير العقد أو النداءات أو البانلز أو الهيستوري. | اختبارات ساعة وهمية وربط المضيف + بوابات workspace وclippy native/Windows وfmt والاعتمادات؛ تجربة المالك البصرية لسه غير متحققة (مفيش GUI في القطعة دي). |
-| A3-next | هيستوري منفصل لكل AI للمراجعة | القطعة التالية للـBridge بعد قرار الثقة المحلية المفتوحة 2026-10-08؛ التصميم المقترح في [BRIDGE_AGENT_HISTORY](foundation/work_orders/BRIDGE_AGENT_HISTORY.md) (مدخلات هيستوري بصاحبها في الـcore + قراءة عبر `history list` + قائمة مراجعة في التطبيق بعد موكاب)؛ سجل مراجعة منفصل لكل profile_id مع label. سجل الـaudit موجود؛ تاريخ الـcore بلا خانة metadata، فمش اتعدل في القطعة دي. | أحمد يراجع اللي عمله كل AI ويرجع الدفعات؛ تصميم تاريخ المراجعة وتنفيذه في قطعة مستقلة. |
-| A4 | core من غير نافذة | مقترح — library / CLI / server؛ Bridge يشتغل من غير التطبيق، مع CPU snapshot عند الحاجة. الـcore يفضل منطق صافي، من غير GPU أو window أو UI dependencies. **2026-10-06: الأساس دخل** — `varos-cli` (describe / snapshot / export-pdf / save-as / apply دفعة = undo واحد / new / diff) و`varos-raster` من غير أي اعتماد على الشاشة (`5e3c29c`)؛ أسماء الأفعال تتظبط على ADR-0009 بعد الموافقة. | نفس البورد والأوامر يشتغلوا من غير نافذة؛ اختبارات قراءة/تعديل/undo/حفظ/تصدير، وأحمد يشوف الناتج. |
-| A5 | أماكن الملفات والمراجعة | مقترح — `FileStore`: محلي الأول، ثم Google Drive وبدائل مفتوحة زي Nextcloud/WebDAV؛ board diffs وطلبات تغيير **زي PRs**: تشوف الفرق وتقبل أو ترفض. التفاصيل المعمارية تتقرر في أمر القطعة، مش وعد بتزامن حي. | دورة ملف ومشاركة وتعديل وطلب تغيير كاملة يشوفها أحمد؛ قبول/رفض واضح من غير ضياع الأصل. |
-| A6 | نسخة الويب المرآة | مؤجل لحد إثبات Bridge في شغلنا — **نفس الكود على WASM/WebGPU**، مش منتج تاني؛ فتح من مخزن الملفات، عرض وتعديل خفيف وتصدير ومراجعة حسب نطاق القطعة. | خطة نقل وقرار معماري، ثم تكافؤ على بوردات معروفة وتجربة أحمد. [ADR-0001](adr/ADR-0001-native-gpu-ui-stack.md) يفضل قانون واجهة الديسكتوب؛ مفيش DOM/Electron بديل. |
-| A7 | بوكس الشات جوه التطبيق | مؤجل — بعد Bridge المثبت في شغلنا؛ بوكس عادي جوه نظام البوكسات يشغّل CLI المستخدم من خلال Bridge. | mockup يشوفه أحمد الأول؛ بعد اعتماده وفي قطعة تنفيذ منفصلة، يجرب الحوار والتعديل والـundo على نفس البورد. |
+### Phase 4 — Tools waves (no bump; corner radius + shear baked for now)
+| # | Slice | What | Lift | Dep | Bump | ADR/spec | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|---|---|
+| 4A | Select/transform | Reflect (O), Shear (baked), Free Transform (E) shear, Rotate/Scale/Reflect/Shear dialogs (kit sheet, Copy, preview), Transform Each, Align to Key Object, Magic Wand (Y), Eyedropper options, Isolation mode (double-click group, breadcrumb, dim others), Layers menu family (Release to Layers, Collect, Merge, Flatten, Locate, Hide/Lock Others) | ADAPT `VC/tools/src/xform/transform.rs:24,91,168`, `free.rs:18`, `VCe/menucmds.rs:74,297`, `wand.rs:19`, `VCe/object.rs:146`, `VCe/layerpanel.rs:19-131` | 0.8 | no | — | **yes** | M–L | ⌥-click Rotate → dialog → Copy; isolation |
+| 4B | Shapes + flyouts | Rounded Rect tool (↑↓), Polygon sides ↑↓, Star, Line (\), Arc, Spiral, Rect/Polar Grid + dialogs; rail flyouts (tech lead: Illustrator-style long-press flyout, mocked first) | COPY `VC/geom/src/shapes.rs:14-186` maths | — | no | — | **yes** | M | star with ↑↓; spiral dialog |
+| 4C | Freehand | curve fitter → Simplify, Pencil (N) fidelity, Smooth, Path Eraser, Join tool, Curvature (⇧~) | ADAPT `VC/pathops/src/fit.rs:30-97`, `edit.rs:12-47,137`, `VC/tools/src/draw2/gesture.rs:43-49`, `curvature.rs` | 2.0 | no | — | yes | M–L | pencil, smooth, simplify |
+| 4D | Cutting | Scissors (C), Knife, Eraser (⇧E), Divide Objects Below | ADAPT `VC/tools/src/draw2/anchor.rs:40`, `cut.rs`, `VC/pathops/src/planar.rs:359` onto i_overlay | 4E (Knife/Eraser) | no | — | no | M | scissors on a circle |
+| 4E | Construction | planar faces on i_overlay → Pathfinder Divide/Trim/Merge/Crop/Outline/Minus Back → Shape Builder (⇧M) | ADAPT-ALGORITHM `VC/pathops/src/planar.rs:321`, `pathfinder.rs:29-87`, `VC/tools/src/builder.rs` | 0.3 | no | ADR note if linesweeper is proposed | yes | L | divide circles; drag-merge regions |
+| 4F | Live Corners | corner widget on Direct (round/inverted/chamfer), bake-on-edit (stored params in Phase 10) | ADAPT `VC/geom/src/corners.rs:134,149`, `VC/tools/src/corners.rs` | — | no | — | yes | M | drag a corner widget |
 
-### المسار B — المنتج
+### Phase 5 — Gradients and swatches (**v7**)
+| # | Slice | What | Lift | Dep | Bump | ADR/spec | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|---|---|
+| 5.0 | S1 appearance view | `Appearance` read-view + `StackItem/EntryOpts/Look` types in memory; every reader goes through it; v4–v6 fixtures byte-identical | ADAPT `VC/doc/src/appearance.rs:306-1010` shape | 0.1 | no | ADR-0013 model sections | no | M | invariant tests |
+| 5.1 | **v7 gradient + swatches** | `Paint::Gradient` (linear/radial, stops, midpoint, spread) + `Paint::SwatchRef` + swatch table; GPU LUT pipelines (dither), CPU, PDF axial/radial shading, SVG; hit-inside; eyedropper/Pathfinder/duplicate carry Paint by value; Bridge 1.2 | ADAPT `VC/color/src/gradient.rs`, `swatch.rs:9-45`; `PC/gpu/src/compose.wgsl:632-680` maths | 5.0, 2.1 | **v7** | ADR-0013 + VRS_FORMAT | no | L–XL | Bridge paints a gradient; PDF matches |
+| 5.2 | Gradient UI | picker Gradient tab enabled (`a/ui/picker/panel.rs:59`), Gradient tool (G) annotator | IDEA `VC/tools/src/xform/gradient.rs:68-231` | 5.1 | no | — | **yes** | L | drag a gradient on canvas |
+| 5.3 | Swatches panel | document/global/groups, `.ase`/`.gpl`, libraries; `PanelId::Swatches` real | ADAPT `VC/color/src/palette_io.rs`, `libraries.rs`, `VCe/swatch.rs:16-54` | 5.1 | no | — | **yes** | L | import `.ase`; global swatch recolours |
+| 5.4 | Colour Guide + Recolor | harmony math to core; variation grid; Recolor Artwork | ADAPT `VC/color/src/harmony.rs`, `recolor.rs` | 5.3 | no | — | **yes** | L | recolor a poster to 3 colours |
+| 5.5 | Gradient on stroke; freeform | within/along/across; freeform as baked texture, reported | ADAPT `VC/effects/src/stroke/gradient.rs`, `VC/color/src/freeform.rs` | 5.2 | no | — | yes | M + L | gradient along a stroke |
 
-| الترتيب | القطعة | الحالة وحدود التسليم | دليل الإقفال |
-|---|---|---|---|
-| B1 | أداة النص مع Arabic shaping | P1 done 2026-10-06 (13/15 gates), amendment 1 pending owner; P1b next<br>مقترح — خمس قطع بالترتيب: **المحرك → Latin point text → العربي/RTL → area text → البانل**. قرار محرك النص (الـADR التاني) يسبق كوده؛ التصميم المرئي يسبق أي واجهة. النص القابل للتحرير لسه مش موجود. | كل قطعة لوحدها: اختبارات مناسبة للحفظ/undo والرندر/التصدير، وأحمد يشوف نتيجتها. قطعة العربي تثبت اتصال الحروف والاتجاه والنص المختلط والتحرير؛ دعم نص البورد منفصل عن بوابة تعريب الواجهة. |
-| B2 | Gradients + خيارات Stroke | مقترح — تدرجات وخيارات الخط في قطع محددة بأوامر عمل على الكود الحالي، بعد النص. | mockup الأول؛ أحمد يجرب القيم والتحرير والـundo، ونقارن الشكل بالتصدير. |
-| B3 | SVG export ثم import | مقترح — **التصدير الأول، وبعده الاستيراد**؛ نطاق الدعم وحدود الفقد مكتوبين لكل قطعة. **2026-10-06: التصدير دخل** في `varos-core/src/svg.rs` (`a2a3358`) باختبارات مقارنة بالرسم؛ زر الواجهة مستني تصميم شاشة التصدير؛ الاستيراد لسه. | ملفات SVG مرجعية، مقارنة الناتج، وحفظ/فتح من غير فقد صامت؛ أحمد يشوف النتيجة. |
-| B4 | الصور | مقترح — إدخال الصور والتعامل معاها؛ نطاق التخزين والتحرير والتصدير يتحدد قبل الكود. | mockup لأي تحكم ظاهر؛ أحمد يجرب دورة إدخال/حفظ/فتح/تصدير، مع اختبارات حدود الملفات. |
-| B5 | [تدوير العرض](foundation/work_orders/VIEW_ROTATION.md) | **مؤجل بقرار المالك** — الخطة موجودة، التنفيذ ما بدأش؛ تحكم التاتش باد المدموج مش معناه تدوير العرض اتعمل. | يتفتح بس بقرار أحمد، ثم تصميم وتجربة؛ مش شرط للدورات الحالية. |
-| A-picker | [Colour picker v3](foundation/work_orders/COLOR_PICKER_V3.md), **all four slices complete**; slice 4 done, fix round in worktree (2026-10-09) | Harmony’s eight original rules include None; Mono triangle markers and distinct brightness chips. Recent/Board/Document drawer; Board scan is lazy and cached. Both page-colour chips open Mini while preserving the big panel’s layout state. Gradient disabled until the engine. | Headless interaction/math/persistence/structure/pacing coverage; independent-review fixes applied. This fix round is uncommitted; owner native interaction and install remain pending. |
-| B-layout | تذكّر ترتيب الواجهة | تنفيذ على `feat/remember-layout` (قرار المالك 2026-10-08): شجرة البوكسات والتبويب النشط والمقاسات وحالة البانلز والـrail/control bar في `layout.json` لكل مستخدم؛ Reset layout في Window ودعم `VAROS_RESET_LAYOUT=1`. البوكسات العائمة/الطيّ الدائم غير موجودة في الكود الحالي؛ امتداد العرض مشتق من الشجرة. | اختبارات headless للحفظ/التحميل والـdebounce والتلف/reset والخروج؛ بوابات workspace وclippy native/Windows وfmt والاعتمادات. تجربة المالك البصرية غير متحققة؛ لا GUI ولا commit/push في القطعة دي. |
-| B6 | بعد كده | مؤجل — نختار قطعة من المتطلبات المحفوظة تحت لما نوصلها، من غير تنفيذ الخطة التاريخية كلها. | نطاق وقرار من أحمد، ثم نفس بوابات القطع. |
+### Phase 6 — Appearance and masks (**v8**) — after the owner design round
+| # | Slice | What | Lift | Dep | Bump | ADR/spec | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|---|---|
+| 6.0 | Design round + ADR-0013 final | Figma options: Appearance section (Properties home), Layers fx badge, masked row (chip + expand), "Add mask" gesture, drop-onto-thumbnail; LAYERS_VISION §3.2 amended | — | 5.0 | — | **ADR-0013 accepted** | **yes (several)** | M (design) | owner picks |
+| 6.1 | **v8 stack + look + MaskAlpha** | extra `StackItem`s with per-entry opacity/visible/blend; `Node.look` (group opacity, isolate); `MaskAlpha` emitted; GPU layer stack + texture pool + depth cap; PDF SMask/transparency groups; SVG `<mask>`; Bridge 1.2 | ADAPT `VC/doc/src/appearance.rs`, `bake.rs`; PC mask maths | 6.0, 0.1 | **v8** | ADR-0013 | no | L | group at 50 % composites once; alpha mask |
+| 6.2 | Appearance UI | stack list, add fill/stroke, per-entry opacity, reorder, fx badge, Expand Appearance | BUILD (kit) | 6.1 | no | — | from 6.0 | L | two strokes + two fills; PDF identical |
+| 6.3 | Masks from the row | "Add mask" → mask group; several per row (nested); draw any vector inside; alpha/clip switch; drop-onto-thumbnail; ⌘7 row chip | LAYERS_VISION §3; PC mask shapes | 6.1 | no | — | from 6.0 | L | add mask → draw circle → masked; second mask |
+| 6.4 | Graphic Styles | named appearance presets | IDEA `VCe/style.rs:29-120` | 6.2 | no | — | yes | M–L | save a style, apply ×10 |
 
-### الإيقاع الثابت لكل دورة
+### Phase 7 — Interchange import (no bump; separate crate, never in `.vrs` read)
+| # | Slice | What | Lift | Dep | Figma | Size | Owner exit test |
+|---|---|---|---|---|---|---|---|
+| 7.1 | SVG/SVGZ import | usvg tree → Path/Image/gradient; Open + Place; loss report | ADAPT `VC/svg/src/import.rs`, `lib.rs:401-503` | 3.1, 5.1, 2.1 | yes (report) | M–L | open a Figma SVG |
+| 7.2 | OS clipboard in | paste PDF/SVG/bitmap from Figma/Illustrator | ADAPT `VCe/clipboard/resources.rs` | 7.1, 1.9 | no | M | ⌘V from Figma |
+| 7.3 | PDF / AI import | hayro-based crate; vector + images; text as outlines until text programme | ADAPT `VC/pdf/src/import_*.rs`, `VCe/fileio/pdfimport.rs` | 7.1 | yes | L–XL | open an `.ai` |
+| 7.4 | DXF import | lines/arcs/polylines/splines; DWG refused | ADAPT `VC/cad/src/lib.rs:29` | 7.1 | no | M | open a DXF |
 
-1. نحدد **قطعة واحدة من A + قطعة واحدة من B**؛ ممكن قطعة صغيرة جوه مرحلة كبيرة زي B1. المساران يتحركوا بالتوازي حسب تبعياتهم، من غير تواريخ أو سرعة مفترضة.
-2. نكتب نطاق القطعتين وطريقة قبولهم. **أي حاجة ظاهرة: صور mockup قبل الكود؛ جلسة التصميم تقف عند الصور/الخطة، والتنفيذ يبقى قطعة منفصلة بعد اعتماد أحمد.** نظام البوكسات وتوزيع البانلات ثابتين؛ التوكنات في `shell/tokens.rs` بس، والاختصارات زي Illustrator.
-3. ننفذ ونراجع، ونشغّل بوابات الاختبار المحلية. مفيش اختبار ينشئ GPU Renderer أو EventLoop، والـcore يفضل مستقل تمامًا عن الواجهة.
-4. **القطعة ما تتقفلش غير لما أحمد يشوفها**: في النافذة لو واجهة، أو يشوف الناتج/القرار لو headless أو ورقة. نجاح الاختبارات وحده مش قبول مالك؛ اللي مستني عينه يتكتب كده.
-5. نسجل الدليل والناقص، ونختار الزوج التالي. **مفيش شغل ويب أو شات قبل ما Bridge يثبت في استخدامنا اليومي في A3، بتجربة أحمد وقياس التوكنات.**
+### Phase 8 — View depth (no bump)
+8.1 Outline mode ⌘Y (renderer outline pass; dep 6.1; Figma yes; M) · 8.2 Pixel Preview + Snap to Pixel (reads `force_pixel_align`/`move_whole_px`; M) · 8.3 Navigator (proxy thumbnail, no idle repaint; Figma yes; M) · 8.4 Presentation mode, Trim view, canvas colour, transparency grid, smart-guide readouts (S–M).
 
-### شغل الخلفية في كل دورة
+### Phase 9 — Application (no bump)
+9.1 Preferences v2 (`settings.json`: keyboard increment, units default, GPU, history depth, recovery, autosave, language; Figma yes; M) · 9.2 Command registry ADR-0015 (one id per behaviour shared by menu/shortcut/Bridge/CLI; `enabled`/`disabled_reason`; menu map toward Illustrator's 9 menus; L) · 9.3 Shortcut editor (⌥⇧⌘K, conflicts, parity default; Figma yes; L) · 9.4 History panel (uses `history_preview` + per-AI history A3-next; Figma yes; M) · 9.5 Actions/batch (record + CLI `apply`; M) · 9.6 Help menu + Quick Look for `.vrs` (S+M) · 9.7 Updates per ADR-0007 (M) · 9.8 Arabic UI per ADR-0012 T2→T3→catalog+RTL (needs ADR-0012 accepted; Figma yes; XL) · 9.9 Accessibility start (AccessKit roles; L).
 
-| العمل | حدوده ودليله |
-|---|---|
-| F7/F8 + P6: قياسات الأداء والتبعيات ومخاطر الإطلاق | قياسات متكررة بأرقام وسيناريو ثابت؛ مش حاجز نستنى نخلصه كله قبل المسارين. F7/F8 ما بدأوش حسب السجل السابق. نعيد قياس الحفظ الكبير (كان ٢٫٣٨ ثانية لملف ١٢٫٦ ميجا قبل النقل للخلفية)، ونحدّث المخاطر من غير وعود إطلاق. |
-| التنضيف الداخلي P4/P5/P7 واستخراج F5/F6 | من [نظام الواجهة](specs/UI_SYSTEM.md): باقي P4 (`icon_toggle` والزوايا)، P5 مفاتيح الكانفس/التركيز، P7 باقي النقل؛ حقول/طبقات/picker ثم مجالات Editor حسب الحاجة. قطعة تحفظ السلوك كل مرة؛ منجمعش نقل الملفات وإعادة التصميم وتغيير السلوك في دفعة واحدة. أي أثر مرئي يرجع لبوابة الـmockup. |
-| بوابة الواجهة العربية | [§8](specs/UI_SYSTEM.md#8-arabic--rtl-gate-owner-piece)، لما أحمد يختار طريق A أو B؛ مش مربوطة تلقائيًا بإقفال محرك نص البورد. مفيش ادعاء إن الواجهة عربية قبلها. |
-| متابعة القبول القديم | تجربة الاسترجاع/التاتش باد/Start v2 وK3، ورسائل رفض الملفات وباقي النواقص تحت؛ تفضل واضحة من غير إعادة تنفيذ الشغل المدموج. QW6 وP21 (4) لسه مفتوحين. |
+### Phase 10 — Live objects A (**v9**): typed `Effect::{Offset,ZigZag,Transform,Warp}`, per-corner params, `width_profile`; one evaluator for canvas/CPU/PDF/SVG/Expand; per-object cache (ADAPT `VC/effects/src/{distort,warp,stylize,util}.rs`, `VC/doc/src/live.rs:278-400`, `VC/effects/src/stroke/width.rs`; ADR-0016 "Live objects"; L) → 10.1 Effect menu + Appearance rows + Width tool ⇧W (Figma yes; L).
 
-### مين ينفذ ومين يراجع
+### Phase 11 — Live objects B (**v10**, **v11**): 11.0 `NodeKind::Live{Blend,Repeat,Envelope}` + Blend tool (W) + Free Transform distort (ADAPT `VC/doc/src/blend.rs:35-380`, `VCe/live.rs:27-117`; XL) · 11.1 Live Paint (K) on planar faces (XL) · 11.2 v11 symbols + brushes (calligraphic/scatter/art/pattern, Paintbrush B / Blob ⇧B, tablet pressure COPY `PC/tablet/src/{macos,appkit}.rs`) + patterns (XL) · 11.3 Perspective grid (COPY `VC/geom/src/projective.rs`; only if asked).
 
-- **Codex Sol 6.1** هو الافتراضي للتنفيذ والمراجعة؛ المراجعة المستقلة تفضل جلسة منفصلة عن المنفذ.
-- **Astra** للـADRين (Bridge ومحرك النص)، ومحرك النص العربي، ونقل WASM؛ وكمان أي قطعة Sol يفشل فيها **مرتين**، مع تسجيل المحاولتين وسبب التصعيد.
-- **Opus** للمراجعات التانية، وقطع AppKit، وحكم التصميم.
+### Phase 12 — Colour management (**v12**, owner-committed): 12.0 ADR-0017 (Process RGB/CMYK/Gray, Spot, document mode, profiles via `moxcms`, explicit conversion only) · 12.1 v12 colour model (picker CMYK sliders, render through profile, PDF ICCBased/Separation/DeviceN, report; XL) · 12.2 PDF/X-4, OutputIntent, Overprint preview, Proof Colours (L).
 
-## اللي اتعمل وما يتعادش
+### Phase 13 — Raster effects + blend modes (**v13**, last before text): `Effect::{Shadow,Blur,Glow}` in points; blend modes; renderer-only cache; PDF image XObjects at 300 ppi default, reported; CPU parity suite (ADAPT `PC/doc/src/effects.rs`, `PC/compose/src/effects.rs`, WGSL rebuilt from `compose.wgsl:1029-1178`; Figma yes; XL).
 
-الأجزاء المنجزة من صفوف الخريطة القديمة 0–7 مكانها هنا بالكومِتات؛ النواقص تفضل في شغل الخلفية والقرارات تحت. الصف 7 (F7/F8) ما بدأش، فمش متسجل كمنجز.
+### Phase 14 — Text programme (placeholder, own plan later, **v14+**): ADR-0010 P1c → P2 TextBox → Latin point text → Arabic/RTL (kashida, our composer; lift only the every-line idea of `VC/text/src/composer.rs`) → area text → type on path → styles/OpenType → PDF text subsetting → Package fonts → Create Outlines. Planned when Phases 0–9 are closed.
 
-| العمل | الحالة المثبتة | دليل |
+### Parked / not planned (reason)
+Rotate view (owner parked) · version history + iCloud coordination (track A5 FileStore) · Web/WASM (A6) · multiple windows/tile (shell rewrite) · saved views · EPS/EMF/WMF/DWG, DXF/TXT export, Slices/Save for Web (low Mac value) · Flare · liquify/puppet warp · gradient mesh (IDEA only) · symbolism tools (after symbols) · layered PSD · Windows runtime (compile-only) · MCP prompts/resources · undo structural sharing (only if 3.1 measurement demands) · target circle/layer colour (fx badge instead).
+
+## Lanes and rules
+| Lane | Owns | Typical slices |
 |---|---|---|
-| صحة المشروع والخطط — الصف القديم 0 | مدموج في PR #1؛ CI البعيد مش مثبت حاليًا، مش دليل نجاح مستضاف | `601fd7c`، [أمر صحة المشروع](foundation/work_orders/PROJECT_HEALTH_2026-09-27.md). |
-| نقل Mac والكيرسر والـchrome | مدموج | [سجل القرارات والدمج](history/STATUS_THROUGH_2026-09-26.md). |
-| P11.1/P11.2 | تحسينات الكاش/culling والزوم الفوري مدموجة؛ القياسات تخص السيناريوهات المسجلة | [P11.1](foundation/P11_1_PERF.md)، [P11.2 وحدوده](foundation/P11_2_PERF.md). |
-| F4.1 | EditCommand موجود؛ ليس API ثابتًا للإضافات | [command.rs](../varos/crates/varos-core/src/command.rs). |
-| DFS S1-A/B/C/D | تبويبات مستقلة، lifecycle، dispatch، وإصلاحات التركيز/FIFO مدموجة | [أمر S1 المحدث](foundation/work_orders/DFS_S1_LIFECYCLE_TABS.md). |
-| DFS S3-A/B/C/D وS2-E1 | وحدات اتربطت في التطبيق عن طريق E2 وF1/F2 (الصف اللي تحت) | [أمر S2/S3](foundation/work_orders/DFS_S2_S3_START_RECENTS_RECOVERY.md). |
-| DFS S5-A/B + جزء E | ADR مقبول، v2 وstructure/migration، fixtures v1 | [format](../varos/crates/varos-core/src/format/mod.rs)، [العقد المحدث](reference/VRS_FORMAT.md). |
-| DFS S6-A | مكتبة pure PDF جاهزة | [export.rs](../varos/crates/varos-pdf/src/export.rs). |
-| QW1/3/4/5، وQW7 ضمن S1 | مدموجة؛ QW2 الأصلي اتلغى لمنع ازدواج resolver | [جدول quick wins](foundation/work_orders/QUICK_WINS_2026-09-24.md). |
-| P14–P20 | إصلاحات مدموجة | [دفتر الأوجاع](PAINS_LOG.md)، `d1d8ee3` و`19eed19`. |
-| فرع Codex 2026-09-27: E2 Start/Home/Recent، F1 حفظ آمن + نسخ استرجاع، F2 استرجاع، S5-C/D/E، خطوط U0-A، كيت U0-B/C | مدموج 2026-10-04 بعد مراجعة مجمّعة (٣ مراجعات Opus + جولتين Codex، ١٤ إصلاح). ✅ الاسترجاع بعد Force Quit اتشاف 2026-10-06 (الكارت والتوقيت الجديد لسه مستنيين عينه). | `2cb072a`، `e772f16`، [أمر S5-C/D/E](foundation/work_orders/DFS_S5_FORMAT_V2.md)، [F1](foundation/work_orders/DFS_S3_F1_INTEGRATION.md)، [F2](foundation/work_orders/DFS_S3_F2_INTEGRATION.md)، [GATE_LOG](foundation/GATE_LOG.md) «2026-10-04 batch review fixes». |
-| DFS S4 على الماك (Finder/Dock/`open` → نفس `OpenPaths`) | مدموج 2026-10-04؛ ✅ دبل كليك Finder اتشاف 2026-10-06 | `221310f`، [أمر S4/S6](foundation/work_orders/DFS_S4_S6_ASSOCIATION_EXPORT.md)، [mac_open.rs](../varos/crates/varos-app/src/mac_open.rs)، [os_open.rs](../varos/crates/varos-app/src/os_open.rs)، GATE_LOG «2026-10-04 — DFS S4 macOS open-documents bridge». |
-| DFS S6-B/C: Export ▸ PDF + ⌘S في الخلفية | مدموج 2026-10-04 (Codex Sol ٣ جولات)؛ ✅ Export ▸ PDF اتشاف 2026-10-06 | `bd4e552`، [export_ui.rs](../varos/crates/varos-app/src/export_ui.rs)، GATE_LOG «2026-10-04 — S6-B/C». |
-| ورقة UI System v3 + تسوية UI_DIRECTION | مدموجة كورقة 2026-10-04؛ حالتها في الملف لسه «proposed» ومراجعتها المستقلة لسه | `420b153`، GATE_LOG «2026-10-04 — UI System v3 (docs only)». |
-| مكتبة الأيقونات، المرحلة 1 (`kit::icon_button` + سجل Lucide) | مدموجة 2026-10-04؛ المرحلة 2 متركونة (قرار 2026-10-06) | `4be3208`، GATE_LOG «2026-10-04 — Icon library stage 1». |
-| P12 (حذف نقطة بالقلم بيوصّل الجارتين) + P21 (1–3) | مدموجين 2026-10-04 (Codex ٣ جولات + مراجعتين Opus). P21 (4) لسه مفتوح. تجربة المالك مش متسجلة | `abf8ec1`، [دفتر الأوجاع](PAINS_LOG.md). |
-| UI P2: قانون الخانات K3 + Pathfinder معطّل بسببه | مدموج 2026-10-04 (Codex Sol ٣ جولات)؛ تجربة K3 بالإيد مش متسجلة | `fa6bd10`، GATE_LOG «2026-10-04 — UI_SYSTEM P2». |
-| Start v2 — Boards: L1 خطوط Inter/JetBrains Mono، L2 بيانات البورد + صيغة v3، L3 صور مصغرة، L4/L5 الصفحة + قسم Board | مدموج 2026-10-04/05؛ قبول المالك الصريح للصفحة مش متسجل | `33aa767`، `380bf05`، `c97be28`، `6405dc9`، [أمر العمل](foundation/work_orders/START_V2_BOARDS.md)، GATE_LOG 2026-10-04/05. |
-| UI P3: `ui.rs` اتقسم لوحدات حقيقية + سجل أيقونات واحد + عدّادات | مدموج 2026-10-05 (Opus جولتين)؛ من الصفين القديمين 1 و6: `ui.rs` ٨٥٠٧ → ٩٧٩ سطر، ثم ٩٣٠ عند `07ff058` و٩٣١ بعد قفل الدورة؛ `editor.rs` لسه ٥١٧٤ سطر (قياس 2026-10-06)، واستخراج F5/F6 لسه | `d882454`، GATE_LOG «2026-10-05 — UI P3». |
-| الشريط العلوي 4b (خلفية سوداء واحدة، شريط 52، Export/Window/المغناطيس في منيو الماك، +N، إشارات المرور في النص عبر [mac_titlebar.rs](../varos/crates/varos-app/src/mac_titlebar.rs)) | ✅ مدموج + اتشاف 2026-10-06 «كله شغال» | `19611ae`، GATE_LOG «2026-10-06 — Top bar 4b». |
-| Close-out 1: Search / Custom… removed + frame-0 recovery scan | مدموج؛ تجربة timing الجديدة لسه | `736feba`، GATE_LOG «Close-out 1». |
-| Trackpad: pinch / smart zoom / 1:1 pan | مدموج؛ تجربة الهاردوير لسه. VIEW_ROTATION خطة مركونة | `2f2bcc0`، GATE_LOG «Trackpad view control». |
-| Recovery card + in-place Review / Restore | مدموج؛ عين المالك لسه | `1532637`، GATE_LOG «Recovery card B». |
-| حزمة التظبيطات الـ12 | ✅ مدموجة + اتشافت 2026-10-06 «كله شغال»؛ فيها نص P4 (الأزرار المقسّمة الرمادي) و`T_MICRO = 10.5` من QW6 | `7adee37`، GATE_LOG «2026-10-06 — JOB B». |
+| Codex Sol 6.1 (default implementer) | varos-core geometry/model/format/tools, render-wgpu, raster, cli | 0.1–0.3, 2.0–2.1, 3.1–3.2, 4B–4F, 5.0–5.1, 6.1, 7.x, 10.0, 13.0 |
+| Opus (AppKit, design judgement, second reviews) | varos-app chrome/menus/sheets/panels, varos-pdf, bridge verbs, objc2 | 0.4–0.9, 1.x, 2.2–2.3, 3.3–3.6, 4A, 5.2–5.4, 6.2–6.4, 8.x, 9.x |
+| Moderator (Fable) / Astra | ADRs, specs, Figma briefs, VRS_FORMAT, NOTICE, GATE_LOG/STATUS/PLAN, memory | ADR list below |
+Parallel only when two slices share no file (safe pairs: 0.1‖0.4, 0.2‖0.6, 0.8‖1.1 after the `menus/` split, 3.1‖4B, 5.1‖4A, 6.1‖7.1, 9.x‖8.x); format slices never parallel with another writer-touching slice; author ≠ reviewer (Codex slice → Opus review and vice versa); every slice: workspace tests, clippy Mac + Windows target `-D warnings`, fmt, dep directions, ratchets unchanged, GATE_LOG entry, merge, push, install when Varos closed, owner hand test.
 
-## شغل محلي غير مدموج — SVG export
+## ADRs and specs before code (in order)
+1. S0 fix list + v5 ordering note (PLAN + ADR-0010 cross-note: no reservation, first merged writer takes v5). 2. Engineering note: panic guard, GPU health, no-panic ratchet. 3. Export sheet + Document Setup + PDF options + Autosave spec (short, Figma-backed). 4. ADR note: kurbo in varos-core + dep review (kurbo, proptest, image features). 5. StrokeStyle spec + ADR-0008 v5 amendment + VRS_FORMAT §5. 6. ADR-0014 raster object + links (+ v6). 7. Planar-faces note (i_overlay; linesweeper only via ADR). 8. ADR-0013 Appearance & masks: model sections before Phase 5, UI sections after 6.0; ADR-0008 v7/v8; ADR-0009 "1.2 opt-in, not-solid token". 9. Import spec (loss table; firewall; hayro review). 10. Settings spec v2 + ADR-0015 command registry. 11. ADR-0012 acceptance (owner) before 9.8. 12. ADR-0016 live objects (+ v9/v10/v11). 13. ADR-0017 colour management (+ v12). 14. ADR-0013 S7 raster annex (+ v13). 15. Text programme plan (last).
 
-2026-10-06: وحدة pure في `varos-core::svg`، بدون تبعيات production جديدة، تصدّر ملف SVG مستقل لكل أرتبورد أو حدود البورد كله. التفاصيل والاختبارات في [أمر العمل](foundation/work_orders/SVG_EXPORT.md). ربط الواجهة لسه: ورقة PDF الحالية ما فيهاش اختيار صيغة، وSVG متعدد الأرتبوردات محتاج تصميم الوجهات الأول. ده كود محلي في worktree، مش إعلان دمج أو تجربة في النافذة.
+## Format bump schedule
+v5 Phase 2 `Path.stroke_style` · v6 Phase 3 Image node + blobs + links · v7 Phase 5 Gradient/SwatchRef/swatch table · v8 Phase 6 stack/look/MaskAlpha · v9 Phase 10 effects/corners/width_profile · v10/v11 Phase 11 live nodes / symbols+brushes+patterns · v12 Phase 12 colour model · v13 Phase 13 raster fx/blend · v14+ Phase 14 TextBox. ADR-0010's "v5" and COLOR_PICKER_V3 §3's "v5 gradients" become "next bump". Per bump (ADR-0008 rule 3): named pure migration, frozen fixtures, refusal fixtures, old-reader harness, VRS_FORMAT rows; every new key `#[serde(default, skip_serializing_if)]`; plain object byte-identical; Bridge 1.0/1.1 fixtures untouched.
 
-## القرارات السارية واللي لسه مفتوح
+## Owner decisions (resolved this session)
+Export/print before stroke · Place = embed default + Link · CMYK committed late (Phase 12) · **Autosave writes into the file** (slice 1.10) · rotate view stays parked · Appearance home + masked-row look decided in the Phase 6.0 Figma round.
 
-**قرارات اتاخدت بالفعل:** ADR-0008 لصيغة الملفات مقبول، ومعدّل 2026-10-04 لصيغة 3 (المستند = Board ليه اسم ووصف وتاجز؛ مراجعة التعديل المستقلة مذكورة في الـADR كباقية)؛ Home بدل burger على Mac؛ icons بدل نصوص الأزرار؛ خطوط Inter 400/500/600 + JetBrains Mono بدل Plex، والعربي مقفول لحد بوابة §8؛ حالات on حسب mockup؛ FAINT→MUTED/DISABLED (اتنفذ في P3)؛ حفظ توزيع البانلات وReset layout من Window حسب قانون L7 (2026-10-08)؛ ملف v1 ذو ماسك مكسور يفتح بتحرير الماسك مع notice؛ تصدير مستند اسمه `.pdf` يستخدم `<name> export.pdf`. التفاصيل ومصدر كل مجموعة في [تسوية UI](specs/UI_SYSTEM.md) و[أمر S5](foundation/work_orders/DFS_S5_FORMAT_V2.md).
+## Top risks and guards
+1 two writers claim one version → schedule + number at merge only · 2 ~30 `.solid()` sites → 5.0 read-view first, 5.1 end-to-end in one slice · 3 undo clones × image bytes → bytes outside clone stacks, RAM measured in 3.1 · 4 one offscreen layer + two clip bugs → 0.1 first, 6.1 layer stack with budget · 5 heat → caches keyed like `flatten.rs`, idle = Wait, pacing test per slice · 6 silent export loss → `ExportReport` from 0.1, every lossy path adds a row, gate · 7 Bridge drift → `skip_serializing_if`, 1.2 opt-in, contract tests · 8 borrowed code self-graded → our tests + fixtures first, attribution, never ui-egui/CPU renderer · 9 second engines (kurbo, linesweeper) → adapter + ADR · 10 import scope creep → separate crate/phase, refusals not repairs · autosave must never write mid-gesture/transaction or during a Bridge batch, and never to a file changed on disk by another app (existing warning path).
 
-**قرارات المالك 2026-10-06:** قانون «مفيش حركة» اتخفف لحركة انزلاق البوكسات (glide) — تفضل، وما نصرفش مجهود على شيلها (فمفيش ADR مطلوب دلوقتي لتعديل عقد glide)؛ خانة Search تتشال من الشريط العلوي (كنترول ميت)؛ «Custom…» يتشال من مقاسات البورد الجديد (البورد يفتح فاضي)؛ أيقونات المرحلة 2 متركونة؛ Windows يفضل كود بس. **الاتفاق الجديد في نفس اليوم، حسب [الرؤية](VISION_AI_NATIVE.md)، حل محل ركن MCP:** Bridge الأول في المسار A، والويب والشات بعد إثباته في شغلنا؛ المسار B يبدأ بالنص العربي، وكل دورة قطعة من كل مسار. شيل Search وCustom مدموج في `736feba`؛ تحكم التاتش باد مدموج في `2f2bcc0` (pinch/smart zoom/1:1 pan)، مستني عين المالك.
+## Execution contract (how the moderator runs it after approval)
+1. Housekeeping commit: copy the two gap inventories into `docs/reference/gap/`, rewrite `docs/PLAN.md` to this phase/slice map (keep the A/B rows that are done as history), update STATUS, memory.
+2. Per slice: spec/ADR if listed → Figma options if marked (owner picks) → brief → Codex or Opus lane → moderator gates → independent review (other lane) → fix round → merge (no-ff) → push → install when Varos closed → GATE_LOG + PLAN row → short Arabic hand-off with what to test.
+3. Owner is asked only for: Figma picks, ADR acceptances, hand-test results, and anything on the "owner decisions" list; otherwise the moderator decides and records why.
+4. Order inside a phase may be reshuffled by the moderator for lane availability; phases are not reordered without the owner.
 
-**لسه مفتوح، من غير إعادة فتح كل الأسئلة القديمة:**
-- **نظام اتصال وثقة Bridge — [ADR-0011](adr/ADR-0011-bridge-connection-and-trust.md):** C1 دخلت 2026-10-07؛ **قرار المالك 2026-10-08 (Amendments 2–3):** مفاتيح هوية في ملفات خاصة بدل Keychain، وثقة كاملة لأي وكيل بنفس uid من غير اقتران أو بوابات صلاحيات أو إذن للحفظ. سجلّ audit مع profile_id وlabel موجود، والقطعة التالية هي هيستوري منفصل لكل AI للمراجعة (A3-next). فحص uid وundo وموانع أخطاء الملفات وعدم الكتابة فوق اسم موجود باقين. Windows فحص ترجمة بس.
-- **Varos Bridge — [ADR-0009](adr/ADR-0009-varos-bridge.md):** مقبول 2026-10-06؛ أول شريحة شغالة؛ عقد MCP/CLI محلي، أوامر وملخصات قليلة التوكنز، دفعة = تراجع واحد، مع النافذة أو من غيرها. ورقة قرار فقط؛ قبولها وترتيب تنفيذها لسه عند المالك.
-- **أداة النص — [ADR-0010](adr/ADR-0010-text-tool.md):** مقبول 2026-10-06؛ P1 خلصت (13/15)؛ التعديل 1 مقبول 2026-10-07؛ P1b خلصت 2026-10-07 (7/8 بوابات؛ الساقط: سرعة فقرة 100 ألف حرف) → P1c للسرعة قبل P2؛ cosmic-text + HarfRust + Skrifa + fontdb، TextBox في صيغة v4، النص يتحول لمسارات وقت الرسم والتصدير، P1 spike عربي headless قبل أي أداة.
-- **محرك نص الواجهة (عربي) — [ADR-0012](adr/ADR-0012-ui-text-engine.md):** **مقترح — مستني المالك**؛ طريق B: مكتبة `varos-text` واحدة للواجهة والكانفس، أسماء التابات/اللايرز/الـRecent بتترسم بمحركنا جوه egui من غير fork، وخاناتنا الخاصة جوه قانون K3؛ T1 مكتبة → T2 أسماء مقروءة → T3 خانات + اختبارات §8 + تجربة المالك → T4 أداة النص (بعد P1c)؛ قرارات مستنية: وزنين Plex Arabic (Medium/SemiBold) ومحاذاة الأسماء في السطر الواحد.
-- **T1 — varos-text:** **دخلت على main 2026-10-07** (`d0e4e85`؛ مراجعة Opus، 1304 اختبار بعد الدمج)؛ البوابات المحلية والنقط المفتوحة في [TEXT_T1_RESULTS](foundation/work_orders/TEXT_T1_RESULTS.md)؛ قبول ADR-0012 لسه مستني المالك.
+## Verification (plan-level)
+- Each slice's "owner exit test" is the acceptance; moderator gates are the floor.
+- Phase exits: 0 = both clip bugs fixed + SVG/PNG export used by the owner; 1 = a printed PDF with bleed/marks + autosave observed; 2 = dashed/arrowed stroke in PDF from a v4 file; 3 = a placed, cropped, linked photo in a Package; 4 = Shape Builder + Pencil used; 5 = gradient in picker + PDF; 6 = multi-stroke + row mask; 7 = `.ai` opened; 8–9 = Outline/Prefs/Shortcut editor/Arabic names; 10–13 as listed; 14 = its own plan.
 
-- مصير عمل `codex/p6-header` القديم قبل استخراج F5: الفرع ده مش موجود محليًا ولا على origin (اتفحص 2026-10-06)؛ لو المحتوى اتاخد في P3 أو 4b يتقفل البند، ومفيش مسح لأي فرع أو worktree من الخطة وحدها.
-- طرح التبعيات المقترح، توقيع/توزيع الإصدار: يفضلوا بنطاقهم وقرارهم.
-- **الاسترجاع والتاتش باد:** الكارت (`1532637`) وframe-0 notice (`736feba`) والتاتش باد (`2f2bcc0`) مدموجين؛ تجربة المالك لسه، ومسارات إلغاء/فشل الاسترجاع في النافذة اختبارات بس. [VIEW_ROTATION](foundation/work_orders/VIEW_ROTATION.md) خطة مركونة، ما بدأتش.
-- **QW6:** مقاس أيقونات البانل ١٨ جوه الـ26×24. الـmicro ١٠٫٥ خلص في التظبيطات الـ12، والتوكن `ICON_LG = 18` مستخدم في `kit::icon_button` وأزرار Align/Pathfinder ([tokens.rs](../varos/crates/varos-app/src/shell/tokens.rs))؛ إن كل أيقونات البانل الباقية بقت ١٨ **مش متحقق** (GATE_LOG P3 سايبه مفتوح).
-- **قطع الواجهة P4–P8** ([UI_SYSTEM §9](specs/UI_SYSTEM.md#9-pieces-in-order)): باقي P4، وP5 مفاتيح الكانفس وحلقات التركيز، وP6 القياس، وP7 باقي النقل، وP8 بوابة العربي.
-- **P21 (4):** تحريك الأرتبورد العادي بيحرك محتوى الـclip من غير الماسك المخفي ([دفتر الأوجاع](PAINS_LOG.md)).
-- **F7/F8:** قياسات الأداء والتبعيات وخطة الإطلاق في خلفية كل دورة؛ ما بدأوش حسب السجل السابق، مش صف انتظار قبل المنتج.
-- **بوابة الواجهة العربية** ([UI_SYSTEM §8](specs/UI_SYSTEM.md#8-arabic--rtl-gate-owner-piece)): المالك اختار طريق B يوم 2026-10-07 (التفاصيل في ADR-0012 تحت)؛ مفيش ادعاء بدعم عربي قبل ما بوابتها تعدّي.
-- **أجزاء Windows من S4-A:** مش متنفذة؛ Windows كود بس بقرار المالك، والتجربة الحقيقية مؤجلة.
-- **قبول الملفات والتصدير:** رسائل رفض S5 والـnotice لماسك v1 المكسور اختبارات بس؛ Dock/`open` والفتح البارد مقابل الدافي مش متجربين لوحدهم؛ Cancel للتصدير وShow in Finder مؤجلين.
-- **قفل CI بسبب الفلوس:** آخر run (36300014830، 2026-09-27) وقف قبل ما يبدأ؛ البوابات المحلية هي المرجع لحد ما يتفك.
+## Summary for the owner (plain)
+1 نصلّح بَجّي الماسك ونمنع الكراش. 2 إخراج SVG/PNG/JPEG + Save a Copy/Revert/Close All + أدوات الزوم واليد + قائمة Select + ⌘2/⌘3/⌘8/⌘J/⌘7. 3 الطباعة: bleed وDocument Setup وخيارات PDF وppi وعلامات القص و⌘P + Autosave في الملف. 4 محرك الاستروك (أطراف/زوايا/داشات/أسهم/داخل-خارج) = أول تغيير فورمات. 5 الصور: Place وسحب من Finder ولصق وCrop وLinks وPackage وImage Trace. 6 موجات التولز: التحويل والعزل، الأشكال والفلاي آوت، Pencil وCurvature، Scissors وKnife، Shape Builder، الزوايا الحية. 7 الجرادينت على الكانفس وفي البيكر + Swatches + Recolor. 8 بعد جولة Figma: الأبيرنس (كذا فيل/استروك) والماسك على الصف مع ⌘7. 9 فتح SVG/PDF/AI/DXF ولصق من Figma. 10 Outline وPixel preview وNavigator، ثم التفضيلات ومحرر الاختصارات والهيستوري والواجهة العربية. 11 الكائنات الحية (إفكتات، Width، Blend، Repeat، رموز، فرش)، ثم CMYK والمطابع، ثم الظل والبلر. 12 النص (عربي + إنجليزي) آخر حاجة كبرنامج مستقل. كل قطعة مرئية تبدأ بخيارات Figma تختارها، وكل شريحة تنتهي بتجربتك في النافذة الحقيقية.
 
-## متطلبات محفوظة للمستقبل
 
-دي مش مهام ضاعت أو اتلغت، لكنها بعد القطع المحددة في المسارين، وتتحول لأوامر عمل لما أحمد يختارها:
-
-- [الماسكات](MASKS_PLAN.md): gestures والتحديد والتداخل، مع إصلاح حدود الرندر قبل الادعاء باكتمالها.
-- Live Corners، Curvature، Appearance متعدد الطبقات، PNG export وما يزيد عن نطاق B2/B3: تفاصيل backlog في [الخريطة المؤرخة](foundation/PLAN_MAP_2026-09-23.md) و[الخطة التفصيلية القديمة](history/DETAILED_ROADMAP.md). تُعاد صياغة القطعة المطلوبة على الكود الحالي، لا تُنفّذ الخطة التاريخية بالكامل.
-- النص العربي اتحرك لأول المسار B؛ تفاصيل الـbacklog التاريخية مش تكليف ببنائها كلها. المحرك والتحرير والاتجاه والحفظ والتصدير يتثبتوا قطعة قطعة.
-- أيقونات المرحلة 2 (متركونة 2026-10-06) والـpicker وباقي التلميع تحت نظام الواجهة؛ نافذة Mac تتذكر مقاسها، screen eyedropper، وFit الذي يتجنب الشريط متابعات محفوظة.
-- MCP وملفات السحابة ومرآة الويب والشات مكانهم المسار A بترتيبه وبواباته؛ الإضافات والتحديثات لسه مستقبلية بقراراتها وسياساتها. مفيش نقل تلقائي لدراسة قديمة لخطة تنفيذ.
-
-## مكان كل نوع من الملفات
-
-| المكان | يستخدم في إيه؟ |
-|---|---|
-| [ADRs](adr/) و[الميثاق](foundation/FOUNDATION_CHARTER.md) | القرارات المعمارية المقبولة والقواعد؛ ما تتعادش كتابتها كتاريخ جديد. |
-| [STATUS](foundation/STATUS.md) | الحقيقة الحالية المختصرة ونتائج التحقق. |
-| هذه الصفحة | ترتيب العمل، حالته، والروابط لأصحاب التنفيذ. |
-| [work_orders](foundation/work_orders/) | نطاق القطعة واختبارات القبول؛ كل ملف له حالة حديثة أعلى خطته الأصلية. |
-| [specs](specs/) | عقد النظام أو مسودة تصميمه؛ UI v3 ورقة مقترحة بالقيم والقطع؛ تاريخ v1/v2 محفوظ ولا يمثل خطة تنفيذ موازية. |
-| [reviews](foundation/work_orders/reviews/) و[audits](audits/) | أدلة مؤرخة، لا backlog إضافي ينافس أوامر العمل. |
-| [reference](reference/) و[design-reference](../design-reference/) | مواصفات تقنية ومراجع بصرية؛ العناوين وحدها لا تثبت إن الميزة مبنية. |
-| [studies](studies/) | أفكار وتقييمات غير معتمدة، إلا القرارات المنقولة صراحة لسجل المالك/ADR. |
-| [history](history/) | خطط وقرارات قديمة محفوظة. لا تغيّر محتواها لتبدو كأنها وصفت الحالة الحالية. |
-| INVENTORY / DEPENDENCY_MAP / OWNERSHIP_MAP | لقطات تأسيسية بتاريخها، وليست أرقامًا حالية؛ تُحدّث خريطة الملكية قبل قطعة استخراج فعلية. |
-
-## طريقة التحديث من هنا
-
-كل قطعة تحدّث حالتها في أمر العمل، وSTATUS، وصفّها هنا عند تغير التسلسل؛ نتائجها في GATE_LOG. لا تُنشأ roadmap أخرى. تُذكر اختبارات الوحدة والتكامل وتجربة النافذة كل على حدة، وتظل الحالات غير المختبرة صريحة. لا نغيّر تاريخًا قديمًا أو نعتبر الموافقة على ترتيب الأوراق اعتمادًا لكل اقتراح تصميمي داخلها.
+## Progress (moderator-maintained)
+| Slice | State | Commit | Notes |
+|---|---|---|---|
+| picker v3 (pre-plan) | done, owner-approved | `214e998` | Wheel/Sliders/Harmony/Mini |
