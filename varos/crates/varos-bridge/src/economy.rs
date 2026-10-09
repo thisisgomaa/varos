@@ -153,6 +153,9 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
     }
+    if edit.api != "1.2" && out.iter().any(|l| matches!(l.op, Operation::DocumentSetup { .. })) {
+        return Err(Error::new("unsupported", "document_setup requires API 1.2"));
+    }
     Ok(out)
 }
 #[allow(clippy::too_many_arguments)]
@@ -227,6 +230,7 @@ fn walk(
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
         if !crate::EDIT_VERBS.contains(&verb)
             && ![
+                "document_setup",
                 "clip",
                 "release_clip",
                 "view",

@@ -277,6 +277,14 @@ struct Shared {
 }
 #[cfg(unix)]
 type CancelMap = std::collections::HashMap<(String, String), (Arc<AtomicBool>, std::time::Instant)>;
+/// Accepted file jobs retain the request flag after the socket reply, so Cancel still reaches them.
+#[cfg(unix)]
+fn release_call_cancellation(map: &mut CancelMap, key: &(String, String), flag: &Arc<AtomicBool>) {
+    // The map and this call own two references; an extra owner is queued/running work.
+    if Arc::strong_count(flag) <= 2 {
+        map.remove(key);
+    }
+}
 
 /// Kept for the lifetime of the app event loop. Dropping removes endpoints and revokes workers.
 pub struct Listener {
@@ -571,7 +579,11 @@ fn spawn_accept(
             }
             // Prune AFTER the (possibly hours-long) accept, so the worker cap sees the live set.
             workers.retain(|(h, _): &(std::thread::JoinHandle<()>, std::os::unix::net::UnixStream)| !h.is_finished());
-            shared.cancellations.lock().unwrap().retain(|_, (_, time)| time.elapsed() < Duration::from_secs(60));
+            shared
+                .cancellations
+                .lock()
+                .unwrap()
+                .retain(|_, (flag, time)| Arc::strong_count(flag) > 1 || time.elapsed() < Duration::from_secs(60));
             match accepted {
                 Ok((stream, _)) if workers.len() < 8 => {
                     let Ok(shutdown) = stream.try_clone() else { continue };
@@ -816,7 +828,11 @@ fn serve_connection(stream: std::os::unix::net::UnixStream, auth: &Auth, shared:
                     }
                 }
             };
-            shared.cancellations.lock().unwrap().remove(&key);
+            release_call_cancellation(
+                &mut shared.cancellations.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+                &key,
+                &flag,
+            );
             let code = result.error.as_ref().map_or("ok", |e| e.code.as_str()).to_owned();
             if let Some((paths, entry)) = audit_entry(&code, result.rev) {
                 let _ = conn::audit::append(&paths, &entry);
@@ -1011,5 +1027,24 @@ mod tests {
             widened[field] = serde_json::json!(true);
             assert!(serde_json::from_value::<Frame>(widened).is_err());
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod queued_cancellation_tests {
+    use super::*;
+    #[test]
+    fn accepted_worker_flag_remains_addressable_until_work_finishes() {
+        let key = ("client".into(), "call".into());
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut map = CancelMap::new();
+        map.insert(key.clone(), (flag.clone(), std::time::Instant::now()));
+        let worker = flag.clone();
+        release_call_cancellation(&mut map, &key, &flag);
+        map[&key].0.store(true, Ordering::Release);
+        assert!(worker.load(Ordering::Acquire));
+        drop(worker);
+        release_call_cancellation(&mut map, &key, &flag);
+        assert!(!map.contains_key(&key));
     }
 }

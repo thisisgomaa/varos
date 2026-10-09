@@ -9,7 +9,7 @@ use std::{
 use varos_core::{
     bridge::{self, TargetErrorCode},
     editor::Editor,
-    model::{Document, NodeKind},
+    model::Document,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,6 +80,9 @@ pub trait Host {
             .execute(varos_core::EditCommand::SetPasteRemembersLayers(enabled))
             .map_err(|reason| Error::new("internal", reason.to_string()))?;
         Ok(())
+    }
+    fn window_memory(&mut self) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no window memory"))
     }
     /// Synchronous headless default. Desktop overrides to defer work beyond the owning thread.
     fn snapshot(&mut self, job: SnapshotJob, cancelled: &AtomicBool) -> Reply {
@@ -342,11 +345,15 @@ impl Service {
                         | Request::Select(_)
                         | Request::Capabilities(_)
                         | Request::Edit(_)
+                        | Request::Describe(_)
+                        | Request::SaveTemplate(_)
+                        | Request::NewFromTemplate(_)
+                        | Request::WindowMemory(_)
                 ))
         {
             return Reply::failure(Error::new(
                 "unsupported",
-                "Bridge API must be 1.0 or 1.1 (capabilities, select, edit, export_pdf, export_svg and export_raster also support 1.2)",
+                "Bridge API must be 1.0 or 1.1 (capabilities, select, edit, describe, exports, templates and window_memory also support 1.2)",
             ));
         }
         if matches!(req, Request::ExportSvg(_) | Request::ExportRaster(_)) && req.api() != "1.2" {
@@ -416,6 +423,12 @@ impl Service {
                 }
             }
             match req {
+                Request::WindowMemory(v) => {
+                    if v.api != "1.2" {
+                        return Err(Error::new("unsupported", "window_memory requires API 1.2"));
+                    }
+                    host.window_memory()
+                }
                 Request::Capabilities(_) => {
                     let mut r = Reply::success(
                         json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":true,"edit":true,"destructive_scope":true,"history_scope":true,"trust":"local user","file_guards":["home_or_external_volume_or_cloud_drive","local_volume_only","protected_roots","dot_components","extension","canonical_parent","no_symlink_escape","no_hardlink_escape","no_overwrite"],"files_scope":true,"scopes":["read","edit","destructive","history","files"],"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
@@ -432,9 +445,15 @@ impl Service {
                         if let Some(v) = r.result.as_mut() {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
-                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"other_tools":["1.0","1.1"]});
+                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"other_tools":["1.0","1.1"]});
                             if let Some(tools) = v["tools"].as_array_mut() {
-                                for name in ["export_svg", "export_raster"] {
+                                for name in [
+                                    "export_svg",
+                                    "export_raster",
+                                    "save_template",
+                                    "new_from_template",
+                                    "window_memory",
+                                ] {
                                     let name = json!(name);
                                     if !tools.contains(&name) {
                                         tools.push(name);
@@ -443,6 +462,7 @@ impl Service {
                             }
                             if let Some(verbs) = v["edit_verbs"].as_array_mut() {
                                 for verb in [
+                                    "document_setup",
                                     "repeat",
                                     "clip",
                                     "release_clip",
@@ -460,6 +480,7 @@ impl Service {
                                     }
                                 }
                             }
+                            v["phase1"] = json!({"edit_verbs":["document_setup"],"describe_fields":["document_info"],"tools":["save_template","new_from_template"]});
                         }
                     }
                     Ok(r)
@@ -505,6 +526,15 @@ impl Service {
                         }
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
+                }
+                Request::SaveTemplate(v) | Request::NewFromTemplate(v) => {
+                    if v.api != "1.2" {
+                        return Err(Error::new("unsupported", "templates require API 1.2"));
+                    }
+                    if v.scope.is_some() || v.path.is_none() {
+                        return Err(Error::new("invalid_argument", "template needs path: NAME.vrs and no scope"));
+                    }
+                    host.file_effect(req.tool(), v)
                 }
                 Request::Save(v)
                 | Request::SaveAs(v)
@@ -850,6 +880,17 @@ impl Service {
         r
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
+        if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["document_info"]) {
+            let b = &self.boards[&v.board];
+            if v.rev.is_some_and(|r| r != b.rev) {
+                return Err(Error::new("stale_revision", "document changed"));
+            }
+            let a = host.access(&v.board)?;
+            let mut out = varos_core::document_setup::info(&a.editor.doc);
+            out["rev"] = json!(b.rev);
+            return Ok(Reply::success(out));
+        }
+
         if let Some(budget) = v.summary_budget {
             if v.api != "1.1"
                 || !(256..=1024).contains(&budget)
@@ -1323,7 +1364,7 @@ fn projection(doc: &Document) -> (BTreeMap<String, Value>, Value, Vec<String>) {
         o["geometry_digest"] = json!(geometry_digest(&details[id]));
         objects.insert(id.into(), o);
     }
-    let counts = json!({"paths":doc.paths.len(),"groups":doc.nodes.iter().filter(|n|n.kind==NodeKind::Group).count(),"layers":doc.nodes.iter().filter(|n|n.kind==NodeKind::Layer).count(),"artboards":doc.artboards.len()});
+    let counts = varos_core::document_setup::counts(doc);
     let artboards:Vec<_>=doc.artboards.iter().enumerate().map(|(i,a)|json!({"id":format!("artboard:{}",a.id),"index":i,"name":a.name,"bounds":[round(a.x as f64),round(a.y as f64),round(a.w as f64),round(a.h as f64)],"bleed":round(a.bleed as f64),"fill":color(&json!(a.page_color)),"clip":a.clip,"hidden":a.hidden,"locked":a.locked})).collect();
     let mut settings = json!(doc);
     for k in [

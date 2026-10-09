@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
-use varos_core::scene::{build_scene_in_view, scene_signature};
+use varos_core::scene::{build_scene_in_view_styled, scene_signature, SceneStyle};
 use varos_core::EditCommand;
 use varos_render_wgpu::Renderer;
 #[cfg(windows)]
@@ -31,6 +31,7 @@ mod bridge_fs;
 mod bridge_host;
 mod chrome;
 mod cursors;
+mod document_ui;
 mod export_ui;
 mod file_jobs;
 mod file_ports;
@@ -52,6 +53,7 @@ mod recent_files;
 mod recovery_host;
 mod shortcuts;
 mod single_instance;
+mod template_jobs;
 mod thumbs;
 mod ui;
 mod workspace;
@@ -487,7 +489,11 @@ fn sync_home(
     gui.set_home(home, recovery.start_warning(store.warning.as_deref()));
     if refresh.should_rebuild(home, [store.generation(), recovery_gen, probe.generation()]) {
         probe.retain(&store.recent_paths()); // only the current Recent list is cached or queued
-        gui.set_start_model(store.model(recovery.rows(), |p| probe.missing(p)));
+        let mut model = store.model(recovery.rows(), |p| probe.missing(p));
+        model.templates = varos_app::storage::paths::AppLayout::current()
+            .and_then(|l| varos_app::storage::templates::list(&l.templates()).ok())
+            .unwrap_or_default();
+        gui.set_start_model(model);
     }
 }
 
@@ -602,14 +608,6 @@ fn preview_svgs(dir: &str) {
     }
 }
 
-/// Where the remembered window geometry lives (`<data root>/window.txt` — still `%APPDATA%\Varos\window.txt`
-/// on Windows). Stays off on macOS: Mac window memory is separate Mac polish (DFS work order Q4).
-fn win_state_path() -> Option<std::path::PathBuf> {
-    if cfg!(target_os = "macos") {
-        return None;
-    }
-    varos_app::storage::paths::AppLayout::current().map(|l| l.window_state())
-}
 /// Crash-log home (`<data root>/Logs/crash.txt`) — the one app-data resolver, so macOS gets a crash log too.
 fn crash_log_path() -> Option<std::path::PathBuf> {
     varos_app::storage::paths::AppLayout::current().map(|l| l.crash_log())
@@ -751,6 +749,21 @@ fn dispatch(
                     s.editor.execute_ui(if release { EditCommand::ClipRelease } else { EditCommand::ClipMake });
                 }
             }
+            host::Ran::default()
+        }
+        host::HostAction::App(AppCommand::DocumentSetup(id) | AppCommand::DocumentInfo(id)) => {
+            if let Some(s) = ws.get_mut(id) {
+                if !gui.commit_fields(&mut s.editor) {
+                    return host::Ran { held: true, ..Default::default() };
+                }
+            }
+            gui.document_sheet = ws.get(id).map(|s| {
+                crate::document_ui::Sheet::new(
+                    id,
+                    matches!(action, host::HostAction::App(AppCommand::DocumentInfo(_))),
+                    &s.editor.doc,
+                )
+            });
             host::Ran::default()
         }
         host::HostAction::App(AppCommand::Window(w)) => {
@@ -935,27 +948,6 @@ fn raise_doc(
     }
 }
 
-/// Restore the last window geometry: `(maximized, outer_x, outer_y, inner_w, inner_h)` in physical px.
-fn load_win_state() -> Option<(bool, i32, i32, u32, u32)> {
-    let s = std::fs::read_to_string(win_state_path()?).ok()?;
-    let mut it = s.split_whitespace();
-    let maxed = it.next()? == "1";
-    let (x, y) = (it.next()?.parse().ok()?, it.next()?.parse().ok()?);
-    let (w, h): (u32, u32) = (it.next()?.parse().ok()?, it.next()?.parse().ok()?);
-    if w < 320 || h < 240 {
-        return None;
-    } // ignore absurd/degenerate saved sizes
-    Some((maxed, x, y, w, h))
-}
-fn save_win_state(maxed: bool, x: i32, y: i32, w: u32, h: u32) {
-    if let Some(p) = win_state_path() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, format!("{} {} {} {} {}", maxed as u8, x, y, w, h));
-    }
-}
-
 fn main() {
     // The user-facing safety net (ENGINEERING_REVIEW §3.3 #4): ANY panic — including paths no table
     // ever enumerates — writes a crash log and shows a readable dialog instead of dying silently.
@@ -1062,8 +1054,12 @@ fn main() {
     let mut recovery = recovery_host::RecoveryHost::new(Box::new(move || {
         let _ = recovery_proxy.send_event(());
     }));
-    let saved = load_win_state(); // remembered geometry from last session (None on first run)
-                                  // winit 0.30 removed WindowBuilder — WindowAttributes carries the identical with_* methods
+    let (mut window_store, saved_geometry) = varos_app::storage::window::WindowStore::load(
+        &varos_app::storage::durable::RealFs,
+        varos_app::storage::paths::AppLayout::current().map(|l| l.window_json()),
+    );
+    let mut saved = saved_geometry.map(|g| (g.maximized, g.position[0], g.position[1], g.size[0], g.size[1])); // remembered geometry from last session (None on first run)
+                                                                                                               // winit 0.30 removed WindowBuilder — WindowAttributes carries the identical with_* methods
     let mut attrs = Window::default_attributes()
         .with_title(varos_app::start::START_TITLE)
         .with_window_icon(load_icon())
@@ -1110,6 +1106,24 @@ fn main() {
                     mp.y + (ms.height as i32 - ws.height as i32) / 2,
                 ));
             }
+        }
+    }
+    if let Some(g) = saved_geometry {
+        let screens: Vec<_> = window
+            .available_monitors()
+            .map(|m| {
+                let p = m.position();
+                let s = m.size();
+                [p.x, p.y, s.width as i32, s.height as i32]
+            })
+            .collect();
+        let g = g.clamp(&screens);
+        saved = Some((g.maximized, g.position[0], g.position[1], g.size[0], g.size[1]));
+        let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(g.size[0], g.size[1]));
+        window.set_outer_position(PhysicalPosition::new(g.position[0], g.position[1]));
+        window.set_maximized(g.maximized);
+        if g.fullscreen {
+            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         }
     }
     let size = window.inner_size();
@@ -1286,7 +1300,12 @@ fn main() {
             if initial_home {
                 renderer.render_ui(&Default::default(), view, &jobs, &tdelta, &screen);
             } else {
-                let world = build_scene_in_view(ed, view, [sz0.width, sz0.height]);
+                let world = build_scene_in_view_styled(
+                    ed,
+                    view,
+                    [sz0.width, sz0.height],
+                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                );
                 renderer.render_ui(&world, view, &jobs, &tdelta, &screen);
             }
         }
@@ -1532,7 +1551,16 @@ fn main() {
                             layout_store.observe(gui.shell_layout(), Instant::now());
                             let _ = layout_store.flush(&varos_app::storage::durable::RealFs, Instant::now());
                             recovery.shutdown();
-                            save_win_state(cursors::is_maximized(hwnd), win_norm.0, win_norm.1, win_norm.2, win_norm.3);
+                            window_store.observe(
+                                varos_app::storage::window::Geometry {
+                                    position: [win_norm.0, win_norm.1],
+                                    size: [win_norm.2, win_norm.3],
+                                    maximized: window.is_maximized(),
+                                    fullscreen: window.fullscreen().is_some(),
+                                },
+                                Instant::now(),
+                            );
+                            let _ = window_store.flush(&varos_app::storage::durable::RealFs, Instant::now());
                             elwt.exit();
                             return;
                         }
@@ -1553,6 +1581,16 @@ fn main() {
                 }
             }
             if matches!(&event, Event::AboutToWait) {
+                window_store.observe(
+                    varos_app::storage::window::Geometry {
+                        position: [win_norm.0, win_norm.1],
+                        size: [win_norm.2, win_norm.3],
+                        maximized: window.is_maximized(),
+                        fullscreen: window.fullscreen().is_some(),
+                    },
+                    Instant::now(),
+                );
+                let _ = window_store.tick(&varos_app::storage::durable::RealFs, Instant::now());
                 layout_store.observe(gui.shell_layout(), Instant::now());
                 let _ = layout_store.tick(&varos_app::storage::durable::RealFs, Instant::now());
                 agent_presence::retain(&ws, Instant::now());
@@ -1606,6 +1644,7 @@ fn main() {
                     file_jobs::next_status_wake(&ws, now),
                     recovery.save_wait.next_ask(),
                     layout_store.next_wake(),
+                    window_store.next_wake(),
                 ];
                 if !renderer.health.is_running() {
                     gui.repaint_at = None;
@@ -1734,7 +1773,7 @@ fn main() {
                             return; // minimized / degenerate — don't reconfigure the surface or record garbage bounds
                         }
                         renderer.resize(size.width, size.height);
-                        if !cursors::is_maximized(hwnd) {
+                        if !window.is_maximized() && window.fullscreen().is_none() {
                             // remember the normal bounds (so un-maximize/next-open restores them)
                             if let Ok(pos) = window.outer_position() {
                                 win_norm = (pos.x, pos.y, size.width, size.height);
@@ -1759,7 +1798,7 @@ fn main() {
                         caption_clicks.reset_after_drag();
                         // Windows parks a MINIMIZED window at (−32000,−32000) with a 0×0 client area —
                         // never persist that as the "normal" bounds, or it reopens the window invisible.
-                        if !cursors::is_maximized(hwnd) {
+                        if !window.is_maximized() && window.fullscreen().is_none() {
                             let sz = window.inner_size();
                             if sz.width > 0 && sz.height > 0 {
                                 win_norm = (pos.x, pos.y, sz.width, sz.height);
@@ -2126,7 +2165,12 @@ fn main() {
                             let rendered = if cache_hit {
                                 renderer.render_ui_cached(&jobs, &tdelta, &screen)
                             } else {
-                                let world = build_scene_in_view(ed, *view, [psz.width, psz.height]);
+                                let world = build_scene_in_view_styled(
+                                    ed,
+                                    *view,
+                                    [psz.width, psz.height],
+                                    SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+                                );
                                 renderer.render_ui(&world, *view, &jobs, &tdelta, &screen)
                             };
                             last_scene_signature = rendered.then_some(signature);

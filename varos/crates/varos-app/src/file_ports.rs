@@ -124,6 +124,13 @@ impl Dialogs for RfdDialogs {
             .unwrap_or_default()
     }
 
+    fn pick_template(&mut self, folder: &Path) -> Option<PathBuf> {
+        FileDialog::new()
+            .set_title("New from Template")
+            .set_directory(folder)
+            .add_filter("Varos templates", &["vrs"])
+            .pick_file()
+    }
     fn pick_locate(&mut self) -> Option<PathBuf> {
         FileDialog::new().set_title("Locate Varos Document").add_filter("Varos documents", &["vrs", "pdf"]).pick_file()
     }

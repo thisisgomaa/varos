@@ -88,6 +88,7 @@ pub struct DocumentSession {
     /// Opening changed the content in memory (A4: broken v1 clipping masks were released). The tab
     /// is dirty from the start — dot, asterisk, Close/Quit prompt — until a Save writes the repair.
     pub repaired_on_open: bool,
+    pub template_unsaved: bool,
     pub recovered: Option<RecoveredSource>,
     pub recovery: varos_app::storage::scheduler::SessionRecovery,
     /// A manual save running on the background worker (`file_jobs`), until its result is applied.
@@ -117,6 +118,7 @@ impl DocumentSession {
             source_fingerprint: None,
             save_unconfirmed: false,
             repaired_on_open: false,
+            template_unsaved: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
             saving: None,
@@ -140,6 +142,7 @@ impl DocumentSession {
             source_fingerprint: None,
             save_unconfirmed: false,
             repaired_on_open: false,
+            template_unsaved: false,
             recovered: None,
             recovery: varos_app::storage::scheduler::SessionRecovery::new(varos_app::storage::recovery::fresh_rid()),
             saving: None,
@@ -168,7 +171,7 @@ impl DocumentSession {
     /// would be missed by the memo only until the next `rev` change, which is why
     /// every Save / Close / Quit decision uses `is_dirty_exact` instead. `mark_saved` resets the memo.
     pub fn is_dirty(&self) -> bool {
-        if self.save_unconfirmed || self.repaired_on_open || self.recovered.is_some() {
+        if self.template_unsaved || self.save_unconfirmed || self.repaired_on_open || self.recovered.is_some() {
             return true;
         }
         let ed = &self.editor;
@@ -187,6 +190,7 @@ impl DocumentSession {
     pub fn is_dirty_exact(&self) -> bool {
         let ed = &self.editor;
         self.save_unconfirmed
+            || self.template_unsaved
             || self.repaired_on_open
             || self.recovered.is_some()
             || self.content_dirty()
@@ -203,6 +207,7 @@ impl DocumentSession {
     pub fn mark_saved(&mut self, path: PathBuf, key: FileKey) {
         self.save_unconfirmed = false;
         self.repaired_on_open = false;
+        self.template_unsaved = false;
         self.recovered = None;
         self.path = Some(path);
         self.key = Some(key);
@@ -217,6 +222,7 @@ impl DocumentSession {
     pub fn mark_saved_snapshot(&mut self, path: PathBuf, key: FileKey, snapshot: Document) {
         self.save_unconfirmed = false;
         self.repaired_on_open = false;
+        self.template_unsaved = false;
         self.recovered = None;
         self.path = Some(path);
         self.key = Some(key);
@@ -439,6 +445,16 @@ impl Workspace {
     /// A new clean `Untitled-N` board that starts as `doc` (a preset board, Start v2): like
     /// [`Self::new_untitled`], then the editor takes `doc` (`replace_doc`) and the checkpoint is taken
     /// after that, so the tab opens clean and its first undo cannot remove the preset artboard.
+    pub fn add_template(&mut self, mut doc: Document) -> SessionId {
+        doc.name.clear();
+        let id = self.new_untitled_with(doc);
+        if let Some(s) = self.get_mut(id) {
+            s.template_unsaved = true;
+            s.memo.set(None);
+        }
+        id
+    }
+
     pub fn new_untitled_with(&mut self, doc: Document) -> SessionId {
         let id = self.new_untitled();
         if let Some(s) = self.get_mut(id) {
@@ -1140,5 +1156,31 @@ mod tests {
         let rev = s.editor.rev;
         s.settle();
         assert_eq!(s.editor.rev, rev);
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+    #[test]
+    fn template_opens_untitled_dirty_without_path_or_history() {
+        let mut ws = Workspace::new();
+        let mut doc = varos_core::board::new_board();
+        doc.name = "Template title".into();
+        let id = ws.add_template(doc);
+        let s = ws.get_mut(id).unwrap();
+        assert!(s.path.is_none());
+        assert!(s.key.is_none());
+        assert!(s.is_dirty_exact());
+        assert!(s.is_dirty());
+        assert!(s.editor.doc.name.is_empty());
+        assert!(s.untitled.is_some());
+        s.editor.execute(varos_core::EditCommand::Undo);
+        assert!(s.is_dirty_exact());
+        s.mark_saved(
+            PathBuf::from("/test/new.vrs"),
+            FileKey { path: PathBuf::from("/test/new.vrs"), dev_ino: None, name_id: None },
+        );
+        assert!(!s.is_dirty_exact());
     }
 }
