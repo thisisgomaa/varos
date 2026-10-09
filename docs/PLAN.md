@@ -168,3 +168,6 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
+
+| 0.4 SVG + export sheet v2 Minimal | implemented, pending review | uncommitted Lane C | Artboards/Selection checklist, folder, vector presets, report/Done/cancel; shared SVG planning, CLI and opt-in Bridge 1.2 |
+| 0.5 raster export | implemented, pending review | uncommitted Lane C | PNG/JPEG/WebP/TIFF offline codecs; scale/ppi, PNG transparency, JPEG quality and report notes |

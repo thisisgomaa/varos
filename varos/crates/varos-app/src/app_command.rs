@@ -55,6 +55,7 @@ pub enum AppCommand {
     /// DFS S6: File ▸ Export ▸ PDF…, the top-bar Export button and the burger's Export… row — show
     /// the Export PDF sheet (page-scope choice) for this tab. Host-owned: it opens the sheet only.
     ShowExport(SessionId),
+    ShowExportPdfPreset(SessionId),
     /// Slice 0.6: File ▸ Export Selection… — the same Export PDF sheet, opened on its Selection scope
     /// (one page fitted to the selected artwork). Host-owned like `ShowExport`.
     ShowExportSelection(SessionId),
@@ -62,7 +63,10 @@ pub enum AppCommand {
     /// background export job (`file_jobs`). Never touches the tab's path, dirty state or Recent.
     /// Slice 0.6: the third field is the sheet's ticket (`file_jobs::next_ticket`), carried by the
     /// job and every `ExportEvent`, so a sheet follows only the export it started.
+    #[allow(dead_code)] // retained legacy PDF command and its lifecycle tests
     ExportPdf(SessionId, varos_pdf::ExportScope, u64),
+    /// Export for Screens: one immutable card/format job per file.
+    ExportScreens(SessionId, Vec<crate::file_jobs::ScreenJob>),
     /// A background save / export finished (`file_jobs::FileDone`), applied on the UI thread.
     FileDone(Box<crate::file_jobs::FileDone>),
     /// ⌘N / `+` / File ▸ New / Start's "New board" — a fresh, clean `Untitled-N` board: a free

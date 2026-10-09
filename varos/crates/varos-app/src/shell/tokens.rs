@@ -633,6 +633,15 @@ pub const PICKER_HARMONY_STRIP_H: f32 = 32.0;
 pub const PICKER_HARMONY_ROW_H: f32 = 28.0;
 pub const PICKER_HARMONY_SWATCH: f32 = 20.0;
 
+// Export sheet v2 Minimal — owner-approved 600 pt composition.
+pub const EXPORT_SHEET_W: f32 = 600.0;
+pub const EXPORT_LEFT_W: f32 = 300.0;
+pub const EXPORT_CARD_W: f32 = 72.0;
+pub const EXPORT_CARD_H: f32 = 90.0;
+pub const EXPORT_CHECK: f32 = 14.0;
+pub const EXPORT_GRID_H: f32 = 230.0;
+pub const EXPORT_FIELD_W: f32 = 210.0;
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;

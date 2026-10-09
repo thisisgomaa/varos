@@ -311,11 +311,17 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+        if ![API, "1.1"].contains(&req.api())
+            && !(req.api() == "1.2"
+                && matches!(req, Request::ExportPdf(_) | Request::ExportSvg(_) | Request::ExportRaster(_)))
+        {
             return Reply::failure(Error::new(
                 "unsupported",
                 "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
             ));
+        }
+        if matches!(req, Request::ExportSvg(_) | Request::ExportRaster(_)) && req.api() != "1.2" {
+            return Reply::failure(Error::new("unsupported", "New export verbs require API 1.2 opt-in"));
         }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
@@ -437,7 +443,11 @@ impl Service {
                     };
                     Ok(host.snapshot(SnapshotJob { document, rev: v.rev, size: [width, height], artboard }, cancelled))
                 }
-                Request::Save(v) | Request::SaveAs(v) | Request::ExportPdf(v) => {
+                Request::Save(v)
+                | Request::SaveAs(v)
+                | Request::ExportPdf(v)
+                | Request::ExportSvg(v)
+                | Request::ExportRaster(v) => {
                     match req {
                         Request::Save(_) if v.path.is_some() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save uses CURRENT backing file only"))
@@ -445,7 +455,9 @@ impl Service {
                         Request::SaveAs(_) if v.path.is_none() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save_as requires path and no scope"))
                         }
-                        Request::ExportPdf(_) if v.path.is_none() || v.scope.is_none() => {
+                        Request::ExportPdf(_) | Request::ExportSvg(_) | Request::ExportRaster(_)
+                            if v.path.is_none() || v.scope.is_none() =>
+                        {
                             return Err(Error::new("invalid_argument", "export_pdf requires path and scope"))
                         }
                         _ => {}
@@ -650,7 +662,7 @@ impl Service {
                     hash: payload,
                     reply: reply.clone(),
                     ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
-                    export_report: matches!(req, Request::ExportPdf(v) if v.api == "1.2"),
+                    export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) if v.api == "1.2"),
                 });
                 while client.receipts.len() > 128 {
                     client.receipts.pop_front();

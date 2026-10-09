@@ -589,7 +589,7 @@ pub(crate) fn build_topbar(
             menu_sep(ui);
             match &export_cmd {
                 Some(cmd) => {
-                    if menu_row(ui, "Export\u{2026}", "") {
+                    if menu_row(ui, "Export\u{2026}", "Alt+Ctrl+E") {
                         cmds.push(cmd.clone());
                         hit = true;
                     }

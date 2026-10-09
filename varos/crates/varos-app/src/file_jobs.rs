@@ -61,6 +61,18 @@ pub struct ExportJob {
     pub cancel: CancelFlag,
 }
 
+/// One card × format, executed by the existing IO worker.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScreenJob {
+    pub job: ExportJob,
+    pub asset: varos_raster::export::Asset,
+    pub options: varos_raster::export::Options,
+    /// Sheet exports choose a fresh numbered name; Bridge refuses collisions.
+    pub collision_names: bool,
+    /// Additional pages from an all-artboards Bridge request (sheet submits one job per card).
+    pub additional: Vec<varos_raster::export::Asset>,
+}
+
 /// A shared cancel flag (one per export job). Two flags are equal only when they are the SAME flag.
 #[derive(Clone, Debug, Default)]
 pub struct CancelFlag(Arc<AtomicBool>);
@@ -127,6 +139,7 @@ pub enum FileJob {
     /// tab's save slot (path, checkpoint, dirty state and Recent stay), like the Bridge's copy.
     SaveCopy(SaveJob),
     Export(ExportJob),
+    Screen(Box<ScreenJob>),
     Bridge(Box<BridgeFileJob>),
 }
 
@@ -217,6 +230,11 @@ impl FileDone {
                 dest: j.dest.clone(),
                 result: Err("Varos couldn't write the copy.".into()),
             }),
+            FileJob::Screen(j) => FileDone::Exported(ExportDone {
+                job: j.job.clone(),
+                result: ExportResult::Failed("Export worker panicked.".into()),
+                report: Default::default(),
+            }),
             FileJob::Export(j) => FileDone::Exported(ExportDone {
                 job: j.clone(),
                 result: ExportResult::Failed("Varos couldn't write the PDF.".into()),
@@ -258,6 +276,7 @@ pub fn execute(job: FileJob, disk: &mut dyn DocStore) -> FileDone {
             let result = disk.save(&j.doc, &j.dest);
             FileDone::CopySaved(SaveDone { sid: j.sid, ticket: j.ticket, dest: j.dest, result })
         }
+        FileJob::Screen(j) => execute_screen(*j, disk, false),
         FileJob::Export(j) => {
             let (result, report) = export_to(&j, disk);
             FileDone::Exported(ExportDone { job: j, result, report })
@@ -270,6 +289,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
         let dest = match &mut j.inner {
             FileJob::Save(s) | FileJob::SaveCopy(s) => &mut s.dest,
             FileJob::Export(e) => &mut e.dest,
+            FileJob::Screen(e) => &mut e.job.dest,
             FileJob::Bridge(_) => unreachable!(),
         };
         if let Some((path, expected)) = &j.expected {
@@ -296,6 +316,7 @@ fn execute_bridge(mut j: BridgeFileJob, disk: &mut dyn DocStore) -> FileDone {
                 )?;
                 FileDone::Saved(SaveDone { sid: s.sid, ticket: s.ticket, dest: s.dest, result: Ok(result) })
             }
+            FileJob::Screen(e) => execute_screen(*e, disk, true),
             FileJob::Export(e) => {
                 let (result, report) =
                     match varos_pdf::export_pdf_bytes_with_report(&e.doc, &e.plan, &AtomicBool::new(false)) {
@@ -434,6 +455,117 @@ pub fn next_status_wake(ws: &Workspace, now: Instant) -> Option<Instant> {
         .map(|t| t + STATUS_DELAY)
         .filter(|&at| at > now)
         .min()
+}
+
+/// Encode once through the shared library; honour cancellation through the durable commit boundary.
+fn execute_screen(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool) -> FileDone {
+    let extra = std::mem::take(&mut screen.additional);
+    if extra.is_empty() {
+        return execute_screen_one(screen, disk, guarded);
+    }
+    let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let mut jobs = vec![screen.clone()];
+    for asset in extra {
+        let mut page = screen.clone();
+        page.job.dest = parent.join(varos_raster::export::file_name(&asset.name, "", page.options.format, 1));
+        page.job.doc = asset.doc.clone();
+        page.asset = asset;
+        jobs.push(page);
+    }
+    let mut names = std::collections::HashSet::new();
+    if jobs.iter().any(|j| !names.insert(j.job.dest.clone()) || disk.exists(&j.job.dest)) {
+        return FileDone::Exported(ExportDone {
+            job: screen.job,
+            result: ExportResult::Failed(
+                "One export destination already exists or duplicates another page name; nothing written.".into(),
+            ),
+            report: Default::default(),
+        });
+    }
+    let mut report = varos_core::ExportReport::default();
+    for (index, job) in jobs.into_iter().enumerate() {
+        let FileDone::Exported(done) = execute_screen_one(job, disk, guarded) else { unreachable!() };
+        report.notes.extend(done.report.notes);
+        if !matches!(done.result, ExportResult::Exported | ExportResult::ExportedUnconfirmed(_)) {
+            return FileDone::Exported(ExportDone {
+                job: screen.job,
+                result: ExportResult::Failed(format!("Export stopped after {index} files: {:?}", done.result)),
+                report,
+            });
+        }
+        if index > 0 {
+            report.notes.push(varos_core::ExportNote {
+                kind: "file".into(),
+                object_id: None,
+                message: format!("Exported {}", done.job.dest.display()),
+            });
+        }
+    }
+    FileDone::Exported(ExportDone { job: screen.job, result: ExportResult::Exported, report })
+}
+
+fn execute_screen_one(mut screen: ScreenJob, disk: &mut dyn DocStore, guarded: bool) -> FileDone {
+    let (result, report) = (|| {
+        if screen.job.cancel.flag().load(Ordering::Relaxed) {
+            return (ExportResult::Cancelled, Default::default());
+        }
+        let encoded = if screen.options.format == varos_raster::export::Format::Pdf {
+            varos_pdf::export_pdf_bytes_with_report(&screen.asset.doc, &screen.job.plan, screen.job.cancel.flag())
+                .map(|(bytes, report)| varos_raster::export::Output {
+                    name: varos_raster::export::file_name(&screen.asset.name, "", screen.options.format, 1),
+                    bytes,
+                    report,
+                })
+                .map_err(|e| e.to_string())
+        } else {
+            varos_raster::export::encode(&screen.asset, &screen.options, screen.job.cancel.flag())
+        };
+        let output = match encoded {
+            Ok(output) => output,
+            Err(reason) => {
+                return (
+                    if screen.job.cancel.flag().load(Ordering::Relaxed) {
+                        ExportResult::Cancelled
+                    } else {
+                        ExportResult::Failed(reason)
+                    },
+                    Default::default(),
+                )
+            }
+        };
+        if screen.collision_names {
+            if let Some(folder) = screen.job.dest.parent() {
+                if let Err(e) = disk.export_folder(folder) {
+                    return (ExportResult::Failed(e), output.report);
+                }
+            }
+            let parent = screen.job.dest.parent().unwrap_or(Path::new(".")).to_path_buf();
+            let mut n = 1;
+            while disk.exists(&screen.job.dest) {
+                n += 1;
+                screen.job.dest =
+                    parent.join(varos_raster::export::file_name(&screen.asset.name, "", screen.options.format, n));
+                if n > 10000 {
+                    return (ExportResult::Failed("Too many filename collisions.".into()), output.report);
+                }
+            }
+        }
+        let result = if guarded {
+            match disk.export_guarded(&screen.job.dest, &output.bytes) {
+                Ok(SaveOutcome::Durable) => ExportResult::Exported,
+                Ok(SaveOutcome::ReplacedUnconfirmed(reason)) => ExportResult::ExportedUnconfirmed(reason),
+                Err(e) => ExportResult::Failed(e.reason),
+            }
+        } else {
+            match disk.export_fresh(&screen.job.dest, &output.bytes, screen.job.cancel.flag()) {
+                Ok(crate::lifecycle::ExportWrite::Written) => ExportResult::Exported,
+                Ok(crate::lifecycle::ExportWrite::Cancelled) => ExportResult::Cancelled,
+                Err(e) => ExportResult::Failed(e),
+            }
+        };
+        (result, output.report)
+    })();
+    FileDone::Exported(ExportDone { job: screen.job, result, report })
 }
 
 #[cfg(test)]
