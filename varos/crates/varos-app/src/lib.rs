@@ -6,6 +6,9 @@
 //! one-module swap. These modules are context-agnostic (they take `&mut egui::Ui` / `&Context`).
 /// The editor's recovery card and its Review panel (owner decision 2026-10-06, direction B).
 pub mod recovery_card;
+// ---- Lane G ----
+#[cfg(target_os = "macos")]
+pub mod accessibility_macos;
 pub mod shell;
 /// Start page pure view model (DFS S2 piece E1) — no `egui`, no I/O.
 pub mod start;

@@ -18,6 +18,8 @@ fn headless_ui() -> Ui {
         recovery: Default::default(),
         file_status: String::new(),
         canvas_hint: Default::default(),
+        // ---- Lane G ----
+        release: Default::default(),
         phase9: Default::default(),
         document_sheet: None,
         export_sheet: None,

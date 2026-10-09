@@ -52,6 +52,8 @@ pub fn commands() -> Vec<Command> {
 pub fn availability(c: &Command, state: DocMenuState) -> Availability {
     let enabled = match c.handler {
         MenuCmd::File(f) => menus::file_row_enabled(f, state),
+        // ---- Lane G ----
+        MenuCmd::Release(_) => true,
         MenuCmd::Phase9(_) => true,
         MenuCmd::ToggleRail
         | MenuCmd::ToggleDock

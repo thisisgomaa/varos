@@ -5,9 +5,13 @@ impl Ui {
         &mut self,
         window: &Window,
     ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
+        // ---- Lane G ----
+        let raw = self.state.egui_input_mut();
+        raw.focused = egui_focus_seed(window.has_focus(), raw.focused);
         let input = self.state.take_egui_input(window);
-        let out = self.ctx.run_ui(input, |_| {});
-        self.state.handle_platform_output(window, out.platform_output);
+        let (out, release_cmds) = lane_g::frame(&self.ctx, input, &mut self.release, |_| {});
+        self.app_cmds.extend(release_cmds);
+        lane_g::platform(&mut self.state, window, &self.ctx, out.platform_output);
         let r = self.ctx.content_rect();
         self.board_hole = Some(r);
         self.board_px = Some(egui::Rect::from_min_max(

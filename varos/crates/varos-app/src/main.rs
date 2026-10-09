@@ -71,6 +71,8 @@ mod print_job;
 mod quicklook;
 mod recent_files;
 mod recovery_host;
+// ---- Lane G ----
+mod release_ui;
 mod shortcut_editor;
 mod shortcuts;
 mod single_instance;
@@ -923,6 +925,11 @@ fn dispatch(
             }
             host::Ran::default()
         }
+        // ---- Lane G ----
+        host::HostAction::App(AppCommand::Release(a)) => {
+            gui.release.handle(a, &gui.accessibility_context());
+            host::Ran { ran: true, ..Default::default() }
+        }
         host::HostAction::App(AppCommand::Phase9(a)) => {
             phase9_host::desktop(a, gui, ws.document_target().is_some());
             host::Ran::default()
@@ -1493,7 +1500,16 @@ fn main() {
         varos_app::storage::paths::AppLayout::current().map(|p| p.shell_layout()),
         std::env::var("VAROS_RESET_LAYOUT").as_deref() == Ok("1"),
     );
-    let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
+    let mut gui = ui::Ui::new(&window);
+    // ---- Lane G: async accessibility/update completions wake Wait without idle polling ----
+    let release_proxy = event_loop.create_proxy();
+    let immediate_repaint = pacing::ImmediateRepaint::default();
+    let repaint_signal = immediate_repaint.clone();
+    gui.accessibility_context().set_request_repaint_callback(move |info| {
+        if repaint_signal.request(info.delay) {
+            let _ = release_proxy.send_event(());
+        }
+    });
     gui.phase9.gpu_effective.clone_from(&renderer.adapter_description);
     gui.restore_shell_layout(shell_layout);
     if let Some(index) = store.thumb_index() {
@@ -2030,6 +2046,10 @@ fn main() {
                 // background result `observe` picked up only needs one more pass (`turn_now`, no frame)
                 if pending.has_new() {
                     redraw!("queue");
+                }
+                // ---- Lane G ----
+                if immediate_repaint.take() {
+                    redraw!("accessibility-update");
                 }
                 let turn_now = recovery.has_file_done();
                 // "Finishing save of “name”…" while a command waits for it; else "Saving “name”…" /
