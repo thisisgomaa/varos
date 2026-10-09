@@ -1332,6 +1332,7 @@ mod tests {
         }
         let plan = varos_pdf::plan_pdf_export(&doc, varos_pdf::ExportScope::AllVisibleArtboards).unwrap();
         crate::file_jobs::FileJob::Export(crate::file_jobs::ExportJob {
+            pdf_options: Default::default(),
             sid: SessionId(1),
             dest,
             doc: Arc::new(doc),

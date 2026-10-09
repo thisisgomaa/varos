@@ -204,6 +204,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
         ("file.savecopy", cmd_alt(KeyCode::KeyS).unwrap(), FileCmd::SaveCopy),
         ("file.revert", fkey(KeyCode::F12).unwrap(), FileCmd::Revert),
         ("file.export", cmd_alt(KeyCode::KeyE).unwrap(), FileCmd::Export),
+        ("file.print", cmd(KeyCode::KeyP).unwrap(), FileCmd::Print),
     ];
     for (id, accel, fc) in want {
         assert!(rows.iter().any(|&(i, a, f)| i == id && a == accel && f == fc), "File menu misses {id}");
@@ -260,6 +261,7 @@ const ADDED_AFTER_SPLIT: &[&str] = &[
     "file.revert",
     "file.exportselection",
     "file.export",
+    "file.print",
     "view.fitall",
     "view.makeguides",
     "view.releaseguides",
@@ -355,6 +357,7 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.export",
             "sub Export",
             "file.exportselection",
+            "file.print",
         ]
     );
 }

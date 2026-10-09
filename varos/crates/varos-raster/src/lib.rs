@@ -2,6 +2,8 @@
 
 pub mod export;
 
+mod clipboard;
+pub use clipboard::clipboard_png;
 use std::sync::Arc;
 use tiny_skia::{
     FillRule, LineCap, LineJoin, Mask, MaskType, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform,

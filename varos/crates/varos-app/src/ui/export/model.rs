@@ -243,10 +243,28 @@ pub fn screen_job(
 ) -> ScreenJob {
     let plan = varos_pdf::ExportPlan {
         scope: varos_pdf::ExportScope::ArtworkBounds,
-        pages: vec![varos_pdf::PageSpec { rect: asset.page.rect, background: asset.page.background }],
+        pages: vec![varos_pdf::PageSpec {
+            rect: asset.page.rect,
+            background: asset.page.background,
+            bleed: asset.page.artboard.and_then(|index| asset.doc.artboards.get(index)).map_or(0.0, |ab| ab.bleed),
+            bleed_edges: asset
+                .page
+                .artboard
+                .and_then(|index| asset.doc.artboards.get(index))
+                .map_or([0.0; 4], varos_core::document_setup::bleed),
+        }],
     };
     ScreenJob {
-        job: ExportJob { sid, ticket, dest, doc: Arc::clone(&asset.doc), plan, replace_confirmed: false, cancel },
+        job: ExportJob {
+            pdf_options: Default::default(),
+            sid,
+            ticket,
+            dest,
+            doc: Arc::clone(&asset.doc),
+            plan,
+            replace_confirmed: false,
+            cancel,
+        },
         asset,
         options,
         collision_names,

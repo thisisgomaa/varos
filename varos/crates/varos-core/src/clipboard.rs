@@ -1,9 +1,8 @@
 //! The in-app object clipboard — Edit ▸ Cut / Copy / Paste / Paste in Place (Astra F04).
 //!
-//! **In-app only.** This holds deep copies of `varos-core` model data inside the running `Editor`;
-//! it is NOT the operating-system clipboard. Copying between Varos windows or to/from other apps
-//! (Illustrator, Figma, a text editor) needs a decision on which flavours to publish (PDF / SVG /
-//! Varos JSON) — that is a later, separate piece. Nothing here may be read as a promise of that.
+//! This module holds detached model data inside the running `Editor`, with no UI or OS dependency.
+//! The desktop adapter publishes these detached bytes first, plus PDF/SVG/PNG flavours, on Copy/Cut.
+//! Varos paste continues to use this internal copy, preserving live structure without format loss.
 //!
 //! The clipboard is never part of undo history and never serialized: copying does not touch the
 //! document (no `rev` bump, no dirty). It survives File ▸ Open, like every desktop editor's clipboard.
@@ -20,7 +19,7 @@ use crate::model::{Anchor, Document, GroupRole, Node, NodeKind, Path};
 /// A detached copy of some artwork: paths + the tree nodes that give them structure. Ids inside are
 /// the ORIGINAL document's ids and serve only as keys between `paths` and `nodes`; every paste mints
 /// fresh ids, so pasting the same clipboard twice gives two fully independent copies.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Clipboard {
     /// Copied paths, back → front (z order at copy time).
     paths: Vec<Path>,
@@ -36,6 +35,10 @@ pub struct Clipboard {
 }
 
 impl Clipboard {
+    /// Original path ids, for public clipboard export from the source snapshot.
+    pub fn source_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.paths.iter().map(|p| p.id)
+    }
     /// Nothing copied yet (Paste is then a no-op).
     pub fn is_empty(&self) -> bool {
         self.paths.is_empty()

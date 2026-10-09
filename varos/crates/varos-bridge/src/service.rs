@@ -335,21 +335,25 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api())
-            && !(req.api() == "1.2"
-                && matches!(
-                    req,
-                    Request::ExportPdf(_)
-                        | Request::ExportSvg(_)
-                        | Request::ExportRaster(_)
-                        | Request::Select(_)
-                        | Request::Capabilities(_)
-                        | Request::Edit(_)
-                        | Request::Describe(_)
-                        | Request::SaveTemplate(_)
-                        | Request::NewFromTemplate(_)
-                        | Request::WindowMemory(_)
-                ))
+        if (crate::TOOLS_12.contains(&req.tool()) && req.api() != "1.2")
+            || ![API, "1.1"].contains(&req.api())
+                && !(req.api() == "1.2"
+                    && matches!(
+                        req,
+                        Request::Print(_)
+                            | Request::Copy(_)
+                            | Request::Cut(_)
+                            | Request::ExportPdf(_)
+                            | Request::ExportSvg(_)
+                            | Request::ExportRaster(_)
+                            | Request::Select(_)
+                            | Request::Capabilities(_)
+                            | Request::Edit(_)
+                            | Request::Describe(_)
+                            | Request::SaveTemplate(_)
+                            | Request::NewFromTemplate(_)
+                            | Request::WindowMemory(_)
+                    ))
         {
             return Reply::failure(Error::new(
                 "unsupported",
@@ -445,7 +449,7 @@ impl Service {
                         if let Some(v) = r.result.as_mut() {
                             v["api"] = json!("1.2");
                             v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
-                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"other_tools":["1.0","1.1"]});
+                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1"]});
                             if let Some(tools) = v["tools"].as_array_mut() {
                                 for name in [
                                     "export_svg",
@@ -453,6 +457,9 @@ impl Service {
                                     "save_template",
                                     "new_from_template",
                                     "window_memory",
+                                    "print",
+                                    "copy",
+                                    "cut",
                                 ] {
                                     let name = json!(name);
                                     if !tools.contains(&name) {
@@ -540,7 +547,13 @@ impl Service {
                 | Request::SaveAs(v)
                 | Request::ExportPdf(v)
                 | Request::ExportSvg(v)
-                | Request::ExportRaster(v) => {
+                | Request::ExportRaster(v)
+                | Request::Print(v)
+                | Request::Copy(v)
+                | Request::Cut(v) => {
+                    if v.options.is_some() && (v.api != "1.2" || !["export_pdf", "print"].contains(&req.tool())) {
+                        return Err(Error::new("invalid_argument", "PDF options require export_pdf API 1.2"));
+                    }
                     match req {
                         Request::Save(_) if v.path.is_some() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save uses CURRENT backing file only"))
@@ -556,6 +569,8 @@ impl Service {
                         _ => {}
                     }
                     let mut reply = host.file_effect(req.tool(), v)?;
+                    self.observe(host);
+                    self.observe_selection(host, &v.board);
                     // Reports originate in the export worker. Preserve them for 1.2;
                     // legacy wire receipts stay byte-identical, including completion.
                     if v.api != "1.2" {

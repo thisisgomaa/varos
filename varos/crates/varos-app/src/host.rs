@@ -50,6 +50,7 @@ pub fn lifecycle_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Optio
         (KeyCode::KeyW, false, false) => FileCmd::CloseTab,
         (KeyCode::KeyW, false, true) => FileCmd::CloseAll,
         (KeyCode::KeyP, false, true) => FileCmd::DocumentSetup,
+        (KeyCode::KeyP, false, false) => FileCmd::Print,
         (KeyCode::KeyQ, false, false) => FileCmd::Quit,
         _ => return None,
     })
@@ -71,6 +72,7 @@ pub fn tab_key(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<AppC
 /// nothing (`None`).
 pub fn to_app_command(cmd: FileCmd, active: Option<SessionId>) -> Option<AppCommand> {
     Some(match cmd {
+        FileCmd::Print => AppCommand::Print(active?),
         FileCmd::New => AppCommand::NewBoard,
         FileCmd::DocumentSetup => AppCommand::DocumentSetup(active?),
         FileCmd::DocumentInfo => AppCommand::DocumentInfo(active?),
@@ -551,6 +553,8 @@ pub fn run_lifecycle(
                 | AppCommand::ShowExportSelection(_)
                 | AppCommand::ExportPdf(..)
                 | AppCommand::ExportScreens(..)
+                | AppCommand::ExportPdfOptions(..)
+                | AppCommand::Print(_)
         )
     {
         return Ran::default();
@@ -616,6 +620,8 @@ fn waits_for_fields(cmd: &AppCommand) -> bool {
             | C::OpenTemplate(_)
             | C::DocumentSetup(_)
             | C::DocumentInfo(_)
+            | C::ExportPdfOptions(..)
+            | C::Print(_)
             | C::NewBoard
             | C::NewWithPreset(_)
             | C::Home
@@ -1184,8 +1190,14 @@ mod tests {
         let mut ws = Workspace::new();
         let first = ws.active_id().unwrap();
         let mut ui = FakeUi { invalid_field: true, ..FakeUi::default() };
-        for cmd in [AppCommand::NewBoard, AppCommand::Quit, AppCommand::CloseDocument(first), AppCommand::ActivateNext]
-        {
+        for cmd in [
+            AppCommand::NewBoard,
+            AppCommand::Quit,
+            AppCommand::CloseDocument(first),
+            AppCommand::ActivateNext,
+            AppCommand::Print(first),
+            AppCommand::ExportPdfOptions(first, varos_pdf::ExportScope::AllVisibleArtboards, 1, Default::default()),
+        ] {
             assert_eq!(run(&mut ws, &mut ui, cmd), Ran { held: true, ..Ran::default() }, "held, did not run");
         }
         assert_eq!(ws.active_id(), Some(first), "no tab was opened, closed or switched");
@@ -1757,6 +1769,7 @@ mod background_tests {
         };
         let done = || {
             let job = ExportJob {
+                pdf_options: Default::default(),
                 sid: a,
                 dest: PathBuf::from("/out/a.pdf"),
                 doc: doc.clone(),

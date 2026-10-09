@@ -607,6 +607,16 @@ pub(crate) fn build_topbar(
                 "Select something to export it.",
                 cmds,
             );
+            hit |= file_menu_row(
+                ui,
+                "Print…",
+                &shortcut_label("P"),
+                crate::chrome::FileCmd::Print,
+                file_state,
+                active,
+                "Printing is currently available on macOS only.",
+                cmds,
+            );
             if menu_row(ui, "Home", "") {
                 cmds.push(AppCommand::Home);
                 hit = true;
