@@ -271,7 +271,7 @@ fn rect_intersection(a: R4, b: R4) -> Option<R4> {
 /// The whole scene, uncut (no view culling). Used where the entire document must be described —
 /// tests, exports, thumbnails. Shares the cross-frame flatten cache with `build_scene_in_view`.
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
-    build_scene_impl(ed, ppu, None)
+    build_scene_impl(ed, ppu, None, None)
 }
 
 /// P11.2: the canvas scene for a `frame`-sized viewport seen through `view`. Paths whose world bbox
@@ -279,10 +279,18 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
 /// entirely; partially visible paths have their rings and stroke runs clipped to that grown rect, reusing
 /// the artboard clippers. Everything inside the frame renders exactly as `build_scene` would.
 pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame))
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None)
 }
 
-fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
+/// UI-independent canvas presentation input; exporters use the unstyled entry points.
+#[derive(Clone, Copy)]
+pub struct SceneStyle {
+    pub checkerboard: [Rgba; 2],
+}
+pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style))
+}
+fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>) -> Scene {
     let mut s = Scene { grid_step: ed.doc.snap.show_grid.then(|| ed.document_grid_step()), ..Default::default() };
     // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
     // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
@@ -302,11 +310,41 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
                 continue; // board eye OFF → the page (paper + edge + handles) vanishes with its art
             }
             let (x0, y0, x1, y1) = ab.rect();
+            if cull.as_ref().is_some_and(|c| !rects_intersect((x0, y0, x1, y1), c.grown(0.0))) {
+                continue;
+            }
             let ring = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
             // page fill: a solid colour, or — when transparent — a faint translucent white so the page
             // still reads on the dark board instead of vanishing into it.
             let paper = ab.page_color.unwrap_or(AB_GHOST);
-            open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            if let Some(style) = style.filter(|_| ed.doc.transparency_grid && paper[3] < 1.0) {
+                // Bounded canvas furniture: at most 128² tiles per page, no export involvement.
+                let step = (8.0 / ppu.max(0.001)).max(ab.w.max(ab.h) / 128.0);
+                let rows = (ab.h / step).ceil() as usize;
+                let cols = (ab.w / step).ceil() as usize;
+                for row in 0..rows {
+                    for col in 0..cols {
+                        let x = x0 + col as f32 * step;
+                        let y = y0 + row as f32 * step;
+                        let color = style.checkerboard[(row + col) % 2];
+                        open.push(Prim::Fill {
+                            rings: vec![vec![
+                                [x, y],
+                                [(x + step).min(x1), y],
+                                [(x + step).min(x1), (y + step).min(y1)],
+                                [x, (y + step).min(y1)],
+                            ]],
+                            color,
+                        });
+                    }
+                }
+                // Explicit translucent colour composites over the checkerboard.
+                if ab.page_color.is_some() && paper[3] > 0.0 {
+                    open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+                }
+            } else {
+                open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            }
             let active = ab_tool && i == ed.doc.active;
             let selected = ab_tool && ed.ab_is_selected(i);
             let edge_col = if selected {

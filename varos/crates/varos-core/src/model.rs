@@ -400,6 +400,9 @@ pub struct Artboard {
     /// but the field exists from day one so multi + bleed never force a format migration. Default 0.
     #[serde(default)]
     pub bleed: f32,
+    /// Optional asymmetric bleed, top/right/bottom/left; absent uses legacy uniform bleed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bleed_edges: Option<[f32; 4]>,
     /// page fill. `Some(rgba)` = a solid page colour (white default); `None` = TRANSPARENT (export with
     /// no background; on-canvas it shows just its edge). Changeable per artboard.
     #[serde(default = "white_page")]
@@ -434,6 +437,7 @@ impl Default for Artboard {
             h: 1080.0,
             name: "Artboard 1".into(),
             bleed: 0.0,
+            bleed_edges: None,
             page_color: white_page(),
             clip: true,
             hidden: false,
@@ -638,6 +642,8 @@ pub struct Document {
     /// Guides locked (can't be grabbed/moved) — Illustrator's Alt+Ctrl+; . Persisted with the doc.
     #[serde(default)]
     pub guides_locked: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub transparency_grid: bool,
 }
 impl Default for Document {
     fn default() -> Self {
@@ -676,6 +682,7 @@ impl Default for Document {
             guides: vec![],
             guide_paths: vec![],
             guides_locked: false,
+            transparency_grid: false,
         }
     }
 }
@@ -731,6 +738,7 @@ impl Document {
             guides,
             guide_paths,
             guides_locked: _,
+            transparency_grid,
         } = self;
         // the unit settings split in two: ppi is content, the display unit a preference
         let DocUnits { ppi, display: _ } = *units;
@@ -740,6 +748,7 @@ impl Document {
             && name == &other.name
             && description == &other.description
             && tags == &other.tags
+            && transparency_grid == &other.transparency_grid
             && ppi == other.units.ppi
             && roots == &other.roots
             && artboards == &other.artboards

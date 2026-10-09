@@ -148,6 +148,8 @@ pub struct RecoveryRow {
 /// `locate_validates_before_relocating`), which is outside this pure model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StartAction {
+    OpenTemplate(PathBuf),
+    NewTemplate,
     /// "New board" (⌘N): a free canvas with zero artboards.
     NewBoard,
     /// "…or start with an artboard": one artboard from the core preset table.
@@ -184,6 +186,7 @@ enum FocusTarget {
 /// The collections and focus are private so the cached focus order can never drift out of step
 /// with them; rebuild the model (from fresh `Recents`/recovery data) to change what it shows.
 pub struct StartModel {
+    pub templates: Vec<PathBuf>,
     rows: Vec<StartRow>,
     /// One card per row, same order (Start v2).
     cards: Vec<BoardCard>,
@@ -244,6 +247,7 @@ impl StartModel {
         }
         let tags = tag_counts(&cards);
         let mut model = Self {
+            templates: Vec::new(),
             rows,
             cards,
             tags,

@@ -30,6 +30,7 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
         K::KeyJ => Code::KeyJ,
         K::KeyN => Code::KeyN,
         K::KeyO => Code::KeyO,
+        K::KeyP => Code::KeyP,
         K::KeyQ => Code::KeyQ,
         K::KeyR => Code::KeyR,
         K::KeyS => Code::KeyS,

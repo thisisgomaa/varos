@@ -1,4 +1,5 @@
 //! Thin filesystem/argument host for the provisional core Bridge contracts.
+mod document;
 use std::{
     ffi::OsString,
     io::{Read, Write},
@@ -191,6 +192,9 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
         return Err(format!("expected a subcommand: {}", VERBS.join(", ")).into());
     }
     let verb = args.remove(0).into_string().map_err(|_| "subcommand must be UTF-8".to_owned())?;
+    if ["document-info", "document-setup", "save-template", "new-from-template"].contains(&verb.as_str()) {
+        return document::run(&verb, args).map_err(Into::into);
+    }
     if !VERBS.contains(&verb.as_str()) {
         return Err(format!("unknown subcommand {verb}; expected {}", VERBS.join(", ")).into());
     }

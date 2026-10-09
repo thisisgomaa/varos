@@ -337,6 +337,7 @@ pub fn tools_for_api(api: &str) -> Value {
         }
     }
     append_export_tools(&mut table);
+    append_document_tools(&mut table);
     table
 }
 fn rpc_result(id: Value, result: Value) -> Value {
@@ -458,9 +459,11 @@ pub fn serve<T: Transport>(
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
             "tools/list" => rpc_result(id, tools_for_api(params["api"].as_str().unwrap_or("1.0"))),
             "tools/call"
-                if params["name"]
-                    .as_str()
-                    .is_none_or(|name| !TOOLS.contains(&name) && !["export_svg", "export_raster"].contains(&name)) =>
+                if params["name"].as_str().is_none_or(|name| {
+                    !TOOLS.contains(&name)
+                        && !["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"]
+                            .contains(&name)
+                }) =>
             {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }
@@ -553,22 +556,34 @@ mod integration_tests {
     fn api_12_discovery_unifies_export_and_command_lanes() {
         for api in ["1.0", "1.1"] {
             assert_eq!(tools_for_api(api), tools());
-            assert!(!tools_for_api(api)["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|row| { matches!(row["name"].as_str(), Some("export_svg" | "export_raster")) }));
+            assert!(!tools_for_api(api)["tools"].as_array().unwrap().iter().any(|row| {
+                matches!(
+                    row["name"].as_str(),
+                    Some("export_svg" | "export_raster" | "save_template" | "new_from_template" | "window_memory")
+                )
+            }));
         }
         let table = tools_for_api("1.2");
+        assert_eq!(tools_12(), table);
         let rows = table["tools"].as_array().unwrap();
         let mut names = std::collections::HashSet::new();
         for row in rows {
             assert!(names.insert(row["name"].as_str().unwrap()), "duplicate tool: {row}");
         }
-        for name in ["export_pdf", "export_svg", "export_raster", "capabilities", "select", "edit"] {
+        for name in [
+            "export_pdf",
+            "export_svg",
+            "export_raster",
+            "capabilities",
+            "select",
+            "edit",
+            "save_template",
+            "new_from_template",
+            "window_memory",
+        ] {
             assert!(names.contains(name), "missing {name}");
         }
-        for name in ["export_svg", "export_raster"] {
+        for name in ["export_svg", "export_raster", "save_template", "new_from_template", "window_memory"] {
             let row = rows.iter().find(|row| row["name"] == name).unwrap();
             assert_eq!(row["inputSchema"]["properties"]["api"]["const"], "1.2");
         }
@@ -578,4 +593,39 @@ mod integration_tests {
             assert_eq!(operations.iter().filter(|op| op["properties"]["verb"]["const"] == verb).count(), 1, "{verb}");
         }
     }
+}
+
+/// Additive opt-in schema projection. Legacy tools/list remains byte-identical.
+fn append_document_tools(out: &mut Value) {
+    if let Some(list) = out["tools"].as_array_mut() {
+        for name in ["save_template", "new_from_template"] {
+            list.push(json!({"name":name,"description":"API 1.2 folder-convention template; path is a plain NAME.vrs. Returns accepted/ticket; poll receipt for completion. Opening creates Untitled and dirty.","inputSchema":object(json!({"api":{"const":"1.2"},"board":{"type":"string"},"request_id":{"type":"string"},"expected_rev":{"type":"integer"},"path":{"type":"string"}}),&["api","board","request_id","expected_rev","path"])}));
+        }
+        list.push(json!({"name":"window_memory","description":"API 1.2 persisted window geometry query.","inputSchema":object(json!({"api":{"const":"1.2"}}),&["api"])}));
+        for tool in list.iter_mut() {
+            if ["edit", "describe", "capabilities"].contains(&tool["name"].as_str().unwrap_or_default()) {
+                tool["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+            }
+            if tool["name"] == "edit" {
+                tool["inputSchema"]["$defs"]["document_setup"] = object(
+                    json!({"verb":{"const":"document_setup"},"field":{"enum":["units","ppi","bleed","transparency_grid"]},"value":{},"artboard":{"type":"string","pattern":"^artboard:[1-9][0-9]*$"}}),
+                    &["verb", "field", "value"],
+                );
+                if let Some(ops) = tool["inputSchema"]["$defs"]["operation"]["anyOf"].as_array_mut() {
+                    ops.push(json!({"$ref":"#/$defs/document_setup"}));
+                }
+                tool["description"]=json!("API 1.2 adds ops {verb:document_setup, field:units|ppi|bleed|transparency_grid, value, artboard?:artboard:N}; bleed is top/right/bottom/left in pt.");
+            }
+            if tool["name"] == "describe" {
+                if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
+                    fields.push(json!("document_info"));
+                }
+            }
+        }
+    }
+}
+
+/// Compatibility entry point for API 1.2 discovery.
+pub fn tools_12() -> Value {
+    tools_for_api("1.2")
 }

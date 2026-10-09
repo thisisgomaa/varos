@@ -11,6 +11,7 @@ fn page() -> usize {
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Capabilities(Capabilities),
+    WindowMemory(Capabilities),
     ListBoards(ListBoards),
     Describe(Describe),
     Select(Select),
@@ -23,6 +24,8 @@ pub enum Request {
     ExportPdf(FileEffect),
     ExportSvg(FileEffect),
     ExportRaster(FileEffect),
+    SaveTemplate(FileEffect),
+    NewFromTemplate(FileEffect),
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -212,6 +215,13 @@ pub enum Operation {
         ids: Vec<String>,
         axis: Axis,
         gap: f32,
+    },
+    /// API 1.2 only; one field per operation makes history intent explicit.
+    DocumentSetup {
+        field: String,
+        value: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artboard: Option<String>,
     },
     AddShape {
         kind: ShapeKind,
@@ -421,7 +431,8 @@ pub enum Order {
 impl Operation {
     pub fn ids(&self) -> &[String] {
         match self {
-            Self::AddShape { .. }
+            Self::DocumentSetup { .. }
+            | Self::AddShape { .. }
             | Self::AddPath { .. }
             | Self::AddArtboard { .. }
             | Self::ResizeArtboard { .. }
@@ -667,6 +678,7 @@ impl Request {
     pub fn tool(&self) -> &'static str {
         match self {
             Self::Capabilities(_) => "capabilities",
+            Self::WindowMemory(_) => "window_memory",
             Self::ListBoards(_) => "list_boards",
             Self::Describe(_) => "describe",
             Self::Select(_) => "select",
@@ -679,11 +691,13 @@ impl Request {
             Self::ExportPdf(_) => "export_pdf",
             Self::ExportSvg(_) => "export_svg",
             Self::ExportRaster(_) => "export_raster",
+            Self::SaveTemplate(_) => "save_template",
+            Self::NewFromTemplate(_) => "new_from_template",
         }
     }
     pub fn api(&self) -> &str {
         match self {
-            Self::Capabilities(v) => &v.api,
+            Self::Capabilities(v) | Self::WindowMemory(v) => &v.api,
             Self::ListBoards(v) => &v.api,
             Self::Describe(v) => &v.api,
             Self::Select(v) => &v.api,
@@ -691,16 +705,26 @@ impl Request {
             Self::History(v) => &v.api,
             Self::RequestStatus(v) => &v.api,
             Self::Snapshot(v) => &v.api,
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => &v.api,
+            Self::Save(v)
+            | Self::SaveAs(v)
+            | Self::ExportPdf(v)
+            | Self::ExportSvg(v)
+            | Self::ExportRaster(v)
+            | Self::SaveTemplate(v)
+            | Self::NewFromTemplate(v) => &v.api,
         }
     }
     pub fn board(&self) -> Option<&str> {
         match self {
             Self::Describe(v) => Some(&v.board),
             Self::Snapshot(v) => Some(&v.board),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => {
-                Some(&v.board)
-            }
+            Self::Save(v)
+            | Self::SaveAs(v)
+            | Self::ExportPdf(v)
+            | Self::ExportSvg(v)
+            | Self::ExportRaster(v)
+            | Self::SaveTemplate(v)
+            | Self::NewFromTemplate(v) => Some(&v.board),
             Self::Select(v) => Some(&v.board),
             Self::Edit(v) => Some(&v.board),
             Self::History(v) => Some(&v.board),
@@ -712,9 +736,13 @@ impl Request {
             Self::Select(v) => Some((&v.request_id, v.expected_rev)),
             Self::Edit(v) => Some((&v.request_id, v.expected_rev)),
             Self::History(v) => Some((&v.request_id, v.expected_rev)),
-            Self::Save(v) | Self::SaveAs(v) | Self::ExportPdf(v) | Self::ExportSvg(v) | Self::ExportRaster(v) => {
-                Some((&v.request_id, v.expected_rev))
-            }
+            Self::Save(v)
+            | Self::SaveAs(v)
+            | Self::ExportPdf(v)
+            | Self::ExportSvg(v)
+            | Self::ExportRaster(v)
+            | Self::SaveTemplate(v)
+            | Self::NewFromTemplate(v) => Some((&v.request_id, v.expected_rev)),
             _ => None,
         }
     }

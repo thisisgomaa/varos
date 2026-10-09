@@ -116,6 +116,11 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         nonnegative(b.w, &label, "width")?;
         nonnegative(b.h, &label, "height")?;
         nonnegative(b.bleed, &label, "bleed")?;
+        if let Some(edges) = b.bleed_edges {
+            for edge in edges {
+                nonnegative(edge, &label, "bleed edge")?;
+            }
+        }
         if let Some(c) = b.page_color {
             color(c, &label, "page color")?;
         }

@@ -195,6 +195,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
     let want = [
         ("file.new", cmd(KeyCode::KeyN).unwrap(), FileCmd::New),
         ("file.open", cmd(KeyCode::KeyO).unwrap(), FileCmd::Open),
+        ("file.document-setup", cmd_alt(KeyCode::KeyP).unwrap(), FileCmd::DocumentSetup),
         ("file.close", cmd(KeyCode::KeyW).unwrap(), FileCmd::CloseTab),
         ("file.save", cmd(KeyCode::KeyS).unwrap(), FileCmd::Save),
         ("file.saveas", cmd_shift(KeyCode::KeyS).unwrap(), FileCmd::SaveAs),
@@ -264,6 +265,10 @@ const ADDED_AFTER_SPLIT: &[&str] = &[
     "view.releaseguides",
     "view.clearguides",
     "view.grid",
+    "file.new-template",
+    "file.save-template",
+    "file.document-setup",
+    "win.document-info",
 ];
 
 fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, Vec<Entry>)> {
@@ -336,6 +341,9 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.new",
             "file.open",
             "sub Open Recent",
+            "file.new-template",
+            "file.save-template",
+            "file.document-setup",
             "---",
             "file.close",
             "file.closeall",

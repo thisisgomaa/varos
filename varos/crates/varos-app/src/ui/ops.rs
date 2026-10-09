@@ -3,6 +3,9 @@ use super::*;
 pub(crate) enum Op {
     View(varos_core::editor::view_commands::ViewAction),
     Zoom(f32),
+    DocumentSetup(EditCommand),
+    DocumentSetupLive(EditCommand, bool),
+    DocumentSetupFinish,
     Tool(ToolKind),
     NewLayer(bool),
     DistributeMode(AlignMode),
@@ -297,6 +300,14 @@ pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
             Op::BoardTags(tags) => {
                 let _ = ed.try_set_board_tags(tags);
             }
+            Op::DocumentSetupLive(command, begin) => {
+                if begin {
+                    ed.begin();
+                }
+                ed.execute_ui(command);
+            }
+            Op::DocumentSetupFinish => ed.finish_document_setup(),
+            Op::DocumentSetup(command) => ed.execute_ui(command),
             Op::Units(unit) => ed.execute_ui(EditCommand::SetUnits(unit)),
             Op::FitArtboard(_) => {} // UI-only, intercepted by run
             Op::ToggleGuidesLock => ed.execute_ui(EditCommand::ToggleGuidesLocked),

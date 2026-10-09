@@ -2094,9 +2094,9 @@ mod dead_control_tests {
         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, crate::chrome::TOPBAR.height))
     }
     /// The FULL window `RawInput.screen_rect`: much taller than the bar, so `menu_below`'s
-    /// `Area::constrain(true)` has room to place a dropdown BELOW the bar (see `tab_strip_tests`).
+    /// `Area::constrain(true)` has room for the combined command and document rows BELOW the bar.
     fn screen_rect() -> egui::Rect {
-        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 900.0))
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1400.0, 1200.0))
     }
     fn press(pos: Pos2, button: PointerButton) -> RawInput {
         RawInput {
