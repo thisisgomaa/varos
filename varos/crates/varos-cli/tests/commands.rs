@@ -721,3 +721,63 @@ fn diff_keeps_sub_decimal_geometry_changes_despite_describe_rounding() {
     );
     assert_eq!(varos_core::bridge::diff(&doc, &changed)["changed"][0]["id"], "path:10");
 }
+
+#[test]
+fn planar_and_cutting_commands_through_headless_cli_apply() {
+    use varos_core::{model::ShapeKind, planar::PathfinderOp};
+    let dir = Scratch::new();
+    let commands = [
+        EditCommand::Pathfinder(PathfinderOp::Divide),
+        EditCommand::Pathfinder(PathfinderOp::Trim),
+        EditCommand::Pathfinder(PathfinderOp::Merge),
+        EditCommand::Pathfinder(PathfinderOp::Crop),
+        EditCommand::Pathfinder(PathfinderOp::Outline),
+        EditCommand::Pathfinder(PathfinderOp::MinusBack),
+        EditCommand::ShapeBuilder { points: vec![[5., 10.], [25., 10.]], delete: false },
+        EditCommand::Scissors { path: 1, segment: 0, t: 0.5 },
+        EditCommand::Knife { points: vec![[-5., 10.], [35., 10.]] },
+        EditCommand::Eraser { points: vec![[10., -5.], [10., 25.]], radius: 2. },
+        EditCommand::DivideObjectsBelow,
+    ];
+    for (i, mut command) in commands.into_iter().enumerate() {
+        let mut ed = Editor::new();
+        let mut ids = Vec::new();
+        for x in [0., 10.] {
+            ids.push(
+                ed.try_execute_created(EditCommand::AddShape {
+                    kind: ShapeKind::Rect,
+                    bounds: [x, 0., 20., 20.],
+                    parent: None,
+                    fill: Some([1., 0., 0., 1.]),
+                    stroke: None,
+                    stroke_width: 0.,
+                    opacity: 1.,
+                    name: None,
+                })
+                .unwrap(),
+            );
+        }
+        if let EditCommand::Scissors { path, .. } = &mut command {
+            *path = ids[0];
+        }
+        let input = dir.path(&format!("in{i}.vrs"));
+        let out = dir.path(&format!("out{i}.vrs"));
+        let batch = dir.path(&format!("batch{i}.json"));
+        varos_pdf::save_vrs(&ed.doc, &input).unwrap();
+        std::fs::write(&batch, json!({"api":"0.1","commands":[EditCommand::SelectPaths(ids),command]}).to_string())
+            .unwrap();
+        cli(
+            &[
+                "apply".as_ref(),
+                input.as_os_str(),
+                "--batch".as_ref(),
+                batch.as_os_str(),
+                "--out".as_ref(),
+                out.as_os_str(),
+            ],
+            true,
+        );
+        let result = varos_pdf::load_vrs(&out).unwrap();
+        assert!(!result.content_eq(&ed.doc), "command {i}");
+    }
+}

@@ -50,6 +50,12 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             | AddShape { .. }
             | GroupSelection
             | Boolean(_)
+            | Pathfinder(_)
+            | ShapeBuilder { .. }
+            | Scissors { .. }
+            | Knife { .. }
+            | Eraser { .. }
+            | DivideObjectsBelow
             | Paste { .. }
             | DuplicateMoveLayer { .. }
             | DuplicateArtboard(_)
@@ -107,6 +113,41 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        Pathfinder(_) => {
+            selection()?;
+            ed.pathfinder_enabled().map_err(str::to_owned)
+        }
+        ShapeBuilder { points, .. } | Knife { points } | Eraser { points, .. } => {
+            selection()?;
+            if points.is_empty() || points.len() > 1000 {
+                return Err("gesture needs 1..1000 points".into());
+            }
+            for p in points {
+                for v in p {
+                    finite(*v)?;
+                    finite(*v + *v)?;
+                }
+            }
+            if let Eraser { radius, .. } = command {
+                dimension(*radius)?;
+            }
+            Ok(())
+        }
+        Scissors { path: pid, segment, t } => {
+            path(*pid)?;
+            finite(*t)?;
+            let p = ed.doc.pidx(*pid).map(|i| &ed.doc.paths[i]).ok_or("unknown path")?;
+            if !p.holes.is_empty() || ed.doc.is_mask_source(*pid) {
+                return Err("scissors does not support compound contours or mask sources".into());
+            }
+            let count = if p.closed { p.anchors.len() } else { p.anchors.len().saturating_sub(1) };
+            if *segment >= count || !(0.0..=1.0).contains(t) {
+                Err("invalid scissors segment or parameter".into())
+            } else {
+                Ok(())
+            }
+        }
+        DivideObjectsBelow => selection(),
         AddPath { anchors, parent, fill, stroke, stroke_width, opacity, name, .. } => {
             if !(2..=1000).contains(&anchors.len()) {
                 return Err("path needs 2..1000 anchors".into());

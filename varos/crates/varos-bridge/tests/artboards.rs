@@ -596,3 +596,95 @@ fn duplicate_group_and_clip_allocates_fresh_tree_ids() {
         assert_eq!(h.editor.doc.paths.iter().filter(|p| !old_paths.contains(&p.id)).count(), 2);
     }
 }
+
+#[test]
+fn construction_api_12_all_verbs_and_legacy_rejection() {
+    let operations = [
+        json!({"verb":"pathfinder","operation":"divide"}),
+        json!({"verb":"pathfinder","operation":"trim"}),
+        json!({"verb":"pathfinder","operation":"merge"}),
+        json!({"verb":"pathfinder","operation":"crop"}),
+        json!({"verb":"pathfinder","operation":"outline"}),
+        json!({"verb":"pathfinder","operation":"minus_back"}),
+        json!({"verb":"shape_builder","points":[[15,20],[45,20]],"delete":false}),
+        json!({"verb":"shape_builder","points":[[15,20]],"delete":true}),
+        json!({"verb":"scissors","segment":0,"t":0.5}),
+        json!({"verb":"knife","points":[[0,20],[60,20]]}),
+        json!({"verb":"eraser","points":[[20,0],[20,40]],"radius":2}),
+        json!({"verb":"divide_objects_below"}),
+    ];
+    for operation in operations {
+        for api in ["1.0", "1.1", "1.2"] {
+            let mut h = FakeHost::two_pages();
+            let second = h
+                .editor
+                .try_execute_created(varos_core::EditCommand::AddShape {
+                    kind: varos_core::model::ShapeKind::Rect,
+                    bounds: [20., 10., 20., 20.],
+                    parent: None,
+                    fill: Some([0., 1., 0., 1.]),
+                    stroke: None,
+                    stroke_width: 0.,
+                    opacity: 1.,
+                    name: None,
+                })
+                .unwrap();
+            let before = h.editor.doc.clone();
+            let rev = h.editor.rev;
+            let mut op = operation.clone();
+            op["ids"] = if op["verb"] == "scissors" {
+                json!(["path:10"])
+            } else if op["verb"] == "divide_objects_below" {
+                json!([format!("path:{second}")])
+            } else {
+                json!(["path:10", format!("path:{second}")])
+            };
+            let mut s = Service::new("test-epoch".into());
+            let decoded = varos_bridge::mcp::decode_tool(
+                "edit",
+                json!({"api":api,"board":"b1","request_id":"r1","expected_rev":rev,"ops":[op]}),
+            );
+            if api != "1.2" {
+                assert!(decoded.is_err());
+                assert!(h.editor.doc.content_eq(&before));
+                continue;
+            }
+            let reply = s.handle(&mut h, &ctx(false), decoded.unwrap(), &AtomicBool::new(false));
+            assert!(reply.ok, "{operation}, {api}: {reply:?}");
+            if api == "1.2" {
+                assert_eq!(h.editor.rev, rev + 1);
+                h.editor.execute(varos_core::EditCommand::Undo);
+                assert!(h.editor.doc.content_eq(&before));
+            } else {
+                assert!(h.editor.doc.content_eq(&before));
+            }
+        }
+    }
+}
+#[test]
+fn api_11_repeat_cannot_smuggle_construction_and_12_capabilities_are_opt_in() {
+    let mut h = FakeHost::two_pages();
+    let mut s = Service::new("test-epoch".into());
+    let rev = h.editor.rev;
+    assert!(varos_bridge::mcp::decode_tool("edit",json!({"api":"1.1","board":"b1","request_id":"r1","expected_rev":rev,"ops":[{"verb":"repeat","count":1,"dx":0,"dy":0,"ops":[{"verb":"knife","ids":["path:10"],"points":[[0,20],[50,20]]}]}]})).is_err());
+    let reply = call(&mut s, &mut h, "capabilities", json!({"api":"1.2"}));
+    assert!(reply.ok);
+    assert!(reply.result.unwrap()["edit_verbs"].as_array().unwrap().contains(&json!("pathfinder")));
+    let reply = call(&mut s, &mut h, "capabilities", json!({"api":"1.1"}));
+    assert!(!reply.result.unwrap()["edit_verbs"].as_array().unwrap().contains(&json!("pathfinder")));
+}
+
+#[test]
+fn construction_schema_is_explicit_opt_in_and_keeps_the_size_ratchet() {
+    let old = varos_bridge::mcp::tools();
+    assert_eq!(old, varos_bridge::mcp::tools_for_api("1.0"));
+    assert_eq!(old, varos_bridge::mcp::tools_for_api("1.1"));
+    let list = varos_bridge::mcp::tools_for_api("1.2");
+    let bytes = serde_json::to_vec(&list).unwrap().len();
+    assert!(bytes <= 24_000, "1.2 tools/list grew to {bytes} bytes");
+    let edit = list["tools"].as_array().unwrap().iter().find(|t| t["name"] == "edit").unwrap();
+    assert!(edit["inputSchema"]["$defs"]["pathfinder"]["properties"]["operation"]["enum"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("divide")));
+}

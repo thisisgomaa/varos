@@ -326,7 +326,7 @@ mod polish_pass_tests {
         const PROPERTIES_BEFORE: f32 = 368.0;
         const PROPERTIES_AFTER: f32 = 357.0;
         const PATHFINDER_BEFORE: f32 = 69.0;
-        const PATHFINDER_AFTER: f32 = 47.0;
+        const PATHFINDER_AFTER: f32 = 105.0; // 4E provisional kit action rows
         assert_eq!((properties_before, properties_after), (PROPERTIES_BEFORE, PROPERTIES_AFTER));
         assert_eq!((pathfinder_before, pathfinder_after), (PATHFINDER_BEFORE, PATHFINDER_AFTER));
     }

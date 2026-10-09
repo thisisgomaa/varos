@@ -169,6 +169,19 @@ pub enum EditCommand {
     Distribute(DistAxis),
     #[serde(rename = "Boolean")]
     Boolean(BoolOp),
+    #[serde(rename = "Pathfinder")]
+    Pathfinder(crate::planar::PathfinderOp),
+    #[serde(rename = "ShapeBuilder")]
+    ShapeBuilder { points: Vec<Pt>, delete: bool },
+    #[serde(rename = "Scissors")]
+    Scissors { path: u32, segment: usize, t: f32 },
+    #[serde(rename = "Knife")]
+    Knife { points: Vec<Pt> },
+    #[serde(rename = "Eraser")]
+    Eraser { points: Vec<Pt>, radius: f32 },
+    #[serde(rename = "DivideObjectsBelow")]
+    DivideObjectsBelow,
+
     #[serde(rename = "Arrange")]
     Arrange(ZOrder),
     #[serde(rename = "TransformAgain")]
@@ -332,6 +345,12 @@ impl EditCommand {
             Self::Align { mode, target } => ed.align(mode, target),
             Self::Distribute(axis) => ed.distribute(axis),
             Self::Boolean(operation) => ed.pathfinder(operation),
+            Self::Pathfinder(operation) => ed.planar_pathfinder(operation),
+            Self::ShapeBuilder { points, delete } => ed.shape_builder(&points, delete),
+            Self::Scissors { path, segment, t } => ed.scissors(path, segment, t),
+            Self::Knife { points } => ed.cut_fills(&points, None),
+            Self::Eraser { points, radius } => ed.cut_fills(&points, Some(radius)),
+            Self::DivideObjectsBelow => ed.divide_objects_below(),
             Self::Arrange(order) => ed.arrange(order),
             Self::TransformAgain => ed.transform_again(),
             Self::DeleteSelected => ed.delete_selected(),

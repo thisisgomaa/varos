@@ -435,6 +435,24 @@ pub(crate) fn apply_design_op(
             };
             ed.try_execute(EditCommand::SelectPaths(paths.clone())).map_err(fail)?;
             match op {
+                Operation::Pathfinder { operation, .. } => {
+                    let command = construction_command(operation)?;
+                    execute(ed, command)?;
+                }
+                Operation::ShapeBuilder { points, delete, .. } => {
+                    execute(ed, EditCommand::ShapeBuilder { points: points.clone(), delete: *delete })?
+                }
+                Operation::Scissors { segment, t, .. } => {
+                    if paths.len() != 1 {
+                        return Err(fail("scissors requires one path"));
+                    }
+                    execute(ed, EditCommand::Scissors { path: paths[0], segment: *segment, t: *t })?;
+                }
+                Operation::Knife { points, .. } => execute(ed, EditCommand::Knife { points: points.clone() })?,
+                Operation::Eraser { points, radius, .. } => {
+                    execute(ed, EditCommand::Eraser { points: points.clone(), radius: *radius })?
+                }
+                Operation::DivideObjectsBelow { .. } => execute(ed, EditCommand::DivideObjectsBelow)?,
                 Operation::Resize { bounds, .. } => {
                     let b = if units.len() == 1 && !ed.doc.node_xform(units[0]).is_identity() {
                         ed.obj_local_bbox()
@@ -637,6 +655,23 @@ fn rounded_rect([x, y, w, h]: [f32; 4], r: f32) -> Result<Vec<varos_core::model:
         }
     }
     Ok(anchors)
+}
+
+fn construction_command(operation: &str) -> Result<EditCommand, Error> {
+    use varos_core::{boolean::BoolOp, planar::PathfinderOp};
+    Ok(match operation {
+        "unite" => EditCommand::Boolean(BoolOp::Unite),
+        "minus_front" => EditCommand::Boolean(BoolOp::MinusFront),
+        "intersect" => EditCommand::Boolean(BoolOp::Intersect),
+        "exclude" => EditCommand::Boolean(BoolOp::Exclude),
+        "divide" => EditCommand::Pathfinder(PathfinderOp::Divide),
+        "trim" => EditCommand::Pathfinder(PathfinderOp::Trim),
+        "merge" => EditCommand::Pathfinder(PathfinderOp::Merge),
+        "crop" => EditCommand::Pathfinder(PathfinderOp::Crop),
+        "outline" => EditCommand::Pathfinder(PathfinderOp::Outline),
+        "minus_back" => EditCommand::Pathfinder(PathfinderOp::MinusBack),
+        _ => return Err(Error::new("invalid_argument", "unknown pathfinder operation")),
+    })
 }
 
 #[cfg(test)]

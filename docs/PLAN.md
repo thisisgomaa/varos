@@ -168,3 +168,5 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 | 0.3 boolean oracles | merged | `5d422d5` | 200 cases/op, all hard, 0 failures |
 | 0.6 file-menu basics | merged + installed, owner hand test pending | merge | Save a Copy ⌥⌘S, Revert F12, Close All ⌥⌘W, Export Selection, cancellable export + Show in Finder, tickets, menus/ split |
 | Export sheet v2 design | owner pick D·Advanced (Figma 14:82) | `d4aaf4e` | contract EXPORT_SHEET_V2.md; build = 0.4/0.5/1.8 |
+| 4E planar / full Pathfinder / Shape Builder | implemented (provisional UI, owner design review pending) | uncommitted Lane K | i_overlay faces, command/Bridge 1.2/CLI; see reference/PLANAR_CUTTING_4E_4D.md |
+| 4D cutting tools | implemented (provisional UI, owner design review pending) | uncommitted Lane K | Scissors C, Knife, Eraser Shift+E, Divide Objects Below; native hand test pending |

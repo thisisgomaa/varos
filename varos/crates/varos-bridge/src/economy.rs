@@ -94,7 +94,7 @@ struct Repeat {
 
 /// First normalize and bound all work, before accessing the allocator/staging editor.
 pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
-    let economy = edit.api == "1.1";
+    let economy = matches!(edit.api.as_str(), "1.1" | "1.2");
     if !economy && (edit.defaults.is_some() || edit.receipt.is_some()) {
         return Err(invalid("defaults and receipt require API 1.1"));
     }
@@ -148,7 +148,7 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
     let mut out = Vec::new();
     let mut targets = 0;
     for (index, op) in edit.ops.iter().enumerate() {
-        walk(op, economy, &defaults, 0, [0.0, 0.0], "", index, &[], &mut out, &mut targets)?;
+        walk(op, economy, edit.api == "1.2", &defaults, 0, [0.0, 0.0], "", index, &[], &mut out, &mut targets)?;
     }
     if !economy && targets > MAX_TARGETS {
         return Err(Error::new("limit_exceeded", "edit exceeds 1000 explicit targets"));
@@ -159,6 +159,7 @@ pub(crate) fn expand(edit: &Edit) -> Result<Vec<Leaf>, Error> {
 fn walk(
     v: &Value,
     economy: bool,
+    construction: bool,
     defaults: &Map<String, Value>,
     depth: usize,
     delta: [f32; 2],
@@ -193,6 +194,7 @@ fn walk(
                     walk(
                         child,
                         economy,
+                        construction,
                         defaults,
                         depth + 1,
                         offset,
@@ -225,7 +227,7 @@ fn walk(
             }
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
-        if !crate::EDIT_VERBS.contains(&verb) {
+        if !crate::EDIT_VERBS.contains(&verb) && !(construction && crate::CONSTRUCTION_VERBS.contains(&verb)) {
             return Err(Error::new("unsupported", "edit verb is not enabled in this slice"));
         }
         let mut op: Operation = serde_json::from_value(normalized).map_err(|e| invalid(e.to_string()))?;

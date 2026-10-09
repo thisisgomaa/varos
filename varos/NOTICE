@@ -4,3 +4,10 @@ varos-core/tests/boolean_props.rs adapts boolean area and membership identities 
 VectorCraft crates/pathops/tests/prop_pathops.rs @ a469568.
 Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under MIT OR Apache-2.0; license texts are provided in LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+
+varos-core/src/planar.rs adapts the face ownership / Pathfinder algorithm model from
+VectorCraft crates/pathops/src/planar.rs and pathfinder.rs @ a469568 (no linesweeper code).
+varos-core/src/construction.rs adapts face merge/delete and cutting behaviour from
+VectorCraft crates/tools/src/builder.rs, cut.rs and draw2/anchor.rs @ a469568.
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under MIT OR Apache-2.0; see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.

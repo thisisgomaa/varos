@@ -15,6 +15,104 @@ pub fn tool_result(reply: &Reply) -> Value {
     }
     json!({"content":content,"structuredContent":projection,"isError":!reply.ok})
 }
+/// Explicit MCP tools/list API 1.2 opt-in; the default 1.0/1.1 schema remains byte-identical.
+pub fn tools_for_api(api: &str) -> Value {
+    let mut list = tools();
+    if api != "1.2" {
+        return list;
+    }
+    if let Some(entries) = list["tools"].as_array_mut() {
+        for tool in entries {
+            let name = tool["name"].as_str().unwrap_or("").to_owned();
+            if name == "edit" {
+                let edit = &mut tool["inputSchema"];
+                let edit_ids = json!({"$ref":"#/$defs/move/properties/ids"});
+                let point = json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}});
+                edit["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+                edit["$defs"]["construction_points"] =
+                    json!({"type":"array","minItems":1,"maxItems":1000,"items":point});
+                let gesture = json!({"$ref":"#/$defs/construction_points"});
+                let extra = [
+                    (
+                        "pathfinder",
+                        object(
+                            json!({"verb":{"const":"pathfinder"},"ids":edit_ids,"operation":{"enum":["unite","minus_front","intersect","exclude","divide","trim","merge","crop","outline","minus_back"]}}),
+                            &["verb", "ids", "operation"],
+                        ),
+                    ),
+                    (
+                        "shape_builder",
+                        object(
+                            json!({"verb":{"const":"shape_builder"},"ids":edit_ids,"points":gesture,"delete":{"type":"boolean"}}),
+                            &["verb", "ids", "points", "delete"],
+                        ),
+                    ),
+                    (
+                        "scissors",
+                        object(
+                            json!({"verb":{"const":"scissors"},"ids":edit_ids,"segment":{"type":"integer","minimum":0},"t":{"type":"number","minimum":0,"maximum":1}}),
+                            &["verb", "ids", "segment", "t"],
+                        ),
+                    ),
+                    (
+                        "knife",
+                        object(
+                            json!({"verb":{"const":"knife"},"ids":edit_ids,"points":gesture}),
+                            &["verb", "ids", "points"],
+                        ),
+                    ),
+                    (
+                        "eraser",
+                        object(
+                            json!({"verb":{"const":"eraser"},"ids":edit_ids,"points":gesture,"radius":{"type":"number","exclusiveMinimum":0}}),
+                            &["verb", "ids", "points", "radius"],
+                        ),
+                    ),
+                    (
+                        "divide_objects_below",
+                        object(json!({"verb":{"const":"divide_objects_below"},"ids":edit_ids}), &["verb", "ids"]),
+                    ),
+                ];
+                for (verb, schema) in extra {
+                    edit["$defs"][verb] = schema;
+                    if let Some(ops) = edit["$defs"]["operation"]["anyOf"].as_array_mut() {
+                        ops.push(json!({"$ref":format!("#/$defs/{verb}")}));
+                    }
+                }
+            }
+            if name == "capabilities" {
+                tool["inputSchema"]["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+            }
+        }
+    }
+    fn trim_descriptions(value: &mut Value) {
+        match value {
+            Value::Object(m) => {
+                if m.get("description").is_some_and(Value::is_string) {
+                    m.remove("description");
+                }
+                for v in m.values_mut() {
+                    trim_descriptions(v);
+                }
+            }
+            Value::Array(a) => {
+                for v in a {
+                    trim_descriptions(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(entries) = list["tools"].as_array_mut() {
+        for tool in entries {
+            if tool["name"] == "edit" {
+                trim_descriptions(&mut tool["inputSchema"]);
+            }
+        }
+    }
+    list
+}
+
 pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
     if name == "edit" {
         let edit: Edit =
@@ -343,7 +441,7 @@ pub fn serve<T: Transport>(
             }
             "ping" => rpc_result(id, json!({})),
             _ if !ready => rpc_error(id, -32002, "initialize and notifications/initialized required"),
-            "tools/list" => rpc_result(id, tools()),
+            "tools/list" => rpc_result(id, tools_for_api(params.get("api").and_then(Value::as_str).unwrap_or("1.0"))),
             "tools/call" if params["name"].as_str().is_none_or(|name| !TOOLS.contains(&name)) => {
                 rpc_error(id, -32602, "unknown or missing tool name")
             }

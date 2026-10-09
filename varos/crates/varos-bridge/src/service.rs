@@ -311,7 +311,10 @@ impl Service {
         reply
     }
     fn handle_inner(&mut self, host: &mut dyn Host, ctx: &Context, req: &Request, cancelled: &AtomicBool) -> Reply {
-        if ![API, "1.1"].contains(&req.api()) && !(req.api() == "1.2" && matches!(req, Request::ExportPdf(_))) {
+        if ![API, "1.1"].contains(&req.api())
+            && !(req.api() == "1.2"
+                && matches!(req, Request::ExportPdf(_) | Request::Edit(_) | Request::Capabilities(_)))
+        {
             return Reply::failure(Error::new(
                 "unsupported",
                 "Bridge API must be 1.0 or 1.1 (export_pdf also supports 1.2)",
@@ -392,6 +395,31 @@ impl Service {
                         v["api_by_tool"] = json!({"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
                         v["edit_verbs"].as_array_mut().unwrap().push(json!("repeat"));
                         v["economy_hint"] = json!("Use API 1.1 defaults and omit decorative names; compact rect/ellipse/path plus repeat for identical rows; request IDs receipts, a budgeted summary or since-revision diff, and an economy snapshot only when needed; inspect specific IDs/fields for detail and ask for larger images explicitly.");
+                    }
+                    if req.api() == "1.2" {
+                        if let Some(v) = r.result.as_mut() {
+                            v["api"] = json!("1.2");
+                            v["supported_api"] = json!(["1.0", "1.1", "1.2"]);
+                            v["api_by_tool"] = json!({"edit":["1.0","1.1","1.2"],"capabilities":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"other_tools":["1.0","1.1"]});
+                            if let Some(verbs) = v["edit_verbs"].as_array_mut() {
+                                verbs.extend(
+                                    [
+                                        "repeat",
+                                        "pathfinder",
+                                        "shape_builder",
+                                        "scissors",
+                                        "knife",
+                                        "eraser",
+                                        "divide_objects_below",
+                                    ]
+                                    .into_iter()
+                                    .map(|v| json!(v)),
+                                );
+                            }
+                            if let Some(unsupported) = v["unsupported"].as_array_mut() {
+                                unsupported.retain(|v| v != "pathfinder");
+                            }
+                        }
                     }
                     Ok(r)
                 }
@@ -478,7 +506,7 @@ impl Service {
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
                     let a = host.access(&v.board)?;
-                    if v.api == "1.1" {
+                    if matches!(v.api.as_str(), "1.1" | "1.2") {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
                     }
                     // Review P2 (slice 3): a deprecated `aN@rev` alias names a page by its index AT `rev`.
