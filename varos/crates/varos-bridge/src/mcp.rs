@@ -645,15 +645,25 @@ pub fn tools_for(api: &str) -> Value {
         }
         if let Some(edit) = tools.iter_mut().find(|t| t["name"] == "edit") {
             let schema = &mut edit["inputSchema"];
-            let defs = schema["$defs"].as_object_mut().unwrap();
+            let Some(defs) = schema["$defs"].as_object_mut() else {
+                // Compaction is optional; retain the original projection if definitions are absent.
+                return out;
+            };
             // oneOf already rejects the case where both discriminator keys are present.
             defs["op_key"]["oneOf"] = json!([{"required":["verb"]},{"required":["op"]}]);
             defs["op_key"]["type"] = json!("object");
             for definition in defs.values_mut() {
                 if definition["allOf"][0] == json!({"$ref":"#/$defs/op_key"}) {
-                    let m = definition.as_object_mut().unwrap();
+                    let Some(m) = definition.as_object_mut() else {
+                        // Leave non-object definitions unchanged rather than compacting them.
+                        continue;
+                    };
+                    let Some(Value::Array(mut constraints)) = m.get("allOf").cloned() else {
+                        // Preserve the original definition if its constraints cannot be compacted.
+                        continue;
+                    };
                     m.remove("type");
-                    let mut constraints = m.remove("allOf").unwrap().as_array().unwrap().clone();
+                    m.remove("allOf");
                     m.insert("$ref".into(), json!("#/$defs/op_key"));
                     constraints.remove(0);
                     if !constraints.is_empty() {
