@@ -44,6 +44,19 @@ pub enum ToolKind {
     Ellipse,
     Triangle,
     Polygon,
+    // ---- Lane D: drawing tools ----
+    RoundedRect,
+    Star,
+    Line,
+    Arc,
+    Spiral,
+    RectGrid,
+    PolarGrid,
+    Pencil,
+    Smooth,
+    PathEraser,
+    Join,
+    Curvature,
     Convert,
     Lasso,
     AddAnchor,
@@ -92,6 +105,8 @@ impl ToolKind {
 #[derive(Clone)]
 pub enum Drag {
     None,
+    // ---- Lane D: host-visible in-flight drawing gesture ----
+    Drawing,
     Construction { points: Vec<Pt>, delete: bool },
     PenNew { aid: u32, down: Pt, broken: bool },
     PenClose { aid: u32, down: Pt, broken: bool },
@@ -423,6 +438,7 @@ struct SelectionState {
 #[derive(Clone)]
 pub struct Editor {
     pub select_transform: crate::select_transform::State,
+    pub drawing: crate::drawing::State,
     pub last_error: Option<crate::guard::EngineError>,
     pub doc: Document,
     pub tool: ToolKind,
@@ -505,6 +521,7 @@ impl Editor {
     pub fn new() -> Self {
         Editor {
             select_transform: Default::default(),
+            drawing: Default::default(),
             last_error: None,
             doc: Document::default(),
             tool: ToolKind::Object,
@@ -3520,6 +3537,7 @@ impl Editor {
         staged.selected = self.selected.clone();
         staged.group_sel = self.group_sel.clone();
         staged.tool = self.tool;
+        staged.drawing.options = self.drawing.options;
         staged.select_transform.isolation = self.select_transform.isolation;
         staged.select_transform.wand = self.select_transform.wand;
         staged.select_transform.pick = self.select_transform.pick;
@@ -3556,6 +3574,9 @@ impl Editor {
             self.doc = staged.doc;
             self.dirty = true;
             self.commit();
+        }
+        if staged.drawing.options_requested {
+            self.drawing.options = staged.drawing.options;
         }
         self.select_transform.isolation = staged.select_transform.isolation;
         self.select_transform.located = staged.select_transform.located;
@@ -3744,6 +3765,7 @@ impl Editor {
     pub fn replace_doc(&mut self, doc: Document) {
         self.stroke_error = None;
         self.select_transform = Default::default();
+        self.drawing = Default::default();
         self.reselect.clear();
         self.reselect_state = None;
         self.key_object = None;
@@ -4107,6 +4129,10 @@ impl Editor {
         // a locked/hidden object is inert on canvas: drop it from the selection so grabbing the transform
         // frame can never move it (the hit-test already refuses to newly pick it). This is the REAL lock.
         self.prune_inert_selection();
+        // ---- Lane D: gesture routing ----
+        if crate::drawing::down(self, pos) {
+            return;
+        }
         if crate::tools::select_transform::down(self, pos) {
             return;
         }
@@ -4141,6 +4167,9 @@ impl Editor {
         }
     }
     pub fn pointer_up(&mut self) {
+        if crate::drawing::up(self) {
+            return;
+        }
         if crate::tools::select_transform::up(self) {
             return;
         }
@@ -4229,6 +4258,10 @@ impl Editor {
         }
     }
     pub fn pointer_move(&mut self, pos: Pt) {
+        if crate::drawing::movement(self, pos) {
+            self.cursor = pos;
+            return;
+        }
         if crate::tools::select_transform::movement(self, pos) {
             self.cursor = pos;
             return;
@@ -4709,12 +4742,15 @@ impl Editor {
                 self.drag = Drag::ConvPull { aid, down };
             }
             Drag::ViewZoom { start, .. } => self.drag = Drag::ViewZoom { start, current: pos },
-            Drag::None => {}
+            Drag::Drawing | Drag::None => {}
         }
     }
 
     // ---------- tool/keys ----------
     pub fn set_tool(&mut self, t: ToolKind) {
+        if self.tool != t {
+            crate::drawing::finish(self, false);
+        }
         if t == ToolKind::Object {
             // promote anchor-selection to object-selection (Illustrator A→V), then drop anchor sel
             let pids: Vec<u32> = self.selected.iter().filter_map(|&aid| self.doc.pid_of_anchor(aid)).collect();
@@ -4767,6 +4803,7 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        crate::drawing::finish(self, true);
         if self.select_transform.preview.is_some() {
             self.transform_end(true);
             self.select_transform.down = None;

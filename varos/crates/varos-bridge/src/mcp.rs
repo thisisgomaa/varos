@@ -27,6 +27,8 @@ fn construction_tools(api: &str) -> Value {
             let mut extra = serde_json::Map::new();
             let mut ops = Vec::new();
             crate::select_transform::schemas(&mut extra, &mut ops);
+            // ---- Lane D: schemas feed both list_verbs and progressive schema ----
+            crate::drawing::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
