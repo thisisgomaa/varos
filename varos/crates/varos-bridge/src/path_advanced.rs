@@ -92,7 +92,7 @@ pub(crate) fn schemas(defs: &mut serde_json::Map<String, serde_json::Value>, ops
         ("scale_strokes", json!({"enabled":{"type":"boolean"}}), vec!["enabled"]),
         (
             "new_document",
-            json!({"settings":{"type":"object","additionalProperties":false,"properties":{"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0},"units":{"enum":["Px","Pt","Pica","Mm","Cm","In"]},"count":{"type":"integer","minimum":1,"maximum":100},"columns":{"type":"integer","minimum":1,"maximum":100},"spacing":{"type":"number","minimum":0},"layout":{"enum":["grid","row","column"]},"bleed":{"type":"number","minimum":0},"ppi":{"type":"number","minimum":1,"maximum":9600}}}}),
+            json!({"settings":{"type":"object","additionalProperties":false,"properties":{"colour_mode":{"enum":["Rgb","Cmyk"]},"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0},"units":{"enum":["Px","Pt","Pica","Mm","Cm","In"]},"count":{"type":"integer","minimum":1,"maximum":100},"columns":{"type":"integer","minimum":1,"maximum":100},"spacing":{"type":"number","minimum":0},"layout":{"enum":["grid","row","column"]},"bleed":{"type":"number","minimum":0},"ppi":{"type":"number","minimum":1,"maximum":9600}}}}),
             vec!["settings"],
         ),
     ] {

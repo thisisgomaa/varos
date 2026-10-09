@@ -262,7 +262,8 @@ fn walk(
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
         // ---- w2-gradients ----
-        if api != "1.2" && verb == "colour" {
+        // ---- w3-cmyk ----
+        if api != "1.2" && ["colour", "colour_management"].contains(&verb) {
             return Err(Error::new("unsupported", "colour requires explicit API 1.2"));
         }
         if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
@@ -277,6 +278,8 @@ fn walk(
             && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"
                 && [
+                    // ---- w3-cmyk ----
+                    "colour_management",
                     "transform",
                     "magic_wand",
                     "eyedropper",

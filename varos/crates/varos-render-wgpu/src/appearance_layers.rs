@@ -27,6 +27,9 @@ pub struct Pool {
     pub targets: Vec<Target>,
     pub layout: wgpu::BindGroupLayout,
     pub pipeline: wgpu::RenderPipeline,
+    /// integration w3: CMYK overprint inside an appearance scene composites with the same
+    /// approximate premultiplied multiply as the flat renderer's `pipe_overprint`.
+    pub overprint: wgpu::RenderPipeline,
 }
 const SHADER: &str = r#"
 struct Out { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) opts: vec2<f32> }
@@ -76,41 +79,50 @@ impl Pool {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let blend = wgpu::BlendComponent {
+        let over = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,
             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
             operation: wgpu::BlendOperation::Add,
         };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("appearance-composite"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &crate::VATTRS,
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState { color: blend, alpha: blend }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
-            multiview_mask: None,
-            cache: None,
-        });
-        Self { size: [0, 0], targets: vec![], layout, pipeline }
+        let multiply = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Dst,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let make = |label: &str, color: wgpu::BlendComponent| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &crate::VATTRS,
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState { color, alpha: over }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = make("appearance-composite", over);
+        let overprint = make("appearance-overprint", multiply);
+        Self { size: [0, 0], targets: vec![], layout, pipeline, overprint }
     }
     pub fn prepare(&mut self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, samples: u32, count: usize) {
         let size = [config.width, config.height];
@@ -165,7 +177,7 @@ fn shift_draw(draw: &mut Draw, fill: u32, fg: u32) {
 fn shift(meta: &mut GroupDraw, fill: u32, fg: u32, op: u32) {
     match meta {
         GroupDraw::Opaque { draws } => draws.iter_mut().for_each(|d| shift_draw(d, fill, fg)),
-        GroupDraw::Layer { draws, quad } | GroupDraw::ClippedLayer { draws, quad, .. } => {
+        GroupDraw::Layer { draws, quad, .. } | GroupDraw::ClippedLayer { draws, quad, .. } => {
             draws.iter_mut().for_each(|d| shift_draw(d, fill, fg));
             shift_range(quad, op);
             if let GroupDraw::ClippedLayer { mask_fan, .. } = meta {
@@ -177,7 +189,7 @@ fn shift(meta: &mut GroupDraw, fill: u32, fg: u32, op: u32) {
             shift_range(mask_clear, fill);
             members.iter_mut().for_each(|d| shift_draw(d, fill, fg));
         }
-        GroupDraw::Nested { members, mask, quad } => {
+        GroupDraw::Nested { members, mask, quad, .. } => {
             members.iter_mut().for_each(|m| shift(m, fill, fg, op));
             if let Some(ms) = mask {
                 ms.iter_mut().for_each(|m| shift(m, fill, fg, op));
@@ -195,6 +207,7 @@ pub fn append(
     buffers: (&mut Vec<Vertex>, &mut Vec<Vertex>, &mut Vec<Vertex>),
 ) -> GroupDraw {
     let (fill, fg, op) = buffers;
+    let overprint = matches!(group, Group::Overprint { .. });
     let (opacity, members, mask) = match group {
         Group::Composite { opacity, members, mask } => (*opacity, members.clone(), mask.clone()),
         Group::Clip { mask_rings, members } => (
@@ -202,7 +215,7 @@ pub fn append(
             members.clone(),
             Some(vec![Group::Opaque(vec![varos_core::Prim::Fill { rings: mask_rings.clone(), color: [1.; 4] }])]),
         ),
-        Group::Isolated { opacity, prims } => (
+        Group::Isolated { opacity, prims } | Group::Overprint { opacity, prims } => (
             *opacity,
             vec![if super::tess::needs_knockout(prims) {
                 Group::Knockout(prims.clone())
@@ -228,7 +241,7 @@ pub fn append(
     for v in &mut op[start as usize..] {
         v.color[0] = if mask.is_some() { 1. } else { 0. };
     }
-    GroupDraw::Nested { members: nested, mask: mask_draws, quad: (start, 6) }
+    GroupDraw::Nested { members: nested, mask: mask_draws, quad: (start, 6), overprint }
 }
 pub fn depth(metas: &[GroupDraw]) -> usize {
     metas
@@ -250,7 +263,7 @@ impl Renderer {
         slot: usize,
     ) {
         for meta in metas {
-            if let GroupDraw::Nested { members, mask, quad } = meta {
+            if let GroupDraw::Nested { members, mask, quad, overprint } = meta {
                 let Some(target) = self.appearance_pool.targets.get(slot) else {
                     self.draw_nested(enc, members, dest, resolve, slot);
                     continue;
@@ -284,7 +297,11 @@ impl Renderer {
                     })],
                     ..Default::default()
                 });
-                pass.set_pipeline(&self.appearance_pool.pipeline);
+                pass.set_pipeline(if *overprint {
+                    &self.appearance_pool.overprint
+                } else {
+                    &self.appearance_pool.pipeline
+                });
                 pass.set_bind_group(0, &bg, &[]);
                 pass.set_vertex_buffer(0, self.op_buf.slice(..));
                 pass.draw(quad.0..quad.0 + quad.1, 0..1);
@@ -361,11 +378,13 @@ mod tests {
         ];
         let (fill, _, opacity, metas) = crate::tess::build_content(&scene, View::identity(), 1., 32., 32.);
         assert_eq!(depth(&metas), 2);
-        let GroupDraw::Nested { members, mask: Some(mask), quad } = &metas[1] else { panic!("missing alpha layer") };
+        let GroupDraw::Nested { members, mask: Some(mask), quad, .. } = &metas[1] else {
+            panic!("missing alpha layer")
+        };
         assert_eq!(mask.len(), 1);
         assert_eq!(quad.1, 6);
         assert_eq!(opacity[quad.0 as usize].color, [1., 0., 0., 0.5]);
-        let GroupDraw::Nested { members: inner, mask: None, quad } = &members[0] else {
+        let GroupDraw::Nested { members: inner, mask: None, quad, .. } = &members[0] else {
             panic!("missing isolated child")
         };
         assert_eq!(opacity[quad.0 as usize].color, [0., 0., 0., 0.3]);

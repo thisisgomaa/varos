@@ -143,6 +143,8 @@ pub enum Paint {
     #[default]
     None,
     Solid(Rgba),
+    // ---- w3-cmyk ----
+    Managed(crate::colour_management::ManagedColour),
     Gradient(crate::gradient::Gradient),
     SwatchRef {
         id: u32,
@@ -152,6 +154,8 @@ pub enum Paint {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case", deny_unknown_fields)]
 enum TaggedPaint {
+    // ---- w3-cmyk ----
+    Managed(crate::colour_management::ManagedColour),
     Gradient(crate::gradient::Gradient),
     SwatchRef { id: u32 },
 }
@@ -159,6 +163,8 @@ impl std::hash::Hash for Paint {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
+            // ---- w3-cmyk ----
+            Self::Managed(c) => c.hash_colour(state),
             Self::Gradient(g) => g.hash(state),
             Self::SwatchRef { id } => id.hash(state),
             Self::None => {}
@@ -179,6 +185,8 @@ impl Paint {
     /// Representative UI colour; callers resolve document references first.
     pub fn representative(&self) -> Option<Rgba> {
         match self {
+            // ---- w3-cmyk ----
+            Self::Managed(c) => Some(c.rgba()),
             Self::Solid(c) => Some(*c),
             Self::Gradient(g) => Some(g.sample(0.5)),
             _ => None,
@@ -203,6 +211,8 @@ impl Paint {
     /// or `representative` for a colour chip. `None` here does not mean unpainted.
     pub fn solid(&self) -> Option<Rgba> {
         match self {
+            // ---- w3-cmyk ----
+            Paint::Managed(c) => Some(c.rgba()),
             Paint::Solid(c) => Some(*c),
             _ => None,
         }
@@ -211,6 +221,8 @@ impl Paint {
 impl Serialize for Paint {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
+            // ---- w3-cmyk ----
+            Paint::Managed(c) => TaggedPaint::Managed(c.clone()).serialize(s),
             Paint::Gradient(g) => TaggedPaint::Gradient(g.clone()).serialize(s),
             Paint::SwatchRef { id } => TaggedPaint::SwatchRef { id: *id }.serialize(s),
             Paint::None => s.serialize_none(), // ⇒ JSON null  (old Option::None)
@@ -230,6 +242,8 @@ impl<'de> Deserialize<'de> for Paint {
             fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Paint, A::Error> {
                 let tagged = TaggedPaint::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
                 Ok(match tagged {
+                    // ---- w3-cmyk ----
+                    TaggedPaint::Managed(c) => Paint::Managed(c),
                     TaggedPaint::Gradient(g) => Paint::Gradient(g),
                     TaggedPaint::SwatchRef { id } => Paint::SwatchRef { id },
                 })
@@ -652,6 +666,11 @@ pub struct Guide {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
+    // ---- w3-cmyk ----
+    #[serde(default, skip_serializing_if = "crate::colour_management::ColourMode::is_rgb")]
+    pub colour_mode: crate::colour_management::ColourMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_profile: Option<crate::colour_management::IccProfile>,
     /// BOARD METADATA (format 3, `crate::board`): the board's name. Empty = "use the file stem"
     /// (`board::display_name`). Older formats load with all three fields empty (`#[serde(default)]`);
     /// the format gate refuses these keys in a file that claims format 1 or 2.
@@ -745,6 +764,9 @@ impl Default for Document {
             images: vec![],
             assets: vec![],
             raster_effects_ppi: crate::images::default_effects_ppi(),
+            // ---- w3-cmyk ----
+            colour_mode: Default::default(),
+            output_profile: None,
             swatches: vec![],
             text_boxes: vec![],
             paths: vec![],
@@ -815,6 +837,9 @@ impl Document {
     /// ever produce a false *dirty*, never a false *clean*.
     pub fn content_eq(&self, other: &Document) -> bool {
         let Document {
+            // ---- w3-cmyk ----
+            colour_mode,
+            output_profile,
             name,
             description,
             tags,
@@ -844,7 +869,10 @@ impl Document {
         // the unit settings split in two: ppi is content, the display unit a preference
         let DocUnits { ppi, display: _ } = *units;
         // cheap, discriminating fields first
-        images == &other.images
+        // ---- w3-cmyk ----
+        colour_mode == &other.colour_mode
+            && output_profile == &other.output_profile
+            && images == &other.images
             && assets == &other.assets
             && raster_effects_ppi == &other.raster_effects_ppi
             && text_boxes == &other.text_boxes

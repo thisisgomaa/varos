@@ -228,3 +228,6 @@ Export/print before stroke · Place = embed default + Link · CMYK committed lat
 <!-- ---- Lane B w3-effects ---- -->
 Phase 10 Lane B: implemented (provisional UI, owner design review pending);
 ADR-0016 proposed. Appearance-stack integration deferred to integrator.
+<!-- ---- w3-cmyk ---- -->
+| 12.0–12.2 colour management (Lane C) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-cmyk` | FORMAT v12; explicit CMYK/Gray/Spot paints, document mode/profile, moxcms, progressive Bridge 1.2 + CLI, ICCBased/Separation + OutputIntent, bounded vector PDF/X-4 preset. Overprint is approximate vector multiply; image proof/PDF-X preflight, external conformance and native UI acceptance remain unverified. Integration must replace reserved v10/v11 identity steps. Gates: root REPORT.md. |
+<!-- ---- end w3-cmyk ---- -->

@@ -4,7 +4,7 @@ const V11: &[u8] = include_bytes!("fixtures/w3-effects/v11-effects.json");
 fn frozen_v11_roundtrip_keeps_typed_effects_width_and_v9_migration() {
     let loaded = format::decode_model(V11, None, &Limits::DEFAULT).unwrap();
     assert_eq!(loaded.source_version, 11);
-    assert!(!loaded.migrated);
+    assert_eq!(loaded.migrated, format::FORMAT_VERSION > 11);
     assert_eq!(loaded.doc.paths[0].effects.len(), 4);
     let encoded = format::encode_model(&loaded.doc, &Limits::DEFAULT).unwrap();
     let back = format::decode_model(encoded.as_bytes(), None, &Limits::DEFAULT).unwrap();

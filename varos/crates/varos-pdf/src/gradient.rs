@@ -110,6 +110,8 @@ pub(super) fn paint(
     pdf: &mut Pdf,
     ids: &mut Alloc,
     pool: &mut Pool,
+    // ---- w3-cmyk ----
+    colours: &crate::colour_management::Resources,
     t: &impl Fn([f32; 2]) -> (f32, f32),
 ) -> bool {
     let paints = [d.p.appearance().fill().resolved(doc), d.p.appearance().stroke().resolved(doc)];
@@ -145,7 +147,9 @@ pub(super) fn paint(
                 c.transform([x.0 - o.0, x.1 - o.1, y.0 - o.0, y.1 - o.1, o.0, o.1])
                     .shading(Name(format!("Gr{i}").as_bytes()));
             }
-            Paint::Solid(s) => {
+            // ---- w3-cmyk ----
+            source @ (Paint::Solid(_) | Paint::Managed(_)) => {
+                let Some(s) = source.representative() else { continue };
                 let gs = ids.next();
                 pdf.ext_graphics(gs).non_stroking_alpha(s[3]);
                 let i = pool.len();
@@ -158,7 +162,10 @@ pub(super) fn paint(
                     state: Some(gs),
                 });
                 used.insert(i);
-                c.set_parameters(Name(format!("GrGS{i}").as_bytes())).set_fill_rgb(s[0], s[1], s[2]).fill_even_odd();
+                c.set_parameters(Name(format!("GrGS{i}").as_bytes()));
+                // ---- w3-cmyk ----
+                crate::colour_management::set(c, doc, &source, s, false);
+                c.fill_even_odd();
             }
             _ => {}
         }
@@ -169,11 +176,19 @@ pub(super) fn paint(
     let form = ids.next();
     let bbox = write::page_bbox(d.bbox, t);
     let data = local.finish();
+    // ---- w3-cmyk ----
     let mut x = pdf.form_xobject(form, &data);
     x.bbox(Rect::new(bbox[0], bbox[1], bbox[2], bbox[3]));
     x.group().transparency().isolated(true).knockout(true).color_space().device_rgb();
     {
         let mut res = x.resources();
+        // ---- w3-cmyk ----
+        if !colours.spaces.is_empty() {
+            let mut spaces = res.color_spaces();
+            for (name, r) in &colours.spaces {
+                spaces.pair(Name(name.as_bytes()), *r);
+            }
+        }
         {
             let mut sh = res.shadings();
             // Include cached shadings too: register can reuse an earlier slot.

@@ -2,6 +2,8 @@
 mod colour;
 // ---- Lane A ----
 mod appearance;
+// ---- w3-cmyk ----
+mod colour_management;
 mod document;
 // ---- Lane E ----
 mod images;
@@ -30,6 +32,7 @@ mod import;
 const VERBS: &[&str] = &[
     "appearance",
     "mask",
+    "colour-management",
     "view-depth",
     "add-text",
     "set-text",
@@ -252,6 +255,10 @@ fn run(mut args: Vec<OsString>) -> Result<Value, Failure> {
     // ---- Lane A ----
     if ["appearance", "mask"].contains(&verb.as_str()) {
         return appearance::run(&verb, args).map_err(Failure::from);
+    }
+    // ---- w3-cmyk ----
+    if verb == "colour-management" {
+        return colour_management::run(args).map_err(Into::into);
     }
     if verb == "view-depth" {
         return view_depth::run(args).map_err(Failure::from);

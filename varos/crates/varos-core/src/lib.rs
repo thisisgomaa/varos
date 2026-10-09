@@ -97,3 +97,12 @@ pub mod width_tool;
 pub mod effects_document;
 pub mod effects_hit;
 // ---- end Lane B w3-effects ----
+// ---- w3-cmyk ----
+pub mod colour_management;
+pub mod colour_management_commands;
+mod colour_transforms;
+
+// ---- w3-cmyk ----
+mod colour_format;
+
+pub mod colour_preview;

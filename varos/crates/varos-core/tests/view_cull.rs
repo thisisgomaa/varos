@@ -495,7 +495,7 @@ fn treatments(groups: &[Group]) -> Vec<char> {
         .iter()
         .flat_map(|g| match g {
             Group::Clip { members, .. } => treatments(members),
-            Group::Isolated { .. } => vec!['I'],
+            Group::Overprint { .. } | Group::Isolated { .. } => vec!['I'],
             Group::Knockout(_) => vec!['K'],
             Group::Opaque(_) => vec!['O'],
             // ---- Lane A ----

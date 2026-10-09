@@ -90,6 +90,8 @@ pub(super) fn sheets(
                             }
                         }
                     });
+                    // ---- w3-cmyk ----
+                    super::colour_management::mode(ui, &mut s.colour_mode);
                     number(ui, "new-width", "Width", &mut s.width, 0.01..=1e6);
                     number(ui, "new-height", "Height", &mut s.height, 0.01..=1e6);
                     if button(ui, "new-unit", s.units.label()) {

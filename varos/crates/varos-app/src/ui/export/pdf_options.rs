@@ -15,6 +15,8 @@ pub fn draw(ui: &mut egui::Ui, options: &mut PdfOptions, expanded: &mut bool, ru
     }
     ui.horizontal(|ui| {
         for (label, preset) in [
+            // ---- w3-cmyk ----
+            ("PDF/X-4", PdfPreset::PdfX4),
             ("Print", PdfPreset::Print),
             ("Press", PdfPreset::Press),
             ("Smallest", PdfPreset::Smallest),

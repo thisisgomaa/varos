@@ -150,3 +150,9 @@ Bridge's discoverable `colour` verb exposes the same command under `command` wit
 `palette-import FILE PALETTE OUT.vrs` imports GPL/ASE/native JSON; `palette-export FILE OUT.gpl|ase|json`
 creates an exclusive destination. GPL/ASE refuse gradient/alpha loss; GPL also refuses global-linkage loss.
 Use native JSON for lossless palettes. Palette input is capped at 4 MiB; document table at 4096 entries.
+
+Lane C: `colour-management FILE COMMAND.json OUT.vrs` sets `{"action":"mode","mode":"Cmyk"}`
+or a targeted paint envelope `{"ids":[1],"command":{"action":"paint","target":"Fill",
+"colour":{"colour":{"model":"cmyk","c":0.2,"m":0.3,"y":0.4,"k":0.1},"alpha":1}}}`.
+Profiles use `{"action":"profile","profile":{"name":"Printer","data":"ICC_BYTES_IN_HEX"}}`.
+Proof/overprint are view-only Bridge/desktop commands; they do not alter saved artwork.

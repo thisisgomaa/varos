@@ -107,6 +107,8 @@ pub enum Prim {
 pub enum Group {
     // ---- Lane A ----
     Composite { opacity: f32, members: Vec<Group>, mask: Option<Vec<Group>> },
+    // ---- w3-cmyk ----
+    Overprint { opacity: f32, prims: Vec<Prim> },
     Opaque(Vec<Prim>),
     Knockout(Vec<Prim>),
     Isolated { opacity: f32, prims: Vec<Prim> },
@@ -118,7 +120,8 @@ impl Group {
     pub fn prims(&self) -> &[Prim] {
         match self {
             Group::Opaque(p) | Group::Knockout(p) => p,
-            Group::Isolated { prims, .. } => prims,
+            // ---- w3-cmyk ----
+            Group::Overprint { prims, .. } | Group::Isolated { prims, .. } => prims,
             // ---- Lane A: recursive containers have no direct primitives ----
             Group::Clip { .. } | Group::Composite { .. } => &[],
         }
@@ -141,6 +144,9 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ed.select_transform.isolation.hash(&mut state);
     // ---- Lane E ----
     ed.view_depth.hash(&mut state);
+    // ---- w3-cmyk ----
+    ed.colour_preview.hash(&mut state);
+    ed.doc.output_profile.as_ref().map(|p| &p.data).hash(&mut state);
     ed.doc.units.ppi.to_bits().hash(&mut state);
     ed.doc.transparency_grid.hash(&mut state);
     // ---- Lane A ----
@@ -402,6 +408,8 @@ pub struct SceneStyle {
 pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
     // ---- Lane E ----
     let scene = build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style), true, false);
+    // ---- w3-cmyk ----
+    let scene = crate::colour_preview::present(ed, scene);
     crate::view_depth_scene::present(ed, view, frame, style, scene)
 }
 /// Full-quality scene for raster/export jobs: original tolerance, aggregate budget and diagnostics.
@@ -440,6 +448,27 @@ fn build_scene_impl(
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
     let stroke_budget = (!canvas).then(|| std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default()));
     let stroke_errors = std::cell::RefCell::new(Vec::new());
+    // ---- w3-cmyk ----
+    let screen = ed.doc.output_profile.as_ref().map(|p| ed.colour_transforms.screen(p));
+    let screen_paint = |paint: crate::model::Paint| match &screen {
+        None => paint,
+        Some(Ok(screen)) => match screen.paint(paint) {
+            Ok(p) => p,
+            Err(e) => {
+                stroke_errors.borrow_mut().push(format!("ICC screen conversion: {e}"));
+                crate::model::Paint::None
+            }
+        },
+        Some(Err(e)) => {
+            if matches!(paint, crate::model::Paint::Managed(_)) {
+                stroke_errors.borrow_mut().push(format!("ICC screen conversion: {e}"));
+                crate::model::Paint::None
+            } else {
+                paint
+            }
+        }
+    };
+    // ---- end w3-cmyk ----
     if canvas {
         ed.canvas_stroke_cache.retain_live(&ed.doc);
     }
@@ -630,7 +659,7 @@ fn build_scene_impl(
         // between the endpoints) — so deleting an anchor to open a shape keeps its fill (A32). Only paths
         // that actually carry a fill colour reach here; a bare stroke line (fill None) never fills.
         if p.anchors.len() >= 3 {
-            let paint = p.appearance().fill().resolved(&ed.doc);
+            let paint = screen_paint(p.appearance().fill().resolved(&ed.doc));
             if paint.is_painted() {
                 let painted = |rings| crate::gradient_scene::prim(rings, &paint, ed.doc.unit_xform(p.id));
                 // A7 seam: WORLD-space rings (unit transform composed). Identity ⇒ today's geometry.
@@ -681,7 +710,7 @@ fn build_scene_impl(
         if style.is_some() && crate::view_depth_scene::outlined(ed, p.id) {
             return out;
         }
-        let paint = p.appearance().stroke().resolved(&ed.doc);
+        let paint = screen_paint(p.appearance().stroke().resolved(&ed.doc));
         if let crate::model::Paint::Gradient(g) = &paint {
             // Integration w2: gradient strokes take THE stroke seam too — main's canvas cache/cap/back-off
             // on the canvas (world rings), strict evaluation + aggregate budget for export.
@@ -814,7 +843,7 @@ fn build_scene_impl(
         }
         if p.anchors.len() >= 2 {
             // Solid paints draw as themselves; a canvas gradient fallback uses its representative colour.
-            let resolved = p.appearance().stroke().resolved(&ed.doc);
+            let resolved = screen_paint(p.appearance().stroke().resolved(&ed.doc));
             let fallback = resolved.solid().or_else(|| {
                 (canvas && matches!(resolved, crate::model::Paint::Gradient(_)))
                     .then(|| resolved.representative())

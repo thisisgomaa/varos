@@ -11,10 +11,18 @@ use varos_core::Group;
 /// reservation is therefore generous so a list that passed the preflight never flattens here.
 const COMPOSITE_LIMITS: Limits = Limits { depth: 12, bytes: usize::MAX / 2 };
 
-/// Lower one appearance composite (`Group::Composite` = opacity + optional alpha mask, Normal blend)
-/// into the renderer's layer list. Nested composites become nested layers on the SAME stack; runs of
-/// other groups are one `Draw` payload each (painted by the existing tiny-skia scene painter).
-fn lower<'a>(group: &'a Group, size: [u32; 2], xf: Transform, out: &mut Vec<LayerPrim<Vec<&'a Group>>>) {
+/// One `Draw` payload: a run of scene groups, or one object's prims drawn opaquely inside its layer.
+enum Item<'a> {
+    Group(&'a Group),
+    Object(&'a [varos_core::Prim]),
+}
+
+/// Lower a wave-3 layer group into the renderer's layer list: an appearance composite
+/// (`Group::Composite` = opacity + optional alpha mask, Normal blend) or a CMYK overprint object
+/// (`Group::Overprint` = one object in a Multiply layer). Nested composites become nested layers on
+/// the SAME stack; runs of other groups are one `Draw` payload each (painted by the existing tiny-skia
+/// scene painter).
+fn lower<'a>(group: &'a Group, size: [u32; 2], xf: Transform, out: &mut Vec<LayerPrim<Vec<Item<'a>>>>) {
     match group {
         Group::Composite { opacity, members, mask } => {
             let mask = mask.as_ref().map(|groups| coverage(groups, size, xf));
@@ -24,9 +32,14 @@ fn lower<'a>(group: &'a Group, size: [u32; 2], xf: Transform, out: &mut Vec<Laye
             }
             out.push(LayerPrim::LayerEnd);
         }
+        Group::Overprint { opacity, prims } => {
+            out.push(LayerPrim::LayerBegin { opacity: *opacity, blend: Blend::Multiply, mask: None });
+            out.push(LayerPrim::Draw(vec![Item::Object(prims)]));
+            out.push(LayerPrim::LayerEnd);
+        }
         other => match out.last_mut() {
-            Some(LayerPrim::Draw(run)) => run.push(other),
-            _ => out.push(LayerPrim::Draw(vec![other])),
+            Some(LayerPrim::Draw(run)) => run.push(Item::Group(other)),
+            _ => out.push(LayerPrim::Draw(vec![Item::Group(other)])),
         },
     }
 }
@@ -52,7 +65,7 @@ fn to_bytes(pixels: &[Pixel], out: &mut [u8]) {
     }
 }
 
-/// CPU executor of `Group::Composite`: the render lane's `CpuLayers` (premultiplied f32,
+/// CPU executor of `Group::Composite` and `Group::Overprint`: the render lane's `CpuLayers` (premultiplied f32,
 /// `layers::composite`, mask applied once at LayerEnd) is the one compositing mechanism.
 pub(crate) fn draw_composite(group: &Group, dst: &mut Pixmap, xf: Transform) {
     let size = [dst.width(), dst.height()];
@@ -63,8 +76,15 @@ pub(crate) fn draw_composite(group: &Group, dst: &mut Pixmap, xf: Transform) {
     to_float(dst.data(), &mut pixels);
     let drawn = CpuLayers::default().render(&prims, size, 1.0, COMPOSITE_LIMITS, &mut pixels, |run, layer| {
         to_bytes(layer, scratch.data_mut());
-        for g in run {
-            super::draw_groups(std::slice::from_ref(*g), &mut scratch, xf);
+        for item in run {
+            match item {
+                Item::Group(g) => super::draw_groups(std::slice::from_ref(*g), &mut scratch, xf),
+                // the object is drawn opaquely in its own layer, exactly as an isolated object is
+                Item::Object(prims) if super::gradient::isolated_knockout(prims) => {
+                    super::draw_knockout(prims, &mut scratch, xf)
+                }
+                Item::Object(prims) => super::draw_prims(prims, &mut scratch, xf),
+            }
         }
         to_float(scratch.data(), layer);
     });
