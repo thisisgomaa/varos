@@ -17,9 +17,23 @@ pub fn tool_result(reply: &Reply) -> Value {
 }
 /// Explicit MCP tools/list API 1.2 opt-in; the default 1.0/1.1 schema remains byte-identical.
 fn construction_tools(api: &str) -> Value {
-    let mut list = tools();
+    let mut list = legacy_tools_list();
     if api != "1.2" {
         return list;
+    }
+    // Transform schemas and compaction belong exclusively to the opt-in projection.
+    if let Some(entries) = list["tools"].as_array_mut() {
+        if let Some(edit) = entries.iter_mut().find(|tool| tool["name"] == "edit") {
+            let mut extra = serde_json::Map::new();
+            let mut ops = Vec::new();
+            crate::select_transform::schemas(&mut extra, &mut ops);
+            if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
+                defs.extend(extra);
+            }
+            if let Some(all) = edit["inputSchema"]["$defs"]["operation"]["anyOf"].as_array_mut() {
+                all.extend(ops);
+            }
+        }
     }
     if let Some(entries) = list["tools"].as_array_mut() {
         for tool in entries {
@@ -101,7 +115,14 @@ pub fn decode_tool(name: &str, args: Value) -> Result<Request, Error> {
 fn object(properties: Value, required: &[&str]) -> Value {
     json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
 }
+/// Default discovery is the frozen main-now legacy projection.
 pub fn tools() -> Value {
+    legacy_tools_list()
+}
+
+// Copied verbatim from main-now (73f3221), except for the function name.
+// Keep API 1.2 mutations outside this builder; fixtures lock its serialized bytes.
+fn legacy_tools_list() -> Value {
     let api = json!({"type":"string","const":"1.0","default":"1.0"});
     let ids = json!({"type":"array","items":{"type":"string","pattern":"^(path|node):[0-9]+$"},"maxItems":1000});
     let rev = json!({"type":"integer","minimum":0});
@@ -151,7 +172,7 @@ pub fn tools() -> Value {
         ),
         object(json!({"verb":{"const":"rename"},"ids":edit_ids,"name":name}), &["verb", "ids", "name"]),
         object(
-            json!({"verb":{"const":"align"},"ids":edit_ids,"mode":{"enum":["left","center","right","top","middle","bottom"]},"target":{"type":"string","pattern":"^(selection|artboard:[1-9][0-9]*|\\$[A-Za-z][A-Za-z0-9_]{0,62}|a[0-9]+@[0-9]+)$","description":"selection, artboard:N, a request-local bound to an artboard, or the deprecated revision-bound aN@rev"}}),
+            json!({"verb":{"const":"align"},"ids":edit_ids,"mode":{"enum":["left","center","right","top","middle","bottom"]},"target":{"type":"string","pattern":"^(selection|key_object|artboard:[1-9][0-9]*|\\$[A-Za-z][A-Za-z0-9_]{0,62}|a[0-9]+@[0-9]+)$","description":"selection, artboard:N, a request-local bound to an artboard, or the deprecated revision-bound aN@rev"}}),
             &["verb", "ids", "mode", "target"],
         ),
         object(
@@ -264,10 +285,9 @@ pub fn tools() -> Value {
         definitions.insert(format!("repeat{depth}"), object(json!({"verb":{"const":"repeat"},"ops":{"type":"array","minItems":1,"maxItems":100,"items":{"anyOf":alternatives}},"count":{"type":"integer","minimum":1,"maximum":100},"dx":{"type":"number"},"dy":{"type":"number"}}), &["verb","ops","count","dx","dy"]));
     }
     all_ops.push(json!({"$ref":"#/$defs/repeat0"}));
-    crate::select_transform::schemas(&mut definitions, &mut all_ops);
     definitions.insert("operation".into(), json!({"anyOf":all_ops}));
     let edit = schemas.get_mut("edit").unwrap();
-    edit["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"]});
+    edit["properties"]["api"] = json!({"enum":["1.0","1.1"]});
     edit["properties"]["ops"]["items"] = json!({"$ref":"#/$defs/operation"});
     edit["properties"]["defaults"] = object(
         json!({"parent":{"type":"string","pattern":"^node:[1-9][0-9]*$"},"fill":paint,"stroke":paint,"stroke_width":{"type":"number","minimum":0},"radius":{"type":"number","minimum":0},"opacity":{"type":"number","minimum":0,"maximum":1}}),
@@ -288,6 +308,11 @@ pub fn tools() -> Value {
         schemas.get_mut(tool).unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1"],"default":"1.0"});
     }
     schemas.get_mut("export_pdf").unwrap()["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+    for name in ["select", "edit"] {
+        if let Some(schema) = schemas.get_mut(name) {
+            schema["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
+        }
+    }
     if let Some(schema) = schemas.get_mut("select") {
         schema["properties"]["paste_remembers_layers"] =
             json!({"type":"boolean","description":"API 1.2 app paste preference; ids must be empty"});
@@ -368,30 +393,18 @@ pub fn tools() -> Value {
             }
         }
     }
-    for tool in ["capabilities", "select"] {
-        if let Some(schema) = schemas.get_mut(tool) {
-            schema["properties"]["api"] = json!({"enum":["1.0","1.1","1.2"],"default":"1.0"});
-        }
-    }
     let tools:Vec<_>=TOOLS.iter().map(|name|json!({"name":name,"description":match *name {
-        "capabilities"=>"Negotiate APIs 1.0/1.1/1.2; 1.2 edit adds tracing, export_pdf adds reports. Local user trust grants scopes. Inspect limits and file safeguards.",
+        "capabilities"=>"Negotiate Bridge API 1.0/1.1; export_pdf additionally supports 1.2 reports; local user trust grants every scope. Inspect limits and file mistake-guards.",
         "list_boards"=>"List authorized open boards, never files or Recent entries.",
         "describe"=>"Summary first. fields compose board/object detail; ids scope objects; limit/cursor page objects; since adds net changes or resync_required.",
         "select"=>"Deliberately replace human selection with explicit targets; no document undo step.",
-        "edit"=>"Atomic explicit-target batch; one undo; human selection retained. API 1.1/1.2: defaults, IDs receipts, tuples, repeat; use object operations without prefixItems. API 1.2 trace_rgba: pixel paths/holes. Page IDs: artboard:N.",
+        "edit"=>"Atomic design batch with explicit targets; one human undo step. Retains human selection. API 1.1 supports creation tuples; use object operations if your client does not support prefixItems. Page verbs use persistent artboard:N ids.",
         "snapshot"=>"Explicit revision-pinned CPU PNG preview of the board, or of one artboard:N page. Returns an MCP image; max 1024 pixels per dimension.",
         "save"|"save_as"|"export_pdf"=>"Queue revision-pinned file work. Returns accepted and ticket; poll request_status. Allowed: fresh .vrs/.pdf names under passwd home, /Volumes/<volume>/, ~/Library/Mobile Documents (iCloud Drive), or ~/Library/CloudStorage/<provider>/ (Dropbox/Google Drive/OneDrive). Refused: /tmp, /private/var, other ~/Library, system roots, running app bundle, dot components and existing files. Network volumes unsupported. Parents must exist and canonical containment is rechecked. FAT32/exFAT use macOS exclusive-rename fallback after linkat; real volumes unverified.",
         "history"=>"One shared undo/redo entry. Local agents need no approval; revision and idempotency checks still apply.",
         _=>"Get a retained receipt by monotonic request_id for this proxy client.",
     },"inputSchema":schemas[*name]})).collect();
-    let mut list = json!({"tools":tools});
-    if let Some(rows) = list["tools"].as_array_mut() {
-        for row in rows {
-            strip_schema_annotations(&mut row["inputSchema"]);
-            row["description"] = json!(row["name"].as_str().unwrap_or("Bridge tool"));
-        }
-    }
-    list
+    json!({"tools":tools})
 }
 fn rpc_result(id: Value, result: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"result":result})
@@ -880,10 +893,10 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
 /// API 1.2 publishes core schemas and an index of extended edit operations.
 /// Discovery never changes the typed decoder or execution path.
 pub fn tools_for(api: &str) -> Value {
-    let mut out = full_tools_for(api);
     if api != "1.2" {
-        return out;
+        return legacy_tools_list();
     }
+    let mut out = full_tools_for(api);
     if let Some(rows) = out["tools"].as_array_mut() {
         if let Some(edit) = rows.iter_mut().find(|row| row["name"] == "edit") {
             let root = edit["inputSchema"].clone();
@@ -1219,23 +1232,6 @@ fn compact_api_12_schema(schema: &mut Value) {
 /// Compatibility entry point for API 1.2 discovery.
 pub fn tools_12() -> Value {
     tools_for_api("1.2")
-}
-
-fn strip_schema_annotations(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            map.remove("description");
-            for child in map.values_mut() {
-                strip_schema_annotations(child);
-            }
-        }
-        Value::Array(array) => {
-            for child in array {
-                strip_schema_annotations(child);
-            }
-        }
-        _ => {}
-    }
 }
 
 #[cfg(test)]
