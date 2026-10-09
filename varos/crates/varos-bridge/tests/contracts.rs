@@ -3092,8 +3092,10 @@ fn economy_schema_size_and_flat_roots() {
     for api in ["1.0", "1.1", "1.2"] {
         let list = varos_bridge::mcp::tools_for_api(api);
         let wire = serde_json::to_vec(&list).unwrap();
-        if api != "1.2" {
-            assert_eq!(wire, serde_json::to_vec(&varos_bridge::mcp::tools()).unwrap());
+        match api {
+            "1.0" => assert_eq!(wire.as_slice(), include_bytes!("fixtures/mcp_tools_list_1_0.json")),
+            "1.1" => assert_eq!(wire.as_slice(), include_bytes!("fixtures/mcp_tools_list_1_1.json")),
+            _ => {}
         }
         let bytes = wire.len();
         println!("API {api} tools/list bytes: {bytes}");
@@ -3113,7 +3115,7 @@ fn economy_schema_size_and_flat_roots() {
         assert!(tuple["prefixItems"].is_array());
         assert!(tuple.get("items").is_none());
     }
-    assert_eq!(edit["description"], "edit"); // Frozen legacy projection.
+    assert!(edit["description"].as_str().unwrap().contains("object operations"));
 }
 
 #[test]

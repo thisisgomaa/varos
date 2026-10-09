@@ -82,7 +82,7 @@ fn only_export_pdf_advertises_api_12() {
         if let Some(values) = api["enum"].as_array() {
             assert_eq!(
                 values.iter().any(|v| v == "1.2"),
-                matches!(tool["name"].as_str(), Some("export_pdf" | "select" | "edit" | "capabilities"))
+                matches!(tool["name"].as_str(), Some("export_pdf" | "select" | "edit"))
             );
         }
     }
@@ -121,7 +121,7 @@ fn api_12_is_advertised_only_by_opt_in_tools() {
         if let Some(values) = api["enum"].as_array() {
             assert_eq!(
                 values.iter().any(|v| v == "1.2"),
-                matches!(tool["name"].as_str(), Some("export_pdf" | "edit" | "select" | "capabilities"))
+                matches!(tool["name"].as_str(), Some("export_pdf" | "edit" | "select"))
             );
         }
     }

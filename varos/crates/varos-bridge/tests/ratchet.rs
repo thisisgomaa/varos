@@ -46,16 +46,43 @@ fn bridge_ratchet_counts_schema_compaction_and_expansion_calls() {
     assert_eq!(unchecked_calls(former_calls), 7);
 }
 
+// Frozen from the verbatim main-now (73f3221) builder, using serde_json::to_vec.
+// These are independent checked-in bytes; never regenerate from the live builder.
+fn assert_legacy_fixture(api: &str, fixture: &[u8]) {
+    let bytes = serde_json::to_vec(&varos_bridge::mcp::tools_for_api(api)).expect("serialize tools/list");
+    println!("API {api} tools/list: {} B", bytes.len());
+    assert_eq!(bytes.as_slice(), fixture, "legacy tools/list bytes changed for API {api}");
+    assert_eq!(serde_json::to_vec(&varos_bridge::mcp::tools()).expect("serialize default tools/list"), fixture);
+}
+
+#[test]
+fn tools_list_1_0_matches_frozen_main_fixture() {
+    assert_legacy_fixture("1.0", include_bytes!("fixtures/mcp_tools_list_1_0.json"));
+}
+
+#[test]
+fn tools_list_1_1_matches_frozen_main_fixture() {
+    assert_legacy_fixture("1.1", include_bytes!("fixtures/mcp_tools_list_1_1.json"));
+}
+
 #[test]
 fn tools_list_size_ratchet_all_api_versions() {
-    // Economy samples at a00dd9d: legacy 23,152 B; combined 1.2 32,172 B.
-    // Progressive disclosure sample: 1.2 22,759 B; ceiling remains 24,000 B.
-    for api in ["1.0", "1.1", "1.2"] {
-        let bytes = serde_json::to_vec(&varos_bridge::mcp::tools_for_api(api)).expect("serialize tools/list").len();
-        println!("API {api} tools/list: {bytes} B");
-        if api != "1.2" {
-            assert_eq!(bytes, 23_152, "legacy schema size is frozen");
-        }
-        assert!(bytes <= 24_000, "API {api} tools/list grew to {bytes} B");
+    let bytes = serde_json::to_vec(&varos_bridge::mcp::tools_for_api("1.2")).expect("serialize tools/list").len();
+    println!("API 1.2 tools/list: {bytes} B");
+    assert!(bytes <= 24_000, "API 1.2 tools/list grew to {bytes} B");
+}
+
+#[test]
+fn align_key_object_is_advertised_in_every_api() {
+    for api in ["1.0", "1.1"] {
+        let list = varos_bridge::mcp::tools_for_api(api);
+        let edit =
+            list["tools"].as_array().expect("tools array").iter().find(|row| row["name"] == "edit").expect("edit tool");
+        let pattern =
+            edit["inputSchema"]["$defs"]["align"]["properties"]["target"]["pattern"].as_str().expect("target pattern");
+        assert!(pattern.contains("|key_object|"), "API {api}: {pattern}");
     }
+    let align = varos_bridge::mcp::schema("edit", Some("align")).expect("API 1.2 align schema");
+    let pattern = align["properties"]["target"]["pattern"].as_str().expect("target pattern");
+    assert!(pattern.contains("|key_object|"), "API 1.2: {pattern}");
 }
