@@ -7,6 +7,31 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
+## Lane G text next-version addition (2026-10-09)
+
+In `feat/w2-text` the next writer version is provisionally **6** (`TEXT_FORMAT_VERSION`).
+The moderator assigns the final number after images and gradients; the older version table below
+records historical writers. JSON and PDF catalog stamps always agree. `migrate_to_text_boxes` is a
+pure identity migration from the previous version: it creates no source, fonts or outlines.
+
+New optional `doc.text_boxes` stores TextBox records; each has `id`, `box_kind` (`Point` or
+`{"Area":[x,y,width,height]}`), baseline `frame:[x,y]`, `runs:[{text,style}]`, and `para`.
+`style` contains `font:{family,weight,hash}` (exact lowercase SHA-256 bytes identity), `size`,
+`letter_spacing`, and RGBA `fill`. `para` contains `align` (Left/Centre/Right/Justify),
+`direction` (Auto/Ltr/Rtl), `kashida` (Off/Minimal/Balanced/Display), and `line_height`.
+A leaf's new `NodeKind` is `{"Text":text_id}`. Every text record has exactly one childless leaf.
+No font bytes, machine paths, layout caches, or generated glyph paths are persisted.
+
+Load/save/edit enforce 4,096 boxes, 4,096 runs per box, 1 MiB source per box and 8 MiB total;
+finite frames, positive area dimensions, font size 0.1–4,096 pt, leading 1.3–20 em, and zero Arabic
+tracking. Runtime shaping additionally refuses frames above 64 KiB or 16,384 glyphs, and bounds
+outline vertices. Unknown/missing font snapshots fail explicitly when rendering/exporting.
+Omitted text storage remains omitted for plain-path files. Declaring a pre-text version while
+carrying either text key is refused. Frozen `fixtures/text_next/` includes mixed source and
+legacy-key, Arabic-tracking, future-JSON/PDF refusal cases, with SHA256SUMS.
+The PDF tests exercise the frozen v5 reader gate against current text output before typed decode.
+Native files retain editable source; PDF/SVG deliverables report **text exported as outlines**.
+
 ## Implementation status — Lane H format 5 (2026-10-09)
 
 The worktree writer stamps JSON `varos:5` and PDF `/VAROS_SchemaVersion 5`. First merged writer takes v5;

@@ -2292,7 +2292,7 @@ fn main() {
                                 if !world.errors.is_empty() {
                                     lifecycle::Dialogs::notice(
                                         &mut dialogs,
-                                        "Stroke cannot be drawn",
+                                        "Artwork cannot be drawn",
                                         &world.errors.join("\n"),
                                     );
                                 }

@@ -331,7 +331,7 @@ impl Ui {
     /// (Gate canvas shortcuts on this, NOT on egui's generic "consumed" — otherwise an Arabic-layout
     /// keypress, which egui receives as a Text event, would swallow V/A/P and the rest.)
     pub fn wants_keyboard(&self) -> bool {
-        export::wants_keyboard(self)
+        self.text_tool.session.is_some() || export::wants_keyboard(self)
     }
     /// Is a document tab lifted in a drag right now (P16)? Esc then belongs to the tab strip (it
     /// cancels the drag) and must not also reach the canvas.
@@ -424,6 +424,7 @@ impl Ui {
     /// DFS S1: the active document changed — drop the Ui state that belongs to the previous document
     /// (the Layers rows cache, drag, Shift-range anchor, collapsed rows and search).
     pub fn document_switched(&mut self) {
+        self.text_tool = Default::default();
         self.color_panel = None;
         self.layer_rows_cache = None;
         self.lay_drag = None;
@@ -734,7 +735,7 @@ impl Ui {
                 &mut ab_name_edit,
                 &mut fit_request,
             );
-            text_tool.paint(ctx, view, ppp);
+            text_tool.paint(ctx, ed, view, ppp);
             paint_agent_presence(ctx, view, ppp, hole, &presence);
             build_snap_hud(ctx, view, ppp, hole, &snap_hud);
             build_origin_crosshair(ctx, view, ppp, hole, origin_preview);
@@ -784,9 +785,7 @@ impl Ui {
             }
             true
         });
-        if ops.iter().any(|op| matches!(op, Op::Tool(_))) && self.text_tool.commit(ed).is_err() {
-            ops.retain(|op| !matches!(op, Op::Tool(_)));
-        }
+        self.text_tool.finish_ops(ed, &mut ops);
         apply_picker_frame(ed, snap_cfg, ops, &mut self.color_panel);
         layout::sync_picker_open(&mut self.picker_layout, self.color_panel.as_ref());
         self.cursor = out.platform_output.cursor_icon; // read the REAL cursor from this frame's output

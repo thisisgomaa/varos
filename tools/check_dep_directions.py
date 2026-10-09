@@ -14,7 +14,7 @@ EDGES = {
     "varos-text": set(),
     "varos-render-wgpu": {"varos-core"},
     "varos-pdf": {"varos-text-layout", "varos-core"},
-    "varos-app": {"varos-text-layout", "varos-import", "varos-text", "varos-text-layout", "varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
+    "varos-app": {"varos-text-layout", "varos-import", "varos-text", "varos-core", "varos-render-wgpu", "varos-pdf", "varos-raster", "varos-bridge"},
     "varos-raster": {"varos-text-layout", "varos-core", "varos-pdf"},  # PDF is test-only.
     "varos-bridge": {"varos-core", "varos-raster"},
     "varos-cli": {"varos-text-layout", "varos-import", "varos-core", "varos-pdf", "varos-raster", "varos-bridge"},

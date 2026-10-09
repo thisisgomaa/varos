@@ -22,6 +22,29 @@ pub struct TextProduct {
     pub error: Option<String>,
 }
 impl TextProduct {
+    pub fn finish_ops(&mut self, ed: &mut Editor, ops: &mut Vec<crate::ui::ops::Op>) {
+        ops.retain(|op| {
+            if let crate::ui::ops::Op::Text(text) = op {
+                if let Some(session) = self.session.as_mut().filter(|s| s.draft.id == text.id) {
+                    if let Err(error) = text.validate() {
+                        self.error = Some(error);
+                    } else {
+                        session.draft = text.clone();
+                        self.generation += 1;
+                    }
+                    return false;
+                }
+            }
+            true
+        });
+        if ops.iter().any(|op| matches!(op, crate::ui::ops::Op::Tool(_))) {
+            if let Err(error) = self.commit(ed) {
+                self.error = Some(error);
+                ops.retain(|op| !matches!(op, crate::ui::ops::Op::Tool(_)));
+            }
+        }
+    }
+
     fn engine(&mut self) -> Result<&mut TextLayout, String> {
         if self.engine.is_none() {
             self.engine = Some(TextLayout::new(varos_text_layout::host_fonts::snapshot()?)?);
@@ -29,7 +52,10 @@ impl TextProduct {
         self.engine.as_mut().ok_or_else(|| "text engine unavailable".into())
     }
     pub fn selected_text(&self, ed: &Editor) -> Option<TextBox> {
-        self.selected.and_then(|id| ed.doc.text_boxes.iter().find(|t| t.id == id)).cloned()
+        self.session
+            .as_ref()
+            .map(|s| s.draft.clone())
+            .or_else(|| self.selected.and_then(|id| ed.doc.text_boxes.iter().find(|t| t.id == id)).cloned())
     }
     pub fn commit(&mut self, ed: &mut Editor) -> Result<(), String> {
         let Some(session) = self.session.as_ref() else {
@@ -47,11 +73,20 @@ impl TextProduct {
         Ok(())
     }
     fn hit(&mut self, ed: &Editor, p: [f32; 2], zoom: f32) -> Option<u32> {
-        for n in ed.doc.nodes.iter().rev() {
-            let NodeKind::Text(id) = n.kind else {
-                continue;
-            };
-            let mut ancestor = Some(n.id);
+        let mut order = Vec::new();
+        let mut stack: Vec<_> = ed.doc.roots.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let n = ed.doc.node(id)?;
+            stack.extend(n.children.iter().rev().copied());
+            if let NodeKind::Text(id) = n.kind {
+                order.push((id, Some(n.id)));
+            }
+        }
+        if self.session.as_ref().is_some_and(|s| s.draft.id == 0) {
+            order.insert(0, (0, None));
+        }
+        for (id, node) in order {
+            let mut ancestor = node;
             let mut hidden = false;
             while let Some(id) = ancestor {
                 let node = ed.doc.node(id)?;
@@ -61,14 +96,22 @@ impl TextProduct {
             if hidden {
                 continue;
             }
-            let t = ed.doc.text_boxes.iter().find(|t| t.id == id)?;
-            let c = self.engine().ok()?.compose(t, zoom).ok()?;
+            let t = self
+                .session
+                .as_ref()
+                .filter(|s| s.draft.id == id)
+                .map(|s| &s.draft)
+                .or_else(|| ed.doc.text_boxes.iter().find(|t| t.id == id))?
+                .clone();
+            let p = text_transform(ed, id).inverse_apply(p);
+            let c = self.engine().ok()?.compose(&t, zoom).ok()?;
             let bounds = match t.box_kind {
                 TextBoxKind::Area(r) => r,
                 TextBoxKind::Point => {
-                    let w = c.layout.lines.iter().map(|l| l.width).fold(0f32, f32::max).max(8.);
+                    let left = c.layout.carets.iter().map(|c| c.x).fold(0f32, f32::min);
+                    let right = c.layout.carets.iter().map(|c| c.x).fold(0f32, f32::max);
                     let h = c.layout.lines.last().map_or(24., |l| l.baseline + l.descent);
-                    [c.origin[0], c.origin[1], w, h]
+                    [c.origin[0] + left, c.origin[1], (right - left).max(8.), h]
                 }
             };
             if p[0] >= bounds[0] && p[0] <= bounds[0] + bounds[2] && p[1] >= bounds[1] && p[1] <= bounds[1] + bounds[3]
@@ -102,7 +145,7 @@ impl TextProduct {
                 !over_panel
                     && (ed.tool == ToolKind::Text
                         || self.session.is_some()
-                        || self.hit(ed, view.s2w(screen), view.zoom).is_some())
+                        || ed.tool == ToolKind::Object && self.hit(ed, view.s2w(screen), view.zoom).is_some())
             }
             _ => false,
         }
@@ -130,34 +173,45 @@ impl TextProduct {
         ppp: f32,
         hole: Option<egui::Rect>,
     ) -> Result<(), String> {
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.draft.id != 0 && !ed.doc.text_boxes.iter().any(|t| t.id == s.draft.id))
+        {
+            self.session = None;
+            self.selected = None;
+        }
         if let Some(session) = self.session.as_mut() {
             if let Some(current) = ed.doc.text_boxes.iter().find(|t| t.id == session.draft.id) {
                 if current != &session.base {
-                    session.draft.para = current.para.clone();
-                    session.draft.box_kind = current.box_kind;
-                    session.draft.frame = current.frame;
-                    for run in &mut session.draft.runs {
-                        if let Some(style) = current.runs.first() {
-                            run.style = style.style.clone();
-                        }
-                    }
-                    session.base = current.clone();
+                    // Bridge edits are blocked during a draft; external undo/revert replaces it.
+                    *session = EditSession::new(current.clone());
                     self.generation += 1;
                 }
             }
         }
         let mut copied = None;
         for event in &input.events {
+            if !matches!(ed.tool, ToolKind::Text | ToolKind::Object)
+                && self.session.is_none()
+                && !matches!(event, Event::Key { key: Key::T, .. })
+            {
+                continue;
+            }
             if let Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers } = event {
-                if !hole.is_some_and(|r| r.contains(*pos))
-                    || ctx.layer_id_at(*pos).is_some_and(|l| l.order != egui::Order::Background)
-                {
+                if !*pressed {
+                    self.selecting = false;
+                }
+                let outside = !hole.is_some_and(|r| r.contains(*pos))
+                    || ctx.layer_id_at(*pos).is_some_and(|l| l.order != egui::Order::Background);
+                if outside && (*pressed || self.press.is_none()) {
                     continue;
                 }
                 let p = view.s2w([pos.x * ppp, pos.y * ppp]);
                 if *pressed {
                     let hit = self.hit(ed, p, view.zoom);
                     if let Some(id) = hit {
+                        ed.try_execute(EditCommand::Selection(varos_core::editor::wave::Selection::Deselect))?;
                         let double = self
                             .last_click
                             .is_some_and(|(time, last)| last == id && input.time.unwrap_or(0.) - time < 0.4);
@@ -169,9 +223,11 @@ impl TextProduct {
                                 self.commit(ed)?;
                                 self.session =
                                     ed.doc.text_boxes.iter().find(|t| t.id == id).cloned().map(EditSession::new);
+                                self.selected = Some(id);
                             }
-                            if let Some(mut session) = self.session.take() {
-                                let c = self.engine()?.compose(&session.draft, view.zoom)?;
+                            if let Some(draft) = self.session.as_ref().map(|s| s.draft.clone()) {
+                                let p = text_transform(ed, draft.id).inverse_apply(p);
+                                let c = self.engine()?.compose(&draft, view.zoom)?.clone();
                                 let line = c
                                     .layout
                                     .lines
@@ -183,8 +239,9 @@ impl TextProduct {
                                             .total_cmp(&(p[1] - c.origin[1] - b.baseline).abs())
                                     })
                                     .map_or(0, |(i, _)| i);
-                                session.hit(&c.layout, line, p[0] - c.origin[0], modifiers.shift);
-                                self.session = Some(session);
+                                if let Some(session) = &mut self.session {
+                                    session.hit(&c.layout, line, p[0] - c.origin[0], modifiers.shift);
+                                }
                             }
                         }
                     } else if ed.tool == ToolKind::Text {
@@ -214,9 +271,9 @@ impl TextProduct {
             }
             if let Event::PointerMoved(pos) = event {
                 if self.selecting {
-                    if let Some(mut session) = self.session.take() {
-                        let p = view.s2w([pos.x * ppp, pos.y * ppp]);
-                        let c = self.engine()?.compose(&session.draft, view.zoom)?;
+                    if let Some(draft) = self.session.as_ref().map(|s| s.draft.clone()) {
+                        let p = text_transform(ed, draft.id).inverse_apply(view.s2w([pos.x * ppp, pos.y * ppp]));
+                        let c = self.engine()?.compose(&draft, view.zoom)?.clone();
                         let line = c
                             .layout
                             .lines
@@ -228,8 +285,9 @@ impl TextProduct {
                                     .total_cmp(&(p[1] - c.origin[1] - b.baseline).abs())
                             })
                             .map_or(0, |(i, _)| i);
-                        session.hit(&c.layout, line, p[0] - c.origin[0], true);
-                        self.session = Some(session);
+                        if let Some(session) = &mut self.session {
+                            session.hit(&c.layout, line, p[0] - c.origin[0], true);
+                        }
                         self.generation += 1;
                     }
                 }
@@ -261,6 +319,7 @@ impl TextProduct {
                         }
                     }
                     Event::Ime(egui::ImeEvent::Preedit { text, .. }) => session.preedit = text.clone(),
+                    Event::Ime(egui::ImeEvent::Disabled) => session.preedit.clear(),
                     Event::Ime(egui::ImeEvent::Commit(text)) => {
                         session.preedit.clear();
                         session.insert(text)?;
@@ -273,6 +332,14 @@ impl TextProduct {
                         Key::ArrowLeft | Key::ArrowRight => {
                             let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
                             session.arrow(layout, *key == Key::ArrowRight, modifiers.shift);
+                        }
+                        Key::ArrowUp | Key::ArrowDown => {
+                            let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
+                            session.vertical(layout, *key == Key::ArrowDown, modifiers.shift);
+                        }
+                        Key::Home | Key::End => {
+                            let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
+                            session.line_edge(layout, *key == Key::End, modifiers.shift);
                         }
                         Key::Backspace | Key::Delete => {
                             let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
@@ -322,7 +389,7 @@ impl TextProduct {
         }
         varos_core::scene::build_scene_in_view_styled(&preview, view, frame, style)
     }
-    pub fn paint(&mut self, ctx: &egui::Context, view: View, ppp: f32) {
+    pub fn paint(&mut self, ctx: &egui::Context, ed: &Editor, view: View, ppp: f32) {
         if let Some(copy) = self.pending_copy.take() {
             ctx.copy_text(copy);
         }
@@ -337,8 +404,9 @@ impl TextProduct {
             return;
         };
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("text-caret")));
+        let transform = text_transform(ed, display.id);
         let screen = |x: f32, y: f32| {
-            let p = view.w2s([x + c.origin[0], y + c.origin[1]]);
+            let p = view.w2s(transform.apply([x + c.origin[0], y + c.origin[1]]));
             egui::pos2(p[0] / ppp, p[1] / ppp)
         };
         let range = session.range();
@@ -351,20 +419,18 @@ impl TextProduct {
                 varos_app::shell::tokens::ACCENT,
             );
         }
-        for line in &c.layout.lines {
-            for g in &line.glyphs {
-                if g.cluster.start < range.end && g.cluster.end > range.start {
-                    let rect = egui::Rect::from_two_pos(
-                        screen(g.x, line.baseline - line.ascent),
-                        screen(g.x + g.advance, line.baseline + line.descent),
-                    );
-                    painter.rect_filled(rect, 0., varos_app::shell::tokens::ACCENT_TINT);
-                }
-            }
+        for [left, top, right, bottom] in c.layout.selection_rects(range) {
+            painter.add(egui::Shape::convex_polygon(
+                vec![screen(left, top), screen(right, top), screen(right, bottom), screen(left, bottom)],
+                varos_app::shell::tokens::ACCENT_TINT,
+                egui::Stroke::NONE,
+            ));
         }
         let caret_byte =
             if session.preedit.is_empty() { session.caret } else { session.range().start + session.preedit.len() };
-        for caret in c.layout.carets.iter().filter(|c| c.byte == caret_byte && c.affinity == session.affinity) {
+        let mut display_session = session.clone();
+        display_session.caret = caret_byte;
+        if let Some(caret) = display_session.current_caret(&c.layout) {
             if let Some(line) = c.layout.lines.get(caret.line) {
                 let cursor_rect = egui::Rect::from_two_pos(
                     screen(caret.x, line.baseline - line.ascent),
@@ -372,7 +438,7 @@ impl TextProduct {
                 );
                 if !ctx.egui_wants_keyboard_input() {
                     ctx.output_mut(|o| {
-                        o.ime = Some(egui::IMEOutput {
+                        o.ime = Some(egui::output::IMEOutput {
                             rect: cursor_rect,
                             cursor_rect,
                             should_interrupt_composition: false,
@@ -388,9 +454,27 @@ impl TextProduct {
     }
 }
 
+// Match the existing outline pipeline's top-level unit rotation.
+fn text_transform(ed: &Editor, id: u32) -> varos_core::model::Xform {
+    let mut node = ed.doc.nodes.iter().find(|n| n.kind == NodeKind::Text(id));
+    let mut transform = node.map(|n| n.xform).unwrap_or_default();
+    while let Some(n) = node {
+        if n.kind == NodeKind::Group {
+            transform = n.xform;
+        }
+        node = n.parent.and_then(|id| ed.doc.node(id));
+    }
+    transform
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn left_text(source: &str, frame: [f32; 2]) -> Result<TextBox, String> {
+        let mut text = varos_text_layout::default_text(source, frame)?;
+        text.para.align = varos_core::text::Alignment::Left;
+        Ok(text)
+    }
     fn send(tool: &mut TextProduct, ed: &mut Editor, events: Vec<Event>, time: f64) {
         let input = egui::RawInput { events, time: Some(time), ..Default::default() };
         tool.input(
@@ -431,7 +515,7 @@ mod tests {
     fn preedit_is_preview_only_and_commits_once() {
         let mut tool = TextProduct {
             engine: Some(TextLayout::bundled().unwrap()),
-            session: Some(EditSession::new(varos_text_layout::default_text("", [0., 0.]).unwrap())),
+            session: Some(EditSession::new(left_text("", [0., 0.]).unwrap())),
             ..Default::default()
         };
         let mut ed = Editor::new();
@@ -451,19 +535,164 @@ mod tests {
     }
     #[test]
     fn clipboard_and_ime_are_published_inside_the_egui_pass() {
-        let mut session = EditSession::new(varos_text_layout::default_text("سلام", [20., 50.]).unwrap());
+        let mut session = EditSession::new(left_text("سلام", [20., 50.]).unwrap());
         session.select_all();
         let mut tool =
             TextProduct { engine: Some(TextLayout::bundled().unwrap()), session: Some(session), ..Default::default() };
         let mut ed = Editor::new();
         send(&mut tool, &mut ed, vec![Event::Copy], 1.);
         let ctx = egui::Context::default();
-        let output = ctx.run_ui(Default::default(), |root| tool.paint(root.ctx(), View::identity(), 1.));
+        let output = ctx.run_ui(Default::default(), |root| tool.paint(root.ctx(), &ed, View::identity(), 1.));
         assert!(output
             .platform_output
             .commands
             .iter()
             .any(|c| matches!(c,egui::OutputCommand::CopyText(text) if text=="سلام")));
         assert!(output.platform_output.ime.is_some());
+    }
+    #[test]
+    fn draft_properties_commit_with_source_in_one_undo_step() {
+        let mut tool = TextProduct {
+            engine: Some(TextLayout::bundled().unwrap()),
+            session: Some(EditSession::new(left_text("سلام", [20., 50.]).unwrap())),
+            ..Default::default()
+        };
+        let mut ed = Editor::new();
+        let mut text = tool.selected_text(&ed).unwrap();
+        text.runs[0].style.size = 48.;
+        text.para.kashida = varos_core::text::Kashida::Balanced;
+        let mut ops = vec![crate::ui::ops::Op::Text(text)];
+        tool.finish_ops(&mut ed, &mut ops);
+        assert!(ops.is_empty());
+        assert!(ed.doc.text_boxes.is_empty());
+        send(&mut tool, &mut ed, vec![Event::Text("!".into())], 1.);
+        tool.commit(&mut ed).unwrap();
+        assert_eq!(ed.doc.text_boxes[0].source(), "سلام!");
+        assert_eq!(ed.doc.text_boxes[0].runs[0].style.size, 48.);
+        assert_eq!(ed.rev, 1);
+        ed.undo();
+        assert!(ed.doc.text_boxes.is_empty());
+    }
+    #[test]
+    fn double_click_edit_escape_commit_and_undo() {
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddText {
+                text: left_text("سلام", [20., 50.]).unwrap(), parent: None
+            })
+            .unwrap();
+        ed.set_tool(ToolKind::Object);
+        let mut tool = TextProduct { engine: Some(TextLayout::bundled().unwrap()), ..Default::default() };
+        send(&mut tool, &mut ed, vec![pointer(25., 45., true), pointer(25., 45., false)], 1.);
+        assert_eq!(tool.selected, Some(id));
+        assert!(tool.session.is_none());
+        send(&mut tool, &mut ed, vec![pointer(25., 45., true), pointer(25., 45., false)], 1.2);
+        assert!(tool.session.is_some());
+        let key = |key, modifiers| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers };
+        send(
+            &mut tool,
+            &mut ed,
+            vec![
+                key(Key::A, egui::Modifiers::COMMAND),
+                Event::Paste("مرحبا Varos".into()),
+                key(Key::Escape, egui::Modifiers::NONE),
+            ],
+            2.,
+        );
+        assert!(tool.session.is_none());
+        assert_eq!(ed.doc.text_boxes[0].source(), "مرحبا Varos");
+        ed.undo();
+        assert_eq!(ed.doc.text_boxes[0].source(), "سلام");
+    }
+    #[test]
+    fn hit_uses_tree_order_and_unsaved_draft_without_stealing_pen_clicks() {
+        let mut ed = Editor::new();
+        let mut tool = TextProduct { engine: Some(TextLayout::bundled().unwrap()), ..Default::default() };
+        let a = ed
+            .try_execute_created(EditCommand::AddText { text: left_text("ABC", [20., 50.]).unwrap(), parent: None })
+            .unwrap();
+        ed.try_execute_created(EditCommand::AddText { text: left_text("DEF", [20., 50.]).unwrap(), parent: None })
+            .unwrap();
+        ed.doc.nodes.iter_mut().find(|n| n.id == ed.doc.active_layer).unwrap().children.reverse();
+        assert_eq!(tool.hit(&ed, [25., 45.], 1.), Some(a));
+        ed.set_tool(ToolKind::Pen);
+        send(&mut tool, &mut ed, vec![pointer(25., 45., true), pointer(25., 45., false)], 1.);
+        assert!(tool.selected.is_none());
+        ed.set_tool(ToolKind::Text);
+        tool.session = Some(EditSession::new(left_text("draft", [20., 50.]).unwrap()));
+        assert_eq!(tool.hit(&ed, [25., 45.], 1.), Some(0));
+        send(&mut tool, &mut ed, vec![pointer(25., 45., true), pointer(25., 45., false)], 2.);
+        assert_eq!(tool.session.as_ref().unwrap().draft.id, 0);
+        assert_eq!(ed.doc.text_boxes.len(), 2);
+    }
+    #[test]
+    fn layout_error_keeps_edit_session_and_ime_cancel_keeps_source() {
+        let mut tool = TextProduct {
+            engine: Some(TextLayout::bundled().unwrap()),
+            session: Some(EditSession::new(left_text("safe", [20., 50.]).unwrap())),
+            selecting: true,
+            ..Default::default()
+        };
+        tool.session.as_mut().unwrap().draft.runs[0].style.font.hash = "0".repeat(64);
+        let mut ed = Editor::new();
+        tool.input(
+            &egui::Context::default(),
+            &egui::RawInput { events: vec![Event::PointerMoved(egui::pos2(30., 40.))], ..Default::default() },
+            &mut ed,
+            View::identity(),
+            1.,
+            None,
+        );
+        assert!(tool.error.is_some());
+        assert_eq!(tool.session.as_ref().unwrap().draft.source(), "safe");
+        tool.error = None;
+        send(
+            &mut tool,
+            &mut ed,
+            vec![
+                Event::Ime(egui::ImeEvent::Preedit { text: "سلام".into(), active_range_chars: None }),
+                Event::Ime(egui::ImeEvent::Disabled),
+            ],
+            1.,
+        );
+        assert!(tool.session.as_ref().unwrap().preedit.is_empty());
+        assert_eq!(tool.session.as_ref().unwrap().draft.source(), "safe");
+    }
+    #[test]
+    fn rotated_hit_and_repeated_scene_reuse_layout_without_gpu() {
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddText { text: left_text("ABC", [20., 50.]).unwrap(), parent: None })
+            .unwrap();
+        let xf = varos_core::model::Xform { rot: std::f32::consts::FRAC_PI_2, piv: [0., 0.] };
+        ed.doc.nodes.iter_mut().find(|n| n.kind == NodeKind::Text(id)).unwrap().xform = xf;
+        let mut tool = TextProduct { engine: Some(TextLayout::bundled().unwrap()), ..Default::default() };
+        assert_eq!(tool.hit(&ed, xf.apply([25., 45.]), 1.), Some(id));
+        let _ = tool.scene(
+            &ed,
+            View::identity(),
+            [500, 500],
+            SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+        );
+        let layouts = tool.engine.as_ref().unwrap().layouts;
+        for _ in 0..3 {
+            let _ = tool.scene(
+                &ed,
+                View::identity(),
+                [500, 500],
+                SceneStyle { checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD },
+            );
+        }
+        assert_eq!(tool.engine.as_ref().unwrap().layouts, layouts);
+    }
+    #[test]
+    fn area_drag_released_outside_canvas_ends_gesture() {
+        let mut ed = Editor::new();
+        ed.set_tool(ToolKind::Text);
+        let mut tool = TextProduct { engine: Some(TextLayout::bundled().unwrap()), ..Default::default() };
+        send(&mut tool, &mut ed, vec![pointer(30., 50., true), pointer(530., 550., false)], 1.);
+        assert!(tool.press.is_none());
+        assert!(!tool.selecting);
+        assert!(matches!(tool.session.as_ref().unwrap().draft.box_kind, TextBoxKind::Area(_)));
     }
 }
