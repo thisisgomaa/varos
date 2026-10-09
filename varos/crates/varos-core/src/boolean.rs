@@ -1,6 +1,6 @@
 //! The ONLY place that touches the external boolean-geometry crates.
 //! Primary: `flo_curves` — boolean ops DIRECTLY on cubic-bezier paths (curves & handles survive).
-//! Fallback: `i_overlay` — robust polygon boolean (used if flo_curves yields nothing for overlapping input).
+//! Fallback: `i_overlay` — robust polygon boolean (also guards the primary result area).
 //!
 //! A `Shape` (flat) = rings of points; a result is `ResultShape` = outer cubic contour + hole cubic contours.
 
@@ -69,7 +69,7 @@ fn from_flo(path: &SimpleBezierPath) -> Vec<Seg> {
     segs
 }
 
-fn flo_op(op: BoolOp, shapes: &[Vec<SimpleBezierPath>], acc: f64) -> Vec<SimpleBezierPath> {
+fn flo_op(op: BoolOp, shapes: &[Vec<SimpleBezierPath>], acc: f64) -> Vec<ResultShape> {
     if shapes.len() < 2 {
         return vec![];
     }
@@ -80,19 +80,22 @@ fn flo_op(op: BoolOp, shapes: &[Vec<SimpleBezierPath>], acc: f64) -> Vec<SimpleB
         }
         a
     };
-    match op {
+    let contours = match op {
         BoolOp::Unite => fold(path_add::<SimpleBezierPath>),
         BoolOp::Intersect => fold(path_intersect::<SimpleBezierPath>),
         BoolOp::Exclude => {
-            // XOR via symmetric difference (A−B)∪(B−A), folded pairwise. This is robust to
-            // the pinch/touch cases where (A∪B)−(A∩B) degenerates into a self-cancelling result.
+            // Keep the two differences separately grouped: path_add can restore the
+            // original overlapping rings instead of joining the symmetric difference.
             let mut a = shapes[0].clone();
+            let mut result = Vec::new();
             for b in &shapes[1..] {
-                let a_minus_b = path_sub::<SimpleBezierPath>(&a, b, acc);
-                let b_minus_a = path_sub::<SimpleBezierPath>(b, &a, acc);
-                a = path_add::<SimpleBezierPath>(&a_minus_b, &b_minus_a, acc);
+                let left = path_sub::<SimpleBezierPath>(&a, b, acc);
+                let right = path_sub::<SimpleBezierPath>(b, &a, acc);
+                result = group(left.iter().map(from_flo).collect());
+                result.extend(group(right.iter().map(from_flo).collect()));
+                a = left.into_iter().chain(right).collect();
             }
-            a
+            return result;
         }
         BoolOp::MinusFront => {
             let mut clip = shapes[1].clone();
@@ -101,26 +104,72 @@ fn flo_op(op: BoolOp, shapes: &[Vec<SimpleBezierPath>], acc: f64) -> Vec<SimpleB
             }
             path_sub::<SimpleBezierPath>(&shapes[0], &clip, acc)
         }
-    }
+    };
+    group(contours.iter().map(from_flo).collect())
 }
 
 fn sample_contour(segs: &[Seg]) -> Vec<Pt> {
+    sample_contour_at(segs, 8)
+}
+
+fn sample_contour_at(segs: &[Seg], steps: usize) -> Vec<Pt> {
     let mut poly = vec![];
     for s in segs {
-        for k in 0..8 {
-            poly.push(cubic(s.0, s.1, s.2, s.3, k as f32 / 8.0));
+        for k in 0..steps {
+            poly.push(cubic(s.0, s.1, s.2, s.3, k as f32 / steps as f32));
         }
     }
     poly
 }
 
+fn signed_area(poly: &[Pt]) -> f64 {
+    (0..poly.len())
+        .map(|i| {
+            let a = poly[i];
+            let b = poly[(i + 1) % poly.len()];
+            a[0] as f64 * b[1] as f64 - b[0] as f64 * a[1] as f64
+        })
+        .sum::<f64>()
+        * 0.5
+}
+
+/// A vertex can lie on another ring's edge. Use a point just inside this ring,
+/// near its boundary (a centroid can instead fall inside a nested child ring).
+fn interior_point(poly: &[Pt]) -> Pt {
+    let winding = signed_area(poly).signum() as f32;
+    for i in 0..poly.len() {
+        let a = poly[i];
+        let b = poly[(i + 1) % poly.len()];
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        for scale in [1e-4, 1e-5, 1e-3] {
+            let p = [(a[0] + b[0]) * 0.5 - dy * winding * scale, (a[1] + b[1]) * 0.5 + dx * winding * scale];
+            if point_in_poly(poly, p) {
+                return p;
+            }
+        }
+    }
+    poly.first().copied().unwrap_or([0.0, 0.0])
+}
+
+fn result_area(shapes: &[ResultShape]) -> f64 {
+    shapes
+        .iter()
+        .map(|s| {
+            signed_area(&sample_contour_at(&s.outer, 32)).abs()
+                - s.holes.iter().map(|h| signed_area(&sample_contour_at(h, 32)).abs()).sum::<f64>()
+        })
+        .sum()
+}
+
 /// Group result subpaths into outer+holes shapes by even-odd nesting depth (point-in-polygon).
 fn group(contours: Vec<Vec<Seg>>) -> Vec<ResultShape> {
     let polys: Vec<Vec<Pt>> = contours.iter().map(|c| sample_contour(c)).collect();
+    let representatives: Vec<Pt> = polys.iter().map(|p| interior_point(p)).collect();
     let n = contours.len();
     let depth: Vec<usize> = (0..n)
         .map(|i| {
-            let rep = polys[i].first().copied().unwrap_or([0.0, 0.0]);
+            let rep = representatives[i];
             (0..n).filter(|&j| j != i && polys[j].len() >= 3 && point_in_poly(&polys[j], rep)).count()
         })
         .collect();
@@ -134,7 +183,7 @@ fn group(contours: Vec<Vec<Seg>>) -> Vec<ResultShape> {
     }
     for i in 0..n {
         if depth[i] % 2 == 1 && contours[i].len() >= 2 {
-            let rep = polys[i][0];
+            let rep = representatives[i];
             let mut best: Option<usize> = None;
             let mut bestd = 0usize;
             for j in 0..n {
@@ -167,15 +216,15 @@ pub fn run_boolean_curves(op: BoolOp, shapes: &[Vec<Vec<Seg>>]) -> Vec<ResultSha
     let acc = 0.1_f64;
     let flo_in: Vec<Vec<SimpleBezierPath>> = shapes.iter().map(|s| shape_to_flo(s)).collect();
     let out = flo_op(op, &flo_in, acc);
-    if !out.is_empty() {
-        return group(out.iter().map(from_flo).filter(|s| s.len() >= 2).collect());
-    }
-    // fallback: i_overlay (polygonal) so the op still produces something on hard input
+    // Independently check area even for nonempty primary results: flo_curves
+    // can silently drop or misclassify disconnected rings on touching edges.
     let flat: Vec<Shape> = shapes
         .iter()
-        .map(|s| s.iter().map(|c| sample_contour(c).iter().map(|p| [p[0] as f64, p[1] as f64]).collect()).collect())
+        .map(|s| {
+            s.iter().map(|c| sample_contour_at(c, 32).iter().map(|p| [p[0] as f64, p[1] as f64]).collect()).collect()
+        })
         .collect();
-    run_boolean(op, &flat)
+    let fallback: Vec<ResultShape> = run_boolean_raw(op, &flat)
         .into_iter()
         .map(|sh| {
             let mut rings: Vec<Vec<Seg>> =
@@ -189,7 +238,18 @@ pub fn run_boolean_curves(op: BoolOp, shapes: &[Vec<Vec<Seg>>]) -> Vec<ResultSha
             }
         })
         .filter(|rs| rs.outer.len() >= 2)
-        .collect()
+        .collect();
+    guard_result(out, fallback)
+}
+
+fn guard_result(out: Vec<ResultShape>, fallback: Vec<ResultShape>) -> Vec<ResultShape> {
+    let expected = result_area(&fallback);
+    let tolerance = 2e-3 * expected.max(1.0);
+    if (result_area(&out) - expected).abs() > tolerance {
+        fallback
+    } else {
+        out
+    }
 }
 
 fn ring_to_straight_segs(ring: &Ring) -> Vec<Seg> {
@@ -233,7 +293,16 @@ pub fn run_boolean(op: BoolOp, shapes: &[Shape]) -> Vec<Shape> {
     if shapes.len() < 2 {
         return vec![];
     }
-    let raw = match op {
+    run_boolean_raw(op, shapes)
+        .into_iter()
+        .map(|sh| sh.into_iter().map(|r| rdp(&r, 0.75)).filter(|r| r.len() >= 3).collect::<Shape>())
+        .filter(|sh: &Shape| !sh.is_empty())
+        .collect()
+}
+
+// The engine guard uses unsimplified rings: RDP may itself change the area.
+fn run_boolean_raw(op: BoolOp, shapes: &[Shape]) -> Vec<Shape> {
+    match op {
         BoolOp::Unite => fold(shapes, OverlayRule::Union),
         BoolOp::Intersect => fold(shapes, OverlayRule::Intersect),
         BoolOp::Exclude => fold(shapes, OverlayRule::Xor),
@@ -241,11 +310,7 @@ pub fn run_boolean(op: BoolOp, shapes: &[Shape]) -> Vec<Shape> {
             let clip = flatten(&fold(&shapes[1..], OverlayRule::Union));
             shapes[0].overlay(&clip, OverlayRule::Difference, FillRule::EvenOdd)
         }
-    };
-    raw.into_iter()
-        .map(|sh| sh.into_iter().map(|r| rdp(&r, 0.75)).filter(|r| r.len() >= 3).collect::<Shape>())
-        .filter(|sh: &Shape| !sh.is_empty())
-        .collect()
+    }
 }
 
 fn perp(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
@@ -276,5 +341,33 @@ fn rdp(pts: &[[f64; 2]], tol: f64) -> Vec<[f64; 2]> {
         left
     } else {
         vec![a, b]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn area_guard_rejects_nonempty_incomplete_primary_result() {
+        let square = |size: f64| ResultShape {
+            outer: ring_to_straight_segs(&vec![[0., 0.], [size, 0.], [size, size], [0., size]]),
+            holes: vec![],
+        };
+        let guarded = guard_result(vec![square(10.)], vec![square(20.)]);
+        assert!((result_area(&guarded) - 400.).abs() < 1e-3);
+        // A valid primary result retains its cubic handles instead of being flattened.
+        let curved = ResultShape {
+            outer: vec![([0., 0.], [0., 10.], [10., 10.], [10., 0.]), ([10., 0.], [10., -10.], [0., -10.], [0., 0.])],
+            holes: vec![],
+        };
+        let fallback = ResultShape {
+            outer: ring_to_straight_segs(
+                &sample_contour_at(&curved.outer, 32).iter().map(|p| [p[0] as f64, p[1] as f64]).collect(),
+            ),
+            holes: vec![],
+        };
+        let kept = guard_result(vec![curved], vec![fallback]);
+        assert_eq!(kept[0].outer.len(), 2);
+        assert_eq!(kept[0].outer[0].1, [0., 10.]);
     }
 }

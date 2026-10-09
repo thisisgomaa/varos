@@ -88,7 +88,7 @@ impl Clipboard {
             let Some(src) = doc.node(id) else { continue };
             let mut n = src.clone();
             n.children.retain(|c| in_copy.contains(c));
-            if n.role == GroupRole::Clip && !n.mask_child.is_some_and(|m| n.children.contains(&m)) {
+            if n.role.is_mask_group() && !n.mask_child.is_some_and(|m| n.children.contains(&m)) {
                 // the mask was left behind → the copy is an ordinary group (as `sync_tree` would demote it)
                 n.role = GroupRole::Normal;
                 n.mask_child = None;

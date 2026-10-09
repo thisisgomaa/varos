@@ -138,6 +138,23 @@ pub enum Paint {
     None,
     Solid(Rgba),
 }
+impl std::hash::Hash for Paint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::None => {}
+            Self::Solid(c) => {
+                for v in c {
+                    if *v == 0.0 {
+                        0u32.hash(state);
+                    } else {
+                        v.to_bits().hash(state);
+                    }
+                }
+            }
+        }
+    }
+}
 impl Paint {
     /// From the legacy optional-colour shape: `None ⇒ Paint::None`, `Some(c) ⇒ Paint::Solid(c)`.
     pub fn from_opt(c: Option<Rgba>) -> Self {
@@ -288,7 +305,7 @@ pub enum PaintRole {
 /// What a GROUP node IS to clipping (MASKS_PLAN §1 / LAYERS_VISION §3.1). `Normal` = an ordinary group.
 /// `Clip` = a clipping-mask group: its `mask_child`'s silhouette clips every OTHER child (Illustrator
 /// `<Clip Group>`, the PDF-native form). `MaskAlpha` / `MaskLuma` are RESERVED for FUTURE soft masks
-/// (§7.1) — parsed today but treated as `Normal` until soft masks ship. Masks are part of `.vrs` format
+/// (§7.1) — parsed today but refused by validation until soft masks ship. Masks are part of `.vrs` format
 /// v2 (see ADR-0008: any writer-side change raises the format number); a v1 file with no `role` key
 /// loads as `Normal`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -298,6 +315,12 @@ pub enum GroupRole {
     Clip,
     MaskAlpha,
     MaskLuma,
+}
+
+impl GroupRole {
+    pub fn is_mask_group(&self) -> bool {
+        matches!(self, Self::Clip | Self::MaskAlpha | Self::MaskLuma)
+    }
 }
 
 /// One node of the REAL scene graph (the Layers system, D2). Structure lives here; geometry/appearance
@@ -781,14 +804,14 @@ impl Document {
     /// parent `Clip` group, the path shapes that clip. Short-circuits to `false` when the document has no
     /// clip group at all, so the common (no-mask) document pays only one arena scan.
     pub fn is_mask_source(&self, pid: u32) -> bool {
-        if !self.nodes.iter().any(|n| n.role == GroupRole::Clip && n.mask_child.is_some()) {
+        if !self.nodes.iter().any(|n| n.role.is_mask_group() && n.mask_child.is_some()) {
             return false;
         }
         let mut cur = self.node_of_path(pid);
         while let Some(nid) = cur {
             let Some(n) = self.node(nid) else { break };
             if let Some(par) = n.parent {
-                if self.node(par).is_some_and(|p| p.role == GroupRole::Clip && p.mask_child == Some(nid)) {
+                if self.node(par).is_some_and(|p| p.role.is_mask_group() && p.mask_child == Some(nid)) {
                     return true;
                 }
             }
@@ -803,7 +826,7 @@ impl Document {
         let mut cur = self.node_of_path(pid);
         while let Some(nid) = cur {
             let n = self.node(nid)?;
-            if matches!(n.kind, NodeKind::Group) && n.role == GroupRole::Clip {
+            if matches!(n.kind, NodeKind::Group) && n.role.is_mask_group() {
                 return Some(nid);
             }
             cur = n.parent;
@@ -813,7 +836,7 @@ impl Document {
     /// The stored `mask_child` node id of a clip group (None if the node isn't a clip). The scene reads
     /// this to build the mask silhouette rings.
     pub fn node_mask_child(&self, nid: u32) -> Option<u32> {
-        self.node(nid).filter(|n| n.role == GroupRole::Clip).and_then(|n| n.mask_child)
+        self.node(nid).filter(|n| n.role.is_mask_group()).and_then(|n| n.mask_child)
     }
     /// ARTBOARD MEMBERSHIP (Ahmed 07-06, the "mirror" rule): the boards a path VISIBLY stands on =
     /// every artboard whose page rect its outline bbox overlaps. One source of truth for the render
@@ -1784,7 +1807,7 @@ impl Document {
             .nodes
             .iter()
             .filter(|n| {
-                n.role == GroupRole::Clip
+                n.role.is_mask_group()
                     && !n.mask_child.is_some_and(|mc| n.children.contains(&mc) && self.node(mc).is_some())
             })
             .map(|n| n.id)

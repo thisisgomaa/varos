@@ -125,12 +125,14 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
         let Some(path) = ed.doc.paths.iter().find(|path| path.id == pid) else { continue };
         path.id.hash(&mut state);
         path.closed.hash(&mut state);
-        for paint in [path.fill.solid(), path.stroke.solid()] {
-            paint.is_some().hash(&mut state);
-            if let Some(color) = paint {
-                color.into_iter().for_each(|channel| f32_hash(channel, &mut state));
-            }
+        path.hidden.hash(&mut state);
+        path.anchors.len().hash(&mut state);
+        path.holes.len().hash(&mut state);
+        for hole in &path.holes {
+            hole.len().hash(&mut state);
         }
+        path.fill.hash(&mut state);
+        path.stroke.hash(&mut state);
         f32_hash(path.stroke_width, &mut state);
         f32_hash(path.opacity, &mut state);
         for anchor in path.anchors.iter().chain(path.holes.iter().flatten()) {
@@ -230,11 +232,6 @@ impl ViewCull {
     fn grown(&self, extra: f32) -> R4 {
         let g = self.pad + extra.max(0.0);
         (self.rect.0 - g, self.rect.1 - g, self.rect.2 + g, self.rect.3 + g)
-    }
-    /// The clip rect for one path: its stroke band (half the width, extruded both ways) is always
-    /// covered, so a centerline cut at this rect ends — caps included — outside the frame.
-    fn path_rect(&self, stroke_width: f32) -> R4 {
-        self.grown(stroke_width * 0.5)
     }
     fn point_visible(&self, p: Pt) -> bool {
         rect_contains_pt(self.grown(0.0), p)
@@ -398,7 +395,7 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         let mut geometry = Vec::with_capacity(ed.doc.paths.len());
         let mut view_clip = Vec::with_capacity(ed.doc.paths.len());
         for (pi, path) in ed.doc.paths.iter().enumerate() {
-            let rect = cull.map(|c| c.path_rect(path.stroke_width));
+            let rect = cull.map(|c| c.grown(crate::geom::painted_padding(path)));
             let (bbox, geom) = cache.lookup(&ed.doc, pi, ppu, |bbox| rect.is_none_or(|r| rects_intersect(bbox, r)));
             view_clip.push(match (rect, &geom) {
                 (Some(r), Some(_)) if !rect_contains(r, bbox) => Some(r),

@@ -126,6 +126,15 @@ pub fn plan_svg_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan,
 /// Deterministic output. Cancellation never returns a partial set of files. Snapshot and plan
 /// should belong together; custom rectangles are allowed and checked before writing.
 pub fn export_svg_files(doc: &Document, plan: &ExportPlan, cancel: &AtomicBool) -> Result<Vec<SvgFile>, ExportError> {
+    export_svg_files_with_report(doc, plan, cancel).map(|(output, _)| output)
+}
+
+/// Export bytes together with explicit diagnostics.
+pub fn export_svg_files_with_report(
+    doc: &Document,
+    plan: &ExportPlan,
+    cancel: &AtomicBool,
+) -> Result<(Vec<SvgFile>, crate::ExportReport), ExportError> {
     cancelled(cancel)?;
     check_document(doc)?;
     if plan.pages.is_empty() {
@@ -146,7 +155,7 @@ pub fn export_svg_files(doc: &Document, plan: &ExportPlan, cancel: &AtomicBool) 
         }
         files.push(SvgFile { page: page.clone(), bytes: write_page(doc, page, cancel)?.into_bytes() });
     }
-    Ok(files)
+    Ok((files, crate::ExportReport::default()))
 }
 fn cancelled(c: &AtomicBool) -> Result<(), ExportError> {
     if c.load(Ordering::Relaxed) {

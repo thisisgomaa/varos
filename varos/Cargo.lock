@@ -4330,6 +4330,7 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
+ "syn 2.0.118",
  "unicode-normalization",
 ]
 
