@@ -23,8 +23,10 @@ fn enabled() -> bool {
 }
 
 /// App-wide settings, persisted across launches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(flatten)]
+    pub preferences: crate::storage::preferences::Preferences,
     /// Autosave/recovery snapshots (§3.5/§3.6). On by default.
     pub recovery_enabled: bool,
     #[serde(default)]
@@ -38,6 +40,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            preferences: crate::storage::preferences::Preferences::default(),
             recovery_enabled: true,
             paste_remembers_layers: false,
             autosave_enabled: true,
@@ -55,7 +58,10 @@ impl Settings {
                 "Autosave interval must be 30–1800 seconds",
             )));
         }
+        crate::storage::preferences::validate(self)
+            .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidInput, e)))?;
         let doc = OnDisk {
+            preferences: self.preferences,
             version: SETTINGS_VERSION,
             recovery_enabled: self.recovery_enabled,
             paste_remembers_layers: self.paste_remembers_layers,
@@ -65,16 +71,24 @@ impl Settings {
         // Additive lane settings: preserve keys owned by sibling lanes at the FIFO writer.
         let mut value = match fs.read(path) {
             Ok(bytes) => {
-                let existing: OnDisk = serde_json::from_slice(&bytes)
+                let existing = super::settings_codec::envelope(&bytes)
                     .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
-                if existing.version != 1 && existing.version != SETTINGS_VERSION {
+                let version = existing.get("version").and_then(serde_json::Value::as_u64);
+                if version != Some(1) && version != Some(2) {
                     return Err(WriteError::Write(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        "Settings version changed; existing settings were kept.",
+                        "Unsupported settings version; writes locked",
                     )));
                 }
-                serde_json::from_slice::<serde_json::Value>(&bytes)
-                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?
+                let (_, invalid) = super::settings_codec::decode(&bytes)
+                    .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+                if !invalid.is_empty() {
+                    return Err(WriteError::Write(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Preserve and repair invalid settings before replacement",
+                    )));
+                }
+                serde_json::Value::Object(existing)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => serde_json::json!({}),
             Err(e) => return Err(WriteError::Write(e)),
@@ -86,12 +100,17 @@ impl Settings {
         }
         let bytes = serde_json::to_vec_pretty(&value)
             .map_err(|e| WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+        if bytes.len() > super::settings_codec::MAX_BYTES {
+            return Err(WriteError::Write(io::Error::new(io::ErrorKind::InvalidData, "Settings exceed 64 KiB")));
+        }
         durable::write_replace(fs, path, &bytes, &new_nonce())
     }
 }
 
 #[derive(Serialize, Deserialize)]
 struct OnDisk {
+    #[serde(flatten)]
+    preferences: crate::storage::preferences::Preferences,
     version: u32,
     recovery_enabled: bool,
     #[serde(default)]
@@ -100,11 +119,6 @@ struct OnDisk {
     autosave_enabled: bool,
     #[serde(default = "default_interval")]
     autosave_interval_seconds: u64,
-}
-
-#[derive(Deserialize)]
-struct VersionProbe {
-    version: u32,
 }
 
 fn bad_path(path: &Path) -> PathBuf {
@@ -121,24 +135,26 @@ pub fn load(fs: &dyn FsPort, path: &Path) -> (Settings, Option<String>) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
         Err(e) => return (Settings::default(), Some(format!("Couldn't read settings: {}", durable::io_reason(&e)))),
     };
-    let probe: VersionProbe = match serde_json::from_slice(&bytes) {
-        Ok(p) => p,
+    let map = match super::settings_codec::envelope(&bytes) {
+        Ok(map) => map,
         Err(_) => return corrupt(fs, path),
     };
-    if probe.version != 1 && probe.version != SETTINGS_VERSION {
-        return (Settings::default(), Some(version_mismatch_warning(probe.version)));
+    let Some(version) = map.get("version").and_then(serde_json::Value::as_u64).and_then(|v| u32::try_from(v).ok())
+    else {
+        return corrupt(fs, path);
+    };
+    if version != 1 && version != SETTINGS_VERSION {
+        return (Settings::default(), Some(version_mismatch_warning(version)));
     }
-    match serde_json::from_slice::<OnDisk>(&bytes) {
-        Ok(doc) if valid_autosave_interval(doc.autosave_interval_seconds) => (
-            Settings {
-                recovery_enabled: doc.recovery_enabled,
-                paste_remembers_layers: doc.paste_remembers_layers,
-                autosave_enabled: doc.autosave_enabled,
-                autosave_interval_seconds: doc.autosave_interval_seconds,
+    match super::settings_codec::decode(&bytes) {
+        Ok((settings, invalid)) => (
+            settings,
+            if invalid.is_empty() {
+                None
+            } else {
+                Some(format!("Invalid settings retained on disk: {}", invalid.join(", ")))
             },
-            None,
         ),
-        Ok(_) => corrupt(fs, path),
         Err(_) => corrupt(fs, path),
     }
 }
@@ -199,10 +215,12 @@ mod tests {
         let d = TestDir::new("settings-roundtrip");
         let path = d.join("settings.json");
         let s = Settings {
+            preferences: crate::storage::preferences::Preferences::default(),
             recovery_enabled: false,
             paste_remembers_layers: true,
             autosave_enabled: false,
             autosave_interval_seconds: 300,
+            ..Settings::default()
         };
         s.save(&RealFs, &path).unwrap();
         let (loaded, warning) = load(&RealFs, &path);

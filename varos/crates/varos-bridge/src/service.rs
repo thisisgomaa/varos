@@ -76,6 +76,22 @@ impl SnapshotJob {
 }
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    fn shortcuts(&mut self, _v: &crate::application::ShortcutsRequest) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no shortcut writer"))
+    }
+    fn command_index(&self, _v: &crate::application::CommandIndex) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no desktop command index"))
+    }
+    // ---- Lane F ----
+    fn preferences(&mut self, _request: &crate::application::Preferences) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no preferences writer"))
+    }
+    fn history_actor(&self, client: &str) -> varos_core::editor::history::Actor {
+        varos_core::editor::history::Actor::Agent {
+            profile_id: client.split(':').next().unwrap_or(client).into(),
+            label: client.into(),
+        }
+    }
     fn set_paste_remembers_layers(&mut self, board: &str, enabled: bool) -> Result<(), Error> {
         self.access(board)?
             .editor
@@ -373,6 +389,12 @@ impl Service {
             return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
         }
         if [
+            "shortcuts",
+            "command_index",
+            "preferences",
+            "history_list",
+            "history_jump",
+            "actions",
             "schema",
             "list_verbs",
             "print",
@@ -456,6 +478,52 @@ impl Service {
                 }
             }
             match req {
+                Request::Preferences(v) => host.preferences(v),
+                Request::Shortcuts(v) => host.shortcuts(v),
+                Request::CommandIndex(v) => host.command_index(v),
+                Request::HistoryList(v) => crate::application::history_list(host, v),
+                Request::HistoryJump(v) => {
+                    let a = host.access(&v.board)?;
+                    let from = a.editor.rev;
+                    a.editor
+                        .try_execute(varos_core::EditCommand::HistoryJump { undo_depth: v.undo_depth })
+                        .map_err(|e| Error::new("invalid_argument", e))?;
+                    self.observe(host);
+                    let mut reply = self.edit_receipt(&v.board, from);
+                    reply.undo_steps = 0;
+                    Ok(reply)
+                }
+                Request::Actions(v) => {
+                    let actor = host.history_actor(&ctx.client);
+                    let a = host.access(&v.board)?;
+                    let from = a.editor.rev;
+                    let result = match &v.action {
+                        crate::application::Action::Start {} => {
+                            a.editor.start_action_recording().map_err(|e| Error::new("busy", e))?;
+                            json!({"recording":true})
+                        }
+                        crate::application::Action::Stop { name } => {
+                            json!({"actions":a.editor.finish_action_recording(name.clone()).map_err(|e|Error::new("invalid_argument",e))?})
+                        }
+                        crate::application::Action::Replay { actions } => {
+                            actions.replay(a.editor).map_err(|e| Error::new("invalid_argument", e))?;
+                            a.editor.annotate_history(from, actor, "Replay Actions".into());
+                            json!({"replayed":true})
+                        }
+                        crate::application::Action::UndoMine {} => {
+                            let profile = match actor {
+                                varos_core::editor::history::Actor::Agent { profile_id, .. } => profile_id,
+                                _ => String::new(),
+                            };
+                            a.editor.undo_agent(&profile).map_err(|e| Error::new("invalid_argument", e))?;
+                            json!({"undone":true})
+                        }
+                    };
+                    self.observe(host);
+                    let mut reply = self.edit_receipt(&v.board, from);
+                    reply.result = Some(result);
+                    Ok(reply)
+                }
                 Request::Schema(v) => Ok(Reply::success(crate::mcp::schema(&v.tool, v.verb.as_deref())?)),
                 Request::ListVerbs(_) => Ok(Reply::success(crate::mcp::list_verbs())),
                 Request::WindowMemory(v) => {
@@ -780,6 +848,7 @@ impl Service {
                     {
                         return Err(Error::new("unsupported", "command wave, clip and release_clip require API 1.2"));
                     }
+                    let actor = host.history_actor(&ctx.client);
                     let a = host.access(&v.board)?;
                     if crate::economy::edit_enabled(&v.api) {
                         crate::economy::preflight_targets(&a.editor.doc, &leaves)?;
@@ -857,6 +926,7 @@ impl Service {
                         return Err(Error::new("cancelled", "cancelled before commit"));
                     }
                     a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
+                    a.editor.annotate_history(from, actor, format!("Agent batch · {} operations", v.ops.len()));
                     self.observe(host);
                     let mut reply = if v.receipt.as_deref() == Some("ids") {
                         self.ids_receipt(&v.board, from)

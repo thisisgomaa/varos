@@ -149,6 +149,13 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        HistoryJump { undo_depth } => {
+            if ed.transaction_open() || *undo_depth > ed.history_depths().0 + ed.history_depths().1 {
+                Err("History position unavailable or edit in progress".into())
+            } else {
+                Ok(())
+            }
+        }
         SetStrokeStyle { ids, style } => {
             if ids.is_empty() {
                 return Err("stroke style targets must not be empty".into());

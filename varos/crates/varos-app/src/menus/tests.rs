@@ -137,7 +137,7 @@ fn view_menu_mirrors_every_snapping_row() {
 fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
     let m = menus();
     let titles: Vec<&str> = m.iter().map(|(t, _)| *t).collect();
-    assert_eq!(titles, ["Varos", "File", "Edit", "Select", "Object", "View", "Window"]);
+    assert_eq!(titles, ["Varos", "File", "Edit", "Select", "Object", "View", "Window", "Help"]);
     let items = flat_items(&m);
     let has = |c: MenuCmd| items.iter().any(|e| matches!(e, Entry::Item { cmd, .. } if *cmd == c));
     for p in PanelId::DOCKABLE {
@@ -279,7 +279,7 @@ fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, V
         v.into_iter()
             .filter(|e| {
                 !matches!(e, Entry::Sub { label: "Clipping Mask" | "Transform" | "Layers", .. })
-                    && !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str()))
+                    && !matches!(e, Entry::Item { id, .. } if (ADDED_AFTER_SPLIT.contains(&id.as_str()) || ["app.preferences","app.shortcuts","app.actions","win.panel.History"].contains(&id.as_str())))
             })
             .map(|e| match e {
                 Entry::Item { id, .. } if id == "view.snapgrid" => {
@@ -295,7 +295,7 @@ fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, V
     }
     menus
         .into_iter()
-        .filter(|(t, _)| *t != "Select")
+        .filter(|(t, _)| *t != "Select" && *t != "Help")
         .map(|(t, v)| {
             let mut v = strip(v);
             if t == "Object" {

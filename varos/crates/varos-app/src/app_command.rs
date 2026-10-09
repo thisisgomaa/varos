@@ -50,6 +50,14 @@ pub enum WindowCmd {
 /// Every document-lifecycle request. In S1, Close Window = `Quit` (one window).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AppCommand {
+    // ---- Lane F ----
+    Phase9(crate::phase9::DesktopAction),
+    ApplyPreferences(varos_app::storage::settings::Settings, u64, bool),
+    ApplyShortcuts(crate::shortcut_editor::Overrides),
+    HistoryJump(SessionId, usize),
+    RecordAction(SessionId, bool),
+    ReplayAction(SessionId, varos_core::actions::Actions),
+    SaveAction(varos_core::actions::Actions),
     Clip(SessionId, bool),
     /// Authenticated local attachment; processed on the UI thread through the same FIFO.
     Bridge(Box<varos_bridge::ipc::Pending>),

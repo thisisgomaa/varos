@@ -13,6 +13,10 @@ use crate::model::{DropPos, SnapConfig};
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum EditCommand {
+    // ---- Lane F ----
+    HistoryJump {
+        undo_depth: usize,
+    },
     SetWandOptions(crate::select_transform::WandOptions),
     SetEyedropperOptions(crate::select_transform::PickOptions),
     Transform(crate::select_transform::Transform),
@@ -584,6 +588,9 @@ impl EditCommand {
                     edit_board(ed, |d| d.tags = tags);
                 }
             }
+            Self::HistoryJump { undo_depth } => {
+                let _ = ed.history_jump(undo_depth);
+            }
             Self::Undo => ed.undo(),
             Self::Redo => ed.redo(),
         }
@@ -683,6 +690,17 @@ impl Editor {
     pub fn execute(&mut self, command: EditCommand) -> Result<(), crate::EngineError> {
         // Immutable history handles bound rollback cost independently of retained artwork.
         let snapshot = self.clone();
+        let label = match &command {
+            EditCommand::Nudge { .. } => "Move",
+            EditCommand::SetOpacity(_) => "Change opacity",
+            EditCommand::AddShape { .. } => "Draw shape",
+            EditCommand::AddPath { .. } => "Draw path",
+            EditCommand::DeleteSelected => "Delete",
+            EditCommand::ApplyPaint { .. } => "Change paint",
+            _ => "Edit artwork",
+        };
+        let semantic = crate::actions::semantic(&command);
+        let before = self.rev;
         self.clipping_enablement.get_mut().take();
         let result = crate::guard::catch_panic(|| {
             command.apply(self);
@@ -692,6 +710,9 @@ impl Editor {
         });
         if result.is_err() {
             *self = snapshot;
+        } else {
+            self.record_step(semantic, before);
+            self.annotate_history(before, crate::editor::history::Actor::Human, label.into());
         }
         result
     }

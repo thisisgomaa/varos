@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+use varos_app::storage::durable::FsPort;
 use varos_app::storage::{
     durable::{RealFs, WriteOutcome},
     io_worker::IoWorker,
@@ -39,9 +40,14 @@ pub struct RecoveryUi {
     /// The Review panel's footer: the recovery setting as it really is.
     pub footer: String,
 }
+// ---- Lane F ----
+#[path = "preferences_host.rs"]
+mod preferences_host;
 enum Finished {
+    Preferences(Settings, Result<Vec<u8>, String>),
+    Shortcuts(crate::shortcut_editor::Overrides, Result<(), String>),
     Recovery(Completion<SessionId>),
-    Settings(Result<(), String>),
+    Settings(Settings, Result<(), String>),
     Scanned(Vec<OrphanEntry>),
     ScanFailed,
     Loaded(String, Result<Box<crate::workspace::RecoveredDocument>, String>),
@@ -52,6 +58,11 @@ enum Finished {
 pub struct RecoveryHost {
     scheduler: Scheduler,
     pub settings: Settings,
+    pub preferences_generation: u64,
+    pub shortcuts: crate::shortcut_editor::Overrides,
+    preferences_pending: bool,
+    settings_evidence_path: Option<PathBuf>,
+    settings_source: Option<Vec<u8>>,
     autosave_wake: Option<Instant>,
     worker: Option<IoWorker<Finished>>,
     store: Option<Arc<RecoveryStore>>,
@@ -121,6 +132,11 @@ impl RecoveryHost {
         let mut host = Self {
             scheduler: Scheduler::default(),
             settings: Settings::default(),
+            preferences_generation: 0,
+            shortcuts: crate::shortcut_editor::Overrides::load(),
+            preferences_pending: false,
+            settings_evidence_path: None,
+            settings_source: None,
             autosave_wake: None,
             worker: None,
             store: None,
@@ -153,6 +169,8 @@ impl RecoveryHost {
         };
         let (settings, warning) = settings::load(&RealFs, &layout.settings());
         host.settings = settings;
+        host.settings_evidence_path = Some(layout.settings());
+        host.settings_source = RealFs.read(&layout.settings()).ok();
         host.scheduler.set_enabled(settings.recovery_enabled);
         if warning.is_none() {
             host.settings_path = Some(layout.settings());
@@ -376,58 +394,61 @@ impl RecoveryHost {
     }
     pub fn handle(&mut self, cmd: &AppCommand, ws: &mut Workspace, now: Instant) -> bool {
         match cmd {
+            AppCommand::ApplyPreferences(settings, generation, reset) => {
+                self.apply_preferences(*settings, *generation, *reset)
+            }
+            AppCommand::ApplyShortcuts(overrides) => self.apply_shortcuts(overrides.clone()),
             AppCommand::SetRecoveryEnabled(_)
             | AppCommand::SetAutosave(_, _)
             | AppCommand::TogglePasteRemembersLayers
             | AppCommand::SetPasteRemembersLayers(_) => {
+                if self.preferences_pending {
+                    self.warning = Some("Wait for the pending preferences write".into());
+                    return true;
+                }
+                let mut desired = self.settings;
                 match cmd {
                     AppCommand::SetRecoveryEnabled(enabled) => {
-                        self.settings.recovery_enabled = *enabled;
-                        self.scheduler.set_enabled(*enabled);
+                        desired.recovery_enabled = *enabled;
                     }
-                    AppCommand::SetPasteRemembersLayers(enabled) => self.settings.paste_remembers_layers = *enabled,
+                    AppCommand::SetPasteRemembersLayers(enabled) => desired.paste_remembers_layers = *enabled,
                     AppCommand::TogglePasteRemembersLayers => {
-                        self.settings.paste_remembers_layers = !self.settings.paste_remembers_layers
+                        desired.paste_remembers_layers = !desired.paste_remembers_layers
                     }
                     AppCommand::SetAutosave(enabled, seconds) => {
                         if !settings::valid_autosave_interval(*seconds) {
                             self.warning = Some("Autosave interval must be 30–1800 seconds".into());
                             return true;
                         }
-                        self.settings.autosave_enabled = *enabled;
-                        self.settings.autosave_interval_seconds = *seconds;
+                        desired.autosave_enabled = *enabled;
+                        desired.autosave_interval_seconds = *seconds;
                         for s in ws.sessions_mut() {
                             s.autosave.reset();
                         }
                     }
                     _ => {}
                 }
-                for s in ws.sessions_mut() {
-                    if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers
-                        && !s
-                            .editor
-                            .execute(varos_core::EditCommand::SetPasteRemembersLayers(
-                                self.settings.paste_remembers_layers,
-                            ))
-                            .is_ok()
-                    {
-                        // A guarded session retries the preference update on the next observation.
-                        continue;
-                    }
-                }
                 if let (Some(path), Some(worker)) = (self.settings_path.clone(), &self.worker) {
-                    let settings = self.settings;
+                    let settings = desired;
+                    self.preferences_pending = true;
                     let job = Box::new(move || {
-                        Finished::Settings(settings.save(&RealFs, &path).map_err(|e| e.reason()).and_then(|outcome| {
-                            match outcome {
+                        Finished::Settings(
+                            settings,
+                            settings.save(&RealFs, &path).map_err(|e| e.reason()).and_then(|outcome| match outcome {
                                 WriteOutcome::Durable => Ok(()),
                                 WriteOutcome::ReplacedUnconfirmed(e) => Err(e.to_string()),
-                            }
-                        }))
+                            }),
+                        )
                     });
-                    if worker.submit(job, Finished::Settings(Err("Settings writer failed.".into()))).is_err() {
+                    if worker.submit(job, Finished::Settings(settings, Err("Settings writer failed.".into()))).is_err()
+                    {
+                        self.preferences_pending = false;
                         self.warning = Some("Couldn't save preferences.".into());
                     }
+                } else {
+                    self.settings = desired;
+                    self.preferences_generation += 1;
+                    self.scheduler.set_enabled(desired.recovery_enabled);
                 }
                 true
             }
@@ -469,6 +490,12 @@ impl RecoveryHost {
         }
     }
     pub fn observe(&mut self, ws: &mut Workspace, now: Instant) {
+        for s in ws.sessions_mut() {
+            s.editor.keyboard_increment_pt = self.settings.preferences.keyboard_increment_pt;
+            if !s.editor.transaction_open() {
+                let _ = s.editor.set_history_depth(self.settings.preferences.history_depth);
+            }
+        }
         for s in ws.sessions_mut() {
             if s.editor.paste_remembers_layers != self.settings.paste_remembers_layers
                 && !s
@@ -520,9 +547,58 @@ impl RecoveryHost {
                             self.scheduler.on_complete(now, s.id, &mut s.recovery, done);
                         }
                     }
-                    Finished::Settings(result) => {
-                        if let Err(e) = result {
-                            self.warning = Some(format!("Couldn't save preferences. {e}"));
+                    Finished::Preferences(settings, result) => {
+                        self.preferences_pending = false;
+                        match result {
+                            Ok(bytes) => {
+                                self.settings_source = Some(bytes);
+                                self.settings_path = self.settings_evidence_path.clone();
+                                self.settings_unsaved = None;
+                                self.warning = None;
+                                self.settings = settings;
+                                self.preferences_generation += 1;
+                                self.scheduler.set_enabled(settings.recovery_enabled);
+                                for s in ws.sessions_mut() {
+                                    s.autosave.reset();
+                                }
+                                self.changed = true;
+                            }
+                            Err(e) => {
+                                self.warning = Some(e);
+                                self.changed = true;
+                            }
+                        }
+                    }
+                    Finished::Shortcuts(overrides, result) => {
+                        match result {
+                            Ok(()) => {
+                                self.shortcuts = overrides;
+                                self.preferences_generation += 1;
+                            }
+                            Err(e) => self.warning = Some(e),
+                        }
+                        self.changed = true;
+                    }
+                    Finished::Settings(settings, result) => {
+                        self.preferences_pending = false;
+                        match result {
+                            Ok(()) => {
+                                self.settings = settings;
+                                self.preferences_generation += 1;
+                                self.scheduler.set_enabled(settings.recovery_enabled);
+                                for tab in ws.sessions_mut() {
+                                    tab.editor.execute_ui(varos_core::EditCommand::SetPasteRemembersLayers(
+                                        settings.paste_remembers_layers,
+                                    ));
+                                    tab.editor.keyboard_increment_pt = settings.preferences.keyboard_increment_pt;
+                                    let _ = tab.editor.set_history_depth(settings.preferences.history_depth);
+                                }
+                                self.changed = true;
+                            }
+                            Err(e) => {
+                                self.warning = Some(format!("Couldn't save preferences. {e}"));
+                                self.changed = true;
+                            }
                         }
                     }
                 }
@@ -708,6 +784,19 @@ impl RecoveryHost {
     }
 }
 impl crate::host::FileJobs for RecoveryHost {
+    fn shortcuts(
+        &mut self,
+        v: &varos_bridge::application::ShortcutsRequest,
+    ) -> Result<varos_bridge::Reply, varos_bridge::Error> {
+        self.bridge_shortcuts(v)
+    }
+    // ---- Lane F ----
+    fn preferences(
+        &mut self,
+        v: &varos_bridge::application::Preferences,
+    ) -> Result<varos_bridge::Reply, varos_bridge::Error> {
+        self.bridge_preferences(v)
+    }
     fn submit(&mut self, job: crate::file_jobs::FileJob) -> Result<(), crate::file_jobs::FileJob> {
         let Some(worker) = &self.worker else {
             return Err(job);

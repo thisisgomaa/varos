@@ -236,7 +236,9 @@ impl Lifecycle<'_> {
     /// Run one command. `AppCommand::Window(_)` is ignored here (host-owned).
     pub fn run(&mut self, cmd: AppCommand) -> Effect {
         match cmd {
-            AppCommand::Selection(..)
+            // ---- Lane F ----
+            AppCommand::Phase9(_) | AppCommand::ApplyPreferences(..) | AppCommand::ApplyShortcuts(_) | AppCommand::HistoryJump(..) | AppCommand::RecordAction(..) | AppCommand::ReplayAction(..) | AppCommand::SaveAction(_)
+            | AppCommand::Selection(..)
             | AppCommand::Object(..)
             | AppCommand::View(..)
             | AppCommand::FitAll(_)

@@ -25,8 +25,13 @@ struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) color: vec4<f32>
 @fragment fn fs(in: VsOut) -> @location(0) vec4<f32> { return in.color; }
 "#;
 
+// ---- Lane F ----
+pub use wgpu::PowerPreference;
+
 pub mod health;
 pub struct Renderer {
+    // ---- Lane F ----
+    pasteboard: [f32; 4],
     pub health: health::DeviceHealth,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -250,6 +255,18 @@ impl Renderer {
     /// surface) — so it returns a human-readable Err instead of panicking; the app shows it in a dialog
     /// (ENGINEERING_REVIEW §3.3: "GPU/Win32/external edges never panic; internal invariants may").
     pub async fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_power(target, width, height, wgpu::PowerPreference::HighPerformance).await
+    }
+    // ---- Lane F ----
+    pub fn set_pasteboard(&mut self, colour: [f32; 4]) {
+        self.pasteboard = colour;
+    }
+    pub async fn new_with_power(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+        power: wgpu::PowerPreference,
+    ) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -259,7 +276,7 @@ impl Renderer {
             .map_err(|e| format!("couldn't create a draw surface on the window: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: power,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
@@ -594,6 +611,7 @@ impl Renderer {
             },
         );
         Ok(Renderer {
+            pasteboard: BG,
             health,
             surface,
             device,
@@ -831,7 +849,12 @@ impl Renderer {
     /// The scene target is cleared exactly once (bg pass); every later scene pass LOADs; resolve happens on
     /// the final pass only.
     fn record_scene(&self, enc: &mut wgpu::CommandEncoder, nbg: u32, metas: &[GroupDraw], overlay: (u32, u32)) {
-        let clearc = wgpu::Color { r: BG[0] as f64, g: BG[1] as f64, b: BG[2] as f64, a: 1.0 };
+        let clearc = wgpu::Color {
+            r: self.pasteboard[0] as f64,
+            g: self.pasteboard[1] as f64,
+            b: self.pasteboard[2] as f64,
+            a: 1.0,
+        };
         // bg pass — clear the scene target and lay the dot grid
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {

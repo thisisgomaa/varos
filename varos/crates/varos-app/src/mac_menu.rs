@@ -2,6 +2,10 @@
 //! background. See docs/foundation/MAC_CHROME.md. Nothing here decides behaviour — a click becomes
 //! a `chrome::MenuCmd` that `main.rs` runs through the SAME paths the keyboard / buttons use.
 
+// ---- Lane F ----
+#[path = "native_registry.rs"]
+mod native_registry;
+
 use crate::app_command::AppCommand;
 use crate::chrome::{self, Check, Entry, MenuCmd, Native};
 use muda::accelerator::{Accelerator, Code, Modifiers};
@@ -28,6 +32,8 @@ pub fn muda_code(code: KeyCode) -> Option<Code> {
         K::KeyE => Code::KeyE,
         K::KeyG => Code::KeyG,
         K::KeyJ => Code::KeyJ,
+        // ---- Lane F ----
+        K::KeyK => Code::KeyK,
         K::KeyN => Code::KeyN,
         K::KeyO => Code::KeyO,
         K::KeyP => Code::KeyP,

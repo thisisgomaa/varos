@@ -147,3 +147,6 @@ pub fn load_vrs_with_notice(path: &FsPath) -> Result<(Document, Option<&'static 
     let notice = loaded.notice();
     Ok((loaded.doc, notice))
 }
+
+// ---- Lane F ----
+pub mod quicklook;

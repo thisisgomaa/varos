@@ -8,8 +8,10 @@
 use varos_app::shell::PanelId;
 use winit::keyboard::KeyCode;
 
+// ---- Lane F ----
 mod edit;
 mod file;
+mod help;
 mod object;
 mod select;
 #[cfg(test)]
@@ -106,6 +108,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 /// What a clicked item does — each one an EXISTING path in the host.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuCmd {
+    // ---- Lane F ----
+    Phase9(crate::phase9::DesktopAction),
     Slice4a(&'static str),
     View(varos_core::editor::view_commands::ViewAction),
     TogglePasteRemembersLayers,
@@ -218,6 +222,7 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
         ("Object", object::rows()),
         ("View", view::rows()),
         ("Window", window::rows()),
+        ("Help", help::rows()),
     ]
 }
 
@@ -226,6 +231,12 @@ fn app_rows() -> Vec<Entry> {
     use KeyCode as K;
     vec![
         Entry::Native(Native::About),
+        item(
+            "app.preferences",
+            "Preferences…",
+            cmd(K::KeyK),
+            MenuCmd::Phase9(crate::phase9::DesktopAction::Preferences),
+        ),
         Entry::Sep,
         Entry::Native(Native::Services),
         Entry::Sep,
@@ -284,6 +295,7 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         K::KeyE => E::E,
         K::KeyG => E::G,
         K::KeyJ => E::J,
+        K::KeyK => E::K,
         K::KeyN => E::N,
         K::KeyO => E::O,
         K::KeyP => E::P,
