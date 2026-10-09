@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::*;
 /// The Board's second hand. Only the header's spare space drags; body gestures edit colour.
 pub(crate) fn build_color_panel(
@@ -108,7 +111,7 @@ pub(crate) fn build_color_panel(
                             t::MUTED
                         },
                     );
-                    if response.on_hover_text(tip).clicked() {
+                    if response.shaped_hover_text(tip).clicked() {
                         if let Some(tab) = tab {
                             if tab != m.tab {
                                 m.finish(ops);

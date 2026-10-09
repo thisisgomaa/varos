@@ -32,6 +32,7 @@ pub enum GpuPreference {
 pub enum Language {
     System,
     En,
+    Ar,
     /// Previously selected catalog unavailable in this build; retained with English fallback.
     Unavailable {
         catalog: [u8; 64],
@@ -43,6 +44,7 @@ impl Language {
         match self {
             Self::System => "system",
             Self::En => "en",
+            Self::Ar => "ar",
             Self::Unavailable { catalog, len } => {
                 std::str::from_utf8(&catalog[..usize::from(*len).min(64)]).unwrap_or("system")
             }
@@ -60,6 +62,7 @@ impl<'de> Deserialize<'de> for Language {
         match value.as_str() {
             "system" => Ok(Self::System),
             "en" => Ok(Self::En),
+            "ar" => Ok(Self::Ar),
             _ if !value.is_empty()
                 && value.len() <= 64
                 && value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_".contains(&b)) =>
@@ -233,7 +236,7 @@ pub const SPECS: &[SettingSpec] = &[
         label: "Language",
         category: "Interface",
         typed: Key::Language,
-        control: Control::Choice(&["system", "en"]),
+        control: Control::Choice(&["system", "en", "ar"]),
         timing: "Restart required; System falls back to English",
     },
     SettingSpec {

@@ -1,4 +1,7 @@
 //! Lane F: additive shortcut overrides by command ID; canvas context preserves text editing.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use crate::{
     app_command::AppCommand,
     command_registry::{self, Command},
@@ -192,10 +195,10 @@ impl EditorState {
             .filter(|c| c.label.to_lowercase().contains(&self.search.to_lowercase()))
         {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(c.label).font(t::small()).color(t::TEXT));
+                ui.shaped_label(egui::RichText::new(c.label).font(t::small()).color(t::TEXT));
                 let value = draft.effective(&c).map(|c| c.text()).unwrap_or_default();
                 if c.id == "shortcut.temporary-hand" {
-                    ui.label(egui::RichText::new("Space · held gesture").font(t::small()).color(t::MUTED));
+                    ui.shaped_label(egui::RichText::new("Space · held gesture").font(t::small()).color(t::MUTED));
                     return;
                 }
                 let (rect, _) =
@@ -225,7 +228,7 @@ impl EditorState {
                 }
             });
         }
-        ui.label(
+        ui.shaped_label(
             egui::RichText::new("Canvas shortcuts; text fields retain their native editing keys.")
                 .font(t::small())
                 .color(t::MUTED),

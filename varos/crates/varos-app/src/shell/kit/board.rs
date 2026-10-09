@@ -6,6 +6,10 @@
 //! pointer-only (`Sense::CLICK`): the Start page owns the keyboard (K2 row 2) and passes `focused`
 //! while its ring is visible. Text arrives as galleys laid out in `Color32::PLACEHOLDER`, so the
 //! control picks the state colour. No host commands, no I/O, no animation, tokens only.
+// ---- Lane F: text adapters ----
+use crate::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use crate::shell::kit::text::ShapedPainter as _;
 use std::sync::Arc;
 
 use egui::{Color32, CornerRadius, Galley, Id, Painter, PointerButton, Rect, Sense, Stroke, StrokeKind, Ui};
@@ -38,7 +42,7 @@ fn hovered(r: &ControlResponse) -> bool {
 /// Paint `galley` so its first line's baseline sits on `baseline`; returns the galley's rect.
 pub fn galley_at_baseline(painter: &Painter, x: f32, baseline: f32, galley: Arc<Galley>, color: Color32) -> Rect {
     let rect = Rect::from_min_size(egui::pos2(x, baseline - first_baseline(&galley)), galley.size());
-    painter.galley(rect.min, galley, color);
+    painter.shaped_galley(rect.min, galley, color);
     rect
 }
 
@@ -50,7 +54,7 @@ pub fn first_baseline(galley: &Galley) -> f32 {
 /// Paint `galley` centred vertically in a line box `[top, top + line)` (CSS half-leading).
 pub fn galley_in_line(painter: &Painter, x: f32, top: f32, line: f32, galley: Arc<Galley>, color: Color32) -> Rect {
     let rect = Rect::from_min_size(egui::pos2(x, top + (line - galley.size().y) / 2.0), galley.size());
-    painter.galley(rect.min, galley, color);
+    painter.shaped_galley(rect.min, galley, color);
     rect
 }
 
@@ -83,11 +87,11 @@ pub fn big_button(ui: &mut Ui, id: Id, rect: Rect, b: BigButton, label: &str) ->
     let block = b.title.size().y + t::SB_BIG_SUB_GAP + b.sub.size().y;
     let top = rect.center().y - block / 2.0;
     let title_h = b.title.size().y;
-    p.galley(egui::pos2(x, top), b.title, ink);
-    p.galley(egui::pos2(x, top + title_h + t::SB_BIG_SUB_GAP), b.sub, weak);
+    p.shaped_galley(egui::pos2(x, top), b.title, ink);
+    p.shaped_galley(egui::pos2(x, top + title_h + t::SB_BIG_SUB_GAP), b.sub, weak);
     let kb =
         egui::pos2(rect.right() - t::SB_BIG_PAD_R - b.shortcut.size().x, rect.center().y - b.shortcut.size().y / 2.0);
-    p.galley(kb, b.shortcut, weak);
+    p.shaped_galley(kb, b.shortcut, weak);
     if b.focused {
         focus_ring(&ui.painter().with_clip_rect(ui.clip_rect()), rect, t::R, t::BG);
     }
@@ -137,12 +141,12 @@ pub fn text_button(
         _ => t::TEXT,
     };
     let pos = rect.center() - label.size() / 2.0;
-    p.galley(pos, label, ink);
+    p.shaped_galley(pos, label, ink);
     if focused && reason.is_none() {
         focus_ring(&ui.painter().with_clip_rect(ui.clip_rect()), rect, t::R, t::PANEL);
     }
     match reason {
-        Some(reason) => ControlResponse { response: r.response.on_hover_text(reason), activated: false },
+        Some(reason) => ControlResponse { response: r.response.shaped_hover_text(reason), activated: false },
         None => r,
     }
 }
@@ -177,19 +181,19 @@ pub fn pill_width(label: &Galley, pad: f32) -> f32 {
 /// A tag pill (src.html `.tg`): SURFACE capsule, MUTED 11/500 text. Static.
 pub fn tag_pill(painter: &Painter, rect: Rect, label: Arc<Galley>) {
     painter.rect_filled(rect, t::RCAP, t::SURFACE);
-    painter.galley(rect.center() - label.size() / 2.0, label, t::MUTED);
+    painter.shaped_galley(rect.center() - label.size() / 2.0, label, t::MUTED);
 }
 
 /// The "Missing" pill (src.html `.pill-miss`): LINE2 capsule outline, MUTED text. Static.
 pub fn outline_pill(painter: &Painter, rect: Rect, label: Arc<Galley>) {
     painter.rect_stroke(rect, t::RCAP, Stroke::new(t::KIT_STROKE, t::LINE2), StrokeKind::Inside);
-    painter.galley(rect.center() - label.size() / 2.0, label, t::MUTED);
+    painter.shaped_galley(rect.center() - label.size() / 2.0, label, t::MUTED);
 }
 
 /// A key chip (src.html `kbd`): LINE2 outline, 3 px corners, TEXT mono label. Static.
 pub fn kbd(painter: &Painter, rect: Rect, label: Arc<Galley>) {
     painter.rect_stroke(rect, t::r_ctrl(), Stroke::new(t::KIT_STROKE, t::LINE2), StrokeKind::Inside);
-    painter.galley(rect.center() - label.size() / 2.0, label, t::TEXT);
+    painter.shaped_galley(rect.center() - label.size() / 2.0, label, t::TEXT);
 }
 
 /// One tag-filter tab (src.html `.flt`): label + mono count, centred in the row; the selected one is
@@ -279,7 +283,7 @@ pub fn segmented_frame(
                 if i == selected { t::TOGGLE_WELL } else { t::HOVER },
             );
         }
-        let response = help.map_or(r.response.clone(), |tips| r.response.on_hover_text(tips[i]));
+        let response = help.map_or(r.response.clone(), |tips| r.response.shaped_hover_text(tips[i]));
         if response.clicked_by(PointerButton::Primary) {
             chosen = Some(i);
         }
@@ -366,8 +370,8 @@ pub fn preset_cell(
     p.rect_stroke(ab, CornerRadius::ZERO, Stroke::new(t::KIT_STROKE, t::MUTED), StrokeKind::Inside);
     let (name, name_top) = name_line;
     let (size, size_top) = size_line;
-    p.galley(egui::pos2(rect.center().x - name.size().x / 2.0, name_top), name, t::TEXT);
-    p.galley(egui::pos2(rect.center().x - size.size().x / 2.0, size_top), size, t::MUTED);
+    p.shaped_galley(egui::pos2(rect.center().x - name.size().x / 2.0, name_top), name, t::TEXT);
+    p.shaped_galley(egui::pos2(rect.center().x - size.size().x / 2.0, size_top), size, t::MUTED);
     if focused {
         let inset = t::KIT_FOCUS_GAP + t::KIT_FOCUS_STROKE + t::KIT_STROKE;
         focus_ring(&ui.painter().with_clip_rect(ui.clip_rect()), rect.shrink(inset), t::R, t::PANEL);
@@ -422,7 +426,7 @@ pub fn more_chip(ui: &mut Ui, id: Id, rect: Rect, open: bool) -> ControlResponse
     p.rect_filled(rect, t::r_ctrl(), if open || hovered(&r) { t::HOVER } else { t::SURFACE });
     p.rect_stroke(rect, t::r_ctrl(), Stroke::new(t::KIT_STROKE, t::LINE2), StrokeKind::Inside);
     Icon::More.paint(p, rect.center(), t::ICON_MD, t::TEXT);
-    let response = r.response.on_hover_text("Locate or remove from Recent");
+    let response = r.response.shaped_hover_text("Locate or remove from Recent");
     ControlResponse { response, activated: r.activated }
 }
 
@@ -456,8 +460,8 @@ pub fn tag_chip(ui: &mut Ui, id: Id, rect: Rect, label: Arc<Galley>, name: &str)
     let p = ui.painter();
     p.rect_filled(rect, t::RCAP, t::SURFACE);
     let text_pos = egui::pos2(rect.left() + t::SB_PILL_PAD, rect.center().y - label.size().y / 2.0);
-    p.galley(text_pos, label, t::MUTED);
+    p.shaped_galley(text_pos, label, t::MUTED);
     Icon::Remove.paint(p, x_center, t::SB_CHIP_X, if hover { t::TEXT } else { t::MUTED });
-    let response = r.response.on_hover_text(format!("Remove {name}"));
+    let response = r.response.shaped_hover_text(crate::i18n::message(ui.ctx(), "Remove {name}", &[("name", name)]));
     ControlResponse { response, activated: r.activated }
 }

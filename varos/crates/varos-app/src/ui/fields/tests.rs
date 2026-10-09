@@ -1078,3 +1078,36 @@ fn type_number_pending_settles_into_draft_before_save_or_tab_switch() {
         assert!(ed.doc.text_boxes.is_empty());
     }
 }
+
+#[test]
+fn arabic_field_commit_preserves_logical_utf8_and_undo() {
+    let mut b = artboard();
+    let original = b.ab_name().to_owned();
+    let name = "لوحة — Café logo ١٢٣";
+    b.edit("dock");
+    b.retype(name);
+    b.key(Key::Enter);
+    b.frame(vec![]);
+    assert_eq!(b.ab_name(), name);
+    let saved = serde_json::to_value(&b.ed.doc).unwrap();
+    assert_eq!(saved["artboards"][0]["name"].as_str(), Some(name));
+    b.ed.undo();
+    assert_eq!(b.ab_name(), original);
+}
+
+#[test]
+fn arabic_indic_digits_type_as_latin_in_numeric_fields() {
+    for event in
+        [Event::Text("٢٥٠٫۵".into()), Event::Paste("٢٥٠٫۵".into()), Event::Ime(egui::ImeEvent::Commit("٢٥٠٫۵".into()))]
+    {
+        let mut b = one_rect();
+        let rev = b.ed.rev;
+        b.edit("X position");
+        b.frame(vec![event]);
+        b.key(Key::Enter);
+        b.frame(vec![]);
+        assert_eq!((b.x(), b.ed.rev), (250.5, rev + 1));
+        b.ed.undo();
+        assert_eq!(b.x(), 100.0);
+    }
+}

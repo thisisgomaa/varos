@@ -1,4 +1,7 @@
 //! Provisional breadcrumb; isolation scope is transient and never persisted.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use varos_app::shell::{kit, tokens as t};
 use varos_core::{EditCommand, Editor};
 pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
@@ -36,7 +39,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
                     {
                         ed.execute_ui(EditCommand::Isolate(None));
                     }
-                    ui.label(t::micro_label(path.join(" / ")));
+                    ui.shaped_authored_label(t::micro_label(path.join(" / ")));
                 });
             });
         });

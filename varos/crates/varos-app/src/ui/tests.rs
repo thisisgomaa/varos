@@ -583,6 +583,24 @@ mod layer_rename_tests {
         }
     }
 
+    // ---- Arabic UI fix round ----
+    #[test]
+    fn arabic_layers_empty_states_are_translated_in_production_paint() {
+        let mut panel = Panel::new(vec![]);
+        varos_app::i18n::set(&panel.ctx, varos_app::i18n::Locale::Ar);
+        kit::text::enable_trace(&panel.ctx);
+        for (search, english) in [("", "No layers yet"), ("missing", "No matching layers")] {
+            panel.search = search.into();
+            panel.frame(vec![]);
+            let records = kit::text::paint_records(&panel.ctx);
+            let arabic = varos_app::i18n::translate(&panel.ctx, english);
+            assert_ne!(arabic, english);
+            assert!(records.iter().any(|r| r.text == arabic), "missing {arabic}: {records:?}");
+            assert!(!records.iter().any(|r| r.text == english));
+        }
+    }
+    // ---- end Arabic UI fix round ----
+
     fn no_icons() -> LayerIcons {
         LayerIcons { eye: None, eye_off: None, lock: None, unlock: None, search: None }
     }
@@ -1444,13 +1462,14 @@ mod tab_strip_tests {
             let i = self.tabs.iter().position(|t| t.label == label).expect("a tab with that label");
             self.layout().tabs.iter().find(|&&(j, _)| j == i).expect("chip is drawn").1
         }
-        fn run(&mut self, mut input: RawInput) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+        fn run(&mut self, mut input: RawInput) -> (Vec<AppCommand>, Vec<varos_app::shell::kit::text::PaintRecord>) {
+            varos_app::shell::kit::text::enable_trace(&self.ctx);
             input.focused &= self.focused;
             let mut win_action = None;
             let mut cmds = Vec::new();
             let (tabs, active) = (&self.tabs, self.active);
             let (shell, rail, dock) = (&mut self.shell, &mut self.rail, &mut self.dock);
-            let out = self.ctx.run_ui(input, |root| {
+            let _out = self.ctx.run_ui(input, |root| {
                 build_topbar(
                     root,
                     &icons(),
@@ -1469,22 +1488,22 @@ mod tab_strip_tests {
                     false,
                 );
             });
-            (cmds, out.shapes)
+            (cmds, varos_app::shell::kit::text::paint_records(&self.ctx))
         }
-        fn idle(&mut self) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+        fn idle(&mut self) -> (Vec<AppCommand>, Vec<varos_app::shell::kit::text::PaintRecord>) {
             self.run(idle())
         }
-        fn press(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+        fn press(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<varos_app::shell::kit::text::PaintRecord>) {
             self.run(press(at, PointerButton::Primary))
         }
-        fn move_to(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+        fn move_to(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<varos_app::shell::kit::text::PaintRecord>) {
             self.run(RawInput {
                 screen_rect: Some(screen_rect()),
                 events: vec![Event::PointerMoved(at)],
                 ..Default::default()
             })
         }
-        fn release(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<egui::epaint::ClippedShape>) {
+        fn release(&mut self, at: Pos2) -> (Vec<AppCommand>, Vec<varos_app::shell::kit::text::PaintRecord>) {
             self.run(release(at, PointerButton::Primary))
         }
         /// Warm-up frame (see `click_at`), press at `from`, then one move 30 px towards `dir` — past
@@ -1499,14 +1518,12 @@ mod tab_strip_tests {
     /// Where the chip labelled `label` was PAINTED this frame: `(left edge, label y, paint order)`.
     /// A clean chip's label starts 12 px in from its left edge (`tab_item`), and a higher paint order
     /// means drawn later = on top.
-    fn painted(shapes: &[egui::epaint::ClippedShape], label: &str) -> (f32, f32, usize) {
-        let hits: Vec<(f32, f32, usize)> = shapes
+    fn painted(records: &[varos_app::shell::kit::text::PaintRecord], label: &str) -> (f32, f32, usize) {
+        let hits: Vec<_> = records
             .iter()
             .enumerate()
-            .filter_map(|(k, cs)| match &cs.shape {
-                egui::Shape::Text(t) if t.galley.text() == label => Some((t.pos.x - 12.0, t.pos.y, k)),
-                _ => None,
-            })
+            .filter(|(_, r)| r.text == label)
+            .map(|(k, r)| (r.rect.left() - 12.0, r.rect.top(), k))
             .collect();
         assert_eq!(hits.len(), 1, "chip {label:?} must be painted exactly once, got {hits:?}");
         hits[0]
@@ -3732,6 +3749,7 @@ mod panel_icons_lane2_tests {
     fn layers_filter_menu_changes_only_visible_kinds_and_is_document_scoped() {
         use egui::{Event, Key, Modifiers};
         let ctx = egui::Context::default();
+        varos_app::shell::kit::text::enable_trace(&ctx);
         varos_app::shell::fonts::install(&ctx);
         varos_app::shell::tokens::apply(&ctx);
         let mut ed = Editor::new();
@@ -3755,7 +3773,7 @@ mod panel_icons_lane2_tests {
         let frame = |events, doc| {
             set_doc_salt(&ctx, Some(crate::app_command::SessionId(doc)));
             let mut ops = vec![];
-            let out = ctx.run_ui(
+            let _out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300.0, 600.0))),
                     events,
@@ -3777,13 +3795,7 @@ mod panel_icons_lane2_tests {
                 },
             );
             assert!(ops.is_empty());
-            out.shapes
-                .into_iter()
-                .filter_map(|s| match s.shape {
-                    egui::Shape::Text(t) => Some(t.galley.text().to_string()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
+            varos_app::shell::kit::text::paint_records(&ctx).into_iter().map(|r| r.text).collect::<Vec<_>>()
         };
         assert!(frame(vec![], 1).iter().any(|s| s == "Test group"));
         let (id, rect) = icon_action_tests::PROBE.with(|p| {
@@ -3832,3 +3844,45 @@ fn menu_owner_absent_for_one_frame_releases_keyboard_and_closes_menu() {
     assert!(!super::wants_keyboard(&ctx));
     assert!(!kit::is_menu_open(&ctx, owner));
 }
+
+// ---- Arabic UI fix round ----
+#[test]
+fn arabic_artboard_chrome_preserves_authored_catalog_key() {
+    let ctx = egui::Context::default();
+    varos_app::shell::fonts::install(&ctx);
+    varos_app::i18n::set(&ctx, varos_app::i18n::Locale::Ar);
+    varos_app::shell::kit::text::enable_trace(&ctx);
+    let hole = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 400.0));
+    let boards = [AbInfo {
+        i: 0,
+        name: "Delete".into(),
+        x: 60.0,
+        y: 100.0,
+        w: 200.0,
+        h: 200.0,
+        transparent: false,
+        clip: true,
+        hidden: false,
+    }];
+    for _ in 0..2 {
+        let _ = ctx.run_ui(egui::RawInput { screen_rect: Some(hole), ..Default::default() }, |ui| {
+            build_ab_chrome(
+                ui.ctx(),
+                varos_core::geom::View::identity(),
+                1.0,
+                hole,
+                &boards,
+                0,
+                false,
+                1,
+                &mut vec![],
+                &mut None,
+                &mut None,
+            );
+        });
+    }
+    let records = varos_app::shell::kit::text::paint_records(&ctx);
+    assert!(records.iter().any(|r| r.text == "Delete"), "{records:?}");
+    assert!(!records.iter().any(|r| r.text == "حذف"));
+}
+// ---- end Arabic UI fix round ----

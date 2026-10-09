@@ -1,3 +1,9 @@
+// ---- Lane F: shaped names ----
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use varos_app::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
 use super::super::*;
 #[path = "layers_gradient.rs"]
 mod gradient_thumb;
@@ -474,7 +480,7 @@ pub(crate) fn col_toggle(
             );
         }
     }
-    resp.on_hover_text(tip).clicked()
+    resp.shaped_hover_text(tip).clicked()
 }
 
 /// The Layers panel — the SIMPLE (Photoshop/Affinity) VIEW of the scene tree (07-03 pivot), docked UNDER
@@ -597,7 +603,7 @@ pub(crate) fn panel_layers(
                 |ui| {
                     if !rows.iter().any(|row| layer_kind_matches(row.kind, kind_filter)) {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(w, 40.0), egui::Sense::hover());
-                        ui.painter().text(
+                        ui.painter().shaped_chrome(
                             r.center(),
                             Align2::CENTER_CENTER,
                             if search.trim().is_empty() && kind_filter == 0 {
@@ -861,14 +867,7 @@ pub(crate) fn panel_layers(
                                 varos_app::shell::tokens::small()
                             };
                             let base = if row.selected || !auto { TEXT } else { MUTED };
-                            let s = elide(&row.name, name_rect.width(), font.size);
-                            p.text(
-                                egui::pos2(name_rect.left(), rect.center().y),
-                                Align2::LEFT_CENTER,
-                                s,
-                                font,
-                                with_a(base, dim),
-                            );
+                            varos_app::shell::kit::text::cell(&p, name_rect, &row.name, font, with_a(base, dim));
                         }
                         // selection — click / Ctrl-toggle / Shift-range act on the ROW (the 07-03 bug fix).
                         // A Board header click makes that board ACTIVE instead (new art lands there).
@@ -927,7 +926,7 @@ pub(crate) fn panel_layers(
                         // the name cell says how to rename it; right-click offers the same editor (Astra
                         // F10: nothing on the row hinted at the double-click, right-click did nothing)
                         if !renaming && resp.hovered() && ptr.is_some_and(|pp| name_rect.contains(pp)) {
-                            resp.clone().on_hover_text("Double-click to rename");
+                            resp.clone().shaped_hover_text("Double-click to rename");
                         }
                         let menu_id = ui.id().with(("lay-menu", row.id, row.sec));
                         if resp.secondary_clicked() && !renaming {
@@ -1033,18 +1032,6 @@ pub(crate) fn panel_layers(
             });
         }
     }
-}
-
-/// Truncate a name with a trailing "…" so it fits `avail` px at `size` (rough per-glyph estimate).
-pub(crate) fn elide(name: &str, avail: f32, size: f32) -> String {
-    let per = size * 0.55;
-    let max = (avail / per).floor() as usize;
-    if name.chars().count() <= max || max < 2 {
-        return name.to_string();
-    }
-    let mut s: String = name.chars().take(max.saturating_sub(1)).collect();
-    s.push('\u{2026}');
-    s
 }
 
 /// Filter affects visible kinds only; it never changes scene nodes or selected artwork.

@@ -470,7 +470,18 @@ impl Icon {
 
     /// Paint the glyph centred on `center` at a display size token (`t::ICON_SM/MD/LG`), tinted `color`.
     pub fn paint(self, painter: &Painter, center: Pos2, size: f32, color: Color32) {
-        if let Some(tex) = self.texture(painter.ctx()) {
+        // ---- Lane F: navigation direction only; drawing-tool geometry is never mirrored ----
+        let icon = if crate::i18n::locale(painter.ctx()) == crate::i18n::Locale::Ar {
+            match self {
+                Self::ChevronLeft => Self::ChevronRight,
+                Self::ChevronRight => Self::ChevronLeft,
+                other => other,
+            }
+        } else {
+            self
+        };
+        // ---- end Lane F ----
+        if let Some(tex) = icon.texture(painter.ctx()) {
             let uv = Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0));
             painter.image(tex.id(), Rect::from_center_size(center, egui::Vec2::splat(size)), uv, color);
         }

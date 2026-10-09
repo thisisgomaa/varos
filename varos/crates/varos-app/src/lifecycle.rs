@@ -1822,6 +1822,9 @@ mod tests {
         assert_eq!(card.tags, ["client", "social"]);
         assert_eq!(card.artboards, 0);
         let ctx = egui::Context::default();
+        // ---- Lane F: shaped paint evidence ----
+        varos_app::shell::kit::text::enable_trace(&ctx);
+        // ---- end Lane F ----
         varos_app::shell::fonts::install(&ctx);
         let mut page = StartPage::new();
         let input = || egui::RawInput {
@@ -1831,14 +1834,14 @@ mod tests {
         let _ = ctx.run_ui(input(), |ui| {
             page.draw(ui, &model, None);
         });
-        let out = ctx.run_ui(input(), |ui| {
+        // ---- Lane F: paint evidence comes from the mesh trace ----
+        let _out = ctx.run_ui(input(), |ui| {
             page.draw(ui, &model, None);
         });
-        let texts: Vec<String> = out
-            .shapes
-            .iter()
-            .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None })
-            .collect();
+        // ---- end Lane F ----
+        // ---- Lane F: labels now emit atlas meshes ----
+        let texts: Vec<String> = varos_app::shell::kit::text::paint_records(&ctx).into_iter().map(|r| r.text).collect();
+        // ---- end Lane F ----
         for want in ["Ramadan campaign", "Key visual for Noor Foods.", "client", "social", "free"] {
             assert!(texts.iter().any(|t| t == want), "the card shows {want:?}: {texts:?}");
         }

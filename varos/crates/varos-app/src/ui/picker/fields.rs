@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::*;
 use varos_app::shell::kit::field::{self as kf, TextField};
 
@@ -105,7 +108,7 @@ pub(super) fn alpha(ui: &mut egui::Ui, m: &mut ColorPanel, ops: &mut Vec<Op>, wi
     }
     let knob = egui::pos2(track.left() + m.hsva[3] * track.width(), track.center().y);
     ui.painter().circle(knob, t::PICKER_ALPHA_KNOB, t::PICKER_WHITE, Stroke::new(t::KIT_STROKE, t::PICKER_BLACK));
-    response.on_hover_text("Alpha");
+    response.shaped_hover_text("Alpha");
     if m.mini() {
         if kit::icon_button_sized(
             ui,

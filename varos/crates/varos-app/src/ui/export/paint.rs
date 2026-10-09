@@ -1,4 +1,10 @@
 //! Hand-painted Minimal sheet; card pixels are cached after one CPU worker pass per snapshot.
+// ---- Lane F: shaped chrome ----
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use varos_app::shell::kit::text::{ShapedPainter as _, ShapedUi as _};
+// ---- end Lane F ----
 use super::{ExportSheet, Phase, SheetAction};
 use egui::{Id, RichText};
 use varos_app::shell::{
@@ -64,10 +70,14 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
             });
             ui.horizontal(|ui| {
                 let count = sheet.minimal.cards().count();
-                ui.label(
-                    RichText::new(format!("Selected {count} · {count} files"))
-                        .font(t::numeric_value(t::T_MICRO))
-                        .color(t::MUTED),
+                ui.shaped_label(
+                    RichText::new(varos_app::i18n::message(
+                        ui.ctx(),
+                        "Selected {count} · {count} files",
+                        &[("count", &count.to_string())],
+                    ))
+                    .font(t::numeric_value(t::T_MICRO))
+                    .color(t::MUTED),
                 );
                 let mut c = Control::new(Id::new("export-clear"), "Clear");
                 if running {
@@ -94,7 +104,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
             ui.horizontal(|ui| {
                 let (_, rect) = ui.allocate_space(egui::vec2(t::EXPORT_FIELD_W, t::KIT_CONTROL_H));
                 if running {
-                    ui.painter().text(
+                    ui.painter().shaped_text(
                         rect.left_center(),
                         egui::Align2::LEFT_CENTER,
                         &sheet.minimal.folder,
@@ -224,7 +234,7 @@ pub fn minimal(ui: &mut egui::Ui, sheet: &mut ExportSheet, action: &mut SheetAct
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let files = sheet.minimal.jobs(sheet.sid, 0, Default::default()).len();
-            let label = format!("Export {files} files");
+            let label = varos_app::i18n::message(ui.ctx(), "Export {count} files", &[("count", &files.to_string())]);
             let mut c = Control::new(Id::new("export-screens"), &label);
             if running {
                 c.availability = Availability::Busy("Exporting…");
@@ -367,7 +377,7 @@ fn card(ui: &mut egui::Ui, sheet: &mut ExportSheet, index: usize, running: bool)
         Icon::ExportCheck.paint(ui.painter(), checkbox.center(), t::EXPORT_CHECK, t::TEXT);
     }
     if list {
-        ui.painter().text(
+        ui.painter().shaped_text(
             egui::pos2(checkbox.right() + t::KIT_PAD, rect.center().y),
             egui::Align2::LEFT_CENTER,
             format!("{} · {} × {}", asset.name, asset.page.rect[2], asset.page.rect[3]),
@@ -384,7 +394,7 @@ fn card(ui: &mut egui::Ui, sheet: &mut ExportSheet, index: usize, running: bool)
             (sheet.minimal.preview_id, index, sheet.minimal.selection_tab),
             preview.shrink(t::KIT_PAD),
         );
-        ui.painter().text(
+        ui.painter().shaped_text(
             egui::pos2(checkbox.right() + t::KIT_TEXT_GAP, rect.bottom() - t::KIT_PAD),
             egui::Align2::LEFT_BOTTOM,
             &asset.name,
@@ -392,7 +402,7 @@ fn card(ui: &mut egui::Ui, sheet: &mut ExportSheet, index: usize, running: bool)
             t::TEXT,
         );
     }
-    response.clone().on_hover_text(&asset.name);
+    response.clone().shaped_hover_text(&asset.name);
     if !running && (response.clicked() || response.double_clicked()) {
         sheet.minimal.cards_mut().click(index, ui.input(|i| i.modifiers.shift), response.double_clicked());
         sheet.minimal.preferences_dirty = true;

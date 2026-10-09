@@ -1,4 +1,7 @@
 //! Lane G: provisional canvas Type tool; all published source changes use EditCommand.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
 use egui::{Event, Key};
 use varos_core::{
     editor::Editor,
@@ -553,7 +556,7 @@ impl TextProduct {
         };
         let range = session.range();
         if c.overset {
-            painter.text(
+            painter.shaped_chrome(
                 screen(0., c.layout.lines.first().map_or(0., |l| l.baseline)),
                 egui::Align2::LEFT_BOTTOM,
                 "Overset text",

@@ -1,4 +1,7 @@
 //! Slice 1.10 provisional controls: owner design review pending.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::super::*;
 use varos_app::shell::{
     kit::field::{self, TextField},
@@ -14,7 +17,7 @@ pub(super) fn settings(
         commands.push(AppCommand::SetAutosave(!r.autosave_enabled, r.autosave_interval_seconds));
     }
     ui.horizontal(|ui| {
-        ui.label(RichText::new("After inactivity (seconds)").font(t::small()).color(t::MUTED));
+        ui.shaped_label(RichText::new("After inactivity (seconds)").font(t::small()).color(t::MUTED));
         if r.autosave_enabled {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(t::DOC_UNITS_W, t::FIELD_H), egui::Sense::hover());
             let value = r.autosave_interval_seconds.to_string();
@@ -40,10 +43,10 @@ pub(super) fn settings(
                 commands.push(AppCommand::SetAutosave(true, seconds));
             }
         } else {
-            ui.label(RichText::new(r.autosave_interval_seconds.to_string()).font(t::small()).color(t::MUTED));
+            ui.shaped_label(RichText::new(r.autosave_interval_seconds.to_string()).font(t::small()).color(t::MUTED));
         }
     });
-    ui.label(
+    ui.shaped_label(
         RichText::new(if r.enabled {
             "Saves changes to the open file. Recovery copies stay on."
         } else {

@@ -1,3 +1,6 @@
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::super::*;
 use varos_app::shell::tokens as t;
 
@@ -10,7 +13,7 @@ pub(crate) fn document_section(
 ) {
     board_section(ui, s, w, ops);
     hsep(ui, w);
-    ui.label(micro_label("DOCUMENT"));
+    ui.shaped_label(micro_label("DOCUMENT"));
     label_gap(ui);
     ui.horizontal(|ui| {
         let units = varos_core::units::Unit::ALL.map(|unit| unit.suffix());
@@ -91,7 +94,7 @@ pub(crate) fn document_section(
             ops.push(Op::AbAdd);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(RichText::new("Colour RGB").color(MUTED).font(t::small()));
+            ui.shaped_label(RichText::new("Colour RGB").color(MUTED).font(t::small()));
         });
     });
     fields::num(
@@ -134,12 +137,12 @@ pub(crate) fn document_section(
     if toggle_row(ui, w, "Recovery (all documents)", recovery.enabled) {
         commands.push(AppCommand::SetRecoveryEnabled(!recovery.enabled));
     }
-    ui.label(RichText::new(&recovery.status).color(MUTED).size(12.0));
+    ui.shaped_label(RichText::new(&recovery.status).color(MUTED).size(12.0));
     if !recovery.last_copy.is_empty() {
-        ui.label(RichText::new(&recovery.last_copy).color(MUTED).size(11.0));
+        ui.shaped_label(RichText::new(&recovery.last_copy).color(MUTED).size(11.0));
     }
     if !recovery.detail.is_empty() {
-        ui.label(RichText::new(&recovery.detail).color(MUTED).size(11.0));
+        ui.shaped_label(RichText::new(&recovery.detail).color(MUTED).size(11.0));
     }
     if let Some(id) = recovery.sid.filter(|_| recovery.retry) {
         ui.horizontal(|ui| {

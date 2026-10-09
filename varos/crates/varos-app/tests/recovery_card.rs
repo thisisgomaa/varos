@@ -23,6 +23,7 @@ const FOOTER: &str = "Recovery on · copies every 30 seconds";
 
 fn context() -> Context {
     let ctx = Context::default();
+    varos_app::shell::kit::text::enable_trace(&ctx);
     fonts::install(&ctx);
     t::apply(&ctx);
     let _ = ctx.run_ui(input(vec![]), |_| {});
@@ -85,11 +86,8 @@ impl Rig {
         all
     }
     /// Every text the last frame painted.
-    fn texts(out: &egui::FullOutput) -> Vec<String> {
-        out.shapes
-            .iter()
-            .filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None })
-            .collect()
+    fn texts(ctx: &Context) -> Vec<String> {
+        varos_app::shell::kit::text::paint_records(ctx).into_iter().map(|r| r.text).collect()
     }
 }
 
@@ -107,7 +105,7 @@ fn headline_is_singular_for_one_copy() {
 fn card_sits_centred_24_above_the_board_bottom_and_follows_the_sentence() {
     let r = Rig::new(board());
     r.frame(&two(), vec![]);
-    let (_, out) = r.frame(&two(), vec![]);
+    let (_, _out) = r.frame(&two(), vec![]);
     let card = r.rect(ids::card()).expect("the card is drawn on a document tab");
     assert_eq!(card.height(), t::SB_RECOV_H);
     assert!((card.center().x - board().center().x).abs() <= 0.5, "centred (whole points): {card:?}");
@@ -118,7 +116,7 @@ fn card_sits_centred_24_above_the_board_bottom_and_follows_the_sentence() {
     assert_eq!(later.right() + t::RC_BTN_GAP, review.left());
     assert_eq!((later.height(), review.height()), (t::SB_BTN_H, t::SB_BTN_H));
     assert!((later.center().y - card.center().y).abs() < 0.01 && (review.center().y - card.center().y).abs() < 0.01);
-    let texts = Rig::texts(&out);
+    let texts = Rig::texts(&r.ctx);
     for s in ["Recovered 2 unsaved copies", "from your last session", "Later", "Review"] {
         assert!(texts.iter().any(|t| t == s), "{s:?} not painted: {texts:?}");
     }
@@ -134,8 +132,8 @@ fn one_copy_reads_singular_and_a_narrow_box_drops_the_second_phrase() {
     let r = Rig::new(board());
     let one = vec![two().remove(0)];
     r.frame(&one, vec![]);
-    let (_, out) = r.frame(&one, vec![]);
-    let texts = Rig::texts(&out);
+    let (_, _out) = r.frame(&one, vec![]);
+    let texts = Rig::texts(&r.ctx);
     assert!(texts.iter().any(|t| t == "Recovered 1 unsaved copy"), "{texts:?}");
     let wide = r.rect(ids::card()).unwrap();
 
@@ -143,8 +141,8 @@ fn one_copy_reads_singular_and_a_narrow_box_drops_the_second_phrase() {
     assert!(!rc::shows_subline(narrow) && rc::shows_subline(board()));
     let r = Rig::new(narrow);
     r.frame(&one, vec![]);
-    let (_, out) = r.frame(&one, vec![]);
-    let texts = Rig::texts(&out);
+    let (_, _out) = r.frame(&one, vec![]);
+    let texts = Rig::texts(&r.ctx);
     assert!(!texts.iter().any(|t| t == rc::SUBLINE), "under 600 the second phrase goes: {texts:?}");
     let card = r.rect(ids::card()).unwrap();
     assert!(card.width() < wide.width());
@@ -177,12 +175,12 @@ fn review_opens_the_panel_in_place_with_a_row_per_copy() {
     assert!(!rc::review_open(&r.ctx));
     assert_eq!(r.click(&rows, ids::review()), [], "Review raises nothing: the panel opens here");
     assert!(rc::review_open(&r.ctx));
-    let (_, out) = r.frame(&rows, vec![]);
-    assert!(!Rig::texts(&out).iter().any(|t| t == "Review" || t == "Later"), "the card is gone");
+    let (_, _out) = r.frame(&rows, vec![]);
+    assert!(!Rig::texts(&r.ctx).iter().any(|t| t == "Review" || t == "Later"), "the card is gone");
     let panel = r.rect(ids::panel()).expect("the panel replaces the card");
     assert_eq!(panel, rc::panel_rect(board(), 2));
     assert_eq!(panel.bottom(), board().bottom() - t::RC_GAP, "same bottom anchor as the card");
-    let texts = Rig::texts(&out);
+    let texts = Rig::texts(&r.ctx);
     for s in [
         "Recovered copies",
         "2",
@@ -224,9 +222,9 @@ fn rows_leave_one_by_one_and_the_last_closes_the_panel() {
     r.frame(&rows, vec![]);
     assert_eq!(r.rect(ids::panel()).unwrap(), rc::panel_rect(board(), 1));
     rows.clear(); // the last one discarded
-    let (actions, out) = r.frame(&rows, vec![]);
+    let (actions, _out) = r.frame(&rows, vec![]);
     assert!(actions.is_empty() && !rc::review_open(&r.ctx));
-    assert!(Rig::texts(&out).is_empty(), "nothing is drawn without rows: {:?}", Rig::texts(&out));
+    assert!(Rig::texts(&r.ctx).is_empty(), "nothing is drawn without rows: {:?}", Rig::texts(&r.ctx));
     r.frame(&rows, vec![]);
     assert!(!over_ui(&r.ctx, board().center_bottom() - egui::vec2(0.0, 60.0)), "nothing left over the canvas");
 }
@@ -253,8 +251,8 @@ fn busy_and_damaged_rows_do_not_fire() {
     rows[1].problem = Some("This recovery copy is damaged.".into());
     r.frame(&rows, vec![]);
     r.click(&rows, ids::review());
-    let (_, out) = r.frame(&rows, vec![]);
-    assert!(Rig::texts(&out).iter().any(|t| t == "This recovery copy is damaged."), "{:?}", Rig::texts(&out));
+    let (_, _out) = r.frame(&rows, vec![]);
+    assert!(Rig::texts(&r.ctx).iter().any(|t| t == "This recovery copy is damaged."), "{:?}", Rig::texts(&r.ctx));
     assert_eq!(r.click(&rows, ids::restore("menu")), []);
     assert_eq!(r.click(&rows, ids::discard("menu")), []);
     assert_eq!(r.click(&rows, ids::restore("untitled")), []);
@@ -533,8 +531,8 @@ fn restored_notice_keyboard_and_fallback_explanation() {
         (save, out)
     };
     frame(42, vec![]);
-    let (_, out) = frame(42, vec![]);
-    assert!(Rig::texts(&out).iter().any(|text| text == "The newest copy was damaged; the previous copy was used."));
+    let (_, _out) = frame(42, vec![]);
+    assert!(Rig::texts(&ctx).iter().any(|text| text == "The newest copy was damaged; the previous copy was used."));
     frame(42, key(egui::Key::Tab));
     assert_eq!(rc::focused(&ctx), Some(ids::later()));
     frame(42, key(egui::Key::Tab));
@@ -542,6 +540,8 @@ fn restored_notice_keyboard_and_fallback_explanation() {
     assert!(frame(42, key(egui::Key::Enter)).0);
     frame(42, key(egui::Key::Tab));
     frame(42, key(egui::Key::Space));
-    assert!(Rig::texts(&frame(42, vec![]).1).is_empty());
-    assert!(!Rig::texts(&frame(43, vec![]).1).is_empty());
+    frame(42, vec![]);
+    assert!(Rig::texts(&ctx).is_empty());
+    frame(43, vec![]);
+    assert!(!Rig::texts(&ctx).is_empty());
 }

@@ -234,3 +234,5 @@ ADR-0016 proposed. Appearance-stack integration deferred to integrator.
 <!-- ---- end w3-cmyk ---- -->
 <!-- Lane E: Phase 11 -->
 | 11.0 Blend / Repeat / Envelope basics (Lane E) | implemented (provisional UI, owner design review pending) | uncommitted `feat/w3-live` | v13; source children, shared evaluator/cache, W, kit options, isolation, Expand/Release, PDF/SVG, API 1.2 and CLI apply. Integrator replaces the three reserved-era identity steps with sibling v10–v12 migrations. See worktree REPORT.md and reference/LIVE_NODES_V13.md; native acceptance pending. |
+<!-- Lane F wave 3 -->
+| 9.8 Arabic UI | implemented (provisional UI, owner design review pending) — see lane REPORT.md for remaining acceptance gaps | uncommitted lane F | ADR-0012 T2/T3 |

@@ -32,7 +32,7 @@ pub struct FontFace {
 impl FontFace {
     pub fn new(family: &'static str, weight: u16, bytes: Arc<[u8]>) -> Result<Self, &'static str> {
         crate::Engine::validate_font(&bytes)?;
-        if family.is_empty() || ![400, 500, 600].contains(&weight) {
+        if family.is_empty() || ![300, 400, 500, 600].contains(&weight) {
             return Err("invalid font metadata");
         }
         let content_hash = Sha256::digest(&bytes).into();
@@ -100,7 +100,7 @@ impl FontSet {
             if self.faces[..i].iter().any(|f| f.family == face.family && f.weight == face.weight) {
                 return Err("duplicate family and weight");
             }
-            if face.family.is_empty() || ![400, 500, 600].contains(&face.weight) {
+            if face.family.is_empty() || ![300, 400, 500, 600].contains(&face.weight) {
                 return Err("invalid font metadata");
             }
             crate::Engine::validate_font(&face.bytes)?;

@@ -1,3 +1,6 @@
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::super::*;
 
 /// Page-size presets shown in the artboard panel: (label, w, h) in world points (px == pt @72ppi).
@@ -25,11 +28,13 @@ pub(crate) fn panel_artboard(
             let inner = ui.available_width();
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             ui.horizontal(|ui| {
-                ui.label(panel_title("Artboard"));
+                ui.shaped_label(panel_title("Artboard"));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // a free canvas (New board) has no artboard: "0 / 0", not "1 / 0"
                     let at = if s.count == 0 { 0 } else { i + 1 };
-                    ui.label(RichText::new(format!("{at} / {}", s.count)).color(MUTED).font(numeric_value(11.5)));
+                    ui.shaped_label(
+                        RichText::new(format!("{at} / {}", s.count)).color(MUTED).font(numeric_value(11.5)),
+                    );
                 });
             });
             ui.horizontal(|ui| {
@@ -63,7 +68,7 @@ pub(crate) fn panel_artboard(
             fields::name(ui, inner, &s.name, "dock", ops, |v| Op::AbName(i, v));
 
             ui.add_space(2.0);
-            ui.label(micro_label("SIZE"));
+            ui.shaped_label(micro_label("SIZE"));
             // preset dropdown
             let entries = AB_PRESETS.iter().map(|(label, _, _)| *label).collect::<Vec<_>>();
             if let Some(index) = kit::text_dropdown(
@@ -145,7 +150,7 @@ pub(crate) fn panel_artboard(
                 }
                 let _ = col;
                 ui.add_space(8.0);
-                ui.label(
+                ui.shaped_label(
                     RichText::new(match s.color {
                         Some(c) => hex_of(c),
                         None => "Transparent".into(),
@@ -269,10 +274,10 @@ pub(crate) fn build_ab_chrome(
                             }
                         } else {
                             let col = if is_active { TEXT } else { MUTED };
-                            ui.label(RichText::new(&ab.name).color(col).size(11.0));
+                            ui.shaped_authored_label(RichText::new(&ab.name).color(col).size(11.0));
                         }
                         // the page size, quietly beside the name (Ahmed 07-07 "المقاس مكتوب جمبه")
-                        ui.label(
+                        ui.shaped_label(
                             RichText::new(format!("{:.0} \u{00d7} {:.0}", ab.w, ab.h))
                                 .color(MUTED)
                                 .font(numeric_value(10.0)),
