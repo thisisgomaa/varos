@@ -41,6 +41,33 @@ pub enum EditCommand {
     },
     /// Place normalized artwork as one group with fresh ids and one undo entry.
     PlaceArtwork(Box<crate::model::Document>),
+    ZoomPercent(f32),
+    View(crate::editor::view_commands::ViewAction),
+    Selection(crate::editor::wave::Selection),
+    Lasso {
+        points: Vec<Pt>,
+        objects: bool,
+        additive: bool,
+    },
+    InsertAnchor {
+        path: u32,
+        segment: usize,
+        t: f32,
+    },
+    DeleteAnchor(u32),
+    AnchorType {
+        anchor: u32,
+        smooth: bool,
+    },
+    DistributeMode(AlignMode),
+    SetDistributeGap(f32),
+    SetPasteRemembersLayers(bool),
+    SetKeyObject(Option<u32>),
+    Object(crate::editor::wave::ObjectAction),
+    DistributeSpacing {
+        axis: DistAxis,
+        gap: f32,
+    },
     /// Deterministic creation; checked callers use `try_execute_created` for the allocated path id.
     AddShape {
         kind: crate::model::ShapeKind,
@@ -157,6 +184,10 @@ pub enum EditCommand {
     },
     #[serde(rename = "GroupSelection")]
     GroupSelection,
+    ClipMake,
+    ClipRelease,
+    #[cfg(test)]
+    ForcedPanic,
     #[serde(rename = "UngroupSelection")]
     UngroupSelection,
     #[serde(rename = "DeleteLayerSelection")]
@@ -308,6 +339,12 @@ pub enum EditCommand {
     CycleUnits,
     #[serde(rename = "SetUnits")]
     SetUnits(crate::units::Unit),
+    SetPpi(f32),
+    SetBleed {
+        index: usize,
+        edges: [f32; 4],
+    },
+    SetTransparencyGrid(bool),
     #[serde(rename = "SetSnapConfig")]
     SetSnapConfig(SnapConfig),
     #[serde(rename = "ToggleSnapping")]
@@ -375,6 +412,19 @@ impl EditCommand {
                 ed.commit();
             }
             Self::PlaceArtwork(doc) => crate::placement::place(ed, *doc),
+            Self::ZoomPercent(value) => ed.requested_zoom = Some(value),
+            Self::View(action) => ed.view_command(action),
+            Self::Selection(action) => ed.selection_command(action),
+            Self::Lasso { points, objects, additive } => ed.lasso_select(&points, objects, additive),
+            Self::InsertAnchor { path, segment, t } => ed.wave_insert_anchor(path, segment, t),
+            Self::AnchorType { anchor, smooth } => ed.wave_anchor_type(anchor, smooth),
+            Self::DeleteAnchor(id) => ed.wave_delete_anchor(id),
+            Self::DistributeMode(mode) => ed.distribute_mode(mode),
+            Self::SetPasteRemembersLayers(enabled) => ed.paste_remembers_layers = enabled,
+            Self::SetDistributeGap(gap) => ed.distribute_gap = gap,
+            Self::SetKeyObject(id) => ed.key_object = id,
+            Self::Object(action) => ed.object_command(action),
+            Self::DistributeSpacing { axis, gap } => ed.distribute_spacing_wave(axis, gap),
             Self::AddPath { .. } => {
                 let _ = ed.try_execute_created(self);
             }
@@ -432,6 +482,17 @@ impl EditCommand {
             Self::RenameNode { node, name } => ed.layer_rename(node, name),
             Self::RenamePath { path, name } => rename_path(ed, path, name),
             Self::GroupSelection => ed.group_selection(),
+            Self::ClipMake => ed.clip_make(),
+            Self::ClipRelease => ed.clip_release(),
+            #[cfg(test)]
+            Self::ForcedPanic => {
+                ed.begin();
+                ed.doc.paths.clear();
+                ed.objsel.clear();
+                ed.dirty = true;
+                ed.commit();
+                panic!("forced command panic");
+            }
             Self::UngroupSelection => ed.ungroup_selection(),
             Self::DeleteLayerSelection => ed.layer_delete_selection(),
             Self::MoveLayer { sources, target, position } => ed.layer_move(&sources, target, position),
@@ -476,7 +537,31 @@ impl EditCommand {
             }
             Self::CommitGuide => ed.commit_guide(),
             Self::CycleUnits => ed.cycle_units(),
-            Self::SetUnits(unit) => ed.set_units(unit),
+            Self::SetUnits(unit) => {
+                if ed.doc.units.display != unit {
+                    edit_setup(ed, |d| d.units.display = unit);
+                }
+            }
+            Self::SetPpi(ppi) => {
+                if crate::document_setup::valid_ppi(ppi) && ed.doc.units.ppi != ppi {
+                    edit_setup(ed, |d| d.units.ppi = ppi);
+                }
+            }
+            Self::SetBleed { index, edges } => {
+                if crate::document_setup::valid_bleed(edges)
+                    && ed.doc.artboards.get(index).is_some_and(|a| crate::document_setup::bleed(a) != edges)
+                {
+                    edit_setup(ed, |d| {
+                        d.artboards[index].bleed = edges.iter().copied().fold(0.0_f32, f32::max);
+                        d.artboards[index].bleed_edges = (edges.iter().any(|v| *v != edges[0])).then_some(edges);
+                    });
+                }
+            }
+            Self::SetTransparencyGrid(on) => {
+                if ed.doc.transparency_grid != on {
+                    edit_setup(ed, |d| d.transparency_grid = on);
+                }
+            }
             Self::SetSnapConfig(config) => ed.doc.snap = config,
             Self::ToggleSnapping => ed.doc.snap.enabled = !ed.doc.snap.enabled,
             Self::ToggleGuidesLocked => ed.doc.guides_locked = !ed.doc.guides_locked,
@@ -506,15 +591,26 @@ impl EditCommand {
 }
 
 impl Editor {
-    /// Checked headless path; existing interactive `execute` callers keep their behavior.
+    /// Checked headless path; interactive callers use the error-retaining `execute_ui` facade.
     pub fn try_execute(&mut self, command: EditCommand) -> Result<(), String> {
         crate::bridge::check(&command, self)?;
-        self.execute(command);
-        Ok(())
+        self.execute(command).map_err(|e| e.to_string())
     }
 
     /// Checked creation returns the actual allocated identity, never a guessed counter.
     pub fn try_execute_created(&mut self, command: EditCommand) -> Result<u32, String> {
+        // Immutable history handles bound rollback cost independently of retained artwork.
+        let snapshot = self.clone();
+        self.clipping_enablement.get_mut().take();
+        match crate::guard::catch_panic(|| self.execute_created_inner(command)) {
+            Ok(result) => result,
+            Err(error) => {
+                *self = snapshot;
+                Err(error.to_string())
+            }
+        }
+    }
+    fn execute_created_inner(&mut self, command: EditCommand) -> Result<u32, String> {
         crate::bridge::check(&command, self)?;
         match command {
             EditCommand::AddShape { kind, bounds, parent, fill, stroke, stroke_width, opacity, name } => {
@@ -577,11 +673,27 @@ impl Editor {
     }
 
     /// Execute one deterministic edit through the core-owned command boundary.
-    pub fn execute(&mut self, command: EditCommand) {
-        command.apply(self);
-        // One invariant gate for every command, including commands whose geometry changes artboard
-        // membership (and therefore effective hidden/locked state) without touching a node flag.
-        self.prune_inert_selection();
+    pub fn execute_ui(&mut self, command: EditCommand) {
+        if let Err(error) = self.execute(command) {
+            self.last_error = Some(error);
+        }
+    }
+
+    /// Fallible command boundary. The interactive facade retains errors for its existing notice path.
+    pub fn execute(&mut self, command: EditCommand) -> Result<(), crate::EngineError> {
+        // Immutable history handles bound rollback cost independently of retained artwork.
+        let snapshot = self.clone();
+        self.clipping_enablement.get_mut().take();
+        let result = crate::guard::catch_panic(|| {
+            command.apply(self);
+            // One invariant gate for every command, including commands whose geometry changes artboard
+            // membership (and therefore effective hidden/locked state) without touching a node flag.
+            self.prune_inert_selection();
+        });
+        if result.is_err() {
+            *self = snapshot;
+        }
+        result
     }
 
     pub fn set_paint_target(&mut self, target: PaintTarget) {
@@ -610,7 +722,7 @@ impl Editor {
     pub fn try_set_board_name(&mut self, typed: &str) -> Result<(), board::Reject> {
         let name = board::clean_text(typed);
         board::check_name(&name)?;
-        self.execute(EditCommand::SetBoardName(name));
+        self.execute_ui(EditCommand::SetBoardName(name));
         Ok(())
     }
 
@@ -618,7 +730,7 @@ impl Editor {
     pub fn try_set_board_description(&mut self, typed: &str) -> Result<(), board::Reject> {
         let text = board::clean_text(typed);
         board::check_description(&text)?;
-        self.execute(EditCommand::SetBoardDescription(text));
+        self.execute_ui(EditCommand::SetBoardDescription(text));
         Ok(())
     }
 
@@ -627,7 +739,7 @@ impl Editor {
     pub fn try_set_board_tags(&mut self, typed: Vec<String>) -> Result<(), board::Reject> {
         let tags = board::normalize_tags(typed);
         board::check_tags(&tags)?;
-        self.execute(EditCommand::SetBoardTags(tags));
+        self.execute_ui(EditCommand::SetBoardTags(tags));
         Ok(())
     }
 }
@@ -688,4 +800,17 @@ fn set_stroke_width(ed: &mut Editor, width: f32) {
     }
     ed.dirty = true;
     ed.commit();
+}
+
+/// Setup previews participate in an already-open scrub transaction.
+fn edit_setup(ed: &mut Editor, change: impl FnOnce(&mut crate::model::Document)) {
+    let own = !ed.transaction_open();
+    if own {
+        ed.begin();
+    }
+    change(&mut ed.doc);
+    ed.dirty = true;
+    if own {
+        ed.commit();
+    }
 }

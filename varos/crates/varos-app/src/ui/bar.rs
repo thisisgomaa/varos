@@ -1,4 +1,5 @@
 use super::*;
+use varos_app::shell::tokens::{FIELD_H, STATUS_ZOOM_W};
 
 pub(crate) fn with_a(c: Color32, a: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0).clamp(0.0, 255.0) as u8)
@@ -589,7 +590,7 @@ pub(crate) fn build_topbar(
             menu_sep(ui);
             match &export_cmd {
                 Some(cmd) => {
-                    if menu_row(ui, "Export\u{2026}", "") {
+                    if menu_row(ui, "Export\u{2026}", "Alt+Ctrl+E") {
                         cmds.push(cmd.clone());
                         hit = true;
                     }
@@ -606,10 +607,21 @@ pub(crate) fn build_topbar(
                 "Select something to export it.",
                 cmds,
             );
+            hit |= file_menu_row(
+                ui,
+                "Print…",
+                &shortcut_label("P"),
+                crate::chrome::FileCmd::Print,
+                file_state,
+                active,
+                "Printing is currently available on macOS only.",
+                cmds,
+            );
             if menu_row(ui, "Home", "") {
                 cmds.push(AppCommand::Home);
                 hit = true;
             }
+            hit |= super::clipping::rows(ui, active, cmds);
             // the View ▸ snapping rows (macOS has them in its native View menu): the same flags,
             // the same transitions — Smart Guides is exactly what Ctrl+U does
             menu_sep(ui);
@@ -661,6 +673,17 @@ pub(crate) fn build_topbar(
             if menu_row(ui, "Reset layout", "") {
                 cmds.push(AppCommand::Window(crate::app_command::WindowCmd::ResetLayout));
                 hit = true;
+            }
+            for (label, key, command) in [
+                ("Document Setup…", "Ctrl+Alt+P", crate::chrome::FileCmd::DocumentSetup),
+                ("Document Info", "", crate::chrome::FileCmd::DocumentInfo),
+                ("Save as Template…", "", crate::chrome::FileCmd::SaveTemplate),
+                ("New from Template…", "", crate::chrome::FileCmd::NewTemplate),
+            ] {
+                hit |= file_menu_row(ui, label, key, command, file_state, active, "Open a document first.", cmds);
+            }
+            if let Some(id) = active {
+                hit |= command_rows(ui, id, cmds);
             }
             if hit {
                 menu_set(ui, menu_id, false);
@@ -799,13 +822,14 @@ pub(crate) fn build_recovery_card(
 /// Status mirror: recovery state on the left; artboard, Fit and zoom on the right.
 pub(crate) fn build_statusbar(
     root: &mut egui::Ui,
-    ab_active: usize,
-    ab_count: usize,
+    artboards: (usize, usize),
     zoom: f32,
     fit_icon: &Option<egui::TextureHandle>,
     fit_request: &mut Option<usize>,
     recovery_status: &str,
+    ops: &mut Vec<Op>,
 ) {
+    let (ab_active, ab_count) = artboards;
     let frame = egui::Frame { fill: SEAM, inner_margin: Margin::ZERO, ..Default::default() };
     // 31 = 25 of bar + the 6pt float-gap under the boxes, folded IN so the text centres in the
     // strip the eye actually sees (Ahmed 07-07: "مش متوسطنة في الارتفاع")
@@ -819,22 +843,26 @@ pub(crate) fn build_statusbar(
             bar.min + egui::vec2(10.0, 0.0),
             egui::pos2((bar.right() - 240.0).max(bar.left() + 10.0), bar.bottom()),
         );
-        p.with_clip_rect(status_rect).text(
-            egui::pos2(status_rect.left(), cy),
-            Align2::LEFT_CENTER,
-            recovery_status,
-            f11.clone(),
-            MUTED,
-        );
-        ui.interact(status_rect, ui.id().with("recovery-status"), egui::Sense::hover()).on_hover_text(recovery_status);
+        status::hint(ui, status_rect, recovery_status);
         // right, laid right→left: zoom % · Fit · Artboard i/n (gap 14)
-        let zr = p.text(
-            egui::pos2(bar.right() - 10.0, cy),
-            Align2::RIGHT_CENTER,
-            format!("{:.0}%", zoom * 100.0),
-            m11.clone(),
-            MUTED,
+        let zr = egui::Rect::from_center_size(
+            egui::pos2(bar.right() - STATUS_ZOOM_W * 0.5 - 10.0, cy),
+            egui::vec2(STATUS_ZOOM_W, FIELD_H),
         );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(zr), |ui| {
+            fields::num(
+                ui,
+                STATUS_ZOOM_W,
+                Lab::Letter("%"),
+                "Zoom percent",
+                zoom * 100.0,
+                0,
+                1.0,
+                5.0..=4000.0,
+                ops,
+                Op::Zoom,
+            );
+        });
         let fw = 13.0 + 4.0 + p.layout_no_wrap("Fit".into(), f11.clone(), MUTED).size().x;
         let fit_r = egui::Rect::from_min_size(egui::pos2(zr.left() - 14.0 - fw, cy - 9.0), egui::vec2(fw, 18.0));
         let fresp = ui.interact(fit_r, ui.id().with("st-fit"), egui::Sense::click());
@@ -863,3 +891,89 @@ pub(crate) fn build_statusbar(
         }
     });
 }
+
+/// Windows mirrors the same command table as the native menu, including nested row labels.
+fn command_rows(ui: &mut egui::Ui, id: SessionId, cmds: &mut Vec<AppCommand>) -> bool {
+    use crate::menus::{Entry, MenuCmd};
+    use varos_core::editor::wave::{ObjectAction as O, Selection as S};
+    use winit::keyboard::KeyCode as K;
+    fn walk(ui: &mut egui::Ui, id: SessionId, rows: &[Entry], cmds: &mut Vec<AppCommand>, prefix: &str) -> bool {
+        let mut hit = false;
+        for row in rows {
+            match row {
+                Entry::Sub { label, items } => {
+                    hit |= walk(ui, id, items, cmds, &format!("{prefix}{label} / "));
+                }
+                Entry::Item { label, cmd, .. } => {
+                    let action = match *cmd {
+                        MenuCmd::TogglePasteRemembersLayers => Some(AppCommand::TogglePasteRemembersLayers),
+                        MenuCmd::View(s) => Some(AppCommand::View(id, s)),
+                        MenuCmd::Selection(s) => Some(AppCommand::Selection(id, s)),
+                        MenuCmd::Object(s) => Some(AppCommand::Object(id, s)),
+                        MenuCmd::Key(k) => match (k.code, k.shift, k.alt) {
+                            (K::KeyA, false, false) => Some(AppCommand::Selection(id, S::All)),
+                            (K::KeyA, true, false) => Some(AppCommand::Selection(id, S::Deselect)),
+                            (K::KeyA, false, true) => Some(AppCommand::Selection(id, S::Artboard)),
+                            (K::Digit0, false, true) => Some(AppCommand::FitAll(id)),
+                            (K::Digit5, false, alt) => Some(AppCommand::View(
+                                id,
+                                if alt {
+                                    varos_core::editor::view_commands::ViewAction::ReleaseGuides
+                                } else {
+                                    varos_core::editor::view_commands::ViewAction::MakeGuides
+                                },
+                            )),
+                            (K::Quote, false, false) => {
+                                Some(AppCommand::View(id, varos_core::editor::view_commands::ViewAction::ToggleGrid))
+                            }
+                            (K::Digit6, false, false) => Some(AppCommand::Selection(id, S::Reselect)),
+                            (K::BracketRight, false, true) => Some(AppCommand::Selection(id, S::Above)),
+                            (K::BracketLeft, false, true) => Some(AppCommand::Selection(id, S::Below)),
+                            (K::Digit2, false, alt) => {
+                                Some(AppCommand::Object(id, if alt { O::UnlockAll } else { O::Lock }))
+                            }
+                            (K::Digit3, false, alt) => {
+                                Some(AppCommand::Object(id, if alt { O::ShowAll } else { O::Hide }))
+                            }
+                            (K::KeyJ, false, alt) => {
+                                Some(AppCommand::Object(id, if alt { O::Average } else { O::Join }))
+                            }
+                            (K::Digit8, false, false) => Some(AppCommand::Object(id, O::CompoundMake)),
+                            (K::Digit8, true, true) => Some(AppCommand::Object(id, O::CompoundRelease)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(action) = action {
+                        if menu_row(ui, &format!("{prefix}{label}"), "") {
+                            cmds.push(action);
+                            hit = true;
+                        }
+                    }
+                }
+                Entry::Sep => {}
+                Entry::Native(_) => {}
+            }
+        }
+        hit
+    }
+    let mut hit = false;
+    for (title, rows) in crate::menus::menus() {
+        if matches!(title, "Select" | "Object" | "View") {
+            let popup_id = doc_id(ui, ("burger-commands", title));
+            let rect =
+                egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(ui.available_width(), MENU_ROW_H));
+            if menu_row(ui, title, "") {
+                menu_toggle(ui, popup_id);
+            }
+            let anchor = ui.interact(rect, popup_id.with("anchor"), egui::Sense::hover());
+            menu_below(ui, popup_id, &anchor, None, |ui| {
+                ui.set_width(varos_app::shell::tokens::KIT_COMMAND_MENU_W);
+                hit |= walk(ui, id, &rows, cmds, "");
+            });
+        }
+    }
+    hit
+}
+#[path = "status.rs"]
+mod status;

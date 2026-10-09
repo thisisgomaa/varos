@@ -1,9 +1,8 @@
 //! The in-app object clipboard — Edit ▸ Cut / Copy / Paste / Paste in Place (Astra F04).
 //!
-//! **In-app only.** This holds deep copies of `varos-core` model data inside the running `Editor`;
-//! it is NOT the operating-system clipboard. Copying between Varos windows or to/from other apps
-//! (Illustrator, Figma, a text editor) needs a decision on which flavours to publish (PDF / SVG /
-//! Varos JSON) — that is a later, separate piece. Nothing here may be read as a promise of that.
+//! This module holds detached model data inside the running `Editor`, with no UI or OS dependency.
+//! The desktop adapter publishes these detached bytes first, plus PDF/SVG/PNG flavours, on Copy/Cut.
+//! Varos paste continues to use this internal copy, preserving live structure without format loss.
 //!
 //! The clipboard is never part of undo history and never serialized: copying does not touch the
 //! document (no `rev` bump, no dirty). It survives File ▸ Open, like every desktop editor's clipboard.
@@ -20,7 +19,7 @@ use crate::model::{Anchor, Document, GroupRole, Node, NodeKind, Path};
 /// A detached copy of some artwork: paths + the tree nodes that give them structure. Ids inside are
 /// the ORIGINAL document's ids and serve only as keys between `paths` and `nodes`; every paste mints
 /// fresh ids, so pasting the same clipboard twice gives two fully independent copies.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Clipboard {
     /// Copied paths, back → front (z order at copy time).
     paths: Vec<Path>,
@@ -31,9 +30,15 @@ pub struct Clipboard {
     roots: Vec<u32>,
     /// World-space AABB `(x0, y0, x1, y1)` of the copied art at copy time (live transforms composed).
     bounds: Option<(f32, f32, f32, f32)>,
+    /// Source layer-name lineage for each detached root, outermost first.
+    layers: HashMap<u32, Vec<String>>,
 }
 
 impl Clipboard {
+    /// Original path ids, for public clipboard export from the source snapshot.
+    pub fn source_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.paths.iter().map(|p| p.id)
+    }
     /// Nothing copied yet (Paste is then a no-op).
     pub fn is_empty(&self) -> bool {
         self.paths.is_empty()
@@ -133,7 +138,23 @@ impl Clipboard {
             x1 = x1.max(c);
             y1 = y1.max(d);
         }
+        let layers = roots
+            .iter()
+            .filter_map(|(_, id)| {
+                let mut names = Vec::new();
+                let mut current = doc.node(*id).and_then(|n| n.parent);
+                while let Some(n) = current.and_then(|id| doc.node(id)) {
+                    if n.kind == NodeKind::Layer {
+                        names.push(n.name.clone());
+                    }
+                    current = n.parent;
+                }
+                names.reverse();
+                (!names.is_empty()).then_some((*id, names))
+            })
+            .collect();
         Clipboard {
+            layers,
             paths: sel.iter().map(|&(pi, _)| doc.paths[pi].clone()).collect(),
             nodes,
             roots: roots.into_iter().map(|(_, id)| id).collect(),
@@ -145,11 +166,58 @@ impl Clipboard {
     /// moved by `offset` (`[0, 0]` = paste in place). Every path, anchor and node gets a new id. Returns
     /// the new path ids, back → front. The caller owns undo (`begin`/`commit`) and the selection.
     pub fn paste_into(&self, doc: &mut Document, offset: Pt) -> Vec<u32> {
+        self.paste_into_remembering_layers(doc, offset, false)
+    }
+    /// Match source layer names and recreate missing layer ancestry when requested.
+    pub fn paste_into_remembering_layers(&self, doc: &mut Document, offset: Pt, remember: bool) -> Vec<u32> {
         if self.is_empty() {
             return vec![];
         }
         doc.sync_tree(); // a valid active Layer to land on
         let host = doc.active_layer;
+        let mut hosts = HashMap::new();
+        if remember {
+            for &root in &self.roots {
+                let Some(names) = self.layers.get(&root) else { continue };
+                let mut parent = None;
+                for name in names {
+                    let found = doc
+                        .nodes
+                        .iter()
+                        .find(|n| n.kind == NodeKind::Layer && n.parent == parent && n.name == *name)
+                        .map(|n| n.id);
+                    let id = found.unwrap_or_else(|| {
+                        let id = doc.nid();
+                        doc.nodes.push(Node {
+                            id,
+                            kind: NodeKind::Layer,
+                            name: name.clone(),
+                            parent,
+                            children: vec![],
+                            hidden: false,
+                            locked: false,
+                            color: None,
+                            clip_exempt: false,
+                            xform: Default::default(),
+                            role: GroupRole::Normal,
+                            mask_child: None,
+                        });
+                        if let Some(parent) = parent {
+                            if let Some(n) = doc.nodes.iter_mut().find(|n| n.id == parent) {
+                                n.children.insert(0, id);
+                            }
+                        } else {
+                            doc.roots.insert(0, id);
+                        }
+                        id
+                    });
+                    parent = Some(id);
+                }
+                if let Some(id) = parent {
+                    hosts.insert(root, id);
+                }
+            }
+        }
         let moved = |p: Pt| [p[0] + offset[0], p[1] + offset[1]];
         let mut pmap: HashMap<u32, u32> = HashMap::new();
         let mut new_paths: Vec<Path> = Vec::with_capacity(self.paths.len());
@@ -181,17 +249,25 @@ impl Clipboard {
             doc.nodes.push(Node {
                 id: nmap[&n.id],
                 kind,
-                parent: Some(n.parent.and_then(|p| nmap.get(&p).copied()).unwrap_or(host)),
+                parent: Some(
+                    n.parent
+                        .and_then(|p| nmap.get(&p).copied())
+                        .unwrap_or_else(|| hosts.get(&n.id).copied().unwrap_or(host)),
+                ),
                 children: n.children.iter().filter_map(|c| nmap.get(c).copied()).collect(),
                 mask_child: n.mask_child.and_then(|m| nmap.get(&m).copied()),
                 xform,
                 ..n.clone()
             });
         }
-        let new_roots: Vec<u32> = self.roots.iter().filter_map(|r| nmap.get(r).copied()).collect();
-        if let Some(h) = doc.nodes.iter_mut().find(|n| n.id == host) {
-            for (i, r) in new_roots.into_iter().enumerate() {
-                h.children.insert(i, r);
+        let mut inserted: HashMap<u32, usize> = HashMap::new();
+        for root in &self.roots {
+            let Some(&id) = nmap.get(root) else { continue };
+            let target = hosts.get(root).copied().unwrap_or(host);
+            if let Some(h) = doc.nodes.iter_mut().find(|n| n.id == target) {
+                let at = inserted.entry(target).or_default();
+                h.children.insert(*at, id);
+                *at += 1;
             }
         }
         let ids: Vec<u32> = new_paths.iter().map(|p| p.id).collect();

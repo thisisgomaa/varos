@@ -25,7 +25,9 @@ struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) color: vec4<f32>
 @fragment fn fs(in: VsOut) -> @location(0) vec4<f32> { return in.color; }
 "#;
 
+pub mod health;
 pub struct Renderer {
+    pub health: health::DeviceHealth,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -278,6 +280,7 @@ impl Renderer {
             })
             .await
             .map_err(|e| format!("the graphics device couldn't start: {e}"))?;
+        let health = health::DeviceHealth::watch(&device);
         // A window bigger than the device's texture cap would panic inside Surface::configure — say so
         // readably instead (ADR-0001: GPU startup failure stays readable).
         let max = device.limits().max_texture_dimension_2d;
@@ -591,6 +594,7 @@ impl Renderer {
             },
         );
         Ok(Renderer {
+            health,
             surface,
             device,
             queue,
@@ -638,6 +642,9 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
+        if !self.health.poll(&self.device) {
+            return;
+        }
         if w > 0 && h > 0 {
             // Never hand configure a size above the GPU cap (wgpu validation panic): clamp, note it once.
             let (w, h) = {
@@ -979,6 +986,9 @@ impl Renderer {
     }
 
     pub fn render(&mut self, world: &Scene, ui: &[Prim], view: View) {
+        if !self.health.poll(&self.device) {
+            return;
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
@@ -989,7 +999,7 @@ impl Renderer {
         };
         let tview = frame.texture.create_view(&Default::default());
         let (fw, fh) = (self.config.width as f32, self.config.height as f32);
-        let bg = build_bg(view, fw, fh);
+        let bg = build_bg(view, fw, fh, world.grid_step);
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
         let ov_start = fgv.len() as u32;
         fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh)); // editing chrome: constant screen size
@@ -1024,6 +1034,9 @@ impl Renderer {
             rp.set_bind_group(0, &self.blit_bg, &[]);
             rp.draw(0..3, 0..1);
         }
+        if !self.health.is_running() {
+            return;
+        }
         self.queue.submit(Some(enc.finish()));
         frame.present();
     }
@@ -1032,6 +1045,9 @@ impl Renderer {
     /// Get this frame's surface texture, or None when the OS gives none (lost/outdated → reconfigure;
     /// occluded/timeout → just skip). Callers park egui frees on None (see `FreeQueue`).
     fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
+        if !self.health.is_running() {
+            return None;
+        }
         let status = self.surface.get_current_texture();
         self.unshown = matches!(status, wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout);
         match status {
@@ -1072,6 +1088,9 @@ impl Renderer {
         tdelta: &egui::TexturesDelta,
         screen: &egui_wgpu::ScreenDescriptor,
     ) {
+        if !self.health.poll(&self.device) {
+            return;
+        }
         // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
         // timeout, common on macOS) we return early, and a dropped full upload makes the next partial
         // font-atlas update panic in egui-wgpu ("texture that has not been allocated yet").
@@ -1108,6 +1127,9 @@ impl Renderer {
                 .forget_lifetime();
             self.egui_rend.render(&mut rp, paint_jobs, screen);
         }
+        if !self.health.is_running() {
+            return;
+        }
         self.queue.submit(user_cmds.into_iter().chain(std::iter::once(enc.finish())));
         frame.present();
         self.release_textures(&tdelta.free);
@@ -1142,6 +1164,9 @@ impl Renderer {
         tdelta: &egui::TexturesDelta,
         screen: &egui_wgpu::ScreenDescriptor,
     ) -> bool {
+        if !self.health.poll(&self.device) {
+            return false;
+        }
         let perf_start = std::time::Instant::now();
         // Upload egui texture changes BEFORE acquiring the frame: if the OS gives no frame (occluded /
         // timeout, common on macOS) we return early, and a dropped full upload makes the next partial
@@ -1157,7 +1182,7 @@ impl Renderer {
         let tview = frame.texture.create_view(&Default::default());
         let prepared = scene.map(|(world, view)| {
             let (fw, fh) = (self.config.width as f32, self.config.height as f32);
-            let bg = build_bg(view, fw, fh);
+            let bg = build_bg(view, fw, fh, world.grid_step);
             let content_start = std::time::Instant::now();
             let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
             let content_elapsed = content_start.elapsed();
@@ -1219,6 +1244,9 @@ impl Renderer {
                 })
                 .forget_lifetime();
             self.egui_rend.render(&mut rp, paint_jobs, screen);
+        }
+        if !self.health.is_running() {
+            return false;
         }
         self.queue.submit(user_cmds.into_iter().chain(std::iter::once(enc.finish())));
         frame.present();

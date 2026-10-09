@@ -45,6 +45,11 @@ pub enum ToolKind {
     Triangle,
     Polygon,
     Convert,
+    Lasso,
+    AddAnchor,
+    DeleteAnchor,
+    Hand,
+    Zoom,
     Eyedropper,
     Artboard,
     Rotate,
@@ -84,6 +89,7 @@ impl ToolKind {
     }
 }
 
+#[derive(Clone)]
 pub enum Drag {
     None,
     Construction { points: Vec<Pt>, delete: bool },
@@ -94,8 +100,11 @@ pub enum Drag {
     Segment { pid: u32, i: usize, down: Pt, a_out0: Option<Pt>, b_in0: Option<Pt>, ap0: Pt, bp0: Pt, straight: bool },
     Guide { idx: usize }, // moving an existing ruler guide (idx into doc.guides)
     Shape { start: Pt, pid: u32, kind: ShapeKind },
+    Lasso { points: Vec<Pt>, objects: bool, additive: bool },
     Marquee { start: Pt, base: Vec<u32> },
     ObjMarquee { start: Pt, base: Vec<u32>, base_groups: Vec<u32> },
+    ViewZoom { start: Pt, current: Pt },
+    GroupClick { path: u32, down: Pt, anchor: Option<u32> },
     DupPending { srcs: Vec<u32>, down: Pt, object: bool },
     // A7: `base` = LOCAL anchors (translated by the move), `base_world` = their world positions (for
     // snapping), `piv_base` = rotated units' base xforms whose pivots the move carries (keeps θ).
@@ -131,6 +140,7 @@ pub enum TfAgain {
 /// Artboard-tool drag state — kept STRICTLY separate from `Drag` (the object/anchor engine) so the two
 /// can never cross-grab (the no-cross-grab guarantee). `Move` carries the artwork base when "move artwork
 /// with artboard" is on, so the page and the art on it translate together.
+#[derive(Clone)]
 pub enum AbDrag {
     None,
     // `pids` = the traveling art's path ids (excluded from snap targets while the page moves)
@@ -214,6 +224,7 @@ pub enum AlignTarget {
     Auto,
     #[serde(rename = "Selection")]
     Selection,
+    KeyObject,
     #[serde(rename = "Artboard")]
     Artboard,
 }
@@ -401,14 +412,30 @@ fn seg_touches_rect(a: Pt, b: Pt, r: (f32, f32, f32, f32)) -> bool {
     true
 }
 
+#[derive(Clone)]
+struct SelectionState {
+    paths: Vec<u32>,
+    anchors: Vec<u32>,
+    groups: Vec<u32>,
+    direct: Option<u32>,
+}
+
+#[derive(Clone)]
 pub struct Editor {
     pub select_transform: crate::select_transform::State,
+    pub last_error: Option<crate::guard::EngineError>,
     pub doc: Document,
     pub tool: ToolKind,
     pub gesture: ToolKind,
     pub active: Option<u32>,
     pub selected: HashSet<u32>,
     pub objsel: HashSet<u32>,
+    pub reselect: Vec<u32>,
+    reselect_state: Option<SelectionState>,
+    pub key_object: Option<u32>,
+    pub distribute_gap: f32,
+    pub paste_remembers_layers: bool,
+    pub requested_zoom: Option<f32>,
     /// Group nodes selected as groups (not merely individual descendant paths). Hidden unlocked
     /// descendants are carried only by structural operations; ordinary edits still target `objsel`.
     pub(crate) group_sel: HashSet<u32>,
@@ -462,9 +489,10 @@ pub struct Editor {
     /// clipboard (a later piece); not part of undo; survives `replace_doc` (File ▸ Open).
     clipboard: Clipboard,
     id_high_water: u32,
-    undo: Vec<Document>,
-    redo: Vec<Document>,
-    pending: Option<Document>,
+    undo: Vec<std::sync::Arc<Document>>,
+    redo: Vec<std::sync::Arc<Document>>,
+    pending: Option<std::sync::Arc<Document>>,
+    pub(crate) clipping_enablement: std::cell::RefCell<Option<crate::clipping::Enablement>>,
 }
 
 impl Default for Editor {
@@ -477,12 +505,19 @@ impl Editor {
     pub fn new() -> Self {
         Editor {
             select_transform: Default::default(),
+            last_error: None,
             doc: Document::default(),
             tool: ToolKind::Object,
             gesture: ToolKind::Object,
             active: None,
             selected: HashSet::new(),
             objsel: HashSet::new(),
+            reselect: Vec::new(),
+            reselect_state: None,
+            key_object: None,
+            distribute_gap: 0.0,
+            paste_remembers_layers: false,
+            requested_zoom: None,
             group_sel: HashSet::new(),
             absel: BTreeSet::new(),
             dsel_path: None,
@@ -522,6 +557,7 @@ impl Editor {
             undo: vec![],
             redo: vec![],
             pending: None,
+            clipping_enablement: Default::default(),
         }
     }
 
@@ -597,7 +633,11 @@ impl Editor {
         let edge_r = EDGE_R / self.ppu;
         for pi in (0..self.doc.paths.len()).rev() {
             let id = self.doc.paths[pi].id;
-            if !self.in_isolation(id) || self.doc.eff_hidden(id) || self.doc.eff_locked(id) {
+            if !self.in_isolation(id)
+                || self.doc.eff_hidden(id)
+                || self.doc.eff_locked(id)
+                || (self.doc.guide_paths.contains(&id) && (self.guides_hidden || self.doc.guides_locked))
+            {
                 continue; // not clickable (cascades)
             }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
@@ -605,7 +645,7 @@ impl Editor {
             // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
             let p = &self.doc.paths[pi];
-            if !p.stroke_style.is_default() {
+            if !self.doc.guide_paths.contains(&id) && !p.stroke_style.is_default() {
                 let in_fill = p.fill.solid().is_some() && self.doc.point_in_path(pi, lp);
                 let in_stroke = crate::stroke::evaluate(p, 0.25 / f64::from(self.ppu.max(0.0001)), &|| false)
                     .is_ok_and(|c| crate::stroke::evaluate::contains(&c.rings, lp, edge_r));
@@ -616,12 +656,13 @@ impl Editor {
                 }
                 continue;
             }
-            let reach = edge_r + painted_half_width(&self.doc.paths[pi]);
+            let guide = self.doc.guide_paths.contains(&id);
+            let reach = edge_r + if guide { 0.0 } else { painted_half_width(&self.doc.paths[pi]) };
             if !ctrl_bbox_near(&self.doc.paths[pi], lp, reach) {
                 continue; // cheap cull: out of reach of every curve AND of the fill (review P3-1)
             }
             let on_edge = self.doc.edge_dist(pi, lp).is_some_and(|d| d <= reach); // outer + hole rims (FB3)
-            let in_fill = self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
+            let in_fill = !guide && self.doc.paths[pi].fill.solid().is_some() && self.doc.point_in_path(pi, lp);
             if on_edge || in_fill {
                 return Some(id);
             }
@@ -1566,7 +1607,7 @@ impl Editor {
             }
         }
         self.dirty = true;
-        self.commit();
+        self.commit_wave();
     }
     /// How many distinct TOP-LEVEL items the object selection spans — an ungrouped path counts as
     /// one, a whole group (all its member paths) counts as one. The number the smart `Auto` keys on.
@@ -1581,6 +1622,10 @@ impl Editor {
     fn resolve_align_target(&self, target: AlignTarget) -> AlignTarget {
         let has_board = self.doc.active_artboard().is_some();
         match target {
+            AlignTarget::KeyObject if self.key_object.is_some_and(|id| self.objsel.contains(&id)) => {
+                AlignTarget::KeyObject
+            }
+            AlignTarget::KeyObject => AlignTarget::Selection,
             AlignTarget::Selection => AlignTarget::Selection,
             AlignTarget::Artboard if has_board => AlignTarget::Artboard,
             AlignTarget::Artboard => AlignTarget::Selection,
@@ -1597,6 +1642,7 @@ impl Editor {
             return;
         }
         match self.resolve_align_target(target) {
+            AlignTarget::KeyObject => self.align_to_key(mode),
             AlignTarget::Artboard => self.align_objects_to_artboard(mode),
             // Selection (incl. any Auto/Artboard that degraded to it): the historic behaviour.
             _ => self.align_objects_to_selection(mode),
@@ -1635,10 +1681,18 @@ impl Editor {
         let reference = match target {
             AlignTarget::Selection if units.len() >= 2 => self.obj_bbox().ok_or("empty selection bounds")?,
             AlignTarget::Artboard => self.doc.active_artboard().ok_or("missing artboard reference")?.rect(),
+            AlignTarget::KeyObject => {
+                let key = self.key_object.filter(|id| self.objsel.contains(id)).ok_or("key object must be selected")?;
+                let unit = self.doc.unit_of(key).ok_or("missing key unit")?;
+                self.wave_unit_bbox(unit).ok_or("empty key bounds")?
+            }
             _ => return Err("explicit selection (at least two units) or artboard reference required".into()),
         };
         let mut translations = Vec::new();
         for unit in units {
+            if target == AlignTarget::KeyObject && self.key_object.and_then(|p| self.doc.unit_of(p)) == Some(unit) {
+                continue;
+            }
             let paths = self.doc.node_paths(unit);
             if paths.iter().any(|p| !self.objsel.contains(p)) {
                 return Err("alignment requires complete units".into());
@@ -2008,6 +2062,9 @@ impl Editor {
 
     // ---------- grouping (Ctrl+G / Ctrl+Shift+G) ----------
     pub fn group_selection(&mut self) {
+        self.group_selection_with_clip(None);
+    }
+    pub(crate) fn group_selection_with_clip(&mut self, mask: Option<u32>) {
         if self.objsel.len() < 2 {
             return;
         }
@@ -2028,9 +2085,16 @@ impl Editor {
             self.bake_selected_units();
         }
         let pids: Vec<u32> = self.objsel.iter().copied().collect();
-        if let Some(gid) = self.doc.group(&pids) {
+        let group = if let Some(mask) = mask { self.doc.clip_group(&pids, mask) } else { self.doc.group(&pids) };
+        if let Some(gid) = group {
             self.group_sel.clear();
             self.group_sel.insert(gid);
+            if let Some(mask) = mask {
+                if let Some(i) = self.doc.pidx(mask) {
+                    self.doc.paths[i].fill = crate::model::Paint::None;
+                    self.doc.paths[i].stroke = crate::model::Paint::None;
+                }
+            }
             if let Some(x0) = common {
                 // world image unchanged: every member read x0 before; now the group applies it instead.
                 for (u, _) in &units {
@@ -2722,6 +2786,25 @@ impl Editor {
             }
         }
         if cfg.guides && !self.guides_hidden {
+            // Converted path guides are excluded from paint_list; supply their world geometry here.
+            for (pi, p) in self.doc.paths.iter().enumerate() {
+                if !self.doc.guide_paths.contains(&p.id)
+                    || self.doc.eff_hidden(p.id)
+                    || self.objsel.contains(&p.id)
+                    || skip_pids.is_some_and(|ids| ids.contains(&p.id))
+                {
+                    continue;
+                }
+                for q in self
+                    .doc
+                    .world_outline_px(pi, self.ppu)
+                    .into_iter()
+                    .chain(p.holes.iter().flat_map(|ring| self.doc.world_ring_px(ring, pi, self.ppu)))
+                {
+                    txl.push((q[0], q[1], q[1]));
+                    tyl.push((q[1], q[0], q[0]));
+                }
+            }
             // ruler guides are just more snap lines (infinite extent)
             for g in &self.doc.guides {
                 if g.vertical {
@@ -2734,9 +2817,8 @@ impl Editor {
         (txl, tyl)
     }
 
-    /// World spacing of the FINEST VISIBLE dot-grid level at the current zoom, so "Snap to Grid" lands
-    /// exactly on the dots the user sees (mirrors the renderer's adaptive base-5 grid, tess.rs build_bg —
-    /// TARGET 30px, MIN 9px). Zoom-dependent: zoom in → finer grid → snaps to the closer dots.
+    /// Adaptive ruler tick spacing. Document grid rendering and snapping use
+    /// `document_grid_step` instead.
     pub fn adaptive_grid_step(&self) -> f32 {
         let zoom = self.ppu.max(1e-4);
         let k0 = ((30.0_f32 / zoom).max(1e-6).ln() / 5f32.ln()).floor();
@@ -2924,7 +3006,7 @@ impl Editor {
         }
         // grid fallback (lowest priority) — snap the top-left edge to the VISIBLE adaptive dot grid
         if cfg.grid && (!sx_done || !sy_done) {
-            let step = self.adaptive_grid_step();
+            let step = self.document_grid_step();
             if !sx_done {
                 nd[0] += (mx0 / step).round() * step - mx0;
             }
@@ -2978,7 +3060,7 @@ impl Editor {
                     guides.push(SnapGuide::Line { a: [x, s0.min(w[1])], b: [x, s1.max(w[1])] });
                 }
             } else if cfg.grid {
-                let step = self.adaptive_grid_step();
+                let step = self.document_grid_step();
                 nx = (w[0] / step).round() * step;
             }
         }
@@ -2996,7 +3078,7 @@ impl Editor {
                     guides.push(SnapGuide::Line { a: [s0.min(w[0]), y], b: [s1.max(w[0]), y] });
                 }
             } else if cfg.grid {
-                let step = self.adaptive_grid_step();
+                let step = self.document_grid_step();
                 ny = (w[1] / step).round() * step;
             }
         }
@@ -3041,7 +3123,7 @@ impl Editor {
         };
         let mut nx = pick(p[0], &xs);
         let mut ny = pick(p[1], &ys);
-        let step = self.adaptive_grid_step(); // grid fallback → the origin lands on the dots the ruler follows
+        let step = self.document_grid_step(); // grid fallback → the origin lands on the dots the ruler follows
         if nx.is_none() {
             let g = (p[0] / step).round() * step;
             if (g - p[0]).abs() <= tol {
@@ -3153,7 +3235,7 @@ impl Editor {
         if let Some((_, c)) = best {
             return c;
         }
-        let s = self.adaptive_grid_step();
+        let s = self.document_grid_step();
         let g = (v / s).round() * s;
         if (g - v).abs() <= tol {
             return g;
@@ -3395,7 +3477,7 @@ impl Editor {
 
         // 3) grid fallback
         if cfg.grid {
-            let step = self.adaptive_grid_step();
+            let step = self.document_grid_step();
             if !sx {
                 nd[0] += (moved[0] / step).round() * step - moved[0];
             }
@@ -3444,6 +3526,11 @@ impl Editor {
         staged.dsel_path = self.dsel_path;
         staged.absel = self.absel.clone();
         staged.clipboard = self.clipboard.clone();
+        staged.reselect = self.reselect.clone();
+        staged.reselect_state = self.reselect_state.clone();
+        staged.key_object = self.key_object;
+        staged.distribute_gap = self.distribute_gap;
+        staged.paste_remembers_layers = self.paste_remembers_layers;
         staged.cur_fill = self.cur_fill;
         staged.cur_stroke = self.cur_stroke;
         staged.cur_sw = self.cur_sw;
@@ -3460,7 +3547,11 @@ impl Editor {
         // A successful create-then-delete/group-then-ungroup batch may expose allocated identities
         // while leaving no authored change. Reserve them even when no undo entry is published.
         self.id_high_water = self.id_high_water.max(staged.allocation_floor());
-        if if preserve_transient { !staged.doc.content_eq(&self.doc) } else { staged.doc != self.doc } {
+        if if preserve_transient {
+            !staged.doc.content_eq(&self.doc) || staged.doc.units.display != self.doc.units.display
+        } else {
+            staged.doc != self.doc
+        } {
             self.begin();
             self.doc = staged.doc;
             self.dirty = true;
@@ -3483,6 +3574,11 @@ impl Editor {
             self.prune_inert_selection();
             return;
         }
+        self.paste_remembers_layers = staged.paste_remembers_layers;
+        self.reselect = staged.reselect;
+        self.reselect_state = staged.reselect_state;
+        self.key_object = staged.key_object;
+        self.distribute_gap = staged.distribute_gap;
         self.objsel = staged.objsel;
         self.selected = staged.selected;
         self.group_sel = staged.group_sel;
@@ -3504,11 +3600,7 @@ impl Editor {
         self.redo.clear();
     }
     pub fn history_preview(&self, redo: bool) -> Option<&Document> {
-        if redo {
-            self.redo.last()
-        } else {
-            self.undo.last()
-        }
+        if redo { self.redo.last() } else { self.undo.last() }.map(std::sync::Arc::as_ref)
     }
     pub fn history_available(&self, redo: bool) -> bool {
         if redo {
@@ -3521,9 +3613,15 @@ impl Editor {
     // ---------- history ----------
     pub fn begin(&mut self) {
         self.id_high_water = self.id_high_water.max(self.doc.ids);
-        self.pending = Some(self.doc.clone());
+        self.clipping_enablement.get_mut().take();
+        self.pending = Some(std::sync::Arc::new(self.doc.clone()));
         self.doc.ids = self.id_high_water;
         self.dirty = false;
+    }
+    /// Command-wave transactions publish history only for changed document content.
+    pub(super) fn commit_wave(&mut self) {
+        self.dirty = self.pending.as_ref().is_some_and(|before| !before.content_eq(&self.doc));
+        self.commit();
     }
     pub fn commit(&mut self) {
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
@@ -3542,18 +3640,25 @@ impl Editor {
         self.pending = None;
         self.dirty = false;
     }
+    /// Finish a setup scrub, dropping a gesture that returned to its starting value.
+    pub fn finish_document_setup(&mut self) {
+        if let Some(before) = &self.pending {
+            self.dirty = !self.doc.content_eq(before) || self.doc.units != before.units;
+            self.commit();
+        }
+    }
     pub fn undo(&mut self) {
         if let Some(s) = self.undo.pop() {
-            self.redo.push(self.doc.clone());
-            self.restore_keeping_prefs(s);
+            self.redo.push(std::sync::Arc::new(self.doc.clone()));
+            self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
     }
     pub fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
-            self.undo.push(self.doc.clone());
-            self.restore_keeping_prefs(s);
+            self.undo.push(std::sync::Arc::new(self.doc.clone()));
+            self.restore_keeping_prefs(std::sync::Arc::unwrap_or_clone(s));
             self.clear_transient_keep_selection();
             self.rev += 1;
         }
@@ -3639,6 +3744,9 @@ impl Editor {
     pub fn replace_doc(&mut self, doc: Document) {
         self.stroke_error = None;
         self.select_transform = Default::default();
+        self.reselect.clear();
+        self.reselect_state = None;
+        self.key_object = None;
         self.doc = doc;
         self.doc.sync_tree(); // migrate legacy registries / adopt tree-less paths (old files)
         self.doc.assign_artboard_ids(); // in-memory pages built without an id (format 4)
@@ -4036,6 +4144,16 @@ impl Editor {
         if crate::tools::select_transform::up(self) {
             return;
         }
+        if let Drag::GroupClick { path, .. } = self.drag {
+            self.execute_ui(crate::command::EditCommand::Selection(wave::Selection::Group(path)));
+        }
+        if let Drag::Lasso { points, objects, additive } = &self.drag {
+            self.execute_ui(crate::command::EditCommand::Lasso {
+                points: points.clone(),
+                objects: *objects,
+                additive: *additive,
+            });
+        }
         self.snap_guides.clear();
         self.snap_hud = None; // snap feedback is per-gesture
         if self.tool == ToolKind::Artboard {
@@ -4274,6 +4392,27 @@ impl Editor {
                 }
                 self.drag = Drag::Shape { start, pid, kind };
                 self.dirty = true;
+            }
+            Drag::GroupClick { path, down, anchor } => {
+                self.drag = Drag::GroupClick { path, down, anchor };
+                if dist(down, pos) * self.ppu >= 4.0 {
+                    self.objsel.clear();
+                    self.group_sel.clear();
+                    if !self.mods.shift {
+                        self.selected.clear();
+                    }
+                    if let Some(id) = anchor {
+                        self.selected.insert(id);
+                    }
+                    self.drag = Drag::DupPending { srcs: vec![path], down, object: false };
+                    self.pointer_move(pos);
+                }
+            }
+            Drag::Lasso { mut points, objects, additive } => {
+                if points.last().is_none_or(|p| dist(*p, pos) * self.ppu >= 2.0) && points.len() < 4096 {
+                    points.push(pos);
+                }
+                self.drag = Drag::Lasso { points, objects, additive };
             }
             Drag::Marquee { start, base } => {
                 let (x0, y0) = (start[0].min(pos[0]), start[1].min(pos[1]));
@@ -4569,6 +4708,7 @@ impl Editor {
                 }
                 self.drag = Drag::ConvPull { aid, down };
             }
+            Drag::ViewZoom { start, .. } => self.drag = Drag::ViewZoom { start, current: pos },
             Drag::None => {}
         }
     }
@@ -4822,6 +4962,11 @@ impl Editor {
         }
         self.doc.paths.iter().filter(|path| included.contains(&path.id)).map(|path| path.id).collect()
     }
+    /// Fresh detached payload using the same source rules as Copy/Cut. No editor mutation.
+    /// Desktop adapters can publish it before a destructive Cut; anchors alone capture nothing.
+    pub fn capture_selection_clipboard(&self, cut: bool) -> Clipboard {
+        Clipboard::capture(&self.doc, &self.clipboard_sources(!cut))
+    }
     /// Edit ▸ Copy (⌘C): put a deep copy of the selection (groups, clip masks and live transforms kept)
     /// on the in-app clipboard. The document is untouched — no history entry, no `rev` bump. With
     /// nothing selected the clipboard keeps its previous content (Illustrator).
@@ -4862,7 +5007,11 @@ impl Editor {
             return;
         }
         self.begin();
-        let new = self.clipboard.paste_into(&mut self.doc, offset.unwrap_or([0.0, 0.0]));
+        let new = self.clipboard.paste_into_remembering_layers(
+            &mut self.doc,
+            offset.unwrap_or([0.0, 0.0]),
+            self.paste_remembers_layers,
+        );
         self.objsel = new.into_iter().collect();
         self.group_sel = self.objsel.iter().filter_map(|&pid| self.doc.top_group_of_path(pid)).collect();
         self.selected.clear();
@@ -4906,12 +5055,12 @@ impl Editor {
         if let Some(pid) = self.path_under(pos) {
             if self.tool == ToolKind::Object {
                 if let Some(group) = self.doc.top_group_of_path(pid) {
-                    self.execute(crate::EditCommand::Isolate(Some(group)));
+                    self.execute_ui(crate::EditCommand::Isolate(Some(group)));
                     return;
                 }
             }
         } else if self.select_transform.isolation.is_some() {
-            self.execute(crate::EditCommand::Isolate(None));
+            self.execute_ui(crate::EditCommand::Isolate(None));
             return;
         }
 
@@ -5024,7 +5173,7 @@ impl Editor {
     /// preview leaves NO history entry.
     pub fn picker_cancel(&mut self) {
         if let Some(doc) = self.pending.take() {
-            self.doc = doc;
+            self.doc = std::sync::Arc::unwrap_or_clone(doc);
         }
         self.dirty = false;
     }
@@ -5654,3 +5803,101 @@ mod picker_tests {
         assert_eq!(ed.doc.paths[pi].fill.solid(), Some([0.5, 0.5, 0.5, 1.0]), "undo restores the pre-open fill");
     }
 }
+
+#[cfg(test)]
+mod crash_boundary_tests {
+    use super::*;
+    use crate::{EditCommand, EngineError};
+    #[test]
+    fn panic_restores_document_selection_revision_and_both_history_stacks() {
+        let mut ed = Editor::new();
+        ed.execute(EditCommand::AddShape {
+            kind: ShapeKind::Rect,
+            bounds: [0., 0., 40., 40.],
+            parent: None,
+            fill: Some([1.; 4]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+        let pid = ed.doc.paths[0].id;
+        ed.execute(EditCommand::SelectPaths(vec![pid])).unwrap();
+        ed.execute(EditCommand::SetStrokeWidth(8.)).unwrap();
+        ed.execute(EditCommand::Undo).unwrap();
+        let before = ed.clone();
+        assert_eq!(
+            ed.execute(EditCommand::ForcedPanic),
+            Err(EngineError::Internal { what: "forced command panic".into() })
+        );
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.objsel, before.objsel);
+        assert_eq!(ed.selected, before.selected);
+        assert_eq!(ed.group_sel, before.group_sel);
+        assert_eq!(ed.undo, before.undo);
+        assert_eq!(ed.redo, before.redo);
+        assert_eq!(ed.pending, before.pending);
+        assert_eq!(ed.rev, before.rev);
+        ed.execute(EditCommand::Redo).unwrap();
+        assert_eq!(ed.doc.paths[0].stroke_width, 8.);
+    }
+    #[test]
+    fn rollback_checkpoint_shares_all_retained_history_and_pending_snapshots() {
+        let mut ed = Editor::new();
+        for i in 0..200 {
+            ed.begin();
+            ed.doc.name = format!("revision {i}");
+            ed.dirty = true;
+            ed.commit();
+        }
+        ed.undo();
+        ed.begin();
+        let before = ed.clone();
+        for (a, b) in ed.undo.iter().zip(&before.undo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+        for (a, b) in ed.redo.iter().zip(&before.redo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+        assert!(std::sync::Arc::ptr_eq(ed.pending.as_ref().unwrap(), before.pending.as_ref().unwrap()));
+        assert!(ed.execute(EditCommand::ForcedPanic).is_err());
+        assert_eq!(ed.undo.len(), 199);
+        assert_eq!(ed.redo.len(), 1);
+        assert_eq!(ed.doc, before.doc);
+        for (a, b) in ed.undo.iter().zip(&before.undo) {
+            assert!(std::sync::Arc::ptr_eq(a, b));
+        }
+    }
+    #[test]
+    fn panicking_batch_discards_the_staged_copy() {
+        let mut ed = Editor::new();
+        ed.doc.name = "original".into();
+        let before = ed.clone();
+        let error =
+            ed.execute_batch(vec![EditCommand::SetBoardName("staged".into()), EditCommand::ForcedPanic]).unwrap_err();
+        assert_eq!(error.index, 1);
+        assert!(error.reason.starts_with("internal error:"));
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.undo, before.undo);
+        assert_eq!(ed.redo, before.redo);
+        assert_eq!(ed.objsel, before.objsel);
+        assert_eq!(ed.rev, before.rev);
+    }
+    #[test]
+    fn panic_preserves_an_open_transaction() {
+        let mut ed = Editor::new();
+        ed.begin();
+        ed.doc.name = "unfinished".into();
+        let before = ed.clone();
+        assert!(ed.execute(EditCommand::ForcedPanic).is_err());
+        assert_eq!(ed.doc, before.doc);
+        assert_eq!(ed.pending, before.pending);
+        assert!(ed.transaction_open());
+    }
+}
+#[path = "command_wave.rs"]
+pub mod wave;
+
+#[path = "view_commands.rs"]
+pub mod view_commands;

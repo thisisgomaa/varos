@@ -9,7 +9,7 @@ use std::{
 use varos_core::{
     bridge::{self, TargetErrorCode},
     editor::Editor,
-    model::{Document, NodeKind},
+    model::Document,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -76,6 +76,16 @@ impl SnapshotJob {
 }
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    fn set_paste_remembers_layers(&mut self, board: &str, enabled: bool) -> Result<(), Error> {
+        self.access(board)?
+            .editor
+            .execute(varos_core::EditCommand::SetPasteRemembersLayers(enabled))
+            .map_err(|reason| Error::new("internal", reason.to_string()))?;
+        Ok(())
+    }
+    fn window_memory(&mut self) -> Result<Reply, Error> {
+        Err(Error::new("unsupported", "host has no window memory"))
+    }
     /// Synchronous headless default. Desktop overrides to defer work beyond the owning thread.
     fn snapshot(&mut self, job: SnapshotJob, cancelled: &AtomicBool) -> Reply {
         job.render(cancelled)
@@ -280,7 +290,21 @@ impl Service {
         req: &Request,
         cancelled: &AtomicBool,
     ) -> Reply {
-        let mut reply = self.handle_inner(host, ctx, req, cancelled);
+        // Read-only requests need no editor rollback checkpoint.
+        let snapshot =
+            req.mutation().and_then(|_| req.board()).and_then(|b| host.access(b).ok().map(|a| a.editor.clone()));
+        let result = varos_core::guard::catch_panic(|| self.handle_inner(host, ctx, req, cancelled));
+        let mut reply = match result {
+            Ok(reply) => reply,
+            Err(error) => {
+                if let (Some(board), Some(snapshot)) = (req.board(), snapshot) {
+                    if let Ok(a) = host.access(board) {
+                        *a.editor = snapshot;
+                    }
+                }
+                Reply::failure(Error::new("internal", error.to_string()))
+            }
+        };
         if let Some((id, _)) = req.mutation() {
             if sequence(id).is_ok() {
                 reply.request_id = Some(id.into());
@@ -348,6 +372,24 @@ impl Service {
         if matches!(req, Request::ImportSvg(_)) && req.api() != "1.2" {
             return Reply::failure(Error::new("unsupported", "import_svg requires API 1.2"));
         }
+        if [
+            "print",
+            "copy",
+            "cut",
+            "export_svg",
+            "export_raster",
+            "save_template",
+            "new_from_template",
+            "window_memory",
+        ]
+        .contains(&req.tool())
+            && req.api() != "1.2"
+        {
+            return Reply::failure(Error::new("unsupported", "tool requires API 1.2"));
+        }
+        if matches!(req, Request::ExportSvg(_) | Request::ExportRaster(_)) && req.api() != "1.2" {
+            return Reply::failure(Error::new("unsupported", "New export verbs require API 1.2 opt-in"));
+        }
         if ctx.epoch != self.epoch {
             return Reply::failure(Error::new("not_found", "attachment epoch expired"));
         }
@@ -412,6 +454,12 @@ impl Service {
                 }
             }
             match req {
+                Request::WindowMemory(v) => {
+                    if v.api != "1.2" {
+                        return Err(Error::new("unsupported", "window_memory requires API 1.2"));
+                    }
+                    host.window_memory()
+                }
                 Request::Capabilities(_) => {
                     let mut r = Reply::success(
                         json!({"api":API,"mcp":MCP_VERSION,"epoch":self.epoch,"client":ctx.client,"app_build":host.build(),"readable_vrs":[1,2,3,4],"writable_vrs":[4],"mode":"attached","tools":TOOLS,"edit_verbs":crate::EDIT_VERBS,"ids":"path:N/node:N/artboard:N; path/node ids are scoped to epoch, artboard ids are persistent (format 4)","deprecated":{"aN@rev":"revision-bound artboard reference; use artboard:N (removed after slice 4)"},"artboard_presets":{"square":[1080,1080],"portrait":[1080,1350],"story":[1080,1920],"a4":[595,842]},"limits":{"request_bytes":crate::MAX_FRAME,"operations":MAX_OPS,"targets":MAX_TARGETS,"page":MAX_PAGE,"text_bytes":MAX_TEXT,"file_jobs":8,"path_anchors":1000,"geometry_anchors_per_object":1000,"geometry_page_bytes":MAX_TEXT,"geometry_typical_anchors_per_page":300,"geometry_anchor_pagination":false,"snapshot_max_dimension":1024,"journal_revisions":128,"journal_bytes":8*1024*1024},"read":true,"edit":true,"destructive_scope":true,"history_scope":true,"trust":"local user","file_guards":["home_or_external_volume_or_cloud_drive","local_volume_only","protected_roots","dot_components","extension","canonical_parent","no_symlink_escape","no_hardlink_escape","no_overwrite"],"files_scope":true,"scopes":["read","edit","destructive","history","files"],"detail_fields":["bounds","paint","parent","name","state","metadata","artboards","geometry","selection"],"unsupported":["headless","flip","pathfinder","group_distribution","gap_distribution","reparent","artboard_bleed"]}),
@@ -503,6 +551,45 @@ impl Service {
                             v["trace"] = json!({"input":"RGBA8 array; alpha below 128 omitted","coordinates":"input pixels, y down","max_pixels":varos_core::trace::MAX_PIXELS,"max_anchors":varos_core::trace::MAX_ANCHORS,"grayscale_levels":8,"request_bytes":crate::MAX_FRAME});
                             v["api_by_tool"]["import_svg"] = json!(["1.2"]);
                             v["tools"].as_array_mut().unwrap().push(json!("import_svg"));
+                            v["api_by_tool"] = json!({"capabilities":["1.0","1.1","1.2"],"select":["1.0","1.1","1.2"],"edit":["1.0","1.1","1.2"],"export_pdf":["1.0","1.1","1.2"],"export_svg":["1.2"],"export_raster":["1.2"],"describe":["1.0","1.1","1.2"],"save_template":["1.2"],"new_from_template":["1.2"],"window_memory":["1.2"],"print":["1.2"],"copy":["1.2"],"cut":["1.2"],"other_tools":["1.0","1.1","1.2"],"import_svg":["1.2"]});
+                            if let Some(tools) = v["tools"].as_array_mut() {
+                                for name in [
+                                    "export_svg",
+                                    "export_raster",
+                                    "save_template",
+                                    "new_from_template",
+                                    "window_memory",
+                                    "print",
+                                    "copy",
+                                    "cut",
+                                ] {
+                                    let name = json!(name);
+                                    if !tools.contains(&name) {
+                                        tools.push(name);
+                                    }
+                                }
+                            }
+                            if let Some(verbs) = v["edit_verbs"].as_array_mut() {
+                                for verb in [
+                                    "document_setup",
+                                    "repeat",
+                                    "clip",
+                                    "release_clip",
+                                    "view",
+                                    "object",
+                                    "distribute_mode",
+                                    "distribute_spacing",
+                                    "anchor_type",
+                                    "insert_anchor",
+                                    "delete_anchor",
+                                ] {
+                                    let verb = json!(verb);
+                                    if !verbs.contains(&verb) {
+                                        verbs.push(verb);
+                                    }
+                                }
+                            }
+                            v["phase1"] = json!({"edit_verbs":["document_setup"],"describe_fields":["document_info"],"tools":["save_template","new_from_template"]});
                         }
                     }
                     Ok(r)
@@ -568,7 +655,26 @@ impl Service {
                     }
                     Ok(reply)
                 }
-                Request::Save(v) | Request::SaveAs(v) | Request::ExportPdf(v) => {
+                Request::SaveTemplate(v) | Request::NewFromTemplate(v) => {
+                    if v.api != "1.2" {
+                        return Err(Error::new("unsupported", "templates require API 1.2"));
+                    }
+                    if v.scope.is_some() || v.path.is_none() {
+                        return Err(Error::new("invalid_argument", "template needs path: NAME.vrs and no scope"));
+                    }
+                    host.file_effect(req.tool(), v)
+                }
+                Request::Save(v)
+                | Request::SaveAs(v)
+                | Request::ExportPdf(v)
+                | Request::ExportSvg(v)
+                | Request::ExportRaster(v)
+                | Request::Print(v)
+                | Request::Copy(v)
+                | Request::Cut(v) => {
+                    if v.options.is_some() && (v.api != "1.2" || !["export_pdf", "print"].contains(&req.tool())) {
+                        return Err(Error::new("invalid_argument", "PDF options require export_pdf API 1.2"));
+                    }
                     match req {
                         Request::Save(_) if v.path.is_some() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save uses CURRENT backing file only"))
@@ -576,12 +682,16 @@ impl Service {
                         Request::SaveAs(_) if v.path.is_none() || v.scope.is_some() => {
                             return Err(Error::new("invalid_argument", "save_as requires path and no scope"))
                         }
-                        Request::ExportPdf(_) if v.path.is_none() || v.scope.is_none() => {
+                        Request::ExportPdf(_) | Request::ExportSvg(_) | Request::ExportRaster(_)
+                            if v.path.is_none() || v.scope.is_none() =>
+                        {
                             return Err(Error::new("invalid_argument", "export_pdf requires path and scope"))
                         }
                         _ => {}
                     }
                     let mut reply = host.file_effect(req.tool(), v)?;
+                    self.observe(host);
+                    self.observe_selection(host, &v.board);
                     // Reports originate in the export worker. Preserve them for 1.2;
                     // legacy wire receipts stay byte-identical, including completion.
                     if v.api != "1.2" {
@@ -595,9 +705,41 @@ impl Service {
                     if v.ids.len() > MAX_TARGETS {
                         return Err(Error::new("limit_exceeded", "too many targets"));
                     }
+                    if (v.mode.is_some() || v.lasso.is_some() || v.paste_remembers_layers.is_some()) && v.api != "1.2" {
+                        return Err(Error::new("unsupported", "selection mode requires API 1.2"));
+                    }
+                    if let Some(enabled) = v.paste_remembers_layers {
+                        if v.mode.is_some() || v.lasso.is_some() || !v.ids.is_empty() {
+                            return Err(Error::new(
+                                "invalid_argument",
+                                "paste setting cannot be combined with selection",
+                            ));
+                        }
+                        host.set_paste_remembers_layers(&v.board, enabled)?;
+                    }
                     let a = host.access(&v.board)?;
                     let paths = resolve(&a.editor.doc, &v.ids, true)?;
-                    a.editor.bridge_select(paths).map_err(|reason| Error::new("invalid_argument", reason))?;
+                    if let Some(lasso) = &v.lasso {
+                        if v.mode.is_some() || !v.ids.is_empty() {
+                            return Err(Error::new("invalid_argument", "lasso cannot be combined with mode or ids"));
+                        }
+                        a.editor
+                            .try_execute(varos_core::EditCommand::Lasso {
+                                points: lasso.points.clone(),
+                                objects: lasso.objects,
+                                additive: lasso.additive,
+                            })
+                            .map_err(|reason| Error::new("invalid_argument", reason))?;
+                    } else if let Some(mode) = v.mode {
+                        if !v.ids.is_empty() {
+                            a.editor.bridge_select(paths).map_err(|reason| Error::new("invalid_argument", reason))?;
+                        }
+                        a.editor
+                            .try_execute(varos_core::EditCommand::Selection(mode))
+                            .map_err(|reason| Error::new("invalid_argument", reason))?;
+                    } else if v.paste_remembers_layers.is_none() {
+                        a.editor.bridge_select(paths).map_err(|reason| Error::new("invalid_argument", reason))?;
+                    }
                     self.observe(host);
                     self.observe_selection(host, &v.board);
                     let b = &self.boards[&v.board];
@@ -613,6 +755,24 @@ impl Service {
                     }
                     if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::TraceRgba { .. })) {
                         return Err(Error::new("unsupported", "trace_rgba requires API 1.2"));
+                    }
+                    if v.api != "1.2"
+                        && ops.iter().any(|op| {
+                            matches!(
+                                op,
+                                Operation::Clip { .. }
+                                    | Operation::ReleaseClip { .. }
+                                    | Operation::View { .. }
+                                    | Operation::AnchorType { .. }
+                                    | Operation::InsertAnchor { .. }
+                                    | Operation::DeleteAnchor { .. }
+                                    | Operation::DistributeMode { .. }
+                                    | Operation::Object { .. }
+                                    | Operation::DistributeSpacing { .. }
+                            ) || matches!(op, Operation::Align { target, .. } if target == "key_object")
+                        })
+                    {
+                        return Err(Error::new("unsupported", "command wave, clip and release_clip require API 1.2"));
                     }
                     let a = host.access(&v.board)?;
                     if crate::economy::edit_enabled(&v.api) {
@@ -675,6 +835,8 @@ impl Service {
                                     "busy"
                                 } else if reason.contains("limit_exceeded:") {
                                     "limit_exceeded"
+                                } else if reason.starts_with("internal error:") {
+                                    "internal"
                                 } else if reason.starts_with("cancelled") {
                                     "cancelled"
                                 } else {
@@ -740,7 +902,7 @@ impl Service {
                         if !ids_mode {
                             return Err(Error::new("invalid_argument", "cursor requires an IDs receipt"));
                         }
-                        if v.api != "1.1" {
+                        if !matches!(v.api.as_str(), "1.1" | "1.2") {
                             return Err(Error::new("invalid_argument", "receipt cursor requires API 1.1"));
                         }
                         if r.board.as_ref().and_then(|b| self.boards.get(b)).map(|b| b.rev) != r.rev {
@@ -790,7 +952,7 @@ impl Service {
                     hash: payload,
                     reply: reply.clone(),
                     ids: matches!(req, Request::Edit(v) if v.receipt.as_deref() == Some("ids")),
-                    export_report: matches!(req, Request::ExportPdf(v) if v.api == "1.2"),
+                    export_report: matches!(req, Request::ExportPdf(v) | Request::ExportSvg(v) | Request::ExportRaster(v) if v.api == "1.2"),
                     stroke_fields: req.api() == "1.2",
                 });
                 while client.receipts.len() > 128 {
@@ -864,6 +1026,17 @@ impl Service {
         r
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
+        if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["document_info"]) {
+            let b = &self.boards[&v.board];
+            if v.rev.is_some_and(|r| r != b.rev) {
+                return Err(Error::new("stale_revision", "document changed"));
+            }
+            let a = host.access(&v.board)?;
+            let mut out = varos_core::document_setup::info(&a.editor.doc);
+            out["rev"] = json!(b.rev);
+            return Ok(Reply::success(out));
+        }
+
         if let Some(budget) = v.summary_budget {
             if v.api != "1.1"
                 || !(256..=1024).contains(&budget)
@@ -1360,7 +1533,7 @@ fn projection(doc: &Document) -> (BTreeMap<String, Value>, Value, Vec<String>) {
         o["geometry_digest"] = json!(geometry_digest(&details[id]));
         objects.insert(id.into(), o);
     }
-    let counts = json!({"paths":doc.paths.len(),"groups":doc.nodes.iter().filter(|n|n.kind==NodeKind::Group).count(),"layers":doc.nodes.iter().filter(|n|n.kind==NodeKind::Layer).count(),"artboards":doc.artboards.len()});
+    let counts = varos_core::document_setup::counts(doc);
     let artboards:Vec<_>=doc.artboards.iter().enumerate().map(|(i,a)|json!({"id":format!("artboard:{}",a.id),"index":i,"name":a.name,"bounds":[round(a.x as f64),round(a.y as f64),round(a.w as f64),round(a.h as f64)],"bleed":round(a.bleed as f64),"fill":color(&json!(a.page_color)),"clip":a.clip,"hidden":a.hidden,"locked":a.locked})).collect();
     let mut settings = json!(doc);
     for k in [
@@ -1718,6 +1891,60 @@ mod observation_tests {
         }
     }
     #[test]
+    fn board_describe_uses_observation_without_rollback_access() {
+        struct ReadHost(Fake, usize);
+        impl Host for ReadHost {
+            fn boards(&self) -> Vec<BoardInfo> {
+                self.0.boards()
+            }
+            fn prepare(&mut self, _: &str, mutation: bool) -> Result<(), Error> {
+                assert!(!mutation);
+                Ok(())
+            }
+            fn observation_access(&mut self, board: &str) -> Result<BoardAccess<'_>, Error> {
+                self.0.access(board)
+            }
+            fn access(&mut self, board: &str) -> Result<BoardAccess<'_>, Error> {
+                self.1 += 1;
+                self.0.access(board)
+            }
+        }
+        let mut host = ReadHost(Fake(Editor::new()), 0);
+        let mut service = Service::new("read-test".into());
+        let request: Request = serde_json::from_value(json!({"tool":"describe","arguments":{
+            "api":"1.0","board":"b1"
+        }}))
+        .unwrap();
+        let context = Context { epoch: "read-test".into(), client: "tester".into() };
+        for _ in 0..10 {
+            let reply = service.handle(&mut host, &context, request.clone(), &AtomicBool::new(false));
+            assert!(reply.ok, "{reply:?}");
+        }
+        assert_eq!(host.1, 10, "one dirty-state read per request; no checkpoint access");
+    }
+    #[test]
+    fn staged_panic_is_structured_and_does_not_publish() {
+        let mut host = Fake(Editor::new());
+        let before = host.0.doc.clone();
+        let revision = host.0.rev;
+        let mut service = Service::new("panic-test".into());
+        let request: Request = serde_json::from_value(json!({"tool":"edit","arguments":{
+            "api":"1.2","request_id":"r1","board":"b1","expected_rev":revision,
+            "ops":[{"verb":"add_shape","kind":"rect","bounds":[0,0,20,20],"fill":"#FF0000FF"},
+                   {"verb":"rename","ids":["path:1"],"name":"__forced_adapter_panic__"}]
+        }}))
+        .unwrap();
+        let context = Context { epoch: "panic-test".into(), client: "tester".into() };
+        let reply = service.handle(&mut host, &context, request, &AtomicBool::new(false));
+        assert!(!reply.ok);
+        let error = reply.error.unwrap();
+        assert_eq!(error.code, "internal");
+        assert!(error.reason.contains("forced adapter panic"));
+        assert_eq!(host.0.doc, before);
+        assert_eq!(host.0.rev, revision);
+        assert!(!host.0.history_available(false));
+    }
+    #[test]
     fn ids_pages_fit_text_and_missing_journal_resyncs() {
         let ids: Vec<_> = (1..=950).map(|n| format!("path:{n}")).collect();
         let mut r = Reply::success(
@@ -1773,10 +2000,10 @@ mod observation_tests {
             service.observe(&mut host);
         }
         assert_eq!(service.fingerprints, 1);
-        host.0.execute(varos_core::EditCommand::ToggleSnapping);
+        host.0.execute_ui(varos_core::EditCommand::ToggleSnapping);
         service.observe(&mut host);
         assert_eq!(service.fingerprints, 2, "settings outside Editor.rev must still be observed");
-        host.0.execute(varos_core::EditCommand::SetBoardName("changed".into()));
+        host.0.execute_ui(varos_core::EditCommand::SetBoardName("changed".into()));
         service.observe(&mut host);
         assert_eq!(service.fingerprints, 3);
     }

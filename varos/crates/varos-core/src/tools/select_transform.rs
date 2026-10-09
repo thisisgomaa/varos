@@ -17,7 +17,7 @@ pub fn down(ed: &mut Editor, pos: Pt) -> bool {
             } else {
                 SelectMode::Set
             };
-            ed.execute(EditCommand::MagicWand { source, options: ed.select_transform.wand, mode });
+            ed.execute_ui(EditCommand::MagicWand { source, options: ed.select_transform.wand, mode });
         } else if !ed.mods.alt && !ed.mods.shift {
             ed.escape_selection();
         }
@@ -104,7 +104,7 @@ pub fn movement(ed: &mut Editor, pos: Pt) -> bool {
         s.shear_axis = if horizontal { 0. } else { 90. };
         s.origin = Some(origin);
     }
-    ed.execute(EditCommand::TransformLive(s));
+    ed.execute_ui(EditCommand::TransformLive(s));
     true
 }
 pub fn up(ed: &mut Editor) -> bool {
@@ -112,13 +112,13 @@ pub fn up(ed: &mut Editor) -> bool {
         ed.select_transform.free_shear = None;
         let click = crate::geom::dist(down, ed.cursor) * ed.ppu < 3.;
         if click {
-            ed.execute(EditCommand::TransformCancel);
+            ed.execute_ui(EditCommand::TransformCancel);
             ed.pivot = Some(down);
             if alt {
                 ed.select_transform.dialog = Some(ed.tool);
             }
         } else {
-            ed.execute(EditCommand::TransformCommit);
+            ed.execute_ui(EditCommand::TransformCommit);
         }
         return true;
     }

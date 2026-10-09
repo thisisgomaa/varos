@@ -69,9 +69,12 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     if matches!(
         command,
         InsertTracedPaths { .. }
+            | View(crate::editor::view_commands::ViewAction::ConvertArtboards)
+            | InsertAnchor { .. }
             | AddPath { .. }
             | AddShape { .. }
             | GroupSelection
+            | ClipMake
             | Boolean(_)
             | Pathfinder(_)
             | ShapeBuilder { .. }
@@ -84,6 +87,12 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             | DuplicateArtboard(_)
             | Transform(crate::select_transform::Transform { copy: true, .. })
             | LayerFamily { .. }
+            | Object(
+                crate::editor::wave::ObjectAction::NewLayer
+                    | crate::editor::wave::ObjectAction::NewSublayer
+                    | crate::editor::wave::ObjectAction::AddAnchors
+                    | crate::editor::wave::ObjectAction::CompoundRelease
+            )
     ) {
         // Reserve an entire format-sized arena before an allocating edit. Existing allocators use
         // u32 ids; refusing near exhaustion is safer than overflowing before post-validation.
@@ -254,6 +263,166 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         Eyedropper { source, .. } => path(*source),
         InsertTracedPaths { paths } => crate::trace::check_insert(ed, paths),
         PlaceArtwork(doc) => crate::placement::check(ed, doc),
+        ZoomPercent(v) => {
+            finite(*v)?;
+            if !(5.0..=4000.0).contains(v) {
+                return Err("zoom must be 5 to 4000 percent".into());
+            }
+            Ok(())
+        }
+        View(action) => {
+            use crate::editor::view_commands::ViewAction as V;
+            match action {
+                V::MakeGuides | V::ReleaseGuides => selection(),
+                V::ClearGuides | V::ToggleGrid => Ok(()),
+                V::Grid { spacing, subdivisions } => {
+                    finite(*spacing)?;
+                    if !(0.01..=1e6).contains(spacing) || !(1..=100).contains(subdivisions) {
+                        return Err("invalid grid spacing/subdivisions".into());
+                    }
+                    Ok(())
+                }
+                V::GuidePosition { index, position } => {
+                    finite(*position)?;
+                    if ed.doc.guides_locked || ed.doc.guides.get(*index).is_none() {
+                        return Err("guide unavailable or locked".into());
+                    }
+                    Ok(())
+                }
+                V::FitArtboard { id, selected } => {
+                    let ab = ed.doc.artboards.iter().find(|ab| ab.id == *id).ok_or("unknown artboard")?;
+                    if ab.locked {
+                        return Err("artboard locked".into());
+                    }
+                    if ed.artwork_bounds(*selected).is_none() {
+                        return Err("no artwork bounds".into());
+                    }
+                    Ok(())
+                }
+                V::ReorderArtboard { id, position } => {
+                    if !ed.doc.artboards.iter().any(|ab| ab.id == *id) || *position >= ed.doc.artboards.len() {
+                        return Err("invalid artboard reorder".into());
+                    }
+                    Ok(())
+                }
+                V::ConvertArtboards => {
+                    selection()?;
+                    if ed.doc.artboards.len()
+                        + ed.objsel
+                            .iter()
+                            .filter_map(|id| ed.doc.unit_of(*id))
+                            .collect::<std::collections::HashSet<_>>()
+                            .len()
+                        > 200
+                    {
+                        return Err("artboard limit exceeded".into());
+                    }
+                    Ok(())
+                }
+            }
+        }
+        Selection(crate::editor::wave::Selection::KeyObject(id)) => check(&SetKeyObject(Some(*id)), ed),
+        Selection(crate::editor::wave::Selection::Group(id)) => path(*id),
+        Lasso { points, .. } => {
+            if !(3..=4096).contains(&points.len()) {
+                return Err("lasso requires 3 to 4096 points".into());
+            }
+            for p in points {
+                finite(p[0])?;
+                finite(p[1])?;
+            }
+            Ok(())
+        }
+        InsertAnchor { path: id, segment, t } => {
+            path(*id)?;
+            finite(*t)?;
+            let pi = ed.doc.pidx(*id).ok_or("unknown path")?;
+            let p = &ed.doc.paths[pi];
+            let count = p.anchors.len().saturating_sub(usize::from(!p.closed));
+            if *segment >= count || !(*t > 0.0 && *t < 1.0) {
+                return Err("invalid segment or split parameter".into());
+            }
+            if ed.doc.paths.iter().map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>()).sum::<usize>()
+                >= format::Limits::DEFAULT.max_anchors
+            {
+                return Err("anchor limit exceeded".into());
+            }
+            Ok(())
+        }
+        AnchorType { anchor: id, .. } | DeleteAnchor(id) => {
+            let pid = ed.doc.pid_of_anchor(*id).ok_or("unknown anchor")?;
+            path(pid)
+        }
+        Selection(_) => Ok(()),
+        DistributeMode(_) => selection(),
+        SetPasteRemembersLayers(_) => Ok(()),
+        SetDistributeGap(v) => finite(*v),
+        SetKeyObject(id) => {
+            if let Some(id) = id {
+                path(*id)?;
+                if !ed.objsel.contains(id) {
+                    return Err("key object must be selected".into());
+                }
+            }
+            Ok(())
+        }
+        Object(crate::editor::wave::ObjectAction::NewLayer | crate::editor::wave::ObjectAction::NewSublayer) => {
+            if ed.doc.nodes.len() >= format::Limits::DEFAULT.max_nodes {
+                return Err("layer would exceed node limit".into());
+            }
+            Ok(())
+        }
+        Object(action) => {
+            use crate::editor::wave::ObjectAction as O;
+            if matches!(action, O::UnlockAll | O::ShowAll | O::CleanUp) {
+                return Ok(());
+            }
+            selection()?;
+            if *action == O::Average && ed.selected.len() < 2 {
+                return Err("average requires at least two selected anchors".into());
+            }
+            if *action == O::CompoundMake
+                && ed.selected_pids().iter().filter_map(|id| ed.doc.pidx(*id)).any(|i| !ed.doc.paths[i].closed)
+            {
+                return Err("compound make requires closed contours".into());
+            }
+            if *action == O::CompoundMake
+                && ed
+                    .selected_pids()
+                    .iter()
+                    .filter_map(|id| ed.doc.pidx(*id))
+                    .filter(|i| ed.doc.paths[*i].closed)
+                    .count()
+                    < 2
+            {
+                return Err("compound make requires at least two closed paths".into());
+            }
+            if *action == O::AddAnchors {
+                let count: usize =
+                    ed.doc.paths.iter().map(|p| p.anchors.len() + p.holes.iter().map(Vec::len).sum::<usize>()).sum();
+                let extra: usize = ed
+                    .selected_pids()
+                    .iter()
+                    .filter_map(|id| ed.doc.pidx(*id))
+                    .map(|i| ed.doc.paths[i].anchors.len() + ed.doc.paths[i].holes.iter().map(Vec::len).sum::<usize>())
+                    .sum();
+                if count.saturating_add(extra) > format::Limits::DEFAULT.max_anchors {
+                    return Err("add anchors would exceed anchor limit".into());
+                }
+            }
+            Ok(())
+        }
+        DistributeSpacing { gap, .. } => {
+            finite(*gap)?;
+            selection()
+        }
+        EditCommand::SetPpi(ppi) if !crate::document_setup::valid_ppi(*ppi) => Err("ppi must be 1..9600".into()),
+        EditCommand::SetBleed { index, edges }
+            if ed.doc.artboards.get(*index).is_none() || !crate::document_setup::valid_bleed(*edges) =>
+        {
+            Err("invalid bleed or artboard".into())
+        }
+        EditCommand::SetPpi(_) | EditCommand::SetBleed { .. } | EditCommand::SetTransparencyGrid(_) => Ok(()),
         AddPath { anchors, parent, fill, stroke, stroke_width, opacity, name, .. } => {
             if !(2..=1000).contains(&anchors.len()) {
                 return Err("path needs 2..1000 anchors".into());
@@ -431,6 +600,13 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
             Ok(())
         }
         Boolean(_) => ed.pathfinder_enabled().map_err(str::to_owned),
+        #[cfg(test)]
+        ForcedPanic => Ok(()),
+        ClipMake => ed
+            .clip_make_enabled()
+            .then_some(())
+            .ok_or_else(|| "clipping requires two complete selected units and a topmost path mask".into()),
+        ClipRelease => ed.clip_release_enabled().then_some(()).ok_or_else(|| "select a clipping group".into()),
         GroupSelection => {
             selection()?;
             if ed.objsel.len() < 2 {
@@ -924,7 +1100,7 @@ impl Editor {
             if cancelled() {
                 return Err(error(index, "cancelled before commit".into()));
             }
-            apply(&mut staged, index)?;
+            crate::guard::catch_panic(|| apply(&mut staged, index)).map_err(|e| error(index, e.to_string()))??;
             staged.clear_batch_history();
         }
         if validate_targeted_stage(&staged).is_err() {
@@ -933,7 +1109,7 @@ impl Editor {
                 if cancelled() {
                     return Err(error(index, "cancelled before commit".into()));
                 }
-                apply(&mut replay, index)?;
+                crate::guard::catch_panic(|| apply(&mut replay, index)).map_err(|e| error(index, e.to_string()))??;
                 validate_targeted_stage(&replay).map_err(|reason| error(index, reason))?;
                 replay.clear_batch_history();
             }
@@ -955,7 +1131,13 @@ impl Editor {
         let before = self.doc.active_artboard().map(|a| a.id);
         let picked: Vec<u32> = self.absel.iter().filter_map(|&i| self.doc.artboards.get(i).map(|a| a.id)).collect();
         let active = batch.editor.doc.active;
+        let grid = (
+            batch.editor.doc.snap.grid_spacing,
+            batch.editor.doc.snap.grid_subdivisions,
+            batch.editor.doc.snap.show_grid,
+        );
         self.publish_batch(batch.editor, true);
+        (self.doc.snap.grid_spacing, self.doc.snap.grid_subdivisions, self.doc.snap.show_grid) = grid;
         // a set-active-only batch is no content change, so `publish_batch` kept this document: apply
         // the staged active index (same artboards, so the same index) as the navigation preference it is
         self.doc.active = active.min(self.doc.artboards.len().saturating_sub(1));

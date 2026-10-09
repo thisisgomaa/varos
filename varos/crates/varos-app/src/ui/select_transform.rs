@@ -127,7 +127,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
     let mut spec = ctx.data(|d| d.get_temp::<Transform>(id).unwrap_or_default());
     if fresh {
         spec = Transform { origin: ed.pivot_point(), each: tool == ToolKind::FreeTransform, ..Default::default() };
-        ed.execute(EditCommand::TransformBegin);
+        ed.execute_ui(EditCommand::TransformBegin);
     }
     let title = match tool {
         ToolKind::Rotate => "Rotate",
@@ -181,7 +181,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
                     changed |= old != spec.random;
                 }
                 if changed || fresh {
-                    ed.execute(EditCommand::TransformLive(spec));
+                    ed.execute_ui(EditCommand::TransformLive(spec));
                 }
                 ui.horizontal(|ui| {
                     if action(ui, "Cancel") {
@@ -189,7 +189,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
                     }
                     if action(ui, "Copy") {
                         spec.copy = true;
-                        ed.execute(EditCommand::TransformLive(spec));
+                        ed.execute_ui(EditCommand::TransformLive(spec));
                         close = Some(false);
                     }
                     if action(ui, "Apply") {
@@ -204,7 +204,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect) {
     }
     ctx.data_mut(|d| d.insert_temp(id, spec));
     if let Some(cancel) = close {
-        ed.execute(if cancel { EditCommand::TransformCancel } else { EditCommand::TransformCommit });
+        ed.execute_ui(if cancel { EditCommand::TransformCancel } else { EditCommand::TransformCommit });
     }
 }
 
@@ -243,7 +243,7 @@ pub(crate) fn menu(ed: &mut Editor, name: &str) {
     }
     nodes.sort_unstable();
     nodes.dedup();
-    ed.execute(EditCommand::LayerFamily { action, nodes });
+    ed.execute_ui(EditCommand::LayerFamily { action, nodes });
 }
 
 fn locate_id(ctx: &egui::Context) -> egui::Id {
@@ -290,7 +290,7 @@ fn options(ui: &mut egui::Ui, ed: &mut Editor) -> bool {
         number(ui, "Weight tolerance", &mut o.weight, 0.0..=1000.0);
         number(ui, "Opacity tolerance", &mut o.opacity, 0.0..=1.0);
         if options != ed.select_transform.wand {
-            ed.execute(EditCommand::SetWandOptions(options));
+            ed.execute_ui(EditCommand::SetWandOptions(options));
         }
         return true;
     }
@@ -302,7 +302,7 @@ fn options(ui: &mut egui::Ui, ed: &mut Editor) -> bool {
         toggle(ui, "Pick weight", &mut o.weight);
         toggle(ui, "Pick opacity", &mut o.opacity);
         if options != ed.select_transform.pick {
-            ed.execute(EditCommand::SetEyedropperOptions(options));
+            ed.execute_ui(EditCommand::SetEyedropperOptions(options));
         }
         return true;
     }
@@ -329,14 +329,14 @@ mod tests {
                 name: None,
             })
             .unwrap();
-        ed.execute(EditCommand::SelectPaths(vec![id]));
+        ed.execute_ui(EditCommand::SelectPaths(vec![id]));
         let before = ed.doc.clone();
         let hole = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800., 600.));
         for tool in [ToolKind::Rotate, ToolKind::Scale, ToolKind::Reflect, ToolKind::Shear, ToolKind::FreeTransform] {
             ed.select_transform.dialog = Some(tool);
             let _ = ctx.run_ui(egui::RawInput::default(), |_| draw(&ctx, &mut ed, hole));
             assert!(ed.transaction_open());
-            ed.execute(EditCommand::TransformCancel);
+            ed.execute_ui(EditCommand::TransformCancel);
             assert_eq!(ed.doc, before);
         }
     }
@@ -381,7 +381,7 @@ mod tests {
             let ctx = egui::Context::default();
             varos_app::shell::fonts::install(&ctx);
             let mut ed = Editor::new();
-            ed.execute(EditCommand::AddShape {
+            ed.execute_ui(EditCommand::AddShape {
                 kind: varos_core::model::ShapeKind::Rect,
                 bounds: [0., 0., 10., 20.],
                 parent: None,
@@ -392,7 +392,7 @@ mod tests {
                 name: None,
             });
             let id = ed.doc.paths[0].id;
-            ed.execute(EditCommand::SelectPaths(vec![id]));
+            ed.execute_ui(EditCommand::SelectPaths(vec![id]));
             let before = ed.doc.clone();
             let rev = ed.rev;
             ed.select_transform.dialog = Some(ToolKind::FreeTransform);

@@ -126,6 +126,26 @@ pub fn plan_svg_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan,
     };
     Ok(ExportPlan { scope, pages })
 }
+/// Plan selection bounds and narrow its immutable export snapshot. Clip mask geometry is retained.
+pub fn plan_selection_svg_export(
+    doc: &Document,
+    selected: &HashSet<u32>,
+) -> Result<(Document, ExportPlan), ExportError> {
+    check_document(doc)?;
+    if selected.is_empty() {
+        return Err(ExportError::NothingToExport);
+    }
+    let masks: HashSet<u32> = doc.paths.iter().filter(|p| doc.is_mask_source(p.id)).map(|p| p.id).collect();
+    let mut narrowed = doc.clone();
+    for path in &mut narrowed.paths {
+        if !selected.contains(&path.id) && !masks.contains(&path.id) {
+            path.hidden = true;
+        }
+    }
+    let page = artwork_bounds(&narrowed).ok_or(ExportError::NothingToExport)?;
+    Ok((narrowed, ExportPlan { scope: ExportScope::WholeBoard, pages: vec![page] }))
+}
+
 /// Deterministic output. Cancellation never returns a partial set of files. Snapshot and plan
 /// should belong together; custom rectangles are allowed and checked before writing.
 pub fn export_svg_files(doc: &Document, plan: &ExportPlan, cancel: &AtomicBool) -> Result<Vec<SvgFile>, ExportError> {

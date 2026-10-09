@@ -14,10 +14,10 @@ impl Tool for Direct {
             }
             let out = ed.which_handle(aid, pos);
             let Some(a) = ed.doc.anchor(aid).cloned() else { return };
-            let hp = if out { a.hout } else { a.hin }.unwrap();
+            let Some(hp) = (if out { a.hout } else { a.hin }) else { return };
             let couple = !ed.mods.alt && a.hin.is_some() && a.hout.is_some() && {
-                let vi = sub(a.hin.unwrap(), a.p);
-                let vo = sub(a.hout.unwrap(), a.p);
+                let vi = sub(a.hin.unwrap_or(a.p), a.p);
+                let vo = sub(a.hout.unwrap_or(a.p), a.p);
                 let mut d = (vi[1].atan2(vi[0]) - vo[1].atan2(vo[0])).abs();
                 if d > std::f32::consts::PI {
                     d = 2.0 * std::f32::consts::PI - d;
@@ -36,21 +36,13 @@ impl Tool for Direct {
             ed.drag = Drag::Handle { aid, out, couple, opp_len, grab: sub(hp, pos) };
             return;
         }
-        // Alt + anchor/path => duplicate (only once a real drag starts)
+        // Option-click climbs groups; a real drag retains Direct's existing duplicate gesture.
         if ed.mods.alt {
-            if let Some(aid) = ed.nearest_anchor(pos, ANCHOR_R, false) {
-                let Some(pid) = ed.doc.pid_of_anchor(aid) else { return };
-                if !ed.mods.shift {
-                    ed.selected.clear();
-                }
-                ed.selected.insert(aid);
-                ed.drag = Drag::DupPending { srcs: vec![pid], down: pos, object: false };
-                return;
+            let anchor = ed.nearest_anchor(pos, ANCHOR_R, false);
+            if let Some(pid) = anchor.and_then(|id| ed.doc.pid_of_anchor(id)).or_else(|| ed.path_under(pos)) {
+                ed.drag = Drag::GroupClick { path: pid, down: pos, anchor };
             }
-            if let Some(pid) = ed.path_under(pos) {
-                ed.drag = Drag::DupPending { srcs: vec![pid], down: pos, object: false };
-                return;
-            }
+            return;
         }
         // an anchor — the white arrow grabs ANY anchor directly (Illustrator), even on an unselected path.
         // Grabbing an already-selected anchor moves the whole selection; an unselected one selects just it.

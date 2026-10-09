@@ -9,7 +9,7 @@ use crate::{
     EditCommand,
 };
 use std::{cell::RefCell, collections::HashSet, sync::Arc};
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ConstructionCache {
     key: Option<(u64, Vec<u32>)>,
     faces: Arc<Vec<planar::Face>>,
@@ -438,7 +438,7 @@ impl Editor {
             }
         }
         if best.0 <= 8.0 / self.ppu {
-            self.execute(EditCommand::Scissors { path: pid, segment: best.1, t: best.2 });
+            self.execute_ui(EditCommand::Scissors { path: pid, segment: best.1, t: best.2 });
         }
     }
     pub(crate) fn finish_construction(&mut self, points: Vec<Pt>, delete: bool) {
@@ -448,7 +448,7 @@ impl Editor {
             ToolKind::Eraser => EditCommand::Eraser { points, radius: 8.0 / self.ppu },
             _ => return,
         };
-        self.execute(command);
+        self.execute_ui(command);
     }
     pub fn construction_highlight(&self) -> Vec<Shape> {
         if self.tool != ToolKind::ShapeBuilder {
@@ -530,7 +530,7 @@ mod tests {
                 name: None,
             })
             .unwrap();
-        ed.execute(EditCommand::SelectPaths(vec![id]));
+        ed.execute_ui(EditCommand::SelectPaths(vec![id]));
         ed.set_tool(ToolKind::ShapeBuilder);
         for k in 0..20 {
             ed.pointer_move([k as f32, 5.]);
@@ -548,21 +548,21 @@ mod tests {
         assert!(cache.hit_checks <= 101, "only new segments checked: {}", cache.hit_checks);
         drop(cache);
         ed.pointer_up();
-        ed.execute(EditCommand::SelectPaths(vec![]));
+        ed.execute_ui(EditCommand::SelectPaths(vec![]));
         ed.set_tool(ToolKind::ShapeBuilder);
         ed.construction_highlight();
         assert_eq!(ed.construction_cache.borrow().builds, 2);
-        ed.execute(EditCommand::SelectPaths(vec![id]));
+        ed.execute_ui(EditCommand::SelectPaths(vec![id]));
         ed.set_tool(ToolKind::ShapeBuilder);
         ed.construction_highlight();
         assert_eq!(ed.construction_cache.borrow().builds, 3);
-        ed.execute(EditCommand::Eraser { points: vec![[5., 5.]], radius: 2. });
+        ed.execute_ui(EditCommand::Eraser { points: vec![[5., 5.]], radius: 2. });
         ed.construction_highlight();
         assert_eq!(ed.construction_cache.borrow().builds, 4);
-        ed.execute(EditCommand::Undo);
+        ed.execute_ui(EditCommand::Undo);
         ed.construction_highlight();
         assert_eq!(ed.construction_cache.borrow().builds, 5);
-        ed.execute(EditCommand::Redo);
+        ed.execute_ui(EditCommand::Redo);
         ed.construction_highlight();
         assert_eq!(ed.construction_cache.borrow().builds, 6);
         ed.replace_doc(crate::model::Document::default());

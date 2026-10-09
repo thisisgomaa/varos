@@ -170,7 +170,7 @@ fn describe_reports_persistent_ids_the_deprecated_alias_and_the_active_page() {
     let detail = call(&mut s, &mut h, "describe", json!({"board":"b1","fields":["artboards"]})).result.unwrap();
     assert_eq!(detail["artboards"][0]["id"], "artboard:2");
     // human edits never renumber: rename B, the id stays
-    h.editor.execute(varos_core::EditCommand::RenameArtboard { index: 1, name: "Cover".into() });
+    h.editor.execute_ui(varos_core::EditCommand::RenameArtboard { index: 1, name: "Cover".into() });
     let v = call(&mut s, &mut h, "describe", json!({"board":"b1","fields":["artboards"]})).result.unwrap();
     assert_eq!(
         (v["artboards"][1]["id"].as_str(), v["artboards"][1]["name"].as_str()),

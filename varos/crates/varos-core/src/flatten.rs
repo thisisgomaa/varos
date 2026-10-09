@@ -229,6 +229,13 @@ impl FlattenCache {
 #[derive(Default)]
 pub struct SharedFlattenCache(Mutex<FlattenCache>);
 
+// Editor rollback snapshots exclude disposable render memoization.
+impl Clone for SharedFlattenCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 impl SharedFlattenCache {
     /// Lock the cache. A poisoned lock (a panic mid-update) is recovered by CLEARING the cache — a cold
     /// rebuild is always correct.

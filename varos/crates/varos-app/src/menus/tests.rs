@@ -59,14 +59,9 @@ fn every_clipboard_row_is_its_shortcut() {
     }
 }
 
-fn edit_rows() -> Vec<Entry> {
-    let m = menus();
-    m.into_iter().find(|(t, _)| *t == "Edit").expect("an Edit menu").1
-}
-
 #[test]
 fn edit_menu_mirrors_select_all_deselect_delete() {
-    let rows = edit_rows();
+    let rows = flat_items(&menus());
     let find = |want: &str| {
         rows.iter()
             .find_map(|e| match e {
@@ -77,8 +72,8 @@ fn edit_menu_mirrors_select_all_deselect_delete() {
     };
     let all = cmd(KeyCode::KeyA);
     let none = cmd_shift(KeyCode::KeyA);
-    assert_eq!(find("edit.selectall"), ("Select All", all, MenuCmd::Key(all.unwrap())));
-    assert_eq!(find("edit.deselect"), ("Deselect", none, MenuCmd::Key(none.unwrap())));
+    assert_eq!(find("select.all"), ("All", all, MenuCmd::Key(all.unwrap())));
+    assert_eq!(find("select.deselect"), ("Deselect", none, MenuCmd::Key(none.unwrap())));
     assert_eq!(find("edit.delete"), ("Delete", None, MenuCmd::Plain(KeyCode::Backspace)));
     assert!(egui_key(KeyCode::KeyA).is_some(), "a focused text field must still get ⌘A (select text)");
 }
@@ -127,7 +122,7 @@ fn view_menu_mirrors_every_snapping_row() {
         ("Smart Guides", MenuCmd::Key(cmd(KeyCode::KeyU).unwrap()), Some(Check::SmartGuides)),
         ("Alignment Guides", MenuCmd::Snap(SnapRow::AlignGuides), Some(Check::AlignGuides)),
         ("Geometric Guides", MenuCmd::Snap(SnapRow::GeomGuides), Some(Check::GeomGuides)),
-        ("Snap to Grid", MenuCmd::Snap(SnapRow::Grid), Some(Check::SnapGrid)),
+        ("Snap to Grid", MenuCmd::Key(cmd_shift(KeyCode::Quote).unwrap()), Some(Check::SnapGrid)),
         ("Snap to Point", MenuCmd::Snap(SnapRow::Point), Some(Check::SnapPoint)),
     ];
     for w in want {
@@ -142,7 +137,7 @@ fn view_menu_mirrors_every_snapping_row() {
 fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
     let m = menus();
     let titles: Vec<&str> = m.iter().map(|(t, _)| *t).collect();
-    assert_eq!(titles, ["Varos", "File", "Edit", "Object", "View", "Window"]);
+    assert_eq!(titles, ["Varos", "File", "Edit", "Select", "Object", "View", "Window"]);
     let items = flat_items(&m);
     let has = |c: MenuCmd| items.iter().any(|e| matches!(e, Entry::Item { cmd, .. } if *cmd == c));
     for p in PanelId::DOCKABLE {
@@ -158,9 +153,16 @@ fn the_bar_has_the_standard_mac_menus_and_mirrors_every_dockable_panel() {
     // slice 0.6: Export Selection… beside it, also without a key (Illustrator has none)
     let export: Vec<&Entry> =
         items.iter().filter(|e| matches!(e, Entry::Item { id, .. } if id.contains("export"))).collect();
-    assert_eq!(export.len(), 2, "PDF… and Export Selection…");
+    assert_eq!(export.len(), 3, "Export…, PDF… preset and Export Selection…");
     assert!(
-        matches!(export[0], Entry::Item { label: "PDF\u{2026}", accel: None, cmd: MenuCmd::File(FileCmd::Export), .. }),
+        matches!(export[0], Entry::Item { accel: Some(a), cmd: MenuCmd::File(FileCmd::Export), .. } if *a == cmd_alt(KeyCode::KeyE).unwrap())
+    );
+    let export = &export[1..];
+    assert!(
+        matches!(
+            export[0],
+            Entry::Item { label: "PDF\u{2026}", accel: None, cmd: MenuCmd::File(FileCmd::ExportPdfPreset), .. }
+        ),
         "{:?}",
         export[0]
     );
@@ -193,6 +195,7 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
     let want = [
         ("file.new", cmd(KeyCode::KeyN).unwrap(), FileCmd::New),
         ("file.open", cmd(KeyCode::KeyO).unwrap(), FileCmd::Open),
+        ("file.document-setup", cmd_alt(KeyCode::KeyP).unwrap(), FileCmd::DocumentSetup),
         ("file.close", cmd(KeyCode::KeyW).unwrap(), FileCmd::CloseTab),
         ("file.save", cmd(KeyCode::KeyS).unwrap(), FileCmd::Save),
         ("file.saveas", cmd_shift(KeyCode::KeyS).unwrap(), FileCmd::SaveAs),
@@ -200,6 +203,8 @@ fn file_menu_rows_are_new_open_close_save_saveas_on_their_keys() {
         ("file.closeall", cmd_alt(KeyCode::KeyW).unwrap(), FileCmd::CloseAll),
         ("file.savecopy", cmd_alt(KeyCode::KeyS).unwrap(), FileCmd::SaveCopy),
         ("file.revert", fkey(KeyCode::F12).unwrap(), FileCmd::Revert),
+        ("file.export", cmd_alt(KeyCode::KeyE).unwrap(), FileCmd::Export),
+        ("file.print", cmd(KeyCode::KeyP).unwrap(), FileCmd::Print),
     ];
     for (id, accel, fc) in want {
         assert!(rows.iter().any(|&(i, a, f)| i == id && a == accel && f == fc), "File menu misses {id}");
@@ -249,24 +254,64 @@ fn snapshot(menus: &[(&'static str, Vec<Entry>)]) -> String {
     out
 }
 
-/// Rows added after the split (0.6 and SVG Place 7.1); the remaining table stays frozen.
-const ADDED_AFTER_SPLIT: &[&str] =
-    &["file.closeall", "file.savecopy", "file.revert", "file.exportselection", "file.place.svg"];
+/// The rows slice 0.6 added after the split; everything else is the pre-split table.
+const ADDED_AFTER_SPLIT: &[&str] = &[
+    "file.closeall",
+    "file.savecopy",
+    "file.revert",
+    "file.exportselection",
+    "file.place.svg",
+    "file.export",
+    "file.print",
+    "view.fitall",
+    "view.makeguides",
+    "view.releaseguides",
+    "view.clearguides",
+    "view.grid",
+    "file.new-template",
+    "file.save-template",
+    "file.document-setup",
+    "win.document-info",
+];
 
 fn without_added(menus: Vec<(&'static str, Vec<Entry>)>) -> Vec<(&'static str, Vec<Entry>)> {
     fn strip(v: Vec<Entry>) -> Vec<Entry> {
         v.into_iter()
             .filter(|e| {
-                !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str()))
-                    && !matches!(e, Entry::Sub { label: "Transform" | "Layers", .. })
+                !matches!(e, Entry::Sub { label: "Clipping Mask" | "Transform" | "Layers", .. })
+                    && !matches!(e, Entry::Item { id, .. } if ADDED_AFTER_SPLIT.contains(&id.as_str()))
             })
             .map(|e| match e {
+                Entry::Item { id, .. } if id == "view.snapgrid" => {
+                    toggle("view.snapgrid", "Snap to Grid", MenuCmd::Snap(SnapRow::Grid), Check::SnapGrid)
+                }
                 Entry::Sub { label, items } => Entry::Sub { label, items: strip(items) },
+                Entry::Item { id, label, accel, cmd: MenuCmd::File(FileCmd::ExportPdfPreset), check } => {
+                    Entry::Item { id, label, accel, cmd: MenuCmd::File(FileCmd::Export), check }
+                }
                 e => e,
             })
             .collect()
     }
-    menus.into_iter().map(|(t, v)| (t, strip(v))).collect()
+    menus
+        .into_iter()
+        .filter(|(t, _)| *t != "Select")
+        .map(|(t, v)| {
+            let mut v = strip(v);
+            if t == "Object" {
+                if let Some(i) = v.iter().position(|e| matches!(e,Entry::Item { id,.. } if id == "obj.ungroup")) {
+                    v.truncate(i + 1);
+                }
+            }
+            if t == "Edit" {
+                v.extend([
+                    key("edit.selectall", "Select All", cmd(KeyCode::KeyA)),
+                    key("edit.deselect", "Deselect", cmd_shift(KeyCode::KeyA)),
+                ]);
+            }
+            (t, v)
+        })
+        .collect()
 }
 
 /// Slice 0.6: the split of `chrome.rs`'s menu tables into `menus/` was a pure move — the assembled
@@ -300,6 +345,9 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.open",
             "sub Open Recent",
             "file.place.svg",
+            "file.new-template",
+            "file.save-template",
+            "file.document-setup",
             "---",
             "file.close",
             "file.closeall",
@@ -308,8 +356,10 @@ fn file_menu_order_has_the_slice_0_6_rows_in_illustrator_places() {
             "file.savecopy",
             "file.revert",
             "---",
+            "file.export",
             "sub Export",
             "file.exportselection",
+            "file.print",
         ]
     );
 }
@@ -358,4 +408,64 @@ fn svg_place_row_is_namespaced_and_has_no_shortcut() {
         row,
         Some(Entry::Item { label: "Place SVG…", accel: None, cmd: MenuCmd::File(FileCmd::PlaceSvg), .. })
     ));
+}
+#[test]
+fn clipping_rows_use_illustrator_shortcuts_and_core_commands() {
+    let items = flat_items(&menus());
+    for (id, alt) in [("obj.clip", false), ("obj.release_clip", true)] {
+        let a = items
+            .iter()
+            .find_map(|e| match e {
+                Entry::Item { id: found, accel, .. } if found == id => *accel,
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(a, Accel { code: KeyCode::Digit7, cmd: true, shift: false, alt });
+    }
+    let mut ed = varos_core::Editor::new();
+    for x in [0., 10.] {
+        ed.try_execute_created(varos_core::EditCommand::AddShape {
+            kind: varos_core::model::ShapeKind::Rect,
+            bounds: [x, x, 40., 40.],
+            parent: None,
+            fill: Some([1.; 4]),
+            stroke: None,
+            stroke_width: 0.,
+            opacity: 1.,
+            name: None,
+        })
+        .unwrap();
+    }
+    ed.select_all();
+    let mut expected = ed.clone();
+    expected.try_execute(varos_core::EditCommand::ClipMake).unwrap();
+    let mut view = varos_core::geom::View::identity();
+    crate::apply_key(&mut ed, &mut view, [0., 0.], "Digit7", true, false, false);
+    assert_eq!(ed.doc, expected.doc);
+    expected.try_execute(varos_core::EditCommand::ClipRelease).unwrap();
+    crate::apply_key(&mut ed, &mut view, [0., 0.], "Digit7", true, false, true);
+    assert_eq!(ed.doc, expected.doc);
+}
+#[test]
+fn select_menu_is_between_edit_and_object_and_has_six_same_modes() {
+    let m = menus();
+    let index = m.iter().position(|(name, _)| *name == "Select").unwrap();
+    assert_eq!(m[index - 1].0, "Edit");
+    assert_eq!(m[index + 1].0, "Object");
+    let same = m[index]
+        .1
+        .iter()
+        .find_map(|e| if let Entry::Sub { label: "Same", items } = e { Some(items) } else { None })
+        .unwrap();
+    assert_eq!(same.len(), 6);
+    assert!(same.iter().all(|e| matches!(e, Entry::Item { cmd: MenuCmd::Selection(_), accel: None, .. })));
+}
+
+#[test]
+fn redo_uses_only_shift_command_z_across_menu_mirrors() {
+    let rows = flat_items(&menus());
+    let redo = rows.iter().find(|row| matches!(row, Entry::Item { id, .. } if id == "edit.redo")).unwrap();
+    let chord = cmd_shift(KeyCode::KeyZ).unwrap();
+    assert!(matches!(redo, Entry::Item { accel: Some(a), cmd: MenuCmd::Key(k), .. } if *a == chord && *k == chord));
+    assert!(!rows.iter().any(|row| matches!(row, Entry::Item { accel: Some(a), .. } if a.code == KeyCode::KeyY && a.cmd && !a.shift && !a.alt)));
 }

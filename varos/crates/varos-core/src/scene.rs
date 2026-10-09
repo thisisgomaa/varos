@@ -105,6 +105,10 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ed.dirty.hash(&mut state);
     ed.show_rulers.hash(&mut state);
     ed.guides_hidden.hash(&mut state);
+    ed.doc.snap.show_grid.hash(&mut state);
+    ed.doc.snap.grid_subdivisions.hash(&mut state);
+    f32_hash(ed.doc.snap.grid_spacing, &mut state);
+    ed.doc.guide_paths.hash(&mut state);
     ed.constrain_wh.hash(&mut state);
     ed.space.hash(&mut state);
     ed.mods.shift.hash(&mut state);
@@ -123,6 +127,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
     ids.extend(ed.objsel.iter().copied());
     ids.sort_unstable();
     ids.hash(&mut state);
+    ed.key_object.hash(&mut state);
     ed.absel.iter().for_each(|index| index.hash(&mut state));
 
     let mut live_paths: Vec<u32> = ed.objsel.iter().copied().collect();
@@ -191,6 +196,7 @@ pub fn scene_signature(ed: &Editor, view: View, frame: [u32; 2]) -> u64 {
 
 #[derive(Default)]
 pub struct Scene {
+    pub grid_step: Option<f32>,
     pub content: Vec<Group>, // artwork groups (z-ordered): opaque runs + isolated translucent layers
     pub report: crate::ExportReport,
     pub errors: Vec<String>,
@@ -276,7 +282,7 @@ fn rect_intersection(a: R4, b: R4) -> Option<R4> {
 /// The whole scene, uncut (no view culling). Used where the entire document must be described —
 /// tests, exports, thumbnails. Shares the cross-frame flatten cache with `build_scene_in_view`.
 pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
-    build_scene_impl(ed, ppu, None)
+    build_scene_impl(ed, ppu, None, None)
 }
 
 /// P11.2: the canvas scene for a `frame`-sized viewport seen through `view`. Paths whose world bbox
@@ -284,14 +290,22 @@ pub fn build_scene(ed: &Editor, ppu: f32) -> Scene {
 /// entirely; partially visible paths have their rings and stroke runs clipped to that grown rect, reusing
 /// the artboard clippers. Everything inside the frame renders exactly as `build_scene` would.
 pub fn build_scene_in_view(ed: &Editor, view: View, frame: [u32; 2]) -> Scene {
-    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame))
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), None)
 }
 
-fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
+/// UI-independent canvas presentation input; exporters use the unstyled entry points.
+#[derive(Clone, Copy)]
+pub struct SceneStyle {
+    pub checkerboard: [Rgba; 2],
+}
+pub fn build_scene_in_view_styled(ed: &Editor, view: View, frame: [u32; 2], style: SceneStyle) -> Scene {
+    build_scene_impl(ed, view.zoom, ViewCull::new(view, frame), Some(style))
+}
+fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>, style: Option<SceneStyle>) -> Scene {
     let stroke_report = std::cell::RefCell::new(crate::ExportReport::default());
     let stroke_budget = std::cell::RefCell::new(crate::stroke::evaluate::StrokeBudget::default());
     let stroke_errors = std::cell::RefCell::new(Vec::new());
-    let mut s = Scene::default();
+    let mut s = Scene { grid_step: ed.doc.snap.show_grid.then(|| ed.document_grid_step()), ..Default::default() };
     // content = z-ordered Groups. Opaque prims accumulate into the current run in PER-OBJECT paint order
     // (each object's fill immediately followed by its own stroke — Illustrator stacking: an object above
     // covers the stroke of the one below). A translucent fill+stroke object flushes the run and becomes
@@ -310,11 +324,41 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
                 continue; // board eye OFF → the page (paper + edge + handles) vanishes with its art
             }
             let (x0, y0, x1, y1) = ab.rect();
+            if cull.as_ref().is_some_and(|c| !rects_intersect((x0, y0, x1, y1), c.grown(0.0))) {
+                continue;
+            }
             let ring = vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
             // page fill: a solid colour, or — when transparent — a faint translucent white so the page
             // still reads on the dark board instead of vanishing into it.
             let paper = ab.page_color.unwrap_or(AB_GHOST);
-            open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            if let Some(style) = style.filter(|_| ed.doc.transparency_grid && paper[3] < 1.0) {
+                // Bounded canvas furniture: at most 128² tiles per page, no export involvement.
+                let step = (8.0 / ppu.max(0.001)).max(ab.w.max(ab.h) / 128.0);
+                let rows = (ab.h / step).ceil() as usize;
+                let cols = (ab.w / step).ceil() as usize;
+                for row in 0..rows {
+                    for col in 0..cols {
+                        let x = x0 + col as f32 * step;
+                        let y = y0 + row as f32 * step;
+                        let color = style.checkerboard[(row + col) % 2];
+                        open.push(Prim::Fill {
+                            rings: vec![vec![
+                                [x, y],
+                                [(x + step).min(x1), y],
+                                [(x + step).min(x1), (y + step).min(y1)],
+                                [x, (y + step).min(y1)],
+                            ]],
+                            color,
+                        });
+                    }
+                }
+                // Explicit translucent colour composites over the checkerboard.
+                if ab.page_color.is_some() && paper[3] > 0.0 {
+                    open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+                }
+            } else {
+                open.push(Prim::Fill { rings: vec![ring.clone()], color: paper });
+            }
             let active = ab_tool && i == ed.doc.active;
             let selected = ab_tool && ed.ab_is_selected(i);
             let edge_col = if selected {
@@ -749,6 +793,24 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
             s.overlay.push(Prim::Stroke { pts: vec![a, b], width: 1.0, color: GUIDE, clip: None });
         }
     }
+    if !ed.guides_hidden {
+        for (pi, _p) in ed
+            .doc
+            .paths
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| ed.doc.guide_paths.contains(&p.id) && !ed.doc.eff_hidden(p.id))
+        {
+            if let Some(geom) = geometry[pi].as_deref() {
+                for pts in view_runs(pi, geom.outline.clone())
+                    .into_iter()
+                    .chain(geom.holes.iter().flat_map(|h| view_runs(pi, h.clone())))
+                {
+                    s.overlay.push(Prim::Stroke { pts, width: 1.0, color: GUIDE, clip: None });
+                }
+            }
+        }
+    }
     // editing skeleton: a thin accent outline for any path being hovered/selected/drawn
     for (pi, geom) in geometry.iter().enumerate() {
         let Some(geom) = geom.as_deref() else { continue }; // P11.2: culled — wholly off screen
@@ -758,7 +820,18 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         if ed.doc.paths[pi].anchors.len() >= 2 && ed.path_shown(ed.doc.paths[pi].id) {
             // A7 seam: WORLD outline + hole rings (identity ⇒ today's geometry).
             for run in view_runs(pi, geom.outline.clone()) {
-                s.overlay.push(Prim::Stroke { pts: run, width: 1.7, color: ACCENT, clip: None });
+                s.overlay.push(Prim::Stroke {
+                    pts: run,
+                    width: if ed.key_object.is_some_and(|key| {
+                        ed.objsel.contains(&key) && ed.doc.unit_of(key) == ed.doc.unit_of(ed.doc.paths[pi].id)
+                    }) {
+                        3.0
+                    } else {
+                        1.7
+                    },
+                    color: ACCENT,
+                    clip: None,
+                });
             }
             for hole in &geom.holes {
                 let mut r = hole.clone();
@@ -854,6 +927,23 @@ fn build_scene_impl(ed: &Editor, ppu: f32, cull: Option<ViewCull>) -> Scene {
         let c = ed.cursor;
         let (x0, y0) = (start[0].min(c[0]), start[1].min(c[1]));
         let (x1, y1) = (start[0].max(c[0]), start[1].max(c[1]));
+        s.overlay.push(Prim::Stroke {
+            pts: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]],
+            width: 1.0,
+            color: ACCENT,
+            clip: None,
+        });
+    }
+    if let Drag::Lasso { points, .. } = &ed.drag {
+        let mut pts = points.clone();
+        if let Some(first) = points.first() {
+            pts.push(*first);
+        }
+        s.overlay.push(Prim::Stroke { pts, width: 1.0, color: ACCENT, clip: None });
+    }
+    if let Drag::ViewZoom { start, current } = ed.drag {
+        let (x0, y0, x1, y1) =
+            (start[0].min(current[0]), start[1].min(current[1]), start[0].max(current[0]), start[1].max(current[1]));
         s.overlay.push(Prim::Stroke {
             pts: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]],
             width: 1.0,

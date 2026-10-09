@@ -24,6 +24,15 @@ pub fn check_structure(doc: &Document, limits: &Limits) -> Result<(), LoadError>
             return Err(Invalid::DuplicateId { kind: "path", id: p.id }.into());
         }
     }
+    let mut guide_ids = HashSet::new();
+    for &id in &doc.guide_paths {
+        if !path_ids.contains(&id) {
+            return Err(Invalid::Dangling { from: "guide", id, missing: id }.into());
+        }
+        if !guide_ids.insert(id) {
+            return Err(Invalid::DuplicateId { kind: "guide", id }.into());
+        }
+    }
     let mut index: HashMap<u32, usize> = HashMap::with_capacity(doc.nodes.len());
     for (i, n) in doc.nodes.iter().enumerate() {
         if index.insert(n.id, i).is_some() {
