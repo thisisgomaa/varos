@@ -29,8 +29,8 @@ number means. All future-version refusal fixtures now claim 15.
 **Durability evidence.** Frozen per-era corpora (`v10/`, `w3-effects/`, `v12/`, `v13/`, `v14/`), one
 mixed v14 document (`v14-mixed/`) that pins the combined key order and round-trips byte-for-byte in
 raw JSON and in the native container, and frozen v9–v13 header gates that refuse v14 JSON, embedded
-model and catalog stamp. Every v9 body re-saves byte-identical apart from the stamp; older-era PDF
-goldens compare with the stamp normalised (`varos-pdf/tests/support/native_era.rs`).
+model and catalog stamp. Precisely: canonical v9 bodies (the compact JSON Varos itself writes, e.g. `v9/mixed.json`) re-save byte-identical apart from the stamp; the pretty-printed lane inputs `lane_c/next_corners.json`, `lane_c/next_live_round.json` and `w3-effects/v9-plain.json` are canonicalised on save (same decoded document, compact bytes — kept frozen as decode inputs); and rewriting a native v9 container changes its PDF text representation (text is embedded as real text since v14 instead of outlines), so only the outlined appearance and the non-text resources are compared to the v9 oracle. Older-era PDF goldens without text compare
+byte-for-byte with the stamp normalised (`varos-pdf/tests/support/native_era.rs`).
 
 **Consequences.** Builds that write 9 (wave 2) refuse every file this build saves; no downgrade save.
 Deferred, recorded rather than hidden: effects stay Path-level while appearance owns stack entries

@@ -11,10 +11,15 @@ use varos_core::Group;
 /// reservation is therefore generous so a list that passed the preflight never flattens here.
 const COMPOSITE_LIMITS: Limits = Limits { depth: 12, bytes: usize::MAX / 2 };
 
-/// One `Draw` payload: a run of scene groups, or one object's prims drawn opaquely inside its layer.
+/// One `Draw` payload: a run of scene groups, one object's prims drawn opaquely inside its layer, or
+/// the layer's alpha mask. Masks are STREAMED (review P1): coverage is rasterised when the layer is
+/// complete, applied to it, and dropped — never retained for every sibling before rendering.
 enum Item<'a> {
     Group(&'a Group),
     Object(&'a [varos_core::Prim]),
+    /// Multiply the finished layer by these groups' alpha (same as the stack's LayerEnd mask, which is
+    /// applied after the layer's content and before its composite).
+    Mask(&'a [Group]),
 }
 
 /// Lower a wave-3 layer group into the renderer's layer list: an appearance composite
@@ -22,13 +27,16 @@ enum Item<'a> {
 /// (`Group::Overprint` = one object in a Multiply layer). Nested composites become nested layers on
 /// the SAME stack; runs of other groups are one `Draw` payload each (painted by the existing tiny-skia
 /// scene painter).
-fn lower<'a>(group: &'a Group, size: [u32; 2], xf: Transform, out: &mut Vec<LayerPrim<Vec<Item<'a>>>>) {
+fn lower<'a>(group: &'a Group, out: &mut Vec<LayerPrim<Vec<Item<'a>>>>) {
     match group {
         Group::Composite { opacity, members, mask } => {
-            let mask = mask.as_ref().map(|groups| coverage(groups, size, xf));
-            out.push(LayerPrim::LayerBegin { opacity: *opacity, blend: Blend::Normal, mask });
+            out.push(LayerPrim::LayerBegin { opacity: *opacity, blend: Blend::Normal, mask: None });
             for g in members {
-                lower(g, size, xf, out);
+                lower(g, out);
+            }
+            if let Some(groups) = mask {
+                // a run of its own: always the layer's last draw, after every member
+                out.push(LayerPrim::Draw(vec![Item::Mask(groups)]));
             }
             out.push(LayerPrim::LayerEnd);
         }
@@ -38,18 +46,26 @@ fn lower<'a>(group: &'a Group, size: [u32; 2], xf: Transform, out: &mut Vec<Laye
             out.push(LayerPrim::LayerEnd);
         }
         other => match out.last_mut() {
-            Some(LayerPrim::Draw(run)) => run.push(Item::Group(other)),
+            Some(LayerPrim::Draw(run)) if !run.iter().any(|i| matches!(i, Item::Mask(_))) => {
+                run.push(Item::Group(other))
+            }
             _ => out.push(LayerPrim::Draw(vec![Item::Group(other)])),
         },
     }
 }
 
-/// Alpha-mask coverage (colour-independent, ADR: alpha masks read alpha only) in canvas pixel order.
-fn coverage(groups: &[Group], size: [u32; 2], xf: Transform) -> Vec<f32> {
-    let n = size[0] as usize * size[1] as usize;
-    let Some(mut pixmap) = Pixmap::new(size[0], size[1]) else { return vec![0.0; n] };
+/// Multiply a finished layer by an alpha mask (colour-independent, ADR: alpha masks read alpha only).
+/// The 8-bit coverage surface lives only for this call.
+fn apply_mask(groups: &[Group], size: [u32; 2], xf: Transform, layer: &mut [Pixel]) {
+    let Some(mut pixmap) = Pixmap::new(size[0], size[1]) else {
+        layer.fill([0.0; 4]);
+        return;
+    };
     super::draw_groups(groups, &mut pixmap, xf);
-    pixmap.pixels().iter().map(|p| f32::from(p.alpha()) / 255.0).collect()
+    for (p, c) in layer.iter_mut().zip(pixmap.pixels()) {
+        let m = f32::from(c.alpha()) / 255.0;
+        *p = p.map(|v| v * m);
+    }
 }
 
 fn to_float(bytes: &[u8], out: &mut [Pixel]) {
@@ -70,14 +86,19 @@ fn to_bytes(pixels: &[Pixel], out: &mut [u8]) {
 pub(crate) fn draw_composite(group: &Group, dst: &mut Pixmap, xf: Transform) {
     let size = [dst.width(), dst.height()];
     let mut prims = Vec::new();
-    lower(group, size, xf, &mut prims);
+    lower(group, &mut prims);
     let Some(mut scratch) = Pixmap::new(size[0], size[1]) else { return };
     let mut pixels = vec![[0.0; 4]; size[0] as usize * size[1] as usize];
     to_float(dst.data(), &mut pixels);
     let drawn = CpuLayers::default().render(&prims, size, 1.0, COMPOSITE_LIMITS, &mut pixels, |run, layer| {
+        if let [Item::Mask(groups)] = run.as_slice() {
+            apply_mask(groups, size, xf, layer); // one transient coverage surface at a time
+            return;
+        }
         to_bytes(layer, scratch.data_mut());
         for item in run {
             match item {
+                Item::Mask(_) => {}
                 Item::Group(g) => super::draw_groups(std::slice::from_ref(*g), &mut scratch, xf),
                 // the object is drawn opaquely in its own layer, exactly as an isolated object is
                 Item::Object(prims) if super::gradient::isolated_knockout(prims) => {
@@ -172,7 +193,7 @@ mod tests {
             mask: Some(vec![square([0.0, 0.0, 0.0, 0.5])]),
         };
         let mut prims = Vec::new();
-        lower(&nested, [4, 4], Transform::identity(), &mut prims);
+        lower(&nested, &mut prims);
         let shape: Vec<_> = prims
             .iter()
             .map(|p| match p {
@@ -184,16 +205,52 @@ mod tests {
                     }
                 }
                 LayerPrim::LayerEnd => "end",
+                LayerPrim::Draw(run) if matches!(run.as_slice(), [Item::Mask(_)]) => "mask",
                 LayerPrim::Draw(_) => "draw",
                 _ => "effect",
             })
             .collect();
-        assert_eq!(shape, ["begin+mask", "draw", "begin", "end", "end"]);
+        assert_eq!(shape, ["begin", "draw", "begin", "end", "mask", "end"]);
         let mut pixmap = Pixmap::new(4, 4).unwrap();
         draw_composite(&nested, &mut pixmap, Transform::identity());
         // red × opacity 0.5 × mask alpha 128/255, composited by layers::composite (Normal)
         let expect = layers::composite(Blend::Normal, [0.0; 4], [1.0, 0.0, 0.0, 1.0], 0.5 * 128.0 / 255.0);
         let px = pixmap.pixels()[5];
         assert_eq!([px.red(), px.alpha()], [(expect[0] * 255.0).round() as u8, (expect[3] * 255.0).round() as u8]);
+    }
+
+    /// Review P1 probe: 100 masked siblings at 2048². Lowering retains no per-pixel mask storage
+    /// (every mask is a deferred draw, rasterised and dropped one at a time), the preflight admits
+    /// the document on its real streamed cost, and the masks still apply (normal case unchanged).
+    #[test]
+    fn hundred_masked_siblings_stream_their_masks() {
+        let square = |x: f32, c: [f32; 4]| {
+            Group::Opaque(vec![varos_core::Prim::Fill {
+                rings: vec![vec![[x, 0.0], [x + 2.0, 0.0], [x + 2.0, 4.0], [x, 4.0], [x, 0.0]]],
+                color: c,
+            }])
+        };
+        let sibling = |x: f32| Group::Composite {
+            opacity: 1.0,
+            members: vec![square(x, [1.0, 0.0, 0.0, 1.0])],
+            mask: Some(vec![square(x, [0.0, 0.0, 0.0, 0.5])]),
+        };
+        let parent = Group::Composite { opacity: 1.0, members: (0..100).map(|_| sibling(0.0)).collect(), mask: None };
+        let mut prims = Vec::new();
+        lower(&parent, &mut prims);
+        assert!(prims.iter().all(|p| !matches!(p, LayerPrim::LayerBegin { mask: Some(_), .. })), "no retained mask");
+        let masks =
+            prims.iter().filter(|p| matches!(p, LayerPrim::Draw(r) if matches!(r.as_slice(), [Item::Mask(_)]))).count();
+        assert_eq!(masks, 100);
+        assert!(crate::appearance_budget::check(std::slice::from_ref(&parent), [2048, 2048]).is_ok());
+        // normal case: one masked sibling keeps the exact Normal composite of red × mask alpha
+        let mut one = Pixmap::new(4, 4).unwrap();
+        draw_composite(&sibling(0.0), &mut one, Transform::identity());
+        let expect = layers::composite(Blend::Normal, [0.0; 4], [1.0, 0.0, 0.0, 1.0], 128.0 / 255.0);
+        assert_eq!(one.pixels()[0].alpha(), (expect[3] * 255.0).round() as u8);
+        let mut many = Pixmap::new(4, 4).unwrap();
+        draw_composite(&parent, &mut many, Transform::identity());
+        assert!(many.pixels()[0].alpha() > one.pixels()[0].alpha(), "every sibling composited");
+        assert_eq!(many.pixels()[3].alpha(), 0, "outside every mask stays clear");
     }
 }
