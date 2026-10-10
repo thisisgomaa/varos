@@ -89,3 +89,23 @@ fn cross_era_fixture_hashes_are_frozen() {
         }
     }
 }
+
+/// Review P2: the pretty-printed lane v9 inputs are canonicalised on save — same decoded document,
+/// compact bytes — and the canonical form is then stable (stamp-only) on every later save.
+#[test]
+fn pretty_printed_v9_inputs_canonicalise_without_changing_the_document() {
+    use varos_core::format::{decode_model, encode_model, Limits};
+    for bytes in [
+        include_bytes!("fixtures/lane_c/next_corners.json").as_slice(),
+        include_bytes!("fixtures/lane_c/next_live_round.json").as_slice(),
+        include_bytes!("fixtures/w3-effects/v9-plain.json").as_slice(),
+    ] {
+        let first = decode_model(bytes, None, &Limits::DEFAULT).unwrap();
+        assert_eq!(first.source_version, 9);
+        let saved = encode_model(&first.doc, &Limits::DEFAULT).unwrap();
+        assert_ne!(saved.as_bytes(), bytes, "pretty input is not byte-preserved");
+        let second = decode_model(saved.as_bytes(), None, &Limits::DEFAULT).unwrap();
+        assert_eq!(second.doc, first.doc, "canonicalisation keeps the document");
+        assert_eq!(encode_model(&second.doc, &Limits::DEFAULT).unwrap(), saved, "canonical form is stable");
+    }
+}

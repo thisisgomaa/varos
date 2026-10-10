@@ -401,4 +401,19 @@ mod tests {
             }
         }
     }
+    /// Review P1 (GPU side): sibling masks reuse the same two pool slots per nesting level, so the
+    /// texture pool is sized by depth, never by sibling count.
+    #[test]
+    fn hundred_masked_siblings_do_not_grow_the_pool() {
+        let paint =
+            varos_core::Prim::Fill { rings: vec![vec![[0., 0.], [20., 0.], [20., 20.], [0., 20.]]], color: [1.; 4] };
+        let sibling = Group::Composite {
+            opacity: 1.0,
+            members: vec![Group::Opaque(vec![paint.clone()])],
+            mask: Some(vec![Group::Opaque(vec![paint])]),
+        };
+        let scene = vec![Group::Composite { opacity: 1.0, members: vec![sibling; 100], mask: None }];
+        let (_, _, _, metas) = crate::tess::build_content(&scene, View::identity(), 1., 32., 32.);
+        assert_eq!(depth(&metas), 2, "parent + one sibling level, whatever the sibling count");
+    }
 }

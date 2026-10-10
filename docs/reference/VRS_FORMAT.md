@@ -26,8 +26,7 @@ Every step is an identity on the decoded document (no validation inside a step; 
 validates after the chain). The lanes' temporary reservations (identity v9/v10/v11 rows, the text
 lane's v9→v14 bridge and its "10–13 are newer" guard) are gone. Combined key order:
 `Document` = `…, images, assets, swatches, text_boxes, typography, paths, …`; `Path` = `stack,
-effects, id, …` (both omitted when empty, so every v9 body re-saves byte-identical apart from the
-stamp). Every lane's refused-future fixture claims **15**. Frozen fixtures: per-lane families
+effects, id, …` (both omitted when empty, so canonical v9 bodies (the compact JSON Varos itself writes, e.g. `v9/mixed.json`) re-save byte-identical apart from the stamp; the pretty-printed lane inputs `lane_c/next_corners.json`, `lane_c/next_live_round.json` and `w3-effects/v9-plain.json` are canonicalised on save (same decoded document, compact bytes — kept frozen as decode inputs); and rewriting a native v9 container changes its PDF text representation (text is embedded as real text since v14 instead of outlines), so only the outlined appearance and the non-text resources are compared to the v9 oracle). Every lane's refused-future fixture claims **15**. Frozen fixtures: per-lane families
 `v10/`, `w3-effects/`, `v12/`, `v13/`, `v14/`; cross-era refusals `w3-cross-era/` (v10 + width
 profile in a stack stroke, v11 + managed colour, v11 + live node, v13 + typography); the mixed
 `v14-mixed/` document (image + gradient + corners + stack + effect + CMYK swatch + live Repeat +

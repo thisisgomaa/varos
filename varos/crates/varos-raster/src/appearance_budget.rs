@@ -8,9 +8,11 @@ fn surfaces(groups: &[Group]) -> u64 {
     groups
         .iter()
         .map(|g| match g {
+            // the layer stays live while its members draw, and while its mask is rasterised (one 8-bit
+            // coverage surface + whatever the mask itself nests) after them; masks are streamed, so
+            // siblings never hold coverage at the same time (review P1)
             Group::Composite { members, mask, .. } => {
-                let content = 1 + surfaces(members);
-                mask.as_ref().map_or(content, |m| content.max(2 + surfaces(m)))
+                1 + mask.as_ref().map_or(surfaces(members), |m| surfaces(members).max(1 + surfaces(m)))
             }
             Group::Clip { members, .. } => 2 + surfaces(members),
             Group::Isolated { .. } | Group::Overprint { .. } => 1,

@@ -28,8 +28,8 @@ Nothing pushed; main untouched. `REPORT.md`: previous content kept, each lane re
   frozen mixed `fixtures/v14-mixed/` (image + gradient + corners + stack + effect + CMYK swatch +
   live Repeat + styled area text) pins `…images, assets, swatches, text_boxes, typography, paths…`
   and `Path = stack, effects, id…`, round-trips byte-for-byte in JSON and the native container, PDF
-  (image, shading, embedded font, DeviceCMYK), CPU pixels and SVG checked. v9 fixtures re-save
-  byte-identical apart from the stamp; old-era PDF goldens compare stamp-normalised.
+  (image, shading, embedded font, DeviceCMYK), CPU pixels and SVG checked. Byte identity, precisely:
+  canonical v9 bodies (the compact JSON Varos itself writes, e.g. `v9/mixed.json`) re-save byte-identical apart from the stamp; the pretty-printed lane inputs `lane_c/next_corners.json`, `lane_c/next_live_round.json` and `w3-effects/v9-plain.json` are canonicalised on save (same decoded document, compact bytes — kept frozen as decode inputs); and rewriting a native v9 container changes its PDF text representation (text is embedded as real text since v14 instead of outlines), so only the outlined appearance and the non-text resources are compared to the v9 oracle. Old-era PDF goldens without text compare stamp-normalised.
 - Docs: VRS_FORMAT wave-3 section + rows 10–14; `ADR-0008-amendment-wave3-formats-10-14.md`; PLAN
   bump schedule, phase headers, one wave-3 Progress table (rows kept, comment markers removed).
 
@@ -57,6 +57,10 @@ Nothing pushed; main untouched. `REPORT.md`: previous content kept, each lane re
   are announced with the catalog-resolved label the Arabic kit paints; pills use their galley text;
   authored names (board cards, rows, tags) stay literal; shaped tooltips kept with AX activation.
   +3 catalog rows. `ui.rs` 851 → 840 (frame glue moved to `ui/wave3.rs`).
+
+## Review fixes (Astra, FIX-THEN-MERGE)
+- P1: CPU alpha masks were rasterised for every sibling before rendering (100 masked siblings at 2048² ≈ 1.68 GB of retained coverage). Masks are now streamed — each is a deferred last draw of its layer, rasterised into one transient 8-bit surface, applied, dropped; preflight charges layer + mask stage per nesting level. GPU path already reuses two pool slots per level (pool sized by depth, not siblings). Regressions: `hundred_masked_siblings_stream_their_masks`, `hundred_masked_siblings_do_not_grow_the_pool`.
+- P2: byte-identity claim narrowed (above, VRS_FORMAT, ADR amendment); `pretty_printed_v9_inputs_canonicalise_without_changing_the_document`.
 
 ## Keyboard
 All new chords equal Illustrator, no losers: W Blend, ⇧W Width, ⌥⌘B Make Blend, ⌥⇧⌘B Release
