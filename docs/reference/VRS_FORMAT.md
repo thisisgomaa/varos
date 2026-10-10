@@ -7,6 +7,41 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
+## Wave-3 formats 10–14 (stamped 2026-10-10, `integ/w3`) — current writer **14**
+
+Final numbers, binding merge order: **10** appearance · **11** live effects + width profiles ·
+**12** explicit colour sources · **13** live objects · **14** typography. `FORMAT_VERSION =
+TYPOGRAPHY_VERSION = 14`; every era constant is pinned literally (`varos-core/tests/format_pin.rs`:
+`(APPEARANCE, EFFECTS, COLOUR, LIVE, TYPOGRAPHY) = (10, 11, 12, 13, 14)`, readable 1..=14, no gaps).
+
+| From → to | Named pure step | Keys introduced (refused under any older stamp, before typed decode) |
+|---|---|---|
+| 9 → 10 | `migrate_v9_to_v10` | `paths[].stack`, `nodes[].look`, role `MaskAlpha` (`format/appearance_keys.rs`) |
+| 10 → 11 | `migrate_v10_to_v11` | `paths[].effects`, `stroke_style.width_profile` — also inside an appearance stroke entry (`format/effect_keys.rs`) |
+| 11 → 12 | `migrate_v11_to_v12` | `colour_mode`, `output_profile`, any `{"type":"managed"}` paint anywhere in `doc` (`colour_format.rs`) |
+| 12 → 13 | `migrate_v12_to_v13` | `nodes[].kind.Live` (`live/format.rs`) |
+| 13 → 14 | `migrate_v13_to_v14` | `typography` (`typography_format.rs`) |
+
+Every step is an identity on the decoded document (no validation inside a step; the loader
+validates after the chain). The lanes' temporary reservations (identity v9/v10/v11 rows, the text
+lane's v9→v14 bridge and its "10–13 are newer" guard) are gone. Combined key order:
+`Document` = `…, images, assets, swatches, text_boxes, typography, paths, …`; `Path` = `stack,
+effects, id, …` (both omitted when empty, so every v9 body re-saves byte-identical apart from the
+stamp). Every lane's refused-future fixture claims **15**. Frozen fixtures: per-lane families
+`v10/`, `w3-effects/`, `v12/`, `v13/`, `v14/`; cross-era refusals `w3-cross-era/` (v10 + width
+profile in a stack stroke, v11 + managed colour, v11 + live node, v13 + typography); the mixed
+`v14-mixed/` document (image + gradient + corners + stack + effect + CMYK swatch + live Repeat +
+styled area text) pins key order and round-trips byte-for-byte in JSON and the native container
+(`varos-pdf/tests/format_v14.rs`, `varos-raster/tests/w3_mixed_v14.rs`). Frozen v9–v13 header
+gates refuse v14 raw JSON, the embedded model and the catalog stamp before decode.
+
+Evaluation order on a derived path (canvas, CPU, PDF, SVG): live node → live effects → stroke →
+appearance stack; Live Corners resolve on the authored anchors first, because corner parameters
+index authored anchors. Text nodes carry no appearance stack (text paint stays simple).
+
+The lane sections below are kept as the per-lane contracts; where they say "integration pending",
+"reserved" or describe temporary bridges, this section supersedes them.
+
 ## Lane A format 10 (wave-3 worktree, integration pending)
 
 The writer is 10 (`APPEARANCE_VERSION = 10`); earlier era constants remain unchanged.
@@ -22,7 +57,6 @@ fixtures are retained; new v11 copies serve future-format refusals for this writ
 Bridge 1.2 discovers appearance/mask through list_verbs/schema; legacy fixtures stay frozen.
 The integrator rechains this step with the later optional wave-3 keys.
 
-## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — base writer **9**
 ## Lane H format 14 — worktree contract (2026-10-10, integration pending)
 
 This lane writes JSON `varos:14` and PDF `/VAROS_SchemaVersion 14`. The integrated
@@ -220,7 +254,12 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 | 6 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` intermediate | images: optional `doc.images`, `doc.assets`, `doc.raster_effects_ppi`, `NodeKind::Image`; binary resources in the PDF container ([ADR-0008 images amendment](../adr/ADR-0008-amendment-next-images.md)). |
 | 7 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` intermediate | gradients: tagged `fill`/`stroke` gradient and `swatch_ref` paints, optional `doc.swatches` ([gradients amendment](../adr/ADR-0008-amendment-next-gradients.md)). |
 | 8 | **legacy, readable through migration** (STAMPED 2026-10-09; shipped by stage 1) | `integ/w2` stage 1 | editable text: optional `doc.text_boxes`, `NodeKind::Text` (section "Format 8"). |
-| 9 | **current writer** (stamped 2026-10-09) | `integ/w2` | Live Corners: optional `doc.paths[].corners` ([live corners amendment](../adr/ADR-0008-live-corners-next-writer.md)); optional PDF-catalog `/VAROS_Preview` + `/VAROS_PreviewVersion` (Lane F, container-only). |
+| 9 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` | Live Corners: optional `doc.paths[].corners` ([live corners amendment](../adr/ADR-0008-live-corners-next-writer.md)); optional PDF-catalog `/VAROS_Preview` + `/VAROS_PreviewVersion` (Lane F, container-only). |
+| 10 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | appearance: optional `doc.paths[].stack`, `doc.nodes[].look`, role `MaskAlpha` (Lane A section). |
+| 11 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | live effects: optional `doc.paths[].effects`, `stroke_style.width_profile` (ADR-0016). |
+| 12 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | colour sources: managed paints, `doc.colour_mode`, `doc.output_profile` (ADR-0017). |
+| 13 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | live objects: `NodeKind::Live{Blend,Repeat,Envelope}` ([LIVE_NODES_V13.md](LIVE_NODES_V13.md)). |
+| 14 | **current writer** (stamped 2026-10-10) | `integ/w3` | typography: optional `doc.typography` (named styles, OpenType features, area/path bindings, threads). |
 
 ## 6. Migration v1 → v2
 
