@@ -45,7 +45,11 @@ pub(crate) fn before_artboard_ids(doc: &Document) -> Result<(), Invalid> {
 /// Root paths/groups are permitted by move_is_legal(Before/After a root); do not require Layer roots.
 /// candidate_max is currently unused (no live-editor bound); do not invent a new file restriction.
 pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
+    // ---- Lane A ----
+    crate::appearance_edits::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;
     // ---- w2-images ----
+    // ---- Lane E: Phase 11 ----
+    crate::live::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     crate::images::validate(doc).map_err(|what| Invalid::NonFinite { what })?;
     // ---- w2-gradients ----
     crate::swatches::validate_document(doc).map_err(|what| Invalid::NonFinite { what })?;
@@ -67,13 +71,13 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         }
         let bad_mask = |reason| Invalid::BadMask { group: n.id, reason };
         match n.role {
-            role if role.is_mask_group() && role != GroupRole::Clip => {
+            role if role.is_mask_group() && role != GroupRole::Clip && role != GroupRole::MaskAlpha => {
                 return Err(bad_mask("soft masks are not supported"))
             }
             GroupRole::Normal if n.mask_child.is_some() => {
                 return Err(bad_mask("an ordinary node cannot have a mask shape"))
             }
-            GroupRole::Clip => {
+            GroupRole::Clip | GroupRole::MaskAlpha => {
                 if n.kind != NodeKind::Group {
                     return Err(bad_mask("only a group can clip its children"));
                 }
@@ -108,7 +112,20 @@ pub(crate) fn authored(doc: &Document) -> Result<(), Invalid> {
         }
         nonnegative(p.stroke_width, &label, "stroke width")?;
         p.stroke_style.validate(p.id)?;
+        // ---- Lane B w3-effects ----
+        if !p.effects.is_empty() {
+            crate::effects::evaluate_many(p).map_err(|reason| Invalid::Stroke { path: p.id, reason })?;
+        }
+        // ---- end Lane B w3-effects ----
         // ---- Lane C ----
+        if doc.is_mask_source(p.id)
+            && p.effects.iter().any(|e| matches!(e,crate::effects::Effect::Transform{copies,..} if *copies>0))
+        {
+            return Err(Invalid::Stroke {
+                path: p.id,
+                reason: "Transform copies cannot replace a clipping-mask source".into(),
+            });
+        }
         crate::live_corners::validate(p, &p.corners)
             .map_err(|_| Invalid::NonFinite { what: format!("path {} corners", p.id) })?;
         if !p.stroke_style.is_default() {

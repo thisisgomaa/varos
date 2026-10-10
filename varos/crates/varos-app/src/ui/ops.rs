@@ -61,6 +61,7 @@ fn stroke_targets(ed: &mut Editor, change: impl Fn(&mut varos_core::stroke::Stro
 
 pub(crate) enum Op {
     Text(varos_core::text::TextBox),
+    Typography(varos_core::typography::Action),
     Colour(varos_core::colour_commands::ColourCommand),
     PaletteFile { path: String, export: bool },
     View(varos_core::editor::view_commands::ViewAction),
@@ -228,6 +229,7 @@ pub(crate) fn apply_picker_frame(
 pub(crate) fn apply_ops(ed: &mut Editor, ops: Vec<Op>) {
     for op in ops {
         match op {
+            Op::Typography(action) => ed.execute_ui(EditCommand::Typography(action)),
             Op::Text(text) => ed.execute_ui(EditCommand::SetText { id: text.id, text }),
             Op::PaletteFile { path, export } => colour_tools::file(ed, path, export),
             Op::Colour(c) => {

@@ -16,8 +16,30 @@ pub fn map(doc: &mut Document, pid: u32, f: impl Fn(Pt) -> Pt) {
     let Some(i) = doc.pidx(pid) else { return };
     let p = &doc.paths[i];
     let paints = [p.appearance().fill().resolved(doc), p.appearance().stroke().resolved(doc)];
+    // ---- Lane A ----
+    let extra = doc.paths[i]
+        .stack
+        .iter()
+        .map(|e| match e {
+            crate::appearance::StackItem::Fill { paint, .. } | crate::appearance::StackItem::Stroke { paint, .. } => {
+                Some(paint.resolved(doc))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (e, paint) in doc.paths[i].stack.iter_mut().zip(extra) {
+        if let Some(Paint::Gradient(g)) = paint {
+            match e {
+                crate::appearance::StackItem::Fill { paint, .. }
+                | crate::appearance::StackItem::Stroke { paint, .. } => *paint = Paint::Gradient(g),
+                _ => {}
+            }
+        }
+    }
     materialize(&mut doc.paths[i], paints);
-    doc.paths[i].map_gradient_placement(f);
+    doc.paths[i].map_gradient_placement(&f);
+    // ---- Lane E: mesh placement follows baked geometry ----
+    crate::live::map_mesh(doc, pid, f);
 }
 pub fn live(
     doc: &mut Document,
@@ -27,6 +49,8 @@ pub fn live(
     world: bool,
     f: impl Fn(Pt) -> Pt,
 ) {
+    // ---- Lane E: snapshot-based mesh placement ----
+    crate::live::map_mesh_gesture(doc, base, pids, world, &f);
     for pid in pids {
         let Some(i) = doc.pidx(*pid) else { continue };
         let source = base.filter(|b| b.pidx(*pid).is_some()).unwrap_or(doc);
@@ -36,6 +60,16 @@ pub fn live(
             .entry(*pid)
             .or_insert_with(|| [path.appearance().fill().resolved(source), path.appearance().stroke().resolved(source)])
             .clone();
+        // ---- Lane A: live placements always derive from the gesture baseline ----
+        let extra = path
+            .stack
+            .iter()
+            .map(|entry| match entry {
+                crate::appearance::StackItem::Fill { paint, .. }
+                | crate::appearance::StackItem::Stroke { paint, .. } => Some(paint.resolved(source)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let source_xf = source.unit_xform(*pid);
         let dest_xf = doc.unit_xform(*pid);
         let mapped = start.map(|p| match p {
@@ -48,6 +82,18 @@ pub fn live(
         // for a frame, but this must never make an invalid document persistable.
         if mapped.iter().all(|p| !matches!(p,Paint::Gradient(g) if g.validate().is_err())) {
             materialize(&mut doc.paths[i], mapped);
+            for (entry, paint) in doc.paths[i].stack.iter_mut().zip(extra) {
+                if let Some(Paint::Gradient(g)) = paint {
+                    let g = g.mapped(|p| if world { dest_xf.inverse_apply(f(source_xf.apply(p))) } else { f(p) });
+                    if g.validate().is_ok() {
+                        match entry {
+                            crate::appearance::StackItem::Fill { paint, .. }
+                            | crate::appearance::StackItem::Stroke { paint, .. } => *paint = Paint::Gradient(g),
+                            _ => {}
+                        }
+                    }
+                }
+            }
         }
     }
 }

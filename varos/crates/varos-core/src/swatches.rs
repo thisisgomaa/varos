@@ -18,6 +18,8 @@ pub struct Swatch {
 }
 pub fn validate_paint(p: &Paint, doc: &Document) -> Result<(), String> {
     match p {
+        // ---- w3-cmyk ----
+        Paint::Managed(c) => c.validate(),
         Paint::None => Ok(()),
         Paint::Solid(c) if c.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)) => Ok(()),
         Paint::Solid(_) => Err("colour channels must be in 0..1".into()),
@@ -31,6 +33,7 @@ pub fn validate_paint(p: &Paint, doc: &Document) -> Result<(), String> {
     }
 }
 pub fn validate_document(doc: &Document) -> Result<(), String> {
+    crate::colour_management::validate_document(doc)?;
     if doc.swatches.len() > 4096 {
         return Err("too many swatches".into());
     }
@@ -73,6 +76,8 @@ impl Paint {
     }
     pub fn sample(&self, point: crate::geom::Pt, doc: &Document) -> Option<Rgba> {
         match self.resolved(doc) {
+            // ---- w3-cmyk ----
+            Self::Managed(c) => Some(c.rgba()),
             Self::Solid(c) => Some(c),
             Self::Gradient(g) => Some(g.sample_point(point)),
             _ => None,
@@ -82,7 +87,14 @@ impl Paint {
 
 impl crate::model::Path {
     pub fn map_gradient_placement(&mut self, f: impl Fn(crate::Pt) -> crate::Pt) {
-        for paint in [&mut self.fill, &mut self.stroke] {
+        // ---- Lane A: extra paints follow the same geometry mapping ----
+        let extra = self.stack.iter_mut().filter_map(|entry| match entry {
+            crate::appearance::StackItem::Fill { paint, .. } | crate::appearance::StackItem::Stroke { paint, .. } => {
+                Some(paint)
+            }
+            _ => None,
+        });
+        for paint in [&mut self.fill, &mut self.stroke].into_iter().chain(extra) {
             if let Paint::Gradient(g) = paint {
                 *g = g.mapped(&f);
             }

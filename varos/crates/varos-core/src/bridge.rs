@@ -45,9 +45,20 @@ pub fn parse_batch(bytes: &[u8]) -> Result<Vec<EditCommand>, BatchError> {
                 && matches!(
                     command,
                     EditCommand::Drawing(_)
+                        // ---- Lane A ----
+                        | EditCommand::Appearance(_)
+                        | EditCommand::Mask(_)
+                        // ---- Lane B w3-effects ----
+                        | EditCommand::LiveEffects(_)
+                        // ---- Lane E: Phase 11 ----
+                        | EditCommand::Live(_)
+                        // ---- Lane H ----
+                        | EditCommand::Typography(_)
                         | EditCommand::AddText { .. }
                         | EditCommand::SetText { .. }
                         | EditCommand::Image(_)
+                        // ---- w3-cmyk ----
+                        | EditCommand::ColourManagement(_)
                         | EditCommand::Colour(_)
                         | EditCommand::PathAdvanced(_)
                         | EditCommand::SetCorners { .. }
@@ -83,6 +94,9 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
     }
     // ---- Lane G ----
     match command {
+        // ---- Lane A ----
+        Appearance(edit) => return crate::appearance_edits::check(ed, edit),
+        Mask(edit) => return crate::appearance_edits::check_mask(ed, edit),
         AddText { text, parent } => crate::text::check_change(ed, text, None, *parent)?,
         SetText { id, text } => crate::text::check_change(ed, text, Some(*id), None)?,
         _ => {}
@@ -108,6 +122,10 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         return Ok(());
     }
     // ---- w2-gradients ----
+    // ---- w3-cmyk ----
+    if let ColourManagement(c) = command {
+        return crate::colour_management_commands::check(ed, c);
+    }
     if let Colour(c) = command {
         return crate::colour_commands::check(ed, c);
     }
@@ -202,8 +220,20 @@ pub(crate) fn check(command: &EditCommand, ed: &Editor) -> Result<(), String> {
         }
     };
     match command {
+        // ---- Lane A ----
+        Appearance(edit) => crate::appearance_edits::check(ed, edit),
+        Mask(edit) => crate::appearance_edits::check_mask(ed, edit),
+        // ---- Lane B w3-effects ----
+        LiveEffects(action) => crate::effects::check(ed, action),
+        // ---- end Lane B w3-effects ----
+        // ---- Lane E: Phase 11 ----
+        Live(action) => crate::live::check(ed, action),
+        // ---- Lane H ----
+        Typography(action) => crate::typography::check(ed, action),
         Drawing(action) => crate::drawing::check(ed, action),
         AddText { .. } | SetText { .. } => Ok(()),
+        // ---- w3-cmyk ----
+        ColourManagement(c) => crate::colour_management_commands::check(ed, c),
         Colour(c) => crate::colour_commands::check(ed, c),
         // ---- Lane C ----
         PathAdvanced(action) => crate::path_advanced::check(ed, *action),

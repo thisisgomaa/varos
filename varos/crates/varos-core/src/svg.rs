@@ -99,7 +99,14 @@ fn check_document(doc: &Document) -> Result<(), ExportError> {
     Ok(())
 }
 pub fn plan_svg_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportError> {
+    // ---- Lane E: Phase 11: whole-board bounds include evaluated copies ----
+    let live = crate::live::evaluated_document(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = live.as_ref().unwrap_or(doc);
     check_document(doc)?;
+    // ---- Lane B w3-effects ----
+    let resolved = crate::effects_document::document(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = resolved.as_ref();
+    // ---- end Lane B w3-effects ----
     let board = |i: usize| {
         let a = &doc.artboards[i];
         PageSpec { rect: [a.x, a.y, a.w, a.h], background: a.page_color, artboard: Some(i), name: a.name.clone() }
@@ -144,6 +151,9 @@ pub fn plan_selection_svg_export(
         }
     }
     crate::images::hide_unselected(&mut narrowed, selected);
+    // ---- Lane E: Phase 11 ----
+    let evaluated = crate::live::evaluated_document(&narrowed).map_err(ExportError::InvalidDocument)?;
+    let narrowed = evaluated.unwrap_or(narrowed);
     let page = artwork_bounds(&narrowed).ok_or(ExportError::NothingToExport)?;
     Ok((narrowed, ExportPlan { scope: ExportScope::WholeBoard, pages: vec![page] }))
 }
@@ -190,12 +200,17 @@ fn export_svg_files_precise(
         return Err(ExportError::InvalidDocument("text needs the text-layout export adapter".into()));
     }
     check_document(doc)?;
+    // ---- Lane E: Phase 11 ----
+    let live = crate::live::evaluated_document(doc).map_err(ExportError::InvalidDocument)?;
+    let doc = live.as_ref().unwrap_or(doc);
     let resolved = crate::live_corners::document(doc);
     let doc = &resolved;
     if plan.pages.is_empty() {
         return Err(ExportError::NothingToExport);
     }
     let mut report = crate::ExportReport::default();
+    // ---- w3-cmyk ----
+    report.notes.extend(crate::colour_management::screen_export_notes(doc, "SVG"));
     let mut stroke_budget = crate::stroke::evaluate::StrokeBudget::default();
     let paint_elements: usize = doc
         .paths
@@ -369,6 +384,12 @@ fn write_page(
             num(bg[3])
         )
         .unwrap();
+    }
+    // ---- Lane A ----
+    if crate::appearance_scene::needed(doc) {
+        appearance::write(&mut out, doc, page, cancel, decimals, None, false)?;
+        out.push_str("</svg>\n");
+        return Ok(out);
     }
     let items: Vec<_> = doc
         .paint_list()
@@ -641,3 +662,19 @@ mod tests {
 
 // ---- Lane C ----
 pub mod options;
+
+// ---- Lane A ----
+mod appearance;
+
+// ---- Lane A ----
+pub(crate) fn appearance_with_images(
+    out: &mut String,
+    doc: &Document,
+    store: &crate::images::BlobStore,
+    page: &PageSpec,
+    preview: bool,
+    cancel: &AtomicBool,
+    decimals: Option<u8>,
+) -> Result<(), ExportError> {
+    appearance::write(out, doc, page, cancel, decimals, Some(store), preview)
+}

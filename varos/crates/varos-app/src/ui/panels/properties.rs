@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::{ShapedPainter as _, ShapedUi as _};
+// ---- end Lane F ----
 use super::super::*;
 
 /// The Properties pane body (Stage 4): the old inspector dock re-housed inside the
@@ -16,7 +19,9 @@ pub(crate) fn panel_properties(
     egui::ScrollArea::vertical().id_salt("props-body").auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
             if let Some(text) = &s.text {
-                type_section(ui, text, ops);
+                // ---- Lane H: resolve named values and stage explicit style overrides ----
+                super::typography::properties(ui, text, &s.typography, ops);
+                // ---- Lane H end ----
                 return;
             }
             let inner = ui.available_width();
@@ -32,9 +37,9 @@ pub(crate) fn panel_properties(
             }
 
             let measured = s.sel || s.direct; // real numbers below (objects, or a Direct selection — Astra F07)
-            ui.label(if measured { panel_title(&s.name) } else { panel_title(&s.name).color(MUTED) });
+            ui.shaped_authored_label(if measured { panel_title(&s.name) } else { panel_title(&s.name).color(MUTED) });
             ui.add_space(2.0);
-            ui.label(micro_label("TRANSFORM"));
+            ui.shaped_label(micro_label("TRANSFORM"));
 
             label_gap(ui);
 
@@ -128,13 +133,12 @@ pub(crate) fn panel_properties(
 
             hsep(ui, inner);
 
-            // Fill / Stroke swatches + stroke weight
-            paint_row(ui, PaintTarget::Fill, s.fill, s.fill_mixed, ops);
-            paint_row(ui, PaintTarget::Stroke, s.stroke, s.stroke_mixed, ops);
+            // ---- Lane A: the one Appearance home replaces legacy Fill/Stroke rows ----
+            super::super::appearance::section(ui, s, ops);
             stroke_section(ui, s, ic, inner, ops);
 
             hsep(ui, inner);
-            ui.label(micro_label("SHAPE"));
+            ui.shaped_label(micro_label("SHAPE"));
             label_gap(ui);
             pathfinder_row(ui, ops, false, s.pathfinder); // a MIRROR of the Pathfinder home (the mockup's Shape section) — roomy dock size
 
@@ -144,7 +148,7 @@ pub(crate) fn panel_properties(
             // No canvas right-click menu exists yet, so the Properties dock is where this lives.
             if s.sel && s.any_clip {
                 hsep(ui, inner);
-                ui.label(micro_label("ARTBOARD CLIP"));
+                ui.shaped_label(micro_label("ARTBOARD CLIP"));
                 label_gap(ui);
                 if IA_OBJECT_CLIP.show(ui, kit::IconState::Toggle(!s.clip_exempt)) {
                     ops.push(Op::SetClipExempt(!s.clip_exempt));
@@ -163,12 +167,12 @@ pub(crate) fn panel_properties(
 /// core refuses the text); each commit is one undo step and makes the document dirty. Labels MUTED 12,
 /// values 13 — the Start card's tag pills on the Properties rows.
 pub(crate) fn board_section(ui: &mut egui::Ui, s: &Snap, w: f32, ops: &mut Vec<Op>) {
-    ui.label(micro_label("BOARD"));
+    ui.shaped_label(micro_label("BOARD"));
     label_gap(ui);
     for (label, field) in [("Name", 0), ("Description", 1), ("Tags", 2)] {
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(w, varos_app::shell::tokens::BOARD_LABEL_H), egui::Sense::hover());
-        ui.painter().text(
+        ui.painter().shaped_text(
             egui::pos2(rect.left(), rect.center().y),
             Align2::LEFT_CENTER,
             label,

@@ -15,6 +15,8 @@ pub mod flatten;
 pub mod format;
 pub mod geom;
 pub mod model;
+// ---- Lane E: Phase 11 ----
+pub mod live;
 pub mod planar;
 pub mod scene;
 // ---- Lane E ----
@@ -73,3 +75,39 @@ mod gradient_transform;
 pub mod actions;
 mod command_labels;
 pub mod registry;
+
+// ---- Lane A ----
+pub mod appearance_edits;
+pub mod appearance_scene;
+// ---- Lane B w3-effects ----
+pub mod effects;
+mod effects_warp;
+pub mod width_profile;
+// ---- end Lane B w3-effects ----
+
+// ---- Lane B w3-effects ----
+pub mod width_geometry;
+mod width_geometry_helpers;
+// ---- end Lane B w3-effects ----
+
+// ---- Lane B w3-effects ----
+pub mod effects_preview;
+pub mod width_tool;
+// ---- end Lane B w3-effects ----
+
+// ---- Lane B w3-effects ----
+pub mod effects_document;
+pub mod effects_hit;
+// ---- end Lane B w3-effects ----
+// ---- w3-cmyk ----
+pub mod colour_management;
+pub mod colour_management_commands;
+mod colour_transforms;
+
+// ---- w3-cmyk ----
+mod colour_format;
+
+pub mod colour_preview;
+// ---- Lane H ----
+pub mod typography;
+pub mod typography_format;

@@ -500,9 +500,11 @@ pub fn scissor_px(rect: [f32; 4], view: View, w: f32, h: f32) -> Option<[u32; 4]
 /// `mask_fan`/`mask_clear` are ranges into the shared FILL buffer (the ring fan + its bbox cover quad).
 #[derive(Debug, PartialEq)]
 pub enum GroupDraw {
+    // ---- Lane A ----
+    Nested { members: Vec<GroupDraw>, mask: Option<Vec<GroupDraw>>, quad: (u32, u32), overprint: bool },
     Opaque { draws: Vec<Draw> },
-    Layer { draws: Vec<Draw>, quad: (u32, u32) },
-    ClippedLayer { draws: Vec<Draw>, quad: (u32, u32), mask_fan: (u32, u32) },
+    Layer { draws: Vec<Draw>, quad: (u32, u32), overprint: bool },
+    ClippedLayer { draws: Vec<Draw>, quad: (u32, u32), mask_fan: (u32, u32), overprint: bool },
     Clip { mask_fan: (u32, u32), mask_clear: (u32, u32), members: Vec<Draw> },
 }
 
@@ -551,7 +553,7 @@ fn knock_draws(
 }
 
 /// Does this (single-object) prim set need knockout? = has a fill AND a translucent stroke.
-fn needs_knockout(prims: &[Prim]) -> bool {
+pub(crate) fn needs_knockout(prims: &[Prim]) -> bool {
     prims.iter().any(|p| matches!(p, Prim::Fill { .. } | Prim::GradientFill{stroke:false,..}))
         && prims
             .iter()
@@ -576,13 +578,15 @@ fn group_draws(
     }
     // knockout objects (and isolated layers that contain a translucent stroke) take the dedicated path
     if !g.prims().iter().any(|p| matches!(p, Prim::GradientFill { .. }))
-        && (matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { prims, .. } if needs_knockout(prims)))
+        && (matches!(g, Group::Knockout(_))
+            || matches!(g, Group::Isolated { prims, .. } | Group::Overprint {prims,..} if needs_knockout(prims)))
     {
         return knock_draws(g.prims(), view, zoom, w, h, fillv, fgv);
     }
     let prims = g.prims();
     let masked = prims.iter().any(|p| matches!(p, Prim::GradientFill { .. }))
-        && (matches!(g, Group::Knockout(_)) || matches!(g, Group::Isolated { .. }) && needs_knockout(prims));
+        && (matches!(g, Group::Knockout(_))
+            || matches!(g, Group::Isolated { .. } | Group::Overprint { .. }) && needs_knockout(prims));
     let mask = masked.then(|| {
         let bands: Vec<Prim> = prims
             .iter()
@@ -765,6 +769,13 @@ pub fn build_content(
     let mut fgv = Vec::new();
     let mut opv = Vec::new();
     let mut metas: Vec<GroupDraw> = Vec::new();
+    // ---- Lane A ----
+    if crate::appearance_layers::recursive(groups) {
+        for g in groups {
+            metas.push(crate::appearance_layers::append(g, view, zoom, w, h, (&mut fillv, &mut fgv, &mut opv)));
+        }
+        return (fillv, fgv, opv, metas);
+    }
     for g in groups {
         // a CLIPPING MASK is its own self-contained render pass (mask fan → clip-tested members → clear):
         // it never coalesces with the opaque run, so its clip bit can't leak into neighbours.
@@ -773,7 +784,8 @@ pub fn build_content(
             let mut member_draws = Vec::new();
             for m in members {
                 let draws = group_draws(m, view, zoom, w, h, &mut fillv, &mut fgv);
-                if let Group::Isolated { opacity, .. } = m {
+                // ---- w3-cmyk ----
+                if let Group::Isolated { opacity, .. } | Group::Overprint { opacity, .. } = m {
                     if !member_draws.is_empty() {
                         metas.push(GroupDraw::Clip {
                             mask_fan,
@@ -783,7 +795,12 @@ pub fn build_content(
                     }
                     let qs = opv.len() as u32;
                     fullscreen_quad(&mut opv, *opacity);
-                    metas.push(GroupDraw::ClippedLayer { draws, quad: (qs, 6), mask_fan });
+                    metas.push(GroupDraw::ClippedLayer {
+                        draws,
+                        quad: (qs, 6),
+                        mask_fan,
+                        overprint: matches!(m, Group::Overprint { .. }),
+                    });
                 } else {
                     member_draws.extend(draws);
                 }
@@ -804,10 +821,15 @@ pub fn build_content(
 /// share a render pass with plain content (no extra pass per knockout object).
 fn push_group(metas: &mut Vec<GroupDraw>, opv: &mut Vec<Vertex>, g: &Group, draws: Vec<Draw>) {
     match g {
-        Group::Isolated { opacity, .. } => {
+        // ---- w3-cmyk ----
+        Group::Isolated { opacity, .. } | Group::Overprint { opacity, .. } => {
             let qs = opv.len() as u32;
             fullscreen_quad(opv, *opacity);
-            metas.push(GroupDraw::Layer { draws, quad: (qs, opv.len() as u32 - qs) });
+            metas.push(GroupDraw::Layer {
+                draws,
+                quad: (qs, opv.len() as u32 - qs),
+                overprint: matches!(g, Group::Overprint { .. }),
+            });
         }
         _ => {
             if let Some(GroupDraw::Opaque { draws: prev }) = metas.last_mut() {
@@ -820,7 +842,7 @@ fn push_group(metas: &mut Vec<GroupDraw>, opv: &mut Vec<Vertex>, g: &Group, draw
 }
 
 /// A full-NDC quad (two triangles); the object opacity rides in colour.a for the composite shader.
-fn fullscreen_quad(v: &mut Vec<Vertex>, opacity: f32) {
+pub(crate) fn fullscreen_quad(v: &mut Vec<Vertex>, opacity: f32) {
     let col = [0.0, 0.0, 0.0, opacity];
     let (a, b, c, d) = ([-1.0f32, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]);
     for p in [a, b, c, a, c, d] {
@@ -1094,6 +1116,7 @@ mod tests {
                     | GroupDraw::Layer { draws, .. }
                     | GroupDraw::ClippedLayer { draws, .. } => draws.iter(),
                     GroupDraw::Clip { members, .. } => members.iter(),
+                    GroupDraw::Nested { .. } => [].iter(),
                 })
                 .filter(|d| matches!(d, Draw::StrokeCov { .. }))
                 .count()
@@ -1843,7 +1866,7 @@ fn clipped_isolated_object_keeps_opacity_and_order() {
     }];
     let (_, _, op, metas) = build_content(&groups, View::identity(), 1., 100., 100.);
     assert!(matches!(metas[0], GroupDraw::Clip { .. }));
-    let GroupDraw::ClippedLayer { mask_fan, quad, draws } = &metas[1] else { panic!("masked layer required") };
+    let GroupDraw::ClippedLayer { mask_fan, quad, draws, .. } = &metas[1] else { panic!("masked layer required") };
     assert!(mask_fan.1 > 0 && !draws.is_empty());
     assert!(op[quad.0 as usize..(quad.0 + quad.1) as usize].iter().all(|v| v.color[3] == 0.5));
     assert!(matches!(metas[2], GroupDraw::Clip { .. }));
@@ -1889,4 +1912,16 @@ fn image_board_scissor_survives_authored_clip_and_fails_closed_offscreen() {
     let (_, fg, _, _) =
         build_content(&[Group::Opaque(vec![image(Some([100., 100., 120., 120.]))])], view, 1., 64., 64.);
     assert!(fg.is_empty());
+}
+
+// ---- w3-cmyk ----
+#[test]
+fn overprint_uses_layer_composites_and_keeps_clip_test() {
+    let fill = Prim::Fill { rings: vec![vec![[1., 1.], [20., 1.], [20., 20.], [1., 20.]]], color: [0., 1., 1., 1.] };
+    let ink = Group::Overprint { opacity: 1., prims: vec![fill] };
+    let (_, _, _, metas) = build_content(std::slice::from_ref(&ink), View { pan: [0.; 2], zoom: 1. }, 1., 100., 100.);
+    assert!(matches!(metas[0], GroupDraw::Layer { overprint: true, .. }));
+    let clipped = Group::Clip { mask_rings: vec![vec![[0., 0.], [10., 0.], [10., 10.]]], members: vec![ink] };
+    let (_, _, _, metas) = build_content(&[clipped], View { pan: [0.; 2], zoom: 1. }, 1., 100., 100.);
+    assert!(matches!(metas[0], GroupDraw::ClippedLayer { overprint: true, .. }));
 }

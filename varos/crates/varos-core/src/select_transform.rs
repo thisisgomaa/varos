@@ -159,7 +159,8 @@ impl Editor {
         false
     }
     pub fn isolate(&mut self, node: Option<u32>) {
-        if node.is_some_and(|n| self.doc.node(n).is_none_or(|n| n.kind != NodeKind::Group)) {
+        if node.is_some_and(|n| self.doc.node(n).is_none_or(|n| !matches!(n.kind, NodeKind::Group | NodeKind::Live(_))))
+        {
             return;
         }
         self.select_transform.isolation = node;
@@ -329,6 +330,16 @@ impl Editor {
                     *dash *= scale;
                 }
                 path.stroke_style.dash_phase *= scale;
+                // ---- Lane A ----
+                for entry in &mut path.stack {
+                    if let crate::appearance::StackItem::Stroke { width, style, .. } = entry {
+                        *width *= scale;
+                        for dash in &mut style.dash {
+                            *dash *= scale;
+                        }
+                        style.dash_phase *= scale;
+                    }
+                }
             }
             if s.scale != [1., 1.] || s.shear != 0. {
                 *path = crate::live_corners::evaluated(path);
@@ -684,6 +695,8 @@ impl Editor {
             clip_exempt: false,
             xform: Xform::default(),
             role: GroupRole::Normal,
+            // ---- Lane A ----
+            look: None,
             mask_child: None,
         });
         if let Some(p) = parent {

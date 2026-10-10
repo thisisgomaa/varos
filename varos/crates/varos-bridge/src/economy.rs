@@ -262,19 +262,27 @@ fn walk(
         }
         let verb = m.get("verb").and_then(Value::as_str).ok_or_else(|| invalid("verb required"))?;
         // ---- w2-gradients ----
-        if api != "1.2" && verb == "colour" {
+        // ---- w3-cmyk ----
+        if api != "1.2" && ["colour", "colour_management"].contains(&verb) {
             return Err(Error::new("unsupported", "colour requires explicit API 1.2"));
         }
         if api != "1.2" && (verb == "set_stroke_style" || m.contains_key("stroke_style")) {
             return Err(Error::new("unsupported", "stroke_style requires explicit API 1.2"));
         }
         // ---- Lane D: opt-in drawing verb expansion ----
+        // ---- Lane E: Phase 11 ----
         if !crate::EDIT_VERBS.contains(&verb)
+            && !(api == "1.2" && crate::live::VERBS.contains(&verb))
             && !(construction && crate::drawing::VERBS.contains(&verb))
-            && !(api == "1.2" && ["set_stroke_style", "add_text", "set_text"].contains(&verb))
+            // ---- Lane A ----
+            && !(api == "1.2" && ["appearance", "mask"].contains(&verb))
+            // ---- Lane H: typography ----
+            && !(api == "1.2" && ["set_stroke_style", "add_text", "set_text", "typography"].contains(&verb))
             && !(construction && (crate::CONSTRUCTION_VERBS.contains(&verb) || verb == "trace_rgba"))
             && !(api == "1.2"
                 && [
+                    // ---- w3-cmyk ----
+                    "colour_management",
                     "transform",
                     "magic_wand",
                     "eyedropper",
@@ -284,6 +292,12 @@ fn walk(
                     "outline_stroke",
                     "offset_path",
                     "expand",
+                    // ---- Lane B w3-effects ----
+                    "live_effects",
+                    "width_profile",
+                    "expand_live",
+                    "width_tool",
+                    // ---- end Lane B w3-effects ----
                     "live_corners",
                     "scale_strokes",
                     "new_document",

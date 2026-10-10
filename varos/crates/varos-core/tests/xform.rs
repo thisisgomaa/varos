@@ -25,6 +25,8 @@ fn xform_field_round_trips_and_unit_xform_defaults_to_identity() {
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     };
     n.xform = Xform { rot: 0.6, piv: [12.0, -3.5] };

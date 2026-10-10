@@ -13,6 +13,11 @@ use std::time::Instant;
 use varos_core::editor::{AbDrag, AbHit, Drag, Editor, Mods, PenHint, TfHit, ToolKind, ZOrder};
 use varos_core::geom::{Pt, View};
 use varos_core::scene::{scene_signature, SceneStyle};
+// ---- Lane F: headless Arabic catalog contract ----
+#[cfg(test)]
+mod arabic_ui_tests;
+// ---- end Lane F ----
+
 // ---- Lane G ----
 mod text_product;
 use varos_core::EditCommand;
@@ -66,6 +71,8 @@ mod print_job;
 mod quicklook;
 mod recent_files;
 mod recovery_host;
+// ---- Lane G ----
+mod release_ui;
 mod shortcut_editor;
 mod shortcuts;
 mod single_instance;
@@ -189,6 +196,9 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
     }
     let idle = matches!(ed.drag, Drag::None); // hover badges only between gestures
     match ed.eff_tool() {
+        // ---- Lane B w3-effects ----
+        ToolKind::Width => CK::CrossRect,
+        // ---- end Lane B w3-effects ----
         ToolKind::Text => CK::CrossRect,
         ToolKind::Gradient => CK::CrossRotate,
         ToolKind::Object if !idle => CK::Select, // marquee / guide drag
@@ -228,6 +238,8 @@ fn desired_ck(ed: &Editor, world: Pt) -> CK {
         | ToolKind::Curvature => CK::CrossRect,
         ToolKind::Polygon => CK::CrossPolygon,
         ToolKind::Hand => CK::Hand,
+        // ---- Lane E: Phase 11 ----
+        ToolKind::Blend => CK::Direct,
         ToolKind::Zoom => CK::Direct,
         ToolKind::Lasso => CK::Direct,
         ToolKind::AddAnchor => CK::PenAdd,
@@ -303,6 +315,9 @@ fn rotate_ck(corner: u8, angle: f32) -> CK {
 /// The control bar's idle label for the current tool (`ui.rs`).
 fn tool_name(t: ToolKind) -> &'static str {
     match t {
+        // ---- Lane B w3-effects ----
+        ToolKind::Width => "Width (Shift+W)",
+        // ---- end Lane B w3-effects ----
         ToolKind::Text => "Type (T)",
         ToolKind::Gradient => "Gradient (G)",
         ToolKind::Pen => "Pen (P)",
@@ -326,6 +341,8 @@ fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::Polygon => "Polygon",
         ToolKind::Convert => "Anchor Point (Shift+C)",
         ToolKind::Hand => "Hand (H)",
+        // ---- Lane E: Phase 11 ----
+        ToolKind::Blend => "Blend (W)",
         ToolKind::Zoom => "Zoom (Z)",
         ToolKind::Lasso => "Lasso (Q)",
         ToolKind::AddAnchor => "Add Anchor (+)",
@@ -351,6 +368,10 @@ fn tool_name(t: ToolKind) -> &'static str {
 fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ctrl: bool, shift: bool, alt: bool) {
     // ---- Lane E ----
     if crate::view_modes::presentation_key(ed, code, ctrl, shift, alt) {
+        return;
+    }
+    // ---- Lane E: Phase 11 ----
+    if crate::ui::live_key(ed, code, ctrl, shift, alt) {
         return;
     }
     if !shortcuts::parity::is_bound(code, ctrl, shift, alt) {
@@ -443,6 +464,9 @@ fn apply_key(ed: &mut Editor, view: &mut View, canvas_centre: Pt, code: &str, ct
     // ---- Lane F: Preferences ▸ keyboard increment ----
     let s = ed.keyboard_increment_pt * if shift { 10.0 } else { 1.0 };
     match code {
+        // ---- Lane B w3-effects ----
+        "KeyW" if shift && !alt => ed.execute_ui(EditCommand::LiveEffects(varos_core::effects::Action::Tool)),
+        // ---- end Lane B w3-effects ----
         "KeyT" => ed.set_tool(ToolKind::Text),
         "KeyV" => ed.set_tool(ToolKind::Object),
         "KeyA" => ed.set_tool(ToolKind::Direct),
@@ -852,15 +876,27 @@ fn dispatch(
             host::Ran { ran: true, ..Default::default() }
         }
         host::HostAction::App(AppCommand::PathMenu(id, name)) => {
+            // ---- Lane B w3-effects ----
             if let Some(s) = ws.get_mut(id) {
-                match name {
-                    "Outline Stroke" => s
-                        .editor
-                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Outline)),
-                    "Expand" => s
-                        .editor
-                        .execute_ui(varos_core::EditCommand::PathAdvanced(varos_core::path_advanced::Action::Expand)),
-                    _ => gui.lane_c_offset(id),
+                if gui.effects_menu(&mut s.editor, id, name) {
+                    return host::Ran { ran: true, ..Default::default() };
+                }
+            }
+            // ---- end Lane B w3-effects ----
+            if let Some(s) = ws.get_mut(id) {
+                // ---- Lane E: Phase 11 ----
+                if name.starts_with("Live:") {
+                    gui.live_menu(id, &mut s.editor, name);
+                } else {
+                    match name {
+                        "Outline Stroke" => s.editor.execute_ui(varos_core::EditCommand::PathAdvanced(
+                            varos_core::path_advanced::Action::Outline,
+                        )),
+                        "Expand" => s.editor.execute_ui(varos_core::EditCommand::PathAdvanced(
+                            varos_core::path_advanced::Action::Expand,
+                        )),
+                        _ => gui.lane_c_offset(id),
+                    }
                 }
             }
             host::Ran { ran: true, ..Default::default() }
@@ -888,6 +924,11 @@ fn dispatch(
                 }
             }
             host::Ran::default()
+        }
+        // ---- Lane G ----
+        host::HostAction::App(AppCommand::Release(a)) => {
+            gui.release.handle(a, &gui.accessibility_context());
+            host::Ran { ran: true, ..Default::default() }
         }
         host::HostAction::App(AppCommand::Phase9(a)) => {
             phase9_host::desktop(a, gui, ws.document_target().is_some());
@@ -1411,6 +1452,9 @@ fn main() {
         // 4b: the traffic lights on the band's centre line (re-applied every redraw — idempotent)
         mac_titlebar::place_traffic_lights(&window, f64::from(chrome::TOPBAR.height), "startup");
     }
+    // ---- Lane F: native chrome locale (existing Preferences command) ----
+    varos_app::i18n::configure_native(recovery.settings.preferences.language.requested());
+    // ---- end Lane F ----
     // macOS: the native menu bar; installed on the first NewEvents (after the app finished launching).
     #[cfg(target_os = "macos")]
     let mac_menu = match mac_menu::MacMenu::build(event_loop.create_proxy()) {
@@ -1456,7 +1500,16 @@ fn main() {
         varos_app::storage::paths::AppLayout::current().map(|p| p.shell_layout()),
         std::env::var("VAROS_RESET_LAYOUT").as_deref() == Ok("1"),
     );
-    let mut gui = ui::Ui::new(&window); // native egui UI (spike) — paints on our surface via render_ui
+    let mut gui = ui::Ui::new(&window);
+    // ---- Lane G: async accessibility/update completions wake Wait without idle polling ----
+    let release_proxy = event_loop.create_proxy();
+    let immediate_repaint = pacing::ImmediateRepaint::default();
+    let repaint_signal = immediate_repaint.clone();
+    gui.accessibility_context().set_request_repaint_callback(move |info| {
+        if repaint_signal.request(info.delay) {
+            let _ = release_proxy.send_event(());
+        }
+    });
     gui.phase9.gpu_effective.clone_from(&renderer.adapter_description);
     gui.restore_shell_layout(shell_layout);
     if let Some(index) = store.thumb_index() {
@@ -1993,6 +2046,10 @@ fn main() {
                 // background result `observe` picked up only needs one more pass (`turn_now`, no frame)
                 if pending.has_new() {
                     redraw!("queue");
+                }
+                // ---- Lane G ----
+                if immediate_repaint.take() {
+                    redraw!("accessibility-update");
                 }
                 let turn_now = recovery.has_file_done();
                 // "Finishing save of “name”…" while a command waits for it; else "Saving “name”…" /

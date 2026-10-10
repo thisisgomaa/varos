@@ -42,10 +42,15 @@ pub enum PaintTarget {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToolKind {
+    // ---- Lane B w3-effects ----
+    Width,
+    // ---- end Lane B w3-effects ----
     // ---- Lane G ----
     Text,
     // ---- w2-gradients ----
     Gradient,
+    // ---- Lane E: Phase 11 ----
+    Blend,
     Object,
     Direct,
     Pen,
@@ -447,6 +452,10 @@ struct SelectionState {
 #[derive(Clone)]
 pub struct Editor {
     // Transient gradient gestures never enter the document.
+    // ---- Lane B w3-effects ----
+    pub width_tool: crate::width_tool::State,
+    pub effects_preview: Option<crate::effects_preview::Preview>,
+    // ---- end Lane B w3-effects ----
     pub gradient_tool: crate::tools::gradient::State,
     pub colour_error: Option<String>,
     pub select_transform: crate::select_transform::State,
@@ -468,6 +477,9 @@ pub struct Editor {
     pub paste_remembers_layers: bool,
     // ---- Lane E ----
     pub view_depth: crate::view_depth::ViewDepth,
+    // ---- w3-cmyk ----
+    pub colour_preview: crate::colour_preview::State,
+    pub(crate) colour_transforms: crate::colour_transforms::Cache,
     pub requested_canvas: Option<[u8; 3]>,
     pub requested_pan: Option<Pt>,
     pub requested_zoom: Option<f32>,
@@ -522,6 +534,8 @@ pub struct Editor {
     pub dirty: bool,
     /// P11.2 cross-frame flatten cache (render-side memo, never serialized, never part of undo). Keyed by
     /// each path's exact geometry inputs, so it can never serve stale geometry — see `flatten.rs`.
+    // ---- Lane E: Phase 11 ----
+    pub live_cache: crate::live::Cache,
     pub canvas_stroke_cache: crate::stroke::canvas::CanvasStrokeCache,
     pub flatten_cache: crate::flatten::SharedFlattenCache,
     /// Edit ▸ Copy / Cut / Paste — the IN-APP clipboard (deep copies of model data). Not the OS
@@ -551,6 +565,10 @@ impl Default for Editor {
 impl Editor {
     pub fn new() -> Self {
         Editor {
+            // ---- Lane B w3-effects ----
+            width_tool: crate::width_tool::State::default(),
+            effects_preview: None,
+            // ---- end Lane B w3-effects ----
             gradient_tool: Default::default(),
             colour_error: None,
             select_transform: Default::default(),
@@ -571,6 +589,9 @@ impl Editor {
             paste_remembers_layers: false,
             // ---- Lane E ----
             view_depth: Default::default(),
+            // ---- w3-cmyk ----
+            colour_preview: Default::default(),
+            colour_transforms: Default::default(),
             requested_canvas: None,
             requested_pan: None,
             requested_zoom: None,
@@ -608,6 +629,8 @@ impl Editor {
             rev: 0,
             construction_cache: Default::default(),
             dirty: false,
+            // ---- Lane E: Phase 11 ----
+            live_cache: Default::default(),
             canvas_stroke_cache: Default::default(),
             flatten_cache: Default::default(),
             clipboard: Clipboard::default(),
@@ -696,6 +719,8 @@ impl Editor {
     /// a thick stroke selects it, and that band occludes what lies beneath it (A31 walk unchanged).
     pub fn path_under(&self, pos: Pt) -> Option<u32> {
         let edge_r = EDGE_R / self.ppu;
+        // ---- Lane E: Phase 11 ----
+        let mut visited_live = std::collections::HashSet::new();
         for pi in (0..self.doc.paths.len()).rev() {
             let id = self.doc.paths[pi].id;
             if !self.in_isolation(id)
@@ -705,11 +730,32 @@ impl Editor {
             {
                 continue; // not clickable (cascades)
             }
+            // ---- Lane E: Phase 11 ----
+            if let Some(node) = crate::live::ancestor(&self.doc, id) {
+                if self.select_transform.isolation != Some(node) {
+                    if visited_live.insert(node) {
+                        if let Some(hit) = crate::live::hit(self, node, pos) {
+                            return Some(hit);
+                        }
+                    }
+                    continue;
+                }
+            }
             // A7 seam: map the cursor into the path's UNIT-local frame, then run the existing local-space
             // tests. `edge_r` is rotation-invariant (distance). Identity ⇒ `lp == pos` (byte-for-byte).
             // The unit transform is a rigid rotation, so the stroke's half-width is not scaled either.
             let lp = self.doc.unit_xform(id).inverse_apply(pos);
             let p = &self.doc.paths[pi];
+            // ---- Lane B w3-effects ----
+            if !p.effects.is_empty() && !self.doc.guide_paths.contains(&id) {
+                if crate::effects_hit::contains(self, id, lp, edge_r)
+                    && self.stroke_mask_rings(id).iter().all(|rings| crate::stroke::evaluate::contains(rings, pos, 0.0))
+                {
+                    return Some(id);
+                }
+                continue;
+            }
+            // ---- end Lane B w3-effects ----
             if !self.doc.guide_paths.contains(&id) && !p.stroke_style.is_default() {
                 let in_fill =
                     p.appearance().fill().resolved_ref(&self.doc).is_painted() && self.doc.point_in_path(pi, lp);
@@ -799,6 +845,10 @@ impl Editor {
     // ---------- object-selection transform frame (rotates with the selection) ----------
     /// Axis-aligned bbox of the object selection (used to refit a fresh, un-rotated frame).
     pub fn obj_bbox(&self) -> Option<(f32, f32, f32, f32)> {
+        // ---- Lane E: Phase 11 ----
+        if crate::live::has_live(&self.doc) && self.select_transform.isolation.is_none() {
+            return crate::live::scene_editor(self).obj_bbox();
+        }
         if self.objsel.is_empty() {
             return None;
         }
@@ -842,6 +892,10 @@ impl Editor {
     /// `frame_corners`/`frame_handles` lands the oriented frame exactly on the drawn (rotated) shape,
     /// independent of each unit's pivot. Identity ⇒ today's local box byte-for-byte.
     pub fn obj_local_bbox(&self) -> Option<(f32, f32, f32, f32)> {
+        // ---- Lane E: Phase 11 ----
+        if crate::live::has_live(&self.doc) && self.select_transform.isolation.is_none() {
+            return crate::live::scene_editor(self).obj_local_bbox();
+        }
         if self.objsel.is_empty() {
             return None;
         }
@@ -3725,6 +3779,9 @@ impl Editor {
         staged.key_object = self.key_object;
         staged.distribute_gap = self.distribute_gap;
         // ---- Lane E ----
+        // ---- w3-cmyk ----
+        staged.colour_preview = self.colour_preview;
+        // ---- end w3-cmyk ----
         staged.view_depth = self.view_depth.clone();
         staged.requested_pan = self.requested_pan;
         staged.requested_zoom = self.requested_zoom;
@@ -3763,6 +3820,9 @@ impl Editor {
             self.drawing.options = staged.drawing.options;
         }
         // ---- Lane E ----
+        // ---- w3-cmyk ----
+        self.colour_preview = staged.colour_preview;
+        // ---- end w3-cmyk ----
         self.view_depth = staged.view_depth;
         self.requested_pan = staged.requested_pan;
         self.requested_zoom = staged.requested_zoom;
@@ -3845,7 +3905,19 @@ impl Editor {
         self.commit();
     }
     pub fn commit(&mut self) {
+        // ---- Lane H ----
+        crate::typography::after_delete(&mut self.doc);
+        // ---- Lane H end ----
         self.doc.sync_tree(); // adopt new paths / prune dead + empty nodes / re-flatten z
+                              // ---- Lane E: Phase 11: source edits cannot publish an invalid live object ----
+        if let Err(what) = crate::live::validate(&self.doc) {
+            if let Some(before) = self.pending.take() {
+                self.doc = before.as_ref().clone();
+            }
+            self.dirty = false;
+            self.last_error = Some(crate::EngineError::Internal { what });
+            return;
+        }
         self.doc.assign_artboard_ids(); // a new or duplicated page gets its stable id (format 4)
         self.id_high_water = self.id_high_water.max(self.doc.ids);
         if self.dirty {
@@ -3878,6 +3950,10 @@ impl Editor {
         }
     }
     pub fn undo(&mut self) {
+        // ---- Lane B w3-effects ----
+        crate::effects_preview::cancel(self);
+        crate::width_tool::cancel(self);
+        // ---- end Lane B w3-effects ----
         if let Some(s) = self.undo.pop() {
             if let Some(entry) = self.history_log.undo.pop() {
                 self.history_log.redo.push(entry);
@@ -3889,6 +3965,10 @@ impl Editor {
         }
     }
     pub fn redo(&mut self) {
+        // ---- Lane B w3-effects ----
+        crate::effects_preview::cancel(self);
+        crate::width_tool::cancel(self);
+        // ---- end Lane B w3-effects ----
         if let Some(s) = self.redo.pop() {
             if let Some(entry) = self.history_log.redo.pop() {
                 self.history_log.undo.push(entry);
@@ -3999,6 +4079,10 @@ impl Editor {
     /// Swap in a freshly-loaded document (File ▸ Open): history, gesture and every transient selection
     /// state reset — the new file starts clean, on the same tool.
     pub fn replace_doc(&mut self, doc: Document) {
+        // ---- Lane B w3-effects ----
+        self.effects_preview = None;
+        self.width_tool = Default::default();
+        // ---- end Lane B w3-effects ----
         // ---- Lane E ----
         self.view_depth = Default::default();
         self.requested_pan = None;
@@ -4371,6 +4455,11 @@ impl Editor {
         if self.view_depth.presentation {
             return;
         }
+        // ---- Lane E: Phase 11 ----
+        if self.tool == ToolKind::Blend {
+            crate::live::tool_down(self, pos);
+            return;
+        }
         self.gradient_tool.geometry.clear();
         if self.tool == ToolKind::Object {
             if let Some(hit) = self.transform_hit(pos) {
@@ -4404,6 +4493,11 @@ impl Editor {
         if crate::drawing::down(self, pos) {
             return;
         }
+        // ---- Lane B w3-effects ----
+        if crate::width_tool::down(self, pos) {
+            return;
+        }
+        // ---- end Lane B w3-effects ----
         if crate::tools::gradient::down(self, pos) {
             return;
         }
@@ -4449,6 +4543,11 @@ impl Editor {
         if crate::drawing::up(self) {
             return;
         }
+        // ---- Lane B w3-effects ----
+        if crate::width_tool::up(self) {
+            return;
+        }
+        // ---- end Lane B w3-effects ----
         if crate::tools::gradient::up(self) {
             return;
         }
@@ -4559,6 +4658,11 @@ impl Editor {
             self.cursor = pos;
             return;
         }
+        // ---- Lane B w3-effects ----
+        if crate::width_tool::movement(self, pos) {
+            return;
+        }
+        // ---- end Lane B w3-effects ----
         if crate::tools::gradient::movement(self, pos) {
             self.cursor = pos;
             return;
@@ -5108,6 +5212,12 @@ impl Editor {
 
     // ---------- tool/keys ----------
     pub fn set_tool(&mut self, t: ToolKind) {
+        // ---- Lane B w3-effects ----
+        if self.tool != t {
+            crate::width_tool::cancel(self);
+            crate::effects_preview::cancel(self);
+        }
+        // ---- end Lane B w3-effects ----
         if self.tool != t {
             crate::drawing::finish(self, false);
         }
@@ -5166,6 +5276,9 @@ impl Editor {
         self.ab_drag = AbDrag::None;
     }
     pub fn escape(&mut self) {
+        // ---- Lane B w3-effects ----
+        crate::width_tool::cancel(self);
+        // ---- end Lane B w3-effects ----
         if self.image_drag.take().is_some() {
             if let Some(before) = self.pending.take() {
                 self.doc = std::sync::Arc::unwrap_or_clone(before);
@@ -5830,7 +5943,8 @@ impl Editor {
         self.commit();
     }
     pub fn set_active_layer(&mut self, nid: u32) {
-        self.doc.active_layer = self.doc.layer_ancestor(nid);
+        // ---- Lane A: restore the authoritative mask drawing child ----
+        self.doc.active_layer = crate::appearance_edits::drawing_target(&self.doc, nid);
     }
     /// Drag & drop a row: move `src` relative to `target` (Before/Into/After). No-op + no undo entry if
     /// the drop is illegal (cycle / into a leaf / layer-into-group).
@@ -5904,7 +6018,8 @@ impl Editor {
         }
         self.refresh_obj_angle(); // A7: selecting a rotated object via the panel restores its stored angle
         if let Some(&last) = nids.last() {
-            self.doc.active_layer = self.doc.layer_ancestor(last);
+            // ---- Lane A: restore the authoritative mask drawing child ----
+            self.doc.active_layer = crate::appearance_edits::drawing_target(&self.doc, last);
         }
     }
     /// Ctrl+click a row: toggle its art in/out of the canvas selection (add if any is out, else remove all).
@@ -5941,7 +6056,8 @@ impl Editor {
             }
         }
         self.refresh_obj_angle(); // selection set changed → single unit shows θ, multi axis-aligns
-        self.doc.active_layer = self.doc.layer_ancestor(nid);
+                                  // ---- Lane A: restore the authoritative mask drawing child ----
+        self.doc.active_layer = crate::appearance_edits::drawing_target(&self.doc, nid);
     }
     /// Alt+drag a row: duplicate its art into the drop target (original stays), reselect the copies.
     pub fn layer_dup_move(&mut self, srcs: &[u32], target: u32, pos: crate::model::DropPos) {

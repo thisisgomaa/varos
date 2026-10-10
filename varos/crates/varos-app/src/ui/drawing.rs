@@ -1,4 +1,7 @@
 //! Lane D: provisional kit numeric sheets, freehand options and drawing preview.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use varos_app::shell::{
     kit::{
         self,
@@ -38,9 +41,11 @@ pub(crate) fn tool_name(t: ToolKind) -> &'static str {
         ToolKind::AddAnchor => "Add Anchor (+)",
         ToolKind::DeleteAnchor => "Delete Anchor (-)",
         ToolKind::Artboard => "Artboard (Shift+O)",
+        ToolKind::Width => "Width (Shift+W)",
         ToolKind::Text => "Type (T)",
         ToolKind::Gradient => "Gradient (G)",
         ToolKind::Hand => "Hand (H)",
+        ToolKind::Blend => "Blend (W)",
         ToolKind::Zoom => "Zoom (Z)",
         ToolKind::Eyedropper => "Eyedropper (I)",
         ToolKind::Rotate => "Rotate (R)",
@@ -216,7 +221,7 @@ pub(super) fn draw(ctx: &egui::Context, ed: &mut Editor, hole: egui::Rect, view:
         .show(ctx, |ui| {
             frame().show(ui, |ui| {
                 ui.set_width(t::DRAW_SHEET_W);
-                ui.label(t::panel_title(tool_name(ed.tool)));
+                ui.shaped_label(t::panel_title(tool_name(ed.tool)));
                 fields(ui, &mut s);
                 ui.horizontal(|ui| {
                     if action(ui, "Cancel") {
@@ -298,21 +303,18 @@ mod tests {
             draw(ctx, ed, hole, View::identity(), 1.)
         })
     }
-    fn position(out: &egui::FullOutput, label: &str) -> egui::Pos2 {
-        fn find(s: &egui::epaint::Shape, label: &str) -> Option<egui::Pos2> {
-            match s {
-                egui::epaint::Shape::Text(t) if t.galley.job.text == label => {
-                    Some(t.pos + t.galley.rect.center().to_vec2())
-                }
-                egui::epaint::Shape::Vec(ss) => ss.iter().find_map(|s| find(s, label)),
-                _ => None,
-            }
-        }
-        out.shapes.iter().find_map(|s| find(&s.shape, label)).expect("visible kit action")
+    fn position(ctx: &egui::Context, label: &str) -> egui::Pos2 {
+        varos_app::shell::kit::text::paint_records(ctx)
+            .into_iter()
+            .find(|r| r.text == label)
+            .unwrap_or_else(|| panic!("missing {label}: {:?}", varos_app::shell::kit::text::paint_records(ctx)))
+            .rect
+            .center()
     }
     fn click(ctx: &egui::Context, ed: &mut Editor, label: &str) {
-        let out = render(ctx, ed, vec![]);
-        let pos = position(&out, label);
+        varos_app::shell::kit::text::enable_trace(ctx);
+        let _out = render(ctx, ed, vec![]);
+        let pos = position(ctx, label);
         for pressed in [true, false] {
             render(
                 ctx,

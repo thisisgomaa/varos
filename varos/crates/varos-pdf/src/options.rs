@@ -7,6 +7,8 @@ use varos_core::{model::Document, ExportNote, ExportReport};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PdfPreset {
+    // ---- w3-cmyk ----
+    PdfX4,
     Print,
     Press,
     Smallest,
@@ -85,7 +87,7 @@ impl PdfOptions {
                 _ => 300,
             },
             compress_streams: preset != PdfPreset::Custom,
-            boxes: PdfBoxes { bleed: preset == PdfPreset::Press, bleed_override: None },
+            boxes: PdfBoxes { bleed: matches!(preset, PdfPreset::Press | PdfPreset::PdfX4), bleed_override: None },
             ..Self::default()
         }
     }
@@ -110,6 +112,10 @@ pub fn export_pdf_with_options(
     cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, ExportReport), String> {
     options.validate()?;
+    // ---- w3-cmyk ----
+    if options.preset == PdfPreset::PdfX4 {
+        crate::pdfx4::preflight(doc, options.marks)?;
+    }
     let ppi_note = ExportNote {
         kind: "no_raster_content".into(),
         object_id: None,
@@ -195,6 +201,11 @@ pub fn export_pdf_with_options(
             let old = dict.get(b"Contents").map_err(|e| e.to_string())?.clone();
             dict.set("Contents", vec![lopdf::Object::Reference(clip), old, lopdf::Object::Reference(stream)]);
         }
+    }
+    // ---- w3-cmyk ----
+    if options.preset == PdfPreset::PdfX4 {
+        crate::pdfx4::finish(&mut pdf)?;
+        report.notes.push(ExportNote {kind:"pdfx4".into(),object_id:None,message:"PDF/X-4 vector preset: ICC OutputIntent and calibrated RGB; external conformance validation remains pending.".into()});
     }
     if options.compress_streams {
         pdf.compress();

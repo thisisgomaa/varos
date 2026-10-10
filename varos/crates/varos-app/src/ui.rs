@@ -35,7 +35,16 @@ mod export;
 // ---- Lane C ----
 pub(crate) mod fields;
 mod guide_field;
+// ---- Lane B w3-effects ----
+mod effects;
+// ---- end Lane B w3-effects ----
 mod lane_c;
+// ---- Lane A ----
+mod appearance;
+// ---- Lane E: Phase 11 ----
+mod live;
+mod wave3; // integration w3: wave-3 frame glue
+pub(crate) use live::{key as live_key, menu_rows as live_menu_rows};
 use varos_app::shell::tokens::{ICON_BTN_H, ICON_BTN_W, ICON_LG, ICON_MD, ICON_SM};
 // Lucide icon path data (white-stroked at render time), same set as the web rail.
 // ---- Lane F ----
@@ -43,9 +52,13 @@ mod bar;
 mod canvas_overlay;
 mod clipping;
 mod colour_tools;
+// ---- w3-cmyk ----
+pub(crate) mod colour_management;
 mod control_bar;
 mod controls;
 mod home;
+// ---- Lane G ----
+mod lane_g;
 mod layout;
 mod menus;
 pub(crate) mod ops;
@@ -106,6 +119,8 @@ pub struct Ui {
     /// last laid out (the band's right zone with the V mark, and the sheet's right edge — one frame late).
     export_sheet: Option<crate::export_ui::ExportSheet>,
     panel_column: Option<egui::Rangef>,
+    // ---- Lane G ----
+    pub release: crate::release_ui::State,
     // ---- Lane F ----
     pub phase9: crate::phase9::State,
     pub document_sheet: Option<crate::document_ui::Sheet>,
@@ -205,11 +220,17 @@ impl Ui {
     }
 }
 impl Ui {
+    // ---- Lane G ----
+    pub fn accessibility_context(&self) -> egui::Context {
+        self.ctx.clone()
+    }
     pub fn toggle_panel(&mut self, p: varos_app::shell::PanelId) {
         self.shell.toggle_panel(p);
     }
     pub fn new(window: &Window) -> Self {
         let ctx = egui::Context::default();
+        // ---- Lane G ----
+        ctx.enable_accesskit();
         install_fonts(&ctx);
         install_style(&ctx);
         disable_ui_keyboard_zoom(&ctx);
@@ -245,6 +266,8 @@ impl Ui {
             recovery: Default::default(),
             file_status: String::new(),
             canvas_hint: Default::default(),
+            // ---- Lane G ----
+            release: Default::default(),
             phase9: Default::default(),
             document_sheet: None,
             export_sheet: None,
@@ -411,6 +434,7 @@ impl Ui {
             self.text_tool.error = Some(error);
             return false;
         }
+        effects::settle(&self.ctx, ed); // Lane B w3-effects
         crate::document_ui::settle(&mut self.document_sheet, ed);
         self.commit_picker_fields(ed)
     }
@@ -452,6 +476,9 @@ impl Ui {
         view: View,
         maximized: bool,
     ) -> (Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor) {
+        // ---- Lane G: drain native actions before selecting any render mode ----
+        #[cfg(target_os = "macos")]
+        varos_app::accessibility_macos::drain(&mut self.state.egui_input_mut().events);
         if self.home {
             return self.run_home(window, maximized);
         }
@@ -501,6 +528,7 @@ impl Ui {
         };
         let recovery = &self.recovery;
         let ic_fit = &self.ic_fit; // the status strip's Fit control shares the artboard panel's icon
+        wave3::open_requests(&self.ctx, &mut self.shell);
         let shell = &mut self.shell; // Stage 4: the box tree hosting the whole workspace
         let prev_hole = self.board_hole; // last frame's canvas hole (the seam underlay paints around it)
         let mut new_hole: Option<egui::Rect> = None;
@@ -522,6 +550,7 @@ impl Ui {
         let mut lay_drag = self.lay_drag;
         let mut lay_anchor = self.lay_anchor;
         let mut ops: Vec<Op> = Vec::new();
+        wave3::settle(&self.ctx, &mut ops);
         let mut refpt = self.refpt;
         let mut lock = self.lock;
         let mut ab_lock = self.ab_lock;
@@ -556,7 +585,7 @@ impl Ui {
         };
         // egui 0.34 removed Context::run — run_ui hands the pass's root Ui (panels now show() on it)
         let text_tool = &mut self.text_tool;
-        let out = self.ctx.run_ui(input, |root| {
+        let (out, release_cmds) = lane_g::frame(&self.ctx, input, &mut self.release, |root| {
             let ctx = root.ctx().clone();
             let ctx = &ctx;
             build_topbar(
@@ -576,6 +605,7 @@ impl Ui {
                 false,
                 cfg!(target_os = "macos"),
             );
+            wave3::sheets(ctx, ed, doc_active, &mut ops);
             lane_c::sheets(ctx, &mut app_cmds, &mut ops, doc_active);
             crate::export_ui::dispatch(ctx, &mut export_sheet, panel_column, export_scopes, &mut app_cmds);
             crate::document_ui::guides(ctx, &ed.doc, view, ppp, prev_hole);
@@ -698,6 +728,7 @@ impl Ui {
             let hole = new_hole.unwrap_or_else(|| ctx.content_rect());
             drawing::draw(ctx, ed, hole, view, ppp);
             select_transform::draw(ctx, ed, hole);
+            wave3::canvas(ctx, ed, &view, ppp, hole);
             lane_c::corners(ctx, ed, &view, ppp, hole, doc_active);
             isolation::draw(ctx, ed, hole);
             crate::image_ui::draw(ctx, ed, doc_active, hole, &mut app_cmds, view, ppp);
@@ -727,6 +758,7 @@ impl Ui {
                 prepare_canvas_sample(m, ed, view, ppp, hole);
             }
         });
+        app_cmds.extend(release_cmds);
         self.color_panel = color_panel;
         self.refpt = refpt;
         self.lock = lock;
@@ -777,7 +809,8 @@ impl Ui {
             out.platform_output.cursor_icon = egui::CursorIcon::Default;
             out
         };
-        self.state.handle_platform_output(window, out.platform_output);
+        // ---- Lane G ----
+        lane_g::platform(&mut self.state, window, &self.ctx, out.platform_output);
         // Stage 4: publish the canvas hole. Logical for the pointer test, physical for main.rs's view
         // fits. A changed hole (box resized/dragged) repaints once more so the underlay catches up.
         if new_hole != self.board_hole {
@@ -803,3 +836,5 @@ impl Ui {
 }
 
 // ───────────────────────────── fonts / style / frame ─────────────────────────────
+
+pub(crate) use effects::effects_menu_rows; // Lane B w3-effects

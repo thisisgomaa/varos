@@ -269,7 +269,7 @@ fn named_next_migration_and_refusal_fixtures_are_frozen() {
     );
     assert_eq!(
         decode_model(include_bytes!("fixtures/v6-images/refused-future.json"), None, &limits).unwrap_err(),
-        LoadError::NewerVersion { found: 10, supported: FORMAT_VERSION }
+        LoadError::NewerVersion { found: 15, supported: FORMAT_VERSION }
     );
     let old = include_str!("fixtures/v5/cap_Butt.json");
     let migrated = decode_model(old.as_bytes(), None, &limits).unwrap();

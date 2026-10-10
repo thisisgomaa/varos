@@ -11,6 +11,17 @@ pub(crate) fn apply(
 ) -> Result<bool, Error> {
     let fail = |s| Error::new("invalid_argument", s);
     match op {
+        Operation::Typography { command } => {
+            ed.try_execute(EditCommand::Typography(command.clone())).map_err(fail)?;
+            affected.extend(
+                ed.doc
+                    .text_boxes
+                    .iter()
+                    .filter_map(|t| varos_core::text::node_id(&ed.doc, t.id))
+                    .map(|id| format!("node:{id}")),
+            );
+            Ok(true)
+        }
         Operation::AddText { text, parent, local } => {
             if let Some(name) = local {
                 crate::design::local_name(name)?;
@@ -65,6 +76,7 @@ pub(crate) fn schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["id","box_kind","frame","runs","para"],"properties":{"id":{"type":"integer","minimum":0},"box_kind":{"oneOf":[{"const":"Point"},{"type":"object","additionalProperties":false,"required":["Area"],"properties":{"Area":{"type":"array","items":number,"minItems":4,"maxItems":4}}}]},"frame":pair,"runs":{"type":"array","minItems":1,"maxItems":4096,"items":{"type":"object","additionalProperties":false,"required":["text","style"],"properties":{"text":{"type":"string"},"style":style}}},"para":{"type":"object","additionalProperties":false,"required":["align","kashida","direction","line_height"],"properties":{"align":{"enum":["Left","Centre","Right","Justify"]},"kashida":{"enum":["Off","Minimal","Balanced","Display"]},"direction":{"enum":["Auto","Ltr","Rtl"]},"line_height":number}}}})
 }
 pub(crate) fn register(schema: &mut Value) {
+    crate::typography::register(schema);
     schema["$defs"]["text_box"] = self::schema();
     schema["$defs"]["add_text"] = json!({"type":"object","additionalProperties":false,"required":["verb","text"],"properties":{"verb":{"const":"add_text"},"text":{"$ref":"#/$defs/text_box"},"parent":{"type":"string"},"local":{"type":"string"}}});
     schema["$defs"]["set_text"] = json!({"type":"object","additionalProperties":false,"required":["verb","node","text"],"properties":{"verb":{"const":"set_text"},"node":{"type":"string"},"text":{"$ref":"#/$defs/text_box"}}});

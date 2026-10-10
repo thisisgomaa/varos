@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::*;
 /// The Board's second hand. Only the header's spare space drags; body gestures edit colour.
 pub(crate) fn build_color_panel(
@@ -25,7 +28,11 @@ pub(crate) fn build_color_panel(
     let height = if m.tab == Tab::Gradient {
         t::GRADIENT_BODY_H + t::PICKER_HEADER_H
     } else if m.tab == Tab::Sliders {
-        t::PICKER_HEADER_H + sliders::body_height(m.mode) + t::PICKER_FIELD_ROW_H + t::PICKER_SWATCH_ROW_H
+        t::PICKER_HEADER_H
+            + sliders::body_height(m.mode)
+            + if m.mode == modes::Mode::Cmyk { managed::height() } else { 0. }
+            + t::PICKER_FIELD_ROW_H
+            + t::PICKER_SWATCH_ROW_H
     } else {
         t::PICKER_H
     };
@@ -104,7 +111,7 @@ pub(crate) fn build_color_panel(
                             t::MUTED
                         },
                     );
-                    if response.on_hover_text(tip).clicked() {
+                    if response.shaped_hover_text(tip).clicked() {
                         if let Some(tab) = tab {
                             if tab != m.tab {
                                 m.finish(ops);
@@ -166,6 +173,8 @@ pub(crate) fn build_color_panel(
                     wheel::show(ui, m, s, ops);
                 } else if m.tab == Tab::Sliders {
                     sliders::show(ui, m, s, layout, ops);
+                    // ---- w3-cmyk ----
+                    managed::show(ui, m, ops);
                 } else if m.tab == Tab::Gradient {
                     gradient::show(ui, m, ops);
                 } else {

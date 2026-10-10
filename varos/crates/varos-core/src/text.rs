@@ -125,6 +125,7 @@ pub fn contains_arabic(text: &str) -> bool {
 }
 
 pub fn validate_document(doc: &Document) -> Result<(), String> {
+    crate::typography::validate(doc)?;
     if doc.text_boxes.len() > 4096 {
         return Err("text box limit exceeded".into());
     }
@@ -192,6 +193,8 @@ pub fn add(ed: &mut Editor, mut text: TextBox, parent: Option<u32>) -> Result<u3
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     });
     if let Some(n) = ed.doc.node_mut(parent) {
@@ -215,6 +218,11 @@ pub fn set(ed: &mut Editor, id: u32, mut text: TextBox) -> Result<(), String> {
         return Ok(());
     }
     ed.begin();
+    if ed.doc.text_boxes[index].source() != text.source() {
+        if let Some(frame) = ed.doc.typography.frames.get_mut(&id) {
+            crate::typography::remap_characters(frame, &ed.doc.text_boxes[index].source(), &text.source());
+        }
+    }
     ed.doc.text_boxes[index] = text;
     ed.dirty = true;
     ed.commit();
@@ -253,6 +261,19 @@ pub fn check_change(ed: &Editor, text: &TextBox, replacing: Option<u32>, parent:
         + text.runs.iter().map(|r| r.text.len()).sum::<usize>();
     if bytes > 8 * 1024 * 1024 {
         return Err("text document budget exceeded".into());
+    }
+    if let Some(id) = replacing {
+        let mut doc = ed.doc.clone();
+        if let Some(old) = doc.text_boxes.iter_mut().find(|t| t.id == id) {
+            if old.source() != text.source() {
+                if let Some(f) = doc.typography.frames.get_mut(&id) {
+                    crate::typography::remap_characters(f, &old.source(), &text.source());
+                }
+            }
+            *old = text.clone();
+            old.id = id;
+        }
+        crate::typography::validate(&doc)?;
     }
     Ok(())
 }
@@ -301,8 +322,28 @@ pub fn translate_selected(ed: &mut Editor, spec: crate::select_transform::Transf
         }
         let delta = crate::geom::rotate_about(spec.movement, [0., 0.], -xf.rot);
         if let Some(t) = ed.doc.text_boxes.iter_mut().find(|t| t.id == *id) {
+            // ---- Lane H: establish an origin for older v14 bindings on first movement ----
+            if let Some(frame) = ed.doc.typography.frames.get_mut(id).filter(|f| f.binding.is_some()) {
+                frame.binding_origin.get_or_insert(t.frame);
+            }
+            // ---- Lane H end ----
             translate(t, delta);
         }
+        // ---- Lane H: a jointly moved boundary already carries this translation ----
+        let moved_boundary = ed
+            .doc
+            .typography
+            .frames
+            .get(id)
+            .and_then(|f| f.binding)
+            .is_some_and(|b| ed.structural_object_paths().contains(&crate::typography::binding_path(b)));
+        if moved_boundary {
+            if let Some(origin) = ed.doc.typography.frames.get_mut(id).and_then(|f| f.binding_origin.as_mut()) {
+                origin[0] += delta[0];
+                origin[1] += delta[1];
+            }
+        }
+        // ---- Lane H end ----
     }
     !ids.is_empty() && spec.movement != [0., 0.]
 }

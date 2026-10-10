@@ -1,4 +1,7 @@
 //! Lane C provisional kit sheets and Direct Selection corner widgets.
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use super::ops::Op;
 use crate::app_command::{AppCommand, SessionId};
 use egui::Id;
@@ -82,7 +85,7 @@ pub(super) fn sheets(
             |ui| {
                 frame().show(ui, |ui| {
                     ui.set_width(t::DOC_SHEET_W);
-                    ui.label(t::panel_title("New Document"));
+                    ui.shaped_label(t::panel_title("New Document"));
                     ui.horizontal(|ui| {
                         for (i, label) in ["Print", "Web", "Mobile", "Social"].iter().enumerate() {
                             if button(ui, ("new-category", i), label) {
@@ -90,6 +93,8 @@ pub(super) fn sheets(
                             }
                         }
                     });
+                    // ---- w3-cmyk ----
+                    super::colour_management::mode(ui, &mut s.colour_mode);
                     number(ui, "new-width", "Width", &mut s.width, 0.01..=1e6);
                     number(ui, "new-height", "Height", &mut s.height, 0.01..=1e6);
                     if button(ui, "new-unit", s.units.label()) {
@@ -160,7 +165,7 @@ pub(super) fn sheets(
             ctx,
             |ui| {
                 frame().show(ui, |ui| {
-                    ui.label(t::panel_title("Offset Path"));
+                    ui.shaped_label(t::panel_title("Offset Path"));
                     number(ui, "offset-delta", "Offset", &mut delta, -7200.0..=7200.0);
                     ui.horizontal(|ui| {
                         for (value, label) in [

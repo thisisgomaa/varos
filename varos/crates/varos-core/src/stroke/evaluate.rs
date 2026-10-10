@@ -219,6 +219,21 @@ pub fn evaluate_capped(
     if cancelled() {
         return Err(StrokeError::Cancelled);
     }
+    // ---- Lane B w3-effects ----
+    if path.effects.iter().any(|e| matches!(e,crate::effects::Effect::Transform{copies,..} if *copies>0)) {
+        let parts = crate::effects_document::resolved_many(path).map_err(StrokeError::Invalid)?;
+        for p in parts {
+            let q = evaluate_capped(&p, tolerance, element_cap, &cancelled)?;
+            result.generated_elements += q.generated_elements;
+            result.rings.extend(q.rings);
+            result.report.notes.extend(q.report.notes);
+            if result.generated_elements > element_cap {
+                return Err(StrokeError::LimitExceeded);
+            }
+        }
+        return Ok(result);
+    }
+    // ---- end Lane B w3-effects ----
     // ---- Lane C: resolve authored live corners for every stroke consumer ----
     let resolved = crate::live_corners::evaluated(path);
     let path = &resolved;
@@ -404,7 +419,7 @@ pub fn evaluate_capped(
                 let mut wrap = slice(&segs, last.0, length);
                 let first_curve = slice(&segs, 0.0, first.1);
                 wrap.extend(first_curve.elements().iter().copied().skip(1));
-                curves.push(wrap);
+                curves.push((wrap, (last.0 / length, 1.0 + first.1 / length)));
             }
         }
         for (a, b) in merged {
@@ -412,13 +427,35 @@ pub fn evaluate_capped(
             if closed && a == 0.0 && b == length {
                 p.close_path();
             }
-            curves.push(p);
+            curves.push((p, (a / length, b / length)));
         }
-        for p in curves {
+        for (p, span) in curves {
             if cancelled() {
                 return Err(StrokeError::Cancelled);
             }
-            let outline = kurbo::stroke(p, &style, &kurbo::StrokeOpts::default(), tolerance);
+            // ---- Lane B w3-effects ----
+            let outline = if let Some(profile) = &s.width_profile {
+                {
+                    // Cap curve flattening before the adapted outline allocates its side geometry.
+                    let rings = flat(&p, tolerance, cancelled, &mut generated, element_cap)?;
+                    let mut line = BezPath::new();
+                    for ring in rings {
+                        if let Some(first) = ring.first() {
+                            line.move_to((first[0], first[1]));
+                            for q in ring.iter().skip(1) {
+                                line.line_to((q[0], q[1]));
+                            }
+                            if p.elements().last() == Some(&PathEl::ClosePath) {
+                                line.close_path();
+                            }
+                        }
+                    }
+                    crate::width_geometry::outline_spans(&line, &[span], width, profile, s, tolerance)
+                }
+            } else {
+                kurbo::stroke(p, &style, &kurbo::StrokeOpts::default(), tolerance)
+            };
+            // ---- end Lane B w3-effects ----
             shaft.extend(flat(&outline, tolerance, cancelled, &mut generated, element_cap)?);
             if shaft.iter().map(Vec::len).sum::<usize>() > element_cap {
                 return Err(StrokeError::LimitExceeded);

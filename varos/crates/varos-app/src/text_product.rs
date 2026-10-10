@@ -1,4 +1,7 @@
 //! Lane G: provisional canvas Type tool; all published source changes use EditCommand.
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
 use egui::{Event, Key};
 use varos_core::{
     editor::Editor,
@@ -20,6 +23,7 @@ pub struct TextProduct {
     selecting: bool,
     pending_copy: Option<String>,
     pub generation: u64,
+    path_drag: Option<path_controls::Drag>,
     pub error: Option<String>,
     /// Integration (w2): the text preview renders from a per-frame `Editor` clone, whose canvas stroke
     /// cache would start empty every frame (`CanvasStrokeCache::clone` is fresh). Keep one cache here
@@ -62,6 +66,13 @@ impl TextProduct {
             self.engine = Some(TextLayout::new(varos_text_layout::host_fonts::snapshot()?)?);
         }
         self.engine.as_mut().ok_or_else(|| "text engine unavailable".into())
+    }
+    fn composition(&mut self, ed: &Editor, draft: &TextBox, zoom: f32) -> Result<varos_text_layout::Composed, String> {
+        let mut doc = ed.doc.clone();
+        varos_core::typography::replace_preview(&mut doc, draft);
+        let target = self.selected.filter(|id| varos_core::typography::story_root(&doc, *id).ok() == Some(draft.id));
+        let text = target.and_then(|id| doc.text_boxes.iter().find(|t| t.id == id)).unwrap_or(draft);
+        self.engine()?.compose_document(&doc, text, zoom)
     }
     pub fn selected_text(&self, ed: &Editor) -> Option<TextBox> {
         self.session
@@ -128,14 +139,23 @@ impl TextProduct {
                 .or_else(|| ed.doc.text_boxes.iter().find(|t| t.id == id))?
                 .clone();
             let p = text_transform(ed, id).inverse_apply(p);
-            let c = self.engine().ok()?.compose(&t, zoom).ok()?;
-            let bounds = match t.box_kind {
-                TextBoxKind::Area(r) => r,
-                TextBoxKind::Point => {
-                    let left = c.layout.carets.iter().map(|c| c.x).fold(0f32, f32::min);
-                    let right = c.layout.carets.iter().map(|c| c.x).fold(0f32, f32::max);
-                    let h = c.layout.lines.last().map_or(24., |l| l.baseline + l.descent);
-                    [c.origin[0] + left, c.origin[1], (right - left).max(8.), h]
+            let c = self.composition(ed, &t, zoom).ok()?;
+            let bounds = if ed.doc.typography.frames.get(&id).is_some_and(|f| f.binding.is_some()) {
+                c.layout.ink_bounds.map(|[x, y, r, b]| [x, y, (r - x).max(8.), (b - y).max(8.)]).unwrap_or([
+                    t.frame[0],
+                    t.frame[1] - 24.,
+                    24.,
+                    24.,
+                ])
+            } else {
+                match t.box_kind {
+                    TextBoxKind::Area(r) => r,
+                    TextBoxKind::Point => {
+                        let left = c.layout.carets.iter().map(|c| c.x).fold(0f32, f32::min);
+                        let right = c.layout.carets.iter().map(|c| c.x).fold(0f32, f32::max);
+                        let h = c.layout.lines.last().map_or(24., |l| l.baseline + l.descent);
+                        [c.origin[0] + left, c.origin[1], (right - left).max(8.), h]
+                    }
                 }
             };
             if p[0] >= bounds[0] && p[0] <= bounds[0] + bounds[2] && p[1] >= bounds[1] && p[1] <= bounds[1] + bounds[3]
@@ -217,6 +237,9 @@ impl TextProduct {
         }
         let mut copied = None;
         for event in &input.events {
+            if self.bracket_event(ctx, event, ed, view, ppp, hole)? {
+                continue;
+            }
             if !matches!(ed.tool, ToolKind::Text | ToolKind::Object)
                 && self.session.is_none()
                 && !matches!(event, Event::Key { key: Key::T, .. })
@@ -234,6 +257,47 @@ impl TextProduct {
                 }
                 let p = view.s2w([pos.x * ppp, pos.y * ppp]);
                 if *pressed {
+                    // ---- Lane H: Command-click threads; Type click binds live path geometry ----
+                    if ed.tool == ToolKind::Text && modifiers.command {
+                        let from = self.selected;
+                        let to = self.hit(ed, p, view.zoom);
+                        if let (Some(from), Some(to)) = (from, to) {
+                            self.commit(ed)?;
+                            ed.try_execute(EditCommand::Typography(varos_core::typography::Action::Thread {
+                                from,
+                                to: Some(to),
+                            }))?;
+                            continue;
+                        }
+                    }
+                    if ed.tool == ToolKind::Text && self.hit(ed, p, view.zoom).is_none() {
+                        if let Some(path) = ed.path_under(p) {
+                            self.commit(ed)?;
+                            let text = varos_text_layout::default_text("", p)?;
+                            let id = ed.try_execute_created(EditCommand::AddText { text, parent: None })?;
+                            let closed = ed.doc.paths.iter().find(|p| p.id == path).is_some_and(|p| p.closed);
+                            let binding = if closed {
+                                varos_core::typography::Binding::Area { path, inset: 0. }
+                            } else {
+                                varos_core::typography::Binding::Path {
+                                    path,
+                                    start: 0.,
+                                    end: 0.,
+                                    offset: 0.,
+                                    flip: false,
+                                    effect: varos_core::typography::PathEffect::Rainbow,
+                                }
+                            };
+                            ed.try_execute(EditCommand::Typography(varos_core::typography::Action::Bind {
+                                text: id,
+                                binding: Some(binding),
+                            }))?;
+                            self.selected = Some(id);
+                            self.session = ed.doc.text_boxes.iter().find(|t| t.id == id).cloned().map(EditSession::new);
+                            continue;
+                        }
+                    }
+                    // ---- Lane H end ----
                     let hit = self.hit(ed, p, view.zoom);
                     if let Some(id) = hit {
                         let double = self
@@ -262,13 +326,20 @@ impl TextProduct {
                         if double || ed.tool == ToolKind::Text {
                             if self.session.as_ref().is_none_or(|s| s.draft.id != id) {
                                 self.commit(ed)?;
+                                let root = varos_core::typography::story_root(&ed.doc, id)?;
                                 self.session =
-                                    ed.doc.text_boxes.iter().find(|t| t.id == id).cloned().map(EditSession::new);
+                                    ed.doc.text_boxes.iter().find(|t| t.id == root).cloned().map(EditSession::new);
                                 self.selected = Some(id);
                             }
                             if let Some(draft) = self.session.as_ref().map(|s| s.draft.clone()) {
                                 let p = text_transform(ed, draft.id).inverse_apply(p);
-                                let c = self.engine()?.compose(&draft, view.zoom)?.clone();
+                                let c = self.composition(ed, &draft, view.zoom)?.clone();
+                                let p = varos_text_layout::path_mapping::PathMap::from_document(
+                                    &ed.doc,
+                                    self.selected.unwrap_or(draft.id),
+                                    &c,
+                                )?
+                                .map_or(p, |map| map.unmap(p));
                                 let line = c
                                     .layout
                                     .lines
@@ -327,7 +398,13 @@ impl TextProduct {
                 if self.selecting {
                     if let Some(draft) = self.session.as_ref().map(|s| s.draft.clone()) {
                         let p = text_transform(ed, draft.id).inverse_apply(view.s2w([pos.x * ppp, pos.y * ppp]));
-                        let c = self.engine()?.compose(&draft, view.zoom)?.clone();
+                        let c = self.composition(ed, &draft, view.zoom)?.clone();
+                        let p = varos_text_layout::path_mapping::PathMap::from_document(
+                            &ed.doc,
+                            self.selected.unwrap_or(draft.id),
+                            &c,
+                        )?
+                        .map_or(p, |map| map.unmap(p));
                         let line = c
                             .layout
                             .lines
@@ -384,19 +461,19 @@ impl TextProduct {
                         Key::A if modifiers.command => session.select_all(),
                         Key::Enter => session.insert("\n")?,
                         Key::ArrowLeft | Key::ArrowRight => {
-                            let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
+                            let layout = &self.composition(ed, &session.draft, view.zoom)?.layout;
                             session.arrow(layout, *key == Key::ArrowRight, modifiers.shift);
                         }
                         Key::ArrowUp | Key::ArrowDown => {
-                            let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
+                            let layout = &self.composition(ed, &session.draft, view.zoom)?.layout;
                             session.vertical(layout, *key == Key::ArrowDown, modifiers.shift);
                         }
                         Key::Home | Key::End => {
-                            let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
+                            let layout = &self.composition(ed, &session.draft, view.zoom)?.layout;
                             session.line_edge(layout, *key == Key::End, modifiers.shift);
                         }
                         Key::Backspace | Key::Delete => {
-                            let layout = &self.engine()?.compose(&session.draft, view.zoom)?.layout;
+                            let layout = &self.composition(ed, &session.draft, view.zoom)?.layout;
                             session.delete(layout, *key == Key::Backspace)?;
                         }
                         _ => {}
@@ -429,8 +506,8 @@ impl TextProduct {
         if let Some(session) = &self.session {
             if session.draft.id == 0 {
                 let _ = varos_core::text::add(&mut preview, session.display_draft(), None);
-            } else if let Some(t) = preview.doc.text_boxes.iter_mut().find(|t| t.id == session.draft.id) {
-                *t = session.display_draft();
+            } else {
+                varos_core::typography::replace_preview(&mut preview.doc, &session.display_draft());
             }
         }
         match self.engine().and_then(|e| e.outlined(&preview.doc, view.zoom)) {
@@ -454,28 +531,32 @@ impl TextProduct {
         scene
     }
     pub fn paint(&mut self, ctx: &egui::Context, ed: &Editor, view: View, ppp: f32) {
+        self.paint_brackets(ctx, ed, view, ppp);
         if let Some(copy) = self.pending_copy.take() {
             ctx.copy_text(copy);
         }
         let Some(session) = self.session.clone() else {
             return;
         };
-        let Ok(engine) = self.engine() else {
-            return;
-        };
         let display = session.display_draft();
-        let Ok(c) = engine.compose(&display, view.zoom) else {
+        let Ok(c) = self.composition(ed, &display, view.zoom) else {
             return;
         };
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("text-caret")));
-        let transform = text_transform(ed, display.id);
+        let transform = text_transform(ed, self.selected.unwrap_or(display.id));
+        let path_map =
+            varos_text_layout::path_mapping::PathMap::from_document(&ed.doc, self.selected.unwrap_or(display.id), &c)
+                .ok()
+                .flatten();
         let screen = |x: f32, y: f32| {
-            let p = view.w2s(transform.apply([x + c.origin[0], y + c.origin[1]]));
+            let point = [x + c.origin[0], y + c.origin[1]];
+            let point = path_map.as_ref().and_then(|map| map.point(point)).unwrap_or(point);
+            let p = view.w2s(transform.apply(point));
             egui::pos2(p[0] / ppp, p[1] / ppp)
         };
         let range = session.range();
         if c.overset {
-            painter.text(
+            painter.shaped_chrome(
                 screen(0., c.layout.lines.first().map_or(0., |l| l.baseline)),
                 egui::Align2::LEFT_BOTTOM,
                 "Overset text",
@@ -531,6 +612,9 @@ fn text_transform(ed: &Editor, id: u32) -> varos_core::model::Xform {
     transform
 }
 
+#[path = "text_path_controls.rs"]
+mod path_controls;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,6 +642,59 @@ mod tests {
             pressed,
             modifiers: Default::default(),
         }
+    }
+    #[test]
+    fn named_style_shortening_and_preedit_keep_preview_and_carets_valid() {
+        use varos_core::typography::{Action, CharacterStyle};
+        let mut ed = Editor::new();
+        let id = ed
+            .try_execute_created(EditCommand::AddText {
+                text: left_text("hello world", [20., 50.]).unwrap(),
+                parent: None,
+            })
+            .unwrap();
+        let mut style = ed.doc.text_boxes[0].runs[0].style.clone();
+        style.size = 42.;
+        ed.try_execute(EditCommand::Typography(Action::DefineCharacter {
+            name: "Title".into(),
+            definition: CharacterStyle { parent: None, style: Some(style) },
+        }))
+        .unwrap();
+        ed.try_execute(EditCommand::Typography(Action::ApplyCharacter {
+            text: id,
+            start: 0,
+            end: 11,
+            name: "Title".into(),
+        }))
+        .unwrap();
+        let mut tool = TextProduct {
+            engine: Some(TextLayout::bundled().unwrap()),
+            selected: Some(id),
+            session: Some(EditSession::new(ed.doc.text_boxes[0].clone())),
+            ..Default::default()
+        };
+        for source in ["h", "", "سَلَام"] {
+            tool.session.as_mut().unwrap().draft.runs[0].text = source.into();
+            let draft = tool.session.as_ref().unwrap().display_draft();
+            let composed = tool.composition(&ed, &draft, 1.).unwrap();
+            assert!(composed.layout.carets.iter().all(|c| c.byte <= source.len()));
+            let scene = tool.scene(
+                &ed,
+                View::identity(),
+                [500, 500],
+                SceneStyle {
+                    checkerboard: varos_app::shell::tokens::DOC_CHECKERBOARD,
+                    outline: varos_app::shell::tokens::OUTLINE_RGBA,
+                    canvas: varos_app::shell::tokens::CANVAS_RGBA,
+                },
+            );
+            assert!(scene.errors.is_empty(), "{:?}", scene.errors);
+            assert_eq!(ed.doc.typography.frames[&id].characters[0].end, 11);
+        }
+        tool.commit(&mut ed).unwrap();
+        assert_eq!(ed.doc.typography.frames[&id].characters[0].end, "سَلَام".len());
+        ed.undo();
+        assert_eq!(ed.doc.text_boxes[0].source(), "hello world");
     }
     #[test]
     fn object_drag_selects_core_identity_and_moves_one_undo_step() {

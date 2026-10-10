@@ -24,7 +24,11 @@ pub(crate) fn apply(
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let paths = resolve(&ed.doc, &ids, matches!(op, Operation::ScaleStrokes { .. } | Operation::NewDocument { .. }))?;
+    let paths = resolve(
+        &ed.doc,
+        &ids,
+        matches!(op, Operation::WidthTool { .. } | Operation::ScaleStrokes { .. } | Operation::NewDocument { .. }),
+    )?;
     *expanded += paths.len();
     if *expanded > 1000 {
         return Err(fail("Expanded targets exceed 1000".into()));
@@ -33,6 +37,19 @@ pub(crate) fn apply(
         ed.try_execute(EditCommand::SelectPaths(paths.clone())).map_err(fail)?;
     }
     let command = match op {
+        // ---- Lane B w3-effects ----
+        Operation::WidthTool { .. } => EditCommand::LiveEffects(varos_core::effects::Action::Tool),
+        Operation::LiveEffects { effects, .. } => {
+            EditCommand::LiveEffects(varos_core::effects::Action::Set { ids: paths.clone(), effects: effects.clone() })
+        }
+        Operation::WidthProfile { profile, .. } => EditCommand::LiveEffects(varos_core::effects::Action::Width {
+            ids: paths.clone(),
+            profile: profile.clone(),
+        }),
+        Operation::ExpandLive { .. } => {
+            EditCommand::LiveEffects(varos_core::effects::Action::Expand { ids: paths.clone() })
+        }
+        // ---- end Lane B w3-effects ----
         Operation::OutlineStroke { .. } => EditCommand::PathAdvanced(Action::Outline),
         Operation::OffsetPath { delta, join, miter, .. } => {
             EditCommand::PathAdvanced(Action::Offset { delta: *delta, join: *join, miter: *miter })
@@ -75,7 +92,7 @@ pub(crate) fn schemas(defs: &mut serde_json::Map<String, serde_json::Value>, ops
         ("scale_strokes", json!({"enabled":{"type":"boolean"}}), vec!["enabled"]),
         (
             "new_document",
-            json!({"settings":{"type":"object","additionalProperties":false,"properties":{"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0},"units":{"enum":["Px","Pt","Pica","Mm","Cm","In"]},"count":{"type":"integer","minimum":1,"maximum":100},"columns":{"type":"integer","minimum":1,"maximum":100},"spacing":{"type":"number","minimum":0},"layout":{"enum":["grid","row","column"]},"bleed":{"type":"number","minimum":0},"ppi":{"type":"number","minimum":1,"maximum":9600}}}}),
+            json!({"settings":{"type":"object","additionalProperties":false,"properties":{"colour_mode":{"enum":["Rgb","Cmyk"]},"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0},"units":{"enum":["Px","Pt","Pica","Mm","Cm","In"]},"count":{"type":"integer","minimum":1,"maximum":100},"columns":{"type":"integer","minimum":1,"maximum":100},"spacing":{"type":"number","minimum":0},"layout":{"enum":["grid","row","column"]},"bleed":{"type":"number","minimum":0},"ppi":{"type":"number","minimum":1,"maximum":9600}}}}),
             vec!["settings"],
         ),
     ] {

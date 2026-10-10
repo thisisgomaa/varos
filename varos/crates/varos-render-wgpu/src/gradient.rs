@@ -107,12 +107,28 @@ impl Gradients {
     pub fn prepare(&mut self, d: &wgpu::Device, q: &wgpu::Queue, metas: &[super::GroupDraw]) {
         let mut used = std::collections::HashSet::new();
         let mut used_luts = std::collections::HashSet::new();
-        for m in metas {
+        // ---- Lane A ----
+        fn leaves<'a>(metas: &'a [super::GroupDraw], out: &mut Vec<&'a super::GroupDraw>) {
+            for m in metas {
+                if let super::GroupDraw::Nested { members, mask, .. } = m {
+                    leaves(members, out);
+                    if let Some(ms) = mask {
+                        leaves(ms, out);
+                    }
+                } else {
+                    out.push(m);
+                }
+            }
+        }
+        let mut leaf_metas = vec![];
+        leaves(metas, &mut leaf_metas);
+        for m in leaf_metas {
             let draws = match m {
                 super::GroupDraw::Opaque { draws }
                 | super::GroupDraw::Layer { draws, .. }
                 | super::GroupDraw::ClippedLayer { draws, .. } => draws,
                 super::GroupDraw::Clip { members, .. } => members,
+                super::GroupDraw::Nested { .. } => continue,
             };
             for draw in draws {
                 if let super::Draw::Gradient { key, gradient, pan, zoom, opacity, .. } = draw {

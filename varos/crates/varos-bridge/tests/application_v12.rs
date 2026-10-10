@@ -116,7 +116,14 @@ fn discovery_reports_unsupported_host_needs_arguments_and_schemas() {
     }
     let nudge = rows.iter().find(|r| r["name"] == "move").unwrap();
     assert_eq!(nudge["id"], "edit.nudge");
-    assert_eq!(nudge["disabled_reason"], "needs_arguments");
+    // integration w3: edit rows inherit `enabled`/`disabled_reason` from their group (16 KiB page)
+    let edit_group =
+        groups.iter().find(|g| g["verbs"].as_array().unwrap().iter().any(|r| r["name"] == "move")).unwrap();
+    assert_eq!(
+        (edit_group["enabled"].clone(), edit_group["disabled_reason"].clone()),
+        (json!(false), json!("needs_arguments"))
+    );
+    assert!(nudge.get("disabled_reason").is_none());
     assert!(!call(&mut service, &mut host, "agent", "preferences", json!({"api":"1.0","action":{"kind":"read"}})).ok);
     for api in ["1.0", "1.1"] {
         assert!(varos_bridge::mcp::tools_for(api)["tools"].as_array().unwrap().iter().all(|r| r["name"] != "actions"));

@@ -1,9 +1,16 @@
 //! wgpu renderer: a GPU canvas that draws a varos-core `Scene`. Stencil-then-cover fills,
 //! MSAA, non-sRGB surface, Mailbox present (low latency). Knows nothing about winit/tauri.
 
+// ---- Lane D ----
+pub mod layer_gpu;
+#[path = "../../varos-raster/src/layers.rs"]
+pub mod layers;
+// ---- end Lane D ----
 pub mod images;
 pub mod perf;
 mod tess;
+// ---- w3-cmyk ----
+mod colour_preview;
 use std::io::Write;
 use tess::{build_bg, build_content, build_fg, Draw, GroupDraw, Vertex};
 use varos_core::geom::View;
@@ -27,6 +34,8 @@ struct VsOut { @builtin(position) clip: vec4<f32>, @location(0) color: vec4<f32>
 "#;
 
 mod gradient;
+// ---- Lane A ----
+mod appearance_layers;
 // ---- Lane F ----
 pub use wgpu::PowerPreference;
 
@@ -72,9 +81,14 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
     // isolated-layer (group opacity): a reusable offscreen MSAA target — each translucent object is
     // rendered here opaquely, resolved, then composited onto the scene at its opacity.
+    // ---- Lane A ----
+    appearance_pool: appearance_layers::Pool,
+    pub appearance_notes: Vec<String>,
     layer_msaa: wgpu::TextureView,
     layer_view: wgpu::TextureView,
     pipe_composite: wgpu::RenderPipeline,
+    // ---- w3-cmyk ----
+    pipe_overprint: wgpu::RenderPipeline,
     comp_bg: wgpu::BindGroup,
     op_buf: wgpu::Buffer,
     op_cap: u64,
@@ -658,6 +672,8 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        // ---- w3-cmyk ----
+        let pipe_overprint = colour_preview::pipeline(&device, &comp_layout, &comp_sh, config.format, samples);
         let comp_bg = make_blit_bg(&device, &blit_bgl, &layer_view, &sampler, &normal_blit_buf);
         let op_cap = 1u64 << 16;
         let op_buf = mk(op_cap);
@@ -673,6 +689,8 @@ impl Renderer {
             },
         );
         let image_cache = images::ImageCache::new(&device, config.format, samples);
+        // ---- Lane A ----
+        let appearance_pool = appearance_layers::Pool::new(&device, config.format, samples);
         Ok(Renderer {
             image_cache,
             gradients,
@@ -711,7 +729,12 @@ impl Renderer {
             sampler,
             layer_msaa,
             layer_view,
+            // ---- Lane A ----
+            appearance_pool,
+            appearance_notes: vec![],
             pipe_composite,
+            // ---- w3-cmyk ----
+            pipe_overprint,
             comp_bg,
             op_buf,
             op_cap,
@@ -1081,7 +1104,10 @@ impl Renderer {
                         rp.draw(mask_clear.0..mask_clear.0 + mask_clear.1, 0..1);
                     }
                 }
-                GroupDraw::Layer { draws, quad } | GroupDraw::ClippedLayer { draws, quad, .. } => {
+                // ---- Lane A ----
+                GroupDraw::Nested { .. } => self.draw_nested(enc, std::slice::from_ref(m), &self.msaa, None, 0),
+                GroupDraw::Layer { draws, quad, overprint }
+                | GroupDraw::ClippedLayer { draws, quad, overprint, .. } => {
                     // render the object OPAQUELY into the isolated layer (cleared transparent, MSAA-resolved)
                     {
                         let mut lp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1126,7 +1152,8 @@ impl Renderer {
                             timestamp_writes: None,
                             occlusion_query_set: None,
                         });
-                        rp.set_pipeline(&self.pipe_composite);
+                        // ---- w3-cmyk ----
+                        rp.set_pipeline(if *overprint { &self.pipe_overprint } else { &self.pipe_composite });
                         rp.set_bind_group(0, &self.comp_bg, &[]);
                         rp.set_vertex_buffer(0, self.op_buf.slice(..));
                         rp.draw(quad.0..quad.0 + quad.1, 0..1);
@@ -1214,6 +1241,15 @@ impl Renderer {
         }
         let bg = build_bg(view, fw, fh, world.grid_step);
         let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+        // ---- Lane A ----
+        let wanted = appearance_layers::depth(&metas);
+        let allowed = appearance_layers::allowed_depth([self.config.width, self.config.height], self.samples);
+        self.appearance_notes.clear();
+        if wanted > allowed {
+            self.appearance_notes
+                .push(format!("Appearance layers flattened beyond level {allowed}: depth/texture budget exceeded"));
+        }
+        self.appearance_pool.prepare(&self.device, &self.config, self.samples, 2 * wanted.min(allowed));
         self.gradients.prepare(&self.device, &self.queue, &metas);
         let ov_start = fgv.len() as u32;
         fgv.extend(build_fg(&world.overlay, view, 1.0, fw, fh)); // editing chrome: constant screen size
@@ -1417,6 +1453,15 @@ impl Renderer {
             let bg = build_bg(view, fw, fh, world.grid_step);
             let content_start = std::time::Instant::now();
             let (fillv, mut fgv, opv, metas) = build_content(&world.content, view, view.zoom, fw, fh);
+            // ---- Lane A ----
+            let wanted = appearance_layers::depth(&metas);
+            let allowed = appearance_layers::allowed_depth([self.config.width, self.config.height], self.samples);
+            self.appearance_notes.clear();
+            if wanted > allowed {
+                self.appearance_notes
+                    .push(format!("Appearance layers flattened beyond level {allowed}: depth/texture budget exceeded"));
+            }
+            self.appearance_pool.prepare(&self.device, &self.config, self.samples, 2 * wanted.min(allowed));
             self.gradients.prepare(&self.device, &self.queue, &metas);
             let content_elapsed = content_start.elapsed();
             let ov_start = fgv.len() as u32;

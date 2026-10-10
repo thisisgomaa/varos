@@ -11,6 +11,10 @@
 //! "the Review panel is open" (egui memory, this session). Drawn as an `egui::Area` on `Order::Middle`
 //! (like the floating control bar), so the editor's layer-aware pointer test hands clicks on it to the
 //! UI, never to the canvas. Not a box: it never docks. Tokens only; azure for keyboard focus only, no shadow, no animation.
+// ---- Lane F: text adapters ----
+use crate::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use crate::shell::kit::text::ShapedPainter as _;
 use std::sync::Arc;
 
 use egui::text::LayoutJob;
@@ -321,7 +325,7 @@ pub fn show_restored(ctx: &Context, board: Rect, sid: u64, notice: &str) -> bool
     let mut save = false;
     floating(ctx, ids::card(), rect, |ui, rect| {
         save = card(ui, rect, parts, ids::save_as(), &mut actions);
-        ui.interact(rect, Id::new("restored-notice-help"), Sense::hover()).on_hover_text(notice);
+        ui.interact(rect, Id::new("restored-notice-help"), Sense::hover()).shaped_hover_text(notice);
     });
     if actions.contains(&StartAction::Later) {
         ctx.data_mut(|d| d.insert_temp(hidden, true));
@@ -403,7 +407,7 @@ fn card(ui: &mut Ui, rect: Rect, parts: CardParts, solid_id: Id, actions: &mut V
     let stacked = rect.width() < card_width(t::RC_MIN_TEXT_W, lw, rw);
     let main_h = if stacked { t::RC_STACK_CARD_H } else { t::SB_RECOV_H };
     if let Some(detail) = &parts.detail {
-        p.galley(egui::pos2(rect.left() + t::RC_PAD_X, rect.top() + main_h), detail.clone(), t::MUTED);
+        p.shaped_galley(egui::pos2(rect.left() + t::RC_PAD_X, rect.top() + main_h), detail.clone(), t::MUTED);
     }
     let rect = Rect::from_min_size(rect.min, egui::vec2(rect.width(), main_h.min(rect.height())));
     let text_fits = !stacked || rect.height() >= t::RC_STACK_CARD_H;

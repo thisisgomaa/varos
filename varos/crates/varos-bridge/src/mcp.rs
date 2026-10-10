@@ -33,8 +33,15 @@ fn construction_tools(api: &str) -> Value {
             crate::drawing::schemas(&mut extra, &mut ops);
             // ---- w2-gradients ----
             crate::colour::schemas(&mut extra, &mut ops);
+            // ---- w3-cmyk ----
+            crate::colour_management::schemas(&mut extra, &mut ops);
             // ---- Lane C ----
             crate::path_advanced::schemas(&mut extra, &mut ops);
+            // ---- Lane B w3-effects ----
+            crate::effects::schemas(&mut extra, &mut ops);
+            // ---- end Lane B w3-effects ----
+            // ---- Lane E: Phase 11 ----
+            crate::live::schemas(&mut extra, &mut ops);
             if let Some(defs) = edit["inputSchema"]["$defs"].as_object_mut() {
                 defs.extend(extra);
             }
@@ -539,6 +546,8 @@ pub fn serve<T: Transport>(
             "tools/call"
                 if params["name"].as_str().is_none_or(|name| {
                     !TOOLS.contains(&name)
+                        // ---- Lane G ----
+                        && name != "release"
                         && name != "import_svg"
                         && name != "import_file"
                         && name != "import_clipboard"
@@ -688,6 +697,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
             if name == "describe" {
                 if let Some(fields) = tool["inputSchema"]["properties"]["fields"]["items"]["enum"].as_array_mut() {
                     fields.extend([
+                        // ---- Lane A ----
+                        json!("appearance"),
                         json!("stroke_style"),
                         json!("text"),
                         json!("swatches"),
@@ -701,6 +712,8 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
                 let schema = &mut tool["inputSchema"];
                 // ---- Lane G ----
                 crate::text::register(schema);
+                // ---- Lane A: progressive disclosure, no inline summaries ----
+                crate::appearance::register(schema);
                 schema["$defs"]["trace_rgba"] = object(
                     json!({"verb":{"const":"trace_rgba"},"rgba":{"type":"array","items":{"type":"integer","minimum":0,"maximum":255}},"width":{"type":"integer","minimum":1},"height":{"type":"integer","minimum":1},"options":{"type":"object","description":"API 1.2 only: TraceOptions; mode BlackWhite, Grayscale, or {Color:{colors:1..255}}; fidelity/corners 0..100, threshold 0..255, noise_px, ignore_white"}}),
                     &["verb", "rgba", "width", "height"],
@@ -930,6 +943,19 @@ pub(crate) fn full_tools_for(api: &str) -> Value {
     out
 }
 
+/// Wave-3 edit verbs (appearance, effects/width, colour management, typography) that API 1.2
+/// tools/list does not inline; `list_verbs` + `schema` are their only discovery path (integration w3).
+pub const WAVE3_DISCOVERY_ONLY: &[&str] = &[
+    "appearance",
+    "mask",
+    "live_effects",
+    "width_profile",
+    "width_tool",
+    "expand_live",
+    "colour_management",
+    "typography",
+];
+
 /// API 1.2 publishes core schemas and an index of extended edit operations.
 /// Discovery never changes the typed decoder or execution path.
 pub fn tools_for(api: &str) -> Value {
@@ -966,6 +992,13 @@ pub fn tools_for(api: &str) -> Value {
                 for op in ops {
                     let expanded = expand_schema(op, &root);
                     let verb = schema_verb(&expanded);
+                    // ---- Lane E: Phase 11: discovery only, no inline bytes ----
+                    // integration w3 projection step: every wave-3 verb follows the live lane's rule —
+                    // listed by list_verbs, parameters from schema, decoded and validated as before, but
+                    // never inlined in tools/list (keeps 1.2 under 24,000 B as verbs keep arriving).
+                    if verb.is_some_and(|v| crate::live::VERBS.contains(&v) || WAVE3_DISCOVERY_ONLY.contains(&v)) {
+                        continue;
+                    }
                     if verb.is_none_or(core_verb) {
                         alternatives.push(op.clone());
                     } else if let Some(verb) = verb {
@@ -1159,6 +1192,10 @@ fn prune_definitions(schema: &mut Value) {
 }
 
 pub fn schema(tool: &str, verb: Option<&str>) -> Result<Value, Error> {
+    // ---- Lane G: discovery-only; no inline tools/list bytes ----
+    if tool == "release" {
+        return crate::release::schema(verb);
+    }
     let table = full_tools_for("1.2");
     let root = table["tools"]
         .as_array()
@@ -1213,7 +1250,9 @@ pub fn list_verbs() -> Value {
                     for op in ops {
                         let expanded = expand_schema(op, root);
                         if let Some(verb) = schema_verb(&expanded) {
-                            let entry = json!({"name":verb,"id":varos_core::registry::edit_id(verb),"description":verb_description(verb),"enabled":false,"disabled_reason":"needs_arguments"});
+                            // integration w3: every edit verb needs arguments, so `enabled`/`disabled_reason`
+                            // are stated once per edit group (keeps the reply inside the 16 KiB page).
+                            let entry = json!({"name":verb,"id":varos_core::registry::edit_id(verb),"description":verb_description(verb)});
                             if core_verb(verb) {
                                 core.push(entry);
                             } else {
@@ -1224,11 +1263,14 @@ pub fn list_verbs() -> Value {
                 }
             } else {
                 let enabled = matches!(name, "capabilities" | "list_boards" | "list_verbs");
-                tools.push(json!({"name":name,"id":varos_core::registry::tool_id(name),"description":row["description"],"enabled":enabled,"disabled_reason":if enabled { None } else { Some("needs_arguments") }}));
+                // ---- Lane E: Phase 11: discovery descriptions are summaries; full schemas stay progressive ----
+                tools.push(json!({"name":name,"id":varos_core::registry::tool_id(name),"description":generic_verb_description(name),"enabled":enabled,"disabled_reason":if enabled { None } else { Some("needs_arguments") }}));
             }
         }
     }
-    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","verbs":core},{"tool":"edit","group":"extended","verbs":extended},{"tool":"image_action","group":"images","verbs":crate::images::ACTIONS.iter().map(|name|json!({"name":name,"description":format!("Image operation {name}; call schema with tool image_action and verb {name}")})).collect::<Vec<_>>()},{"group":"tools","verbs":tools}]})
+    // ---- Lane G: progressive disclosure ----
+    tools.push(crate::release::discovery());
+    json!({"api":"1.2","groups":[{"tool":"edit","group":"core","enabled":false,"disabled_reason":"needs_arguments","verbs":core},{"tool":"edit","group":"extended","enabled":false,"disabled_reason":"needs_arguments","verbs":extended},{"tool":"image_action","group":"images","verbs":crate::images::ACTIONS.iter().map(|name|json!({"name":name,"description":format!("Image operation {name}; call schema with tool image_action and verb {name}")})).collect::<Vec<_>>()},{"group":"tools","verbs":tools}]})
 }
 
 pub fn stroke_style_schema() -> Value {

@@ -154,3 +154,12 @@ mod gradient;
 pub mod package;
 // ---- Lane F ----
 pub mod quicklook;
+
+// ---- w3-cmyk ----
+mod colour_management;
+mod pdfx4;
+// ---- Lane H ----
+mod cff_subset;
+mod font_package;
+mod font_subset;
+mod text_embed;

@@ -82,6 +82,10 @@ impl SnapshotJob {
 }
 /// Only the desktop host supplies owning-thread mutable access. No transport knows an Editor.
 pub trait Host {
+    // ---- Lane G ----
+    fn release(&mut self, _v: &crate::release::Request) -> Result<Reply, Error> {
+        Err(Error::new("unsupported_host", "desktop release surface unavailable"))
+    }
     fn shortcuts(&mut self, _v: &crate::application::ShortcutsRequest) -> Result<Reply, Error> {
         Err(Error::new("unsupported", "host has no shortcut writer"))
     }
@@ -420,6 +424,8 @@ impl Service {
             return Reply::failure(Error::new("unsupported", "import requires API 1.2"));
         }
         if [
+            // ---- Lane G ----
+            "release",
             "shortcuts",
             "command_index",
             "help",
@@ -510,6 +516,8 @@ impl Service {
                 }
             }
             match req {
+                // ---- Lane G ----
+                Request::Release(v) => crate::release::dispatch(host, v),
                 Request::Help(v) => host.help(v),
                 Request::Preferences(v) => host.preferences(v),
                 Request::Shortcuts(v) => host.shortcuts(v),
@@ -919,9 +927,17 @@ impl Service {
                     ))
                 }
                 Request::Edit(v) => {
+                    // ---- Lane A ----
                     let leaves = crate::economy::expand(v)?;
                     let ops: Vec<_> = leaves.iter().map(|l| &l.op).collect();
-                    if v.api != "1.2" && ops.iter().any(|op| op.slice4a() || op.lane_c()) {
+                    if v.api != "1.2"
+                        && ops.iter().any(|op| {
+                            op.slice4a()
+                                || op.lane_c()
+                                || op.live()
+                                || matches!(op, Operation::Appearance { .. } | Operation::Mask { .. })
+                        })
+                    {
                         return Err(Error::new("unsupported", "slice 4A verbs require API 1.2"));
                     }
                     // ---- Lane D: version opt-in ----
@@ -931,6 +947,11 @@ impl Service {
                     if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::TraceRgba { .. })) {
                         return Err(Error::new("unsupported", "trace_rgba requires API 1.2"));
                     }
+                    // ---- Lane H ----
+                    if v.api != "1.2" && ops.iter().any(|op| matches!(op, Operation::Typography { .. })) {
+                        return Err(Error::new("unsupported", "typography requires API 1.2"));
+                    }
+                    // ---- Lane H end ----
                     if v.api != "1.2"
                         && ops.iter().any(|op| {
                             matches!(
@@ -1065,6 +1086,13 @@ impl Service {
                     } else {
                         a.editor.publish_design_batch(batch).map_err(|reason| Error::new("busy", reason))?;
                     }
+                    // ---- Lane B w3-effects ----
+                    // Tool choice is transient: publish_batch intentionally preserves human tools.
+                    // Apply the explicitly requested tool only after the entire batch has succeeded.
+                    if ops.iter().any(|op| matches!(op, Operation::WidthTool { .. })) {
+                        a.editor.execute_ui(varos_core::EditCommand::LiveEffects(varos_core::effects::Action::Tool));
+                    }
+                    // ---- end Lane B w3-effects ----
                     a.editor.annotate_history(from, actor, format!("Agent batch · {} operations", v.ops.len()));
                     a.editor.annotate_history_verbs(
                         from,
@@ -1251,6 +1279,17 @@ impl Service {
         r
     }
     fn describe(&self, v: &Describe, host: &mut dyn Host) -> Result<Reply, Error> {
+        // ---- Lane A ----
+        if v.fields.as_ref().is_some_and(|f| f.as_slice() == ["appearance"]) {
+            if v.api != "1.2" {
+                return Err(Error::new("unsupported", "appearance detail requires API 1.2"));
+            }
+            let a = host.access(&v.board)?;
+            if v.rev.is_some_and(|r| r != a.editor.rev) {
+                return Err(Error::new("stale_revision", "document changed"));
+            }
+            return crate::appearance::describe(a.editor, v.ids.as_deref(), v.limit).map(Reply::success);
+        }
         // ---- w2-images ----
         if v.api == "1.2" && v.fields.as_ref().is_some_and(|f| f.as_slice() == ["images"]) {
             let a = host.access(&v.board)?;

@@ -24,6 +24,9 @@ fn anchors(ring: Vec<[f32; 2]>) -> Vec<Anchor> {
 }
 fn region(mut rings: Vec<Vec<[f32; 2]>>, source: &Path, paint: Paint) -> Path {
     let mut out = source.clone();
+    // ---- Lane B w3-effects ----
+    out.effects.clear();
+    // ---- end Lane B w3-effects ----
     out.corners.clear();
     out.closed = true;
     out.anchors = if rings.is_empty() { vec![] } else { anchors(rings.remove(0)) };
@@ -85,6 +88,11 @@ pub fn check(ed: &Editor, action: Action) -> Result<(), String> {
     if ids.is_empty() {
         return Err("Select paths first".into());
     }
+    // ---- Lane B w3-effects ----
+    if matches!(action, Action::Expand) {
+        crate::effects_document::bake_selected(&ed.doc, &ids.iter().copied().collect::<Vec<_>>())?;
+    }
+    // ---- end Lane B w3-effects ----
     for id in ids {
         let p = ed.doc.paths.iter().find(|p| p.id == id).ok_or("unknown path")?;
         if ed.doc.eff_locked(id) || ed.doc.eff_hidden(id) || !ed.in_isolation(id) {
@@ -115,6 +123,17 @@ pub fn check(ed: &Editor, action: Action) -> Result<(), String> {
 }
 impl Editor {
     pub fn path_advanced(&mut self, action: Action) {
+        // ---- Lane B w3-effects ----
+        if matches!(action, Action::Expand)
+            && self
+                .selected_pids()
+                .iter()
+                .any(|id| self.doc.pidx(*id).is_some_and(|i| !self.doc.paths[i].effects.is_empty()))
+        {
+            let _ = crate::effects_document::expand_appearance(self);
+            return;
+        }
+        // ---- end Lane B w3-effects ----
         if check(self, action).is_err() {
             return;
         }
@@ -152,11 +171,13 @@ impl Editor {
                 fill.stroke = Paint::None;
                 fill.stroke_width = 0.;
                 fill.stroke_style = StrokeStyle::default();
-                for a in &mut fill.anchors {
+                // ---- Lane B w3-effects ----
+                for a in fill.anchors.iter_mut().chain(fill.holes.iter_mut().flatten()) {
                     if a.id == 0 {
                         a.id = self.doc.nid();
                     }
                 }
+                // ---- end Lane B w3-effects ----
                 self.doc.paths[pi] = fill;
                 if !generated.anchors.is_empty() {
                     let parent = self.doc.node_of_path(id).and_then(|n| self.doc.node(n)).and_then(|n| n.parent);
