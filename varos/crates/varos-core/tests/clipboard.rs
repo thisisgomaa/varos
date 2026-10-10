@@ -59,6 +59,8 @@ fn add_layer(ed: &mut Editor, name: &str) -> u32 {
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     });
     ed.doc.roots.insert(0, id);

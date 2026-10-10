@@ -23,6 +23,10 @@
 //! behind a "+N" tab (a kit menu with counts); the selected filter is always shown. The ring is the
 //! kit's 2 px azure outside ring with a 1 px gap, shown for keyboard only.
 //! ⌘N / ⌘O belong to the host (K2 row 1); [`StartPage::command_keys`] is for the example gallery.
+// ---- Lane F: text adapters ----
+use crate::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use crate::shell::kit::text::ShapedPainter as _;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -996,7 +1000,7 @@ impl StartPage {
         d.version = version_text();
         // the filter row: what fits between the count and the view toggle
         let head = lay.head;
-        let title_w = width_of(ui, "Recent boards", roles::H2);
+        let title_w = width_of(ui, &crate::i18n::translate(ui.ctx(), "Recent boards"), roles::H2);
         let start = title_w + t::SB_COUNT_GAP + width_of(ui, &d.visible, roles::MONO) + t::SB_FILTERS_GAP;
         let seg_w = (t::SB_SEG_BTN_W + t::SB_SEG_PAD) * 2.0 + t::SB_SEG_PAD + t::KIT_STROKE * 2.0;
         let avail = head.width() - seg_w - t::SB_FILTERS_GAP - start;
@@ -1182,11 +1186,18 @@ impl StartPage {
     fn content(&mut self, ui: &mut Ui, l: &PageLayout, f: &mut Frame<'_>) {
         if l.first_launch {
             let p = ui.painter().clone();
-            let title = text(ui, FIRST_TITLE, roles::H1);
+            let title = text(ui, &crate::i18n::translate(ui.ctx(), FIRST_TITLE), roles::H1);
             let tx = l.title.center().x - title.size().x / 2.0;
             kb::galley_in_line(&p, tx, l.title.top(), l.title.height(), title, t::TEXT);
-            let lede = text_wrapped(ui, LEDE, roles::LEDE_FIRST, l.lede.width(), 2, Align::Center);
-            p.galley(egui::pos2(l.lede.center().x, l.lede.top()), lede, t::MUTED);
+            let lede = text_wrapped(
+                ui,
+                &crate::i18n::translate(ui.ctx(), LEDE),
+                roles::LEDE_FIRST,
+                l.lede.width(),
+                2,
+                Align::Center,
+            );
+            p.shaped_galley(egui::pos2(l.lede.center().x, l.lede.top()), lede, t::MUTED);
             self.actions(ui, l, f);
             keys(ui, l.keys, &[(&["Return"], "New board")], true);
             self.presets(ui, l, f);
@@ -1194,8 +1205,9 @@ impl StartPage {
         }
         self.actions(ui, l, f);
         let p = ui.painter().clone();
-        let lede = text_wrapped(ui, LEDE, roles::BODY, l.lede.width(), 2, Align::Min);
-        p.galley(l.lede.min, lede, t::MUTED);
+        let lede =
+            text_wrapped(ui, &crate::i18n::translate(ui.ctx(), LEDE), roles::BODY, l.lede.width(), 2, Align::Min);
+        p.shaped_galley(l.lede.min, lede, t::MUTED);
         keys(ui, l.keys, &[(&["↑", "↓"], "Move"), (&["Return"], "Open board"), (&["Delete"], REMOVE)], false);
         self.presets(ui, l, f);
         for (i, (row, rect)) in f.model.recovery().iter().zip(&l.recovered).enumerate() {
@@ -1257,13 +1269,13 @@ impl StartPage {
         p.rect_filled(panel, t::r_box(), t::PANEL);
         let head_bottom = panel.top() + t::KIT_STROKE + t::SB_PANEL_HEAD_H;
         p.hline(panel.x_range(), head_bottom - t::KIT_STROKE / 2.0, t::hairline());
-        let head = text(ui, "…or start with an artboard", roles::SMALL_MEDIUM);
+        let head = text(ui, &crate::i18n::translate(ui.ctx(), "…or start with an artboard"), roles::SMALL_MEDIUM);
         let hw = head.size().x;
         let line_top = panel.top() + t::KIT_STROKE;
         let line_h = t::SB_PANEL_HEAD_H - t::KIT_STROKE;
         let hx = panel.left() + t::KIT_STROKE + t::SB_PANEL_PAD_X;
         kb::galley_in_line(&p, hx, line_top, line_h, head, t::TEXT);
-        let sub = text(ui, "— true proportions", roles::SMALL);
+        let sub = text(ui, &crate::i18n::translate(ui.ctx(), "— true proportions"), roles::SMALL);
         kb::galley_in_line(&p, hx + hw + t::SB_PANEL_HEAD_GAP, line_top, line_h, sub, t::MUTED);
         for (i, (preset, cell)) in PRESETS.iter().zip(&l.preset_cells).enumerate() {
             if i > 0 {
@@ -1298,7 +1310,7 @@ impl StartPage {
         let x = kb::recovered_band(&p, rect);
         // buttons, right to left: Restore (solid), Discard (ghost) — "Restore" everywhere (owner 2026-10-06)
         let label_r = text(ui, RESTORE, roles::SMALL_MEDIUM);
-        let label_d = text(ui, "Discard", roles::SMALL_MEDIUM);
+        let label_d = text(ui, &crate::i18n::translate(ui.ctx(), "Discard"), roles::SMALL_MEDIUM);
         let w_r = kb::pill_width(&label_r, t::SB_BTN_PAD);
         let w_d = kb::pill_width(&label_d, t::SB_BTN_PAD);
         let top = rect.center().y - t::SB_BTN_H / 2.0;
@@ -1353,7 +1365,7 @@ impl StartPage {
     fn head(&mut self, ui: &mut Ui, l: &PageLayout, f: &mut Frame<'_>) {
         let p = ui.painter().clone();
         let h = l.head;
-        let title = text(ui, "Recent boards", roles::H2);
+        let title = text(ui, &crate::i18n::translate(ui.ctx(), "Recent boards"), roles::H2);
         let tw = title.size().x;
         kb::galley_in_line(&p, h.left(), h.top(), h.height(), title, t::TEXT);
         let count = text(ui, &self.derived.visible, roles::MONO);
@@ -1396,7 +1408,10 @@ impl StartPage {
             let id = ids::filter(tag.as_deref());
             let r = kb::filter_tab(ui, id, rect, label, count, selected, self.ring_on(&slot), label_s);
             let r = if truncated {
-                kit::ControlResponse { response: r.response.on_hover_text(label_s.as_str()), activated: r.activated }
+                kit::ControlResponse {
+                    response: r.response.shaped_hover_text(label_s.as_str()),
+                    activated: r.activated,
+                }
             } else {
                 r
             };
@@ -1411,7 +1426,7 @@ impl StartPage {
             let label = text(ui, &self.derived.more_label, roles::BODY);
             let w = t::SB_FILTER_PAD * 2.0 + label.size().x;
             let rect = Rect::from_min_size(egui::pos2(x, h.top()), egui::vec2(w, h.height()));
-            let empty = text(ui, "", roles::MONO);
+            let empty = text(ui, &crate::i18n::translate(ui.ctx(), ""), roles::MONO);
             let focused = self.ring_on(&Slot::MoreFilters);
             let r = kb::filter_tab(ui, ids::more_filters(), rect, label, empty, false, focused, "More tags");
             self.mark(f, &Slot::MoreFilters, rect);
@@ -1444,7 +1459,7 @@ impl StartPage {
             let ix = well.left() + t::SB_MISS_X;
             let ic = egui::pos2(ix + t::ICON_MD / 2.0, row_top + t::ICON_MD / 2.0);
             Icon::FileQuestion.paint(&wp, ic, t::ICON_MD, t::MUTED);
-            let g = text(ui, "File not found", roles::SMALL);
+            let g = text(ui, &crate::i18n::translate(ui.ctx(), "File not found"), roles::SMALL);
             kb::galley_in_line(&wp, ix + t::ICON_MD + t::SB_MISS_GAP, row_top, t::ICON_MD, g, t::MUTED);
         } else {
             well_dots(&wp, well);
@@ -1462,7 +1477,7 @@ impl StartPage {
         let top = well.bottom() + t::SB_CARD_PAD_TOP;
         let line = roles::NAME.line;
         let (right_w, date) = if card.missing {
-            let g = text(ui, "Missing", roles::TAG);
+            let g = text(ui, &crate::i18n::translate(ui.ctx(), "Missing"), roles::TAG);
             let w = kb::pill_width(&g, t::SB_MISS_PILL_PAD);
             let pill = Rect::from_min_size(
                 egui::pos2(x1 - w, top + (line - t::SB_MISS_PILL_H) / 2.0),
@@ -1484,7 +1499,7 @@ impl StartPage {
         let mut y = top + line;
         if let Some(desc) = card.description.as_deref().filter(|d| !d.is_empty()) {
             let g = text_wrapped(ui, desc, roles::DESC, x1 - x0, 2, Align::Min);
-            p.galley(egui::pos2(x0, y + t::SB_DESC_GAP), g, t::MUTED);
+            p.shaped_galley(egui::pos2(x0, y + t::SB_DESC_GAP), g, t::MUTED);
             y += t::SB_DESC_GAP + roles::DESC.line * 2.0;
         }
         let tags_top = y + t::SB_TAGS_GAP;
@@ -1558,10 +1573,10 @@ impl StartPage {
         let right = x + cw;
         let th = l.table_head;
         for (label, lx) in [("#", x + t::SB_NUM_PAD), ("Name", name_x), ("Tags", tags_x), ("Folder", folder_x)] {
-            let g = text(ui, label, roles::MICRO);
+            let g = text(ui, &crate::i18n::translate(ui.ctx(), label), roles::MICRO);
             kb::galley_in_line(&p, lx, th.top(), th.height(), g, t::MUTED);
         }
-        let g = text(ui, "Modified", roles::MICRO);
+        let g = text(ui, &crate::i18n::translate(ui.ctx(), "Modified"), roles::MICRO);
         let w = g.size().x;
         kb::galley_in_line(&p, right - w, th.top(), th.height(), g, t::MUTED);
         p.hline(th.x_range(), th.bottom() - t::KIT_STROKE / 2.0, t::hairline());
@@ -1603,7 +1618,7 @@ impl StartPage {
             let g = text(ui, folder, roles::MONO);
             kb::galley_in_line(&p, folder_x, rect.top(), rect.height(), g, t::MUTED);
             if card.missing {
-                let g = text(ui, "Missing", roles::TAG);
+                let g = text(ui, &crate::i18n::translate(ui.ctx(), "Missing"), roles::TAG);
                 let w = kb::pill_width(&g, t::SB_MISS_PILL_PAD);
                 let pill = Rect::from_min_size(
                     egui::pos2(right - w, rect.center().y - t::SB_MISS_PILL_H / 2.0),
@@ -1839,7 +1854,7 @@ fn placeholder(ui: &Ui, p: &egui::Painter, well: Rect, card: &BoardCard) {
         }
     }
     let g = text(ui, &initials(&card.name), roles::H2);
-    p.galley(front.center() - g.size() / 2.0, g, t::MUTED);
+    p.shaped_galley(front.center() - g.size() / 2.0, g, t::MUTED);
 }
 
 /// Realistic stand-in data (the mockup's ten boards, one Recovered row) for the example gallery and

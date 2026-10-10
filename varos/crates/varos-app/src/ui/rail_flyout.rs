@@ -1,5 +1,8 @@
 //! Lane D: provisional kit flyouts. Last-used tools are keyed by document + group.
 //! Glyph provenance: existing Lucide registry (ISC) and Varos originals; no reference assets copied.
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::{Op, ToolKind};
 use varos_app::shell::{
     kit::{self, Control, Icon, IconState},
@@ -22,6 +25,8 @@ pub(crate) const GROUPS: &[&[ToolKind]] = &[
     &[ToolKind::Scale, ToolKind::Shear, ToolKind::FreeTransform],
     // w2-gradients: the Gradient tool (G) in the kit rail (integration w2: the old construction strip is gone)
     &[ToolKind::Gradient],
+    // ---- Lane E: Phase 11 ----
+    &[ToolKind::Blend],
     &[ToolKind::Eyedropper, ToolKind::MagicWand],
     &[ToolKind::ShapeBuilder],
     &[ToolKind::Scissors, ToolKind::Knife, ToolKind::Eraser],
@@ -76,9 +81,11 @@ fn icon(tool: ToolKind) -> Icon {
         ToolKind::Curvature => Icon::DrawCurvature,
         ToolKind::PathEraser | ToolKind::Eraser => Icon::PathEraser,
         ToolKind::Join => Icon::Link,
+        ToolKind::Width => Icon::MoveArtwork,
         ToolKind::Text => Icon::Type,
         ToolKind::Gradient => Icon::PickerGradient,
         ToolKind::Hand => Icon::Hand,
+        ToolKind::Blend => Icon::Link,
         ToolKind::Zoom => Icon::ZoomIn,
         ToolKind::Lasso => Icon::Lasso,
         ToolKind::Pen | ToolKind::Convert => Icon::PenTool,
@@ -110,7 +117,7 @@ pub(crate) fn slot(ui: &mut egui::Ui, group: &[ToolKind], active: ToolKind, ops:
         IconState::Tool(active == state.last),
     );
     if group.len() > 1 {
-        result.response.clone().on_hover_text("Right-click or hold for more tools");
+        result.response.clone().shaped_hover_text("Right-click or hold for more tools");
     }
     let now = ui.input(|i| i.time);
     let down = result.response.is_pointer_button_down_on();

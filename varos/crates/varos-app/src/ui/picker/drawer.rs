@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::*;
 pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut PickerLayout, ops: &mut Vec<Op>) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(m.width(), t::PICKER_SWATCH_ROW_H), egui::Sense::hover());
@@ -29,9 +32,9 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
             if response.clicked() && !kit::field::blocked(ui.ctx()) {
                 ops.push(Op::PickerSet(m.target, c));
             }
-            response.on_hover_text(hex_of(c));
+            response.shaped_hover_text(hex_of(c));
         } else {
-            response.on_hover_text("Recent colour — empty");
+            response.shaped_hover_text("Recent colour — empty");
         }
     }
     let r = egui::Rect::from_center_size(
@@ -41,7 +44,7 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
     Icon::ChevronDown.paint(ui.painter(), r.center(), t::PICKER_GLYPH, t::MUTED);
     if ui
         .interact(r, ui.id().with("drawer"), egui::Sense::click())
-        .on_hover_text("Recent / Board / Document colours")
+        .shaped_hover_text("Recent / Board / Document colours")
         .clicked()
         && !kit::field::blocked(ui.ctx())
     {
@@ -71,7 +74,7 @@ pub(crate) fn show(ui: &mut egui::Ui, m: &mut ColorPanel, s: &Snap, layout: &mut
                         checker(&ui.painter_at(r), r, t::PICKER_CHECKER);
                     }
                     ui.painter().rect_filled(r, t::r_ctrl(), rgba_c32a(*c));
-                    if response.on_hover_text(hex_of(*c)).clicked() && !kit::field::blocked(ui.ctx()) {
+                    if response.shaped_hover_text(hex_of(*c)).clicked() && !kit::field::blocked(ui.ctx()) {
                         ops.push(Op::PickerSet(m.target, *c));
                     }
                 }

@@ -126,6 +126,8 @@ pub fn run(args: Vec<String>) -> Result<i32, String> {
         && verb != "import_file"
         && verb != "import_clipboard"
         && ![
+            // ---- Lane G ----
+            "release",
             "help",
             "import_svg",
             "preferences",

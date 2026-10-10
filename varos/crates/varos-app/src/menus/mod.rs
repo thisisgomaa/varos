@@ -12,6 +12,9 @@ use winit::keyboard::KeyCode;
 mod edit;
 mod file;
 mod help;
+// ---- Lane B w3-effects ----
+mod effect;
+// ---- end Lane B w3-effects ----
 mod object;
 mod select;
 #[cfg(test)]
@@ -114,6 +117,8 @@ pub fn file_row_enabled(f: FileCmd, s: DocMenuState) -> bool {
 /// What a clicked item does — each one an EXISTING path in the host.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MenuCmd {
+    // ---- Lane G ----
+    Release(crate::release_ui::DesktopAction),
     ImageSheet(crate::image_ui::SheetKind),
     // ---- Lane C ----
     LaneC(&'static str),
@@ -231,6 +236,9 @@ pub fn menus() -> Vec<(&'static str, Vec<Entry>)> {
         ("Edit", edit::rows()),
         ("Select", select::rows()),
         ("Object", object::rows()),
+        // ---- Lane B w3-effects ----
+        ("Effect", effect::rows()),
+        // ---- end Lane B w3-effects ----
         ("View", view::rows()),
         ("Window", window::rows()),
         ("Help", help::rows()),
@@ -242,6 +250,8 @@ fn app_rows() -> Vec<Entry> {
     use KeyCode as K;
     vec![
         Entry::Native(Native::About),
+        // ---- Lane G ----
+        item("app.updates", "Check for Updates…", None, MenuCmd::Release(crate::release_ui::DesktopAction::Check)),
         item(
             "app.preferences",
             "Preferences…",
@@ -303,6 +313,8 @@ pub fn egui_key(code: KeyCode) -> Option<egui::Key> {
         // ---- Lane E ----
         K::KeyY => E::Y,
         K::KeyF => E::F,
+        // ---- Lane E: Phase 11 ----
+        K::KeyB => E::B,
         K::KeyA => E::A,
         K::KeyC => E::C,
         K::KeyD => E::D,

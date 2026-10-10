@@ -15,6 +15,8 @@ mod panel;
 pub(crate) use panel::build_color_panel;
 mod modes;
 mod sliders;
+// ---- w3-cmyk ----
+mod managed;
 mod wheel;
 pub(crate) use cluster::*;
 pub(crate) use wheel::WheelCache;
@@ -41,6 +43,8 @@ enum Gesture {
 }
 
 pub(crate) struct ColorPanel {
+    // ---- w3-cmyk ----
+    managed: managed::State,
     gradient: gradient::State,
     pub(crate) target: MTarget,
     pub(crate) hsva: Rgba,
@@ -83,6 +87,8 @@ impl ColorPanel {
         let c = seed.unwrap_or([1.0, 0.0, 0.0, 1.0]);
         let h = rgb_to_hsv(c);
         Self {
+            // ---- w3-cmyk ----
+            managed: managed::State::default(),
             gradient: Default::default(),
             target,
             hsva: [h[0], h[1], h[2], c[3]],
@@ -109,6 +115,9 @@ impl ColorPanel {
         let fresh = Self::new(target, seed, mixed);
         let hue = self.hsva[0];
         let same_target = self.target == target;
+        // ---- w3-cmyk ----
+        self.managed = managed::State::default();
+        self.channel_state = None;
         self.target = target;
         self.hsva = fresh.hsva;
         if same_target && (seed.is_none() || self.hsva[1] < 0.001) {
@@ -270,6 +279,8 @@ pub(crate) fn open_picker(panel: &mut Option<ColorPanel>, target: MTarget, ed: &
         m.selection = ed.selected_pids();
         m.config = Config::Full;
         gradient::seed(m, ed);
+        // ---- w3-cmyk ----
+        managed::seed(m, ed);
     }
 }
 /// Selection and external paint edits re-seed; our live drag retains its HSV (including grey hue).
@@ -314,6 +325,8 @@ pub(crate) fn follow_selection(m: &mut ColorPanel, ed: &mut Editor) {
         m.reseed(target, c, mixed);
         m.selection = selection;
     }
+    // ---- w3-cmyk ----
+    managed::seed(m, ed);
 }
 pub(crate) struct CanvasSampling {
     key: ([f32; 2], f32, f32, egui::Rect),

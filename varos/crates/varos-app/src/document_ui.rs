@@ -1,4 +1,7 @@
 //! Provisional kit sheet; owner design review pending (Phase 1.1/1.5).
+// ---- Lane F: shaped chrome ----
+use varos_app::shell::kit::text::ShapedUi as _;
+// ---- end Lane F ----
 use crate::app_command::SessionId;
 use egui::{Id, RichText, Stroke};
 use varos_app::shell::{
@@ -97,7 +100,7 @@ pub fn draw(
                 .show(ui, |ui| {
                     ui.set_width(t::DOC_SHEET_W);
                     ui.spacing_mut().item_spacing = egui::vec2(t::KIT_GAP, t::KIT_TEXT_GAP);
-                    ui.label(
+                    ui.shaped_label(
                         RichText::new(if s.info { "Document Info" } else { "Document Setup" })
                             .color(t::TEXT)
                             .font(t::body()),
@@ -148,6 +151,8 @@ pub fn draw(
                         kit::notice(ui, "Links: —");
                         kit::notice(ui, "Fonts: —");
                     } else {
+                        // ---- w3-cmyk ----
+                        crate::ui::colour_management::setup(ui, ed, ops);
                         let units = varos_core::Unit::ALL.map(|u| u.suffix());
                         if let Some(i) = kit::text_dropdown(
                             ui,

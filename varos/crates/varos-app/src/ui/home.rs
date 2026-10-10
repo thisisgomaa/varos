@@ -11,7 +11,9 @@ impl Ui {
         let input = self.state.take_egui_input(window);
         self.start_page.recovery_status.clone_from(&self.recovery.footer);
         self.export_sheet = None; // Home has no document to export
-        let out = self.ctx.run_ui(input, |root| {
+
+        // ---- Lane G ----
+        let (out, release_cmds) = lane_g::frame(&self.ctx, input, &mut self.release, |root| {
             build_home_frame(
                 root,
                 &self.top,
@@ -30,6 +32,7 @@ impl Ui {
             // Lane C: New Document / export sheets are reachable from Home too (integration w2)
             lane_c::sheets(root.ctx(), &mut self.app_cmds, &mut Vec::new(), None);
         });
+        self.app_cmds.extend(release_cmds);
 
         // K3: Home draws no document field; any edit left open (an invalid one a non-user command
         // passed) is closed here — there is no document to commit into
@@ -44,7 +47,8 @@ impl Ui {
             out.platform_output.cursor_icon = egui::CursorIcon::Default;
             out
         };
-        self.state.handle_platform_output(window, out.platform_output);
+        // ---- Lane G ----
+        lane_g::platform(&mut self.state, window, &self.ctx, out.platform_output);
         self.repaint_at =
             out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| Instant::now().checked_add(v.repaint_delay));
         let jobs = self.ctx.tessellate(out.shapes, out.pixels_per_point);

@@ -7,21 +7,111 @@ either as a raw JSON file or embedded inside a valid PDF container (the `.ai` pa
 refusal copy. The decision record behind it is `docs/adr/ADR-0008-vrs-format-versioning.md`; read that
 for *why*, this for *what byte, what key, what number*.
 
-## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — current writer **9**
+## Wave-3 formats 10–14 (stamped 2026-10-10, `integ/w3`) — current writer **14**
+
+Final numbers, binding merge order: **10** appearance · **11** live effects + width profiles ·
+**12** explicit colour sources · **13** live objects · **14** typography. `FORMAT_VERSION =
+TYPOGRAPHY_VERSION = 14`; every era constant is pinned literally (`varos-core/tests/format_pin.rs`:
+`(APPEARANCE, EFFECTS, COLOUR, LIVE, TYPOGRAPHY) = (10, 11, 12, 13, 14)`, readable 1..=14, no gaps).
+
+| From → to | Named pure step | Keys introduced (refused under any older stamp, before typed decode) |
+|---|---|---|
+| 9 → 10 | `migrate_v9_to_v10` | `paths[].stack`, `nodes[].look`, role `MaskAlpha` (`format/appearance_keys.rs`) |
+| 10 → 11 | `migrate_v10_to_v11` | `paths[].effects`, `stroke_style.width_profile` — also inside an appearance stroke entry (`format/effect_keys.rs`) |
+| 11 → 12 | `migrate_v11_to_v12` | `colour_mode`, `output_profile`, any `{"type":"managed"}` paint anywhere in `doc` (`colour_format.rs`) |
+| 12 → 13 | `migrate_v12_to_v13` | `nodes[].kind.Live` (`live/format.rs`) |
+| 13 → 14 | `migrate_v13_to_v14` | `typography` (`typography_format.rs`) |
+
+Every step is an identity on the decoded document (no validation inside a step; the loader
+validates after the chain). The lanes' temporary reservations (identity v9/v10/v11 rows, the text
+lane's v9→v14 bridge and its "10–13 are newer" guard) are gone. Combined key order:
+`Document` = `…, images, assets, swatches, text_boxes, typography, paths, …`; `Path` = `stack,
+effects, id, …` (both omitted when empty, so canonical v9 bodies (the compact JSON Varos itself writes, e.g. `v9/mixed.json`) re-save byte-identical apart from the stamp; the pretty-printed lane inputs `lane_c/next_corners.json`, `lane_c/next_live_round.json` and `w3-effects/v9-plain.json` are canonicalised on save (same decoded document, compact bytes — kept frozen as decode inputs); and rewriting a native v9 container changes its PDF text representation (text is embedded as real text since v14 instead of outlines), so only the outlined appearance and the non-text resources are compared to the v9 oracle). Every lane's refused-future fixture claims **15**. Frozen fixtures: per-lane families
+`v10/`, `w3-effects/`, `v12/`, `v13/`, `v14/`; cross-era refusals `w3-cross-era/` (v10 + width
+profile in a stack stroke, v11 + managed colour, v11 + live node, v13 + typography); the mixed
+`v14-mixed/` document (image + gradient + corners + stack + effect + CMYK swatch + live Repeat +
+styled area text) pins key order and round-trips byte-for-byte in JSON and the native container
+(`varos-pdf/tests/format_v14.rs`, `varos-raster/tests/w3_mixed_v14.rs`). Frozen v9–v13 header
+gates refuse v14 raw JSON, the embedded model and the catalog stamp before decode.
+
+Evaluation order on a derived path (canvas, CPU, PDF, SVG): live node → live effects → stroke →
+appearance stack; Live Corners resolve on the authored anchors first, because corner parameters
+index authored anchors. Text nodes carry no appearance stack (text paint stays simple).
+
+The lane sections below are kept as the per-lane contracts; where they say "integration pending",
+"reserved" or describe temporary bridges, this section supersedes them.
+
+## Lane A format 10 (wave-3 worktree, integration pending)
+
+The writer is 10 (`APPEARANCE_VERSION = 10`); earlier era constants remain unchanged.
+`migrate_v9_to_v10` is a named pure identity migration: absent keys keep earlier semantics.
+`Path.stack` is optional (empty is omitted). Nonempty stacks contain exactly one base fill and
+one base stroke, plus owned fill/stroke entries with paint, Normal blend, visibility and opacity.
+Extra strokes own width in points and StrokeStyle. `Node.look` is optional on containers and
+stores opacity/isolate. `GroupRole::MaskAlpha` uses the existing group `mask_child` form;
+several masks are nested groups. Stack, look and MaskAlpha are refused in every stamp below 10.
+Frozen JSON/PDF/SVG and refusal artifacts: `varos-core/tests/fixtures/v10/`, with SHA256SUMS.
+Plain v9 model bytes remain identical after replacing only the format stamp. Original v5–v9
+fixtures are retained; new v11 copies serve future-format refusals for this writer.
+Bridge 1.2 discovers appearance/mask through list_verbs/schema; legacy fixtures stay frozen.
+The integrator rechains this step with the later optional wave-3 keys.
+
+## Lane H format 14 — worktree contract (2026-10-10, integration pending)
+
+This lane writes JSON `varos:14` and PDF `/VAROS_SchemaVersion 14`. The integrated
+baseline below remains v9. `Document.typography` is optional, defaults empty, and
+is omitted when empty. Existing plain-document keys and their order are unchanged.
+
+| Key | Wire value and constraints |
+|---|---|
+| `typography.frames` | Map from TextBox object IDs to frame records; at most 4,096, no dangling IDs. |
+| `frames[id].binding` | `null`, `{"Area":{"path":ID,"inset":N}}`, or `{"Path":{"path":ID,"start":N,"end":N,"offset":N,"flip":BOOL,"effect":"Rainbow" or "Skew"}}`. Path ID must exist. Area needs a closed path. Inset/start/end are finite 0–1,000,000; offset is finite ±1,000,000. |
+| `frames[id].binding_origin` | Optional `[x,y]`, omitted when absent; finite coordinates bounded to ±10,000,000. Captures the text anchor when binding. Composition converts live boundary world geometry into text-unit coordinates, then adds `text.frame - binding_origin`. Absence preserves legacy binding placement. Joint boundary/text translation and clipboard offset move this origin too. |
+| `frames[id].next` | Optional next TextBox ID; one incoming link, no cycles, no independent target source; path text cannot be threaded. Story source stays in its root. |
+| `frames[id].characters` | Up to 4,096 `{start,end,name}` assignments: nonempty UTF-8 byte ranges in the source, resolved named character style. Source edits remap ranges. |
+| `frames[id].paragraph` | Optional named paragraph style. |
+| `frames[id].features` | Up to 64 four-ASCII-alphanumeric OpenType tags, integer values 0–65,535. Required Arabic `rlig/ccmp/locl/curs/mark/mkmk` cannot be disabled. |
+| `typography.characters` | Up to 1,024 names mapping to `{parent: NAME or null, style: TextStyle or null}`. Whole-style inheritance; no per-field cascading. |
+| `typography.paragraphs` | Up to 1,024 names mapping to `{parent: NAME or null, style: ParaStyle or null}`. Line height 1.3–20. |
+
+Names are nonempty trimmed UTF-8, at most 128 bytes. Parent references must resolve;
+cycles or chains with no definition are refused. All applied and unused definitions
+are validated using the existing TextStyle/ParaStyle rules. Typography records reject
+unknown fields. Optional frame members default to null/empty; default records may
+serialize those members explicitly. No variable-axis key is supported.
+
+`migrate_v13_to_v14` is a named pure identity migration for pre-typography documents;
+it refuses a nonempty typography sidecar under era 13. A typography key under any
+stamp <14 is refused before typed decode, including an empty key. Frozen v14 JSON,
+PDF, SHA-256 and refusal fixtures live in `varos-core/tests/fixtures/v14/`.
+
+**Isolated-lane limitation:** this checkout reads 1–9 and 14, temporarily bridges
+9→14, and refuses reserved 10–13 plus versions >14 before typed decode. It does
+not claim to read sibling wave-3 schemas. The integrator must replace the bridge
+and reserved-version guard with the real ordered v9→10→11→12→13→14 migrations;
+identity placeholders here would falsely advertise support for absent sibling keys.
+
+Native containers retain all editable source. Deliverable PDF substitutes eligible
+opaque straight text with subset TrueType/CID CFF fonts and logical ToUnicode;
+page/clip-ineligible glyphs are not emitted as text. Curved, translucent, variable,
+or licence-restricted fonts use reported outlines. SVG remains outlines by default.
+Font packages require permitted redistribution and contain hashes and licences.
+
+## Wave-2 formats 6–9 (stamped 2026-10-09, `integ/w2`) — integrated baseline writer **9**
 
 Final numbers, binding merge order: **6** images · **7** gradients + swatches · **8** editable text ·
-**9** Live Corners + the optional Quick Look preview (one bump). `FORMAT_VERSION = CORNERS_VERSION = 9`;
+**9** Live Corners + the optional Quick Look preview (one bump). At wave-2 integration, `FORMAT_VERSION = CORNERS_VERSION = 9`;
 `IMAGE_VERSION = 6`, `GRADIENT_VERSION = 7`, `TEXT_FORMAT_VERSION = 8`, `PREVIEW_FORMAT_VERSION = 9`
 (pinned literally by `varos-core/tests/format_pin.rs`). JSON `varos` and PDF `/VAROS_SchemaVersion`
 always agree. `MIGRATIONS` is the contiguous named pure chain `migrate_v5_to_v6` (images, identity),
 `migrate_v6_to_v7` (gradients, identity, no validation), `migrate_v7_to_v8` (text,
 `text_format::migrate_to_text_boxes`), `migrate_v8_to_v9` (corners + preview, identity); Bridge 1.2
-`readable_vrs` is derived from that table (1–9). Each era's keys are refused under an older stamp
+`readable_vrs` is derived from that table (1–9 at wave-2 integration, 1–10 in Lane A). Each era's keys are refused under an older stamp
 before typed decode: images (<6), gradient paints/swatches (<7), text (<8), corners (<9) and the
 PDF-catalog preview keys (<9). Every new key is optional with a default, so plain documents keep
 their bytes apart from the stamp. `Document` key order (frozen by `fixtures/v9/mixed.json`):
 `name, description, tags, images, assets, raster_effects_ppi, swatches, text_boxes, paths, …`.
-Each lane's refused-future fixture is format **10**. Old-reader gates v4–v8 are frozen in
+Each wave-2 lane's historical refused-future fixture is format **10** and remains frozen; active future gates now use separate v11 copies. Old-reader gates v4–v8 are frozen in
 `varos-pdf/tests/{old_reader_harness,format_v9}.rs` (raw JSON and PDF container).
 
 ### Format 8 — editable text
@@ -44,7 +134,7 @@ legacy-key, Arabic-tracking, future-JSON/PDF refusal cases, with SHA256SUMS (res
 `mixed.json` and `refuse_arabic_tracking.json` → 8; `refuse_newer.json`/`.pdf` → 10; `refuse_text_in_v5.json`
 stays 5; new `refuse_text_in_v7.json`).
 The PDF tests exercise the frozen v5 reader gate against current text output before typed decode.
-Native files retain editable source; PDF/SVG deliverables report **text exported as outlines**.
+Native files retain editable source; this v8-era writer outlined PDF/SVG text. The v14 lane adds eligible PDF text embedding (below).
 
 ## Implementation status — Lane F preview (2026-10-09, merged)
 
@@ -163,7 +253,12 @@ S5-B now supplies the version-first gate through `format::decode_model`, includi
 | 6 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` intermediate | images: optional `doc.images`, `doc.assets`, `doc.raster_effects_ppi`, `NodeKind::Image`; binary resources in the PDF container ([ADR-0008 images amendment](../adr/ADR-0008-amendment-next-images.md)). |
 | 7 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` intermediate | gradients: tagged `fill`/`stroke` gradient and `swatch_ref` paints, optional `doc.swatches` ([gradients amendment](../adr/ADR-0008-amendment-next-gradients.md)). |
 | 8 | **legacy, readable through migration** (STAMPED 2026-10-09; shipped by stage 1) | `integ/w2` stage 1 | editable text: optional `doc.text_boxes`, `NodeKind::Text` (section "Format 8"). |
-| 9 | **current writer** (stamped 2026-10-09) | `integ/w2` | Live Corners: optional `doc.paths[].corners` ([live corners amendment](../adr/ADR-0008-live-corners-next-writer.md)); optional PDF-catalog `/VAROS_Preview` + `/VAROS_PreviewVersion` (Lane F, container-only). |
+| 9 | **legacy, readable through identity migration** (stamped 2026-10-09) | `integ/w2` | Live Corners: optional `doc.paths[].corners` ([live corners amendment](../adr/ADR-0008-live-corners-next-writer.md)); optional PDF-catalog `/VAROS_Preview` + `/VAROS_PreviewVersion` (Lane F, container-only). |
+| 10 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | appearance: optional `doc.paths[].stack`, `doc.nodes[].look`, role `MaskAlpha` (Lane A section). |
+| 11 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | live effects: optional `doc.paths[].effects`, `stroke_style.width_profile` (ADR-0016). |
+| 12 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | colour sources: managed paints, `doc.colour_mode`, `doc.output_profile` (ADR-0017). |
+| 13 | **legacy, readable through identity migration** (stamped 2026-10-10) | `integ/w3` intermediate | live objects: `NodeKind::Live{Blend,Repeat,Envelope}` ([LIVE_NODES_V13.md](LIVE_NODES_V13.md)). |
+| 14 | **current writer** (stamped 2026-10-10) | `integ/w3` | typography: optional `doc.typography` (named styles, OpenType features, area/path bindings, threads). |
 
 ## 6. Migration v1 → v2
 
@@ -594,3 +689,37 @@ limits and an 8 MiB decoder budget before decoding, and reuses those validated b
 best-effort; missing/corrupt/unwritable cache falls back to an in-memory thumbnail. The signed macOS
 Quick Look extension and blob-aware integration remain moderator work, requiring native acceptance.
 <!-- End Lane F fix round -->
+
+<!-- ---- Lane B w3-effects ---- -->
+## Provisional wave-3 v11 — Phase 10 live effects
+Writer: 11. Previous era: 10 (Lane A appearance; identity reservation in this standalone worktree).
+Pure step: migrate_v10_to_v11, typed defaults only. Integrator rechains v9→v10→v11.
+Path.effects: ordered tagged offset/zig_zag/transform/warp recipes, empty list omitted.
+StrokeStyle.width_profile: optional {points:[[length_fraction,left_factor,right_factor],…]}, None omitted.
+Seven presets are canonical point arrays; custom points have the same representation.
+Reader key gates refuse both new keys in eras 1–10, including empty/null values.
+Frozen JSON/refusal corpus: crates/varos-core/tests/fixtures/w3-effects, SHA256SUMS.
+Export resolves independent copies; editable embedded models retain the authored stack.
+No change to historical fixtures; historical malformed-v10 assertions now test typed refusal.
+<!-- ---- end Lane B w3-effects ---- -->
+<!-- ---- w3-cmyk ---- -->
+### Format 12: explicit colour sources (Lane C)
+
+`COLOUR_VERSION = 12`. `Document.colour_mode` defaults to `Rgb` and is omitted for RGB;
+`output_profile` is optional `{name,data}` with bounded ICC metadata encoded as hex.
+Existing null/solid-array paints retain their exact JSON bytes. New paints are
+`{"type":"managed","value":{"colour":{"model":"rgb|cmyk|gray|spot",...},"alpha":1}}`.
+Source channels/tint are finite 0..1; named spot inks require a consistent CMYK alternate.
+Swatches retain the managed paint and existing global identity. See proposed ADR-0017.
+
+`migrate_v11_to_v12` is a named pure identity migration; missing keys are RGB defaults.
+This worktree uses reserved identity v9→v10→v11 steps; the integrator must replace these
+with the other wave-3 lane migrations before merging. Pre-v12 colour keys/managed tags
+are refused before typed decoding; unknown future stamps are refused. Frozen v12 fixtures
+live in `varos-core/tests/fixtures/v12` and PDF operator goldens in `varos-pdf/tests/fixtures/v12`.
+Historical fixtures remain unchanged. RGB authored bodies/page operators are identical;
+container/model stamps and dependent PDF offsets/lengths necessarily advance.
+<!-- ---- end w3-cmyk ---- -->
+<!-- Lane E: Phase 11 -->
+## Reserved wave-3 v13: live nodes
+`nodes[].kind.Live` stores source-child Blend, Repeat and Envelope parameters; derived paths are runtime only. `migrate_v12_to_v13` is pure identity. Versions ≤12 must not contain `Live`. Lane-local preceding identity rows are integration placeholders, not implementations of sibling phases. Full contract: [LIVE_NODES_V13.md](LIVE_NODES_V13.md). Frozen fixture family: `varos-core/tests/fixtures/v13/`.

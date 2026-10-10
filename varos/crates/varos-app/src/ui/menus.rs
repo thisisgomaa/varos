@@ -1,3 +1,9 @@
+// ---- Lane F: shaped chrome ----
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
+use varos_app::shell::kit::text::ShapedPainter as _;
+// ---- end Lane F ----
 use super::*;
 
 pub(crate) fn menu_open(ui: &egui::Ui, id: egui::Id) -> bool {
@@ -76,11 +82,13 @@ pub(crate) const MENU_R: u8 = 4; // outer radius — sharp, a work tool (was 10:
 
 /// One menu row: label left (after the gutter), shortcut right. Returns true on click.
 pub(crate) fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
+    let translated = varos_app::i18n::translate(ui.ctx(), label);
+    let label = translated.as_ref();
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), MENU_ROW_H), egui::Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::ZERO, HOVER); // full-bleed, square — AI-crisp
     }
-    ui.painter().text(
+    ui.painter().shaped_text(
         egui::pos2(rect.left() + MENU_GUTTER, rect.center().y),
         Align2::LEFT_CENTER,
         label,
@@ -88,7 +96,7 @@ pub(crate) fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
         TEXT,
     );
     if !shortcut.is_empty() {
-        ui.painter().text(
+        ui.painter().shaped_text(
             egui::pos2(rect.right() - 12.0, rect.center().y),
             Align2::RIGHT_CENTER,
             shortcut,
@@ -103,20 +111,24 @@ pub(crate) fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
 /// `Sense::hover` only — it can never be clicked, so it cannot become an "enabled dead button" (spec
 /// §2 forbids those). A tooltip carries the reason.
 pub(crate) fn menu_row_disabled(ui: &mut egui::Ui, label: &str, tip: &str) {
+    let translated = varos_app::i18n::translate(ui.ctx(), label);
+    let label = translated.as_ref();
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), MENU_ROW_H), egui::Sense::hover());
-    ui.painter().text(
+    ui.painter().shaped_text(
         egui::pos2(rect.left() + MENU_GUTTER, rect.center().y),
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(12.0),
         DISABLED,
     );
-    resp.on_hover_text(tip);
+    resp.shaped_hover_text(tip);
 }
 
 /// A toggle row: same skeleton as `menu_row`, with a hand-drawn ✓ in the gutter when on —
 /// Illustrator's Window-menu look (NOT a checkbox; Ahmed 07-07).
 pub(crate) fn check_row(ui: &mut egui::Ui, label: &str, checked: bool) -> bool {
+    let translated = varos_app::i18n::translate(ui.ctx(), label);
+    let label = translated.as_ref();
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), MENU_ROW_H), egui::Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::ZERO, HOVER);
@@ -127,7 +139,7 @@ pub(crate) fn check_row(ui: &mut egui::Ui, label: &str, checked: bool) -> bool {
         ui.painter().line_segment([c + egui::vec2(-4.0, -0.2), knee], Stroke::new(1.6, TEXT));
         ui.painter().line_segment([knee, c + egui::vec2(4.2, -3.4)], Stroke::new(1.6, TEXT));
     }
-    ui.painter().text(
+    ui.painter().shaped_text(
         egui::pos2(rect.left() + MENU_GUTTER, rect.center().y),
         Align2::LEFT_CENTER,
         label,

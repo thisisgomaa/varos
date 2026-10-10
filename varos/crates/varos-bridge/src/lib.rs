@@ -1,4 +1,5 @@
 //! API 1.0/1.1 adapters. No window, GPU, provider or filesystem editing dependency.
+// ---- Lane G ----
 pub mod cli;
 pub mod conn;
 mod design;
@@ -7,6 +8,7 @@ mod economy;
 pub mod files;
 pub mod ipc;
 pub mod mcp;
+pub mod release;
 pub mod service;
 pub use dto::{Error, Reply, Request};
 pub use service::{BoardAccess, BoardInfo, Context, Host, Service};
@@ -76,6 +78,8 @@ mod select_transform;
 mod drawing;
 // ---- Lane C ----
 mod path_advanced;
+// ---- Lane E: Phase 11 ----
+mod live;
 pub mod storage_paths;
 
 pub mod templates;
@@ -93,3 +97,13 @@ pub mod application;
 
 // ---- Lane F ----
 mod action_recording;
+
+// ---- Lane A ----
+mod appearance;
+// ---- Lane B w3-effects ----
+mod effects;
+// ---- end Lane B w3-effects ----
+// ---- w3-cmyk ----
+mod colour_management;
+// ---- Lane H ----
+mod typography;

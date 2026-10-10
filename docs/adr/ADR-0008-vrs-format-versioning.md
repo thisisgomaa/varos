@@ -136,6 +136,7 @@ becomes v5 → v6).
 
 Accepted — product owner (Ahmed), 2026-09-24. Amended 2026-10-04 (format 3, board metadata — owner's
 Board decision in `START_V2_BOARDS.md`; the amendment itself awaits independent review). Amended
-2026-10-07 (format 4, artboard ids — owner's Bridge "Instagram Story" ask; awaits independent review).
+2026-10-07 (format 4, artboard ids — owner's Bridge "Instagram Story" ask; awaits independent review). Amended
+2026-10-10 (formats 10–14, wave 3 — [ADR-0008-amendment-wave3-formats-10-14.md](ADR-0008-amendment-wave3-formats-10-14.md); awaits independent review).
 
 **Number note:** 0008 is taken by this ADR because it is filed first. The MCP study (`docs/studies/2026-09-23-MCP_CONTROL_STUDY.md`) and the Online study (`docs/studies/2026-09-23-ONLINE_AND_MAC_STUDY.md`) also propose "ADR-0008"; they take the next free numbers when their ADRs are drafted.

@@ -13,6 +13,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+// ---- Lane H ----
+#[path = "typography_clipboard.rs"]
+mod typography_clipboard;
+// ---- Lane H end ----
+
 use crate::geom::Pt;
 use crate::model::{Anchor, Document, GroupRole, Node, NodeKind, Path};
 
@@ -30,6 +35,10 @@ pub struct Clipboard {
     paths: Vec<Path>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     texts: Vec<crate::text::TextBox>,
+    // ---- Lane H ----
+    #[serde(default, skip_serializing_if = "crate::typography::Typography::is_empty")]
+    typography: crate::typography::Typography,
+    // ---- Lane H end ----
     /// Copied leaf + Group nodes. `parent` is `None` for a top-level item; `children` only list copied
     /// nodes; a clip group whose mask was not copied is demoted to a plain group.
     nodes: Vec<Node>,
@@ -70,13 +79,20 @@ impl Clipboard {
     }
     // ---- Lane G: one detached tree for mixed path/image/text selections. ----
     pub fn capture_objects(doc: &Document, pids: &[u32], texts: &[u32]) -> Clipboard {
+        // ---- Lane H: capture the complete story and referenced live boundaries ----
+        let texts = typography_clipboard::story_ids(doc, texts);
+        let texts = texts.as_slice();
         let mut all = pids.to_vec();
+        all.extend(
+            texts.iter().filter_map(|id| doc.typography.frames.get(id)?.binding.map(crate::typography::binding_path)),
+        );
+        // ---- Lane H end ----
         for i in &doc.images {
             if pids.contains(&i.id) {
                 let mut node = doc.node_of_path(i.id);
                 while let Some(id) = node {
                     let Some(n) = doc.node(id) else { break };
-                    if n.role == GroupRole::Clip {
+                    if n.role.is_mask_group() {
                         if let Some(mask) = n.mask_child {
                             all.extend(doc.node_paths(mask));
                         }
@@ -156,6 +172,8 @@ impl Clipboard {
                 clip_exempt: false,
                 xform: Default::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             roots.push((doc.pidx(pid).unwrap_or(0), spare));
@@ -222,6 +240,9 @@ impl Clipboard {
                 .map(|(pi, _)| doc.images[*pi - doc.paths.len()].clone())
                 .collect(),
             resources: Default::default(),
+            // ---- Lane H ----
+            typography: typography_clipboard::capture(doc, texts),
+            // ---- Lane H end ----
             layers,
             texts: doc.text_boxes.iter().filter(|t| texts.contains(&t.id)).cloned().collect(),
             // w2-gradients: copied paints are resolved (a swatch table is per document)
@@ -232,6 +253,14 @@ impl Clipboard {
                     let mut p = doc.paths[pi].clone();
                     p.fill = p.fill.resolved(doc);
                     p.stroke = p.stroke.resolved(doc);
+                    // ---- Lane A ----
+                    for entry in &mut p.stack {
+                        if let crate::appearance::StackItem::Fill { paint, .. }
+                        | crate::appearance::StackItem::Stroke { paint, .. } = entry
+                        {
+                            *paint = paint.resolved(doc);
+                        }
+                    }
                     p
                 })
                 .collect(),
@@ -279,6 +308,8 @@ impl Clipboard {
                             clip_exempt: false,
                             xform: Default::default(),
                             role: GroupRole::Normal,
+                            // ---- Lane A ----
+                            look: None,
                             mask_child: None,
                         });
                         if let Some(parent) = parent {
@@ -350,6 +381,10 @@ impl Clipboard {
                     Some(&np) => NodeKind::Image(np),
                     None => continue,
                 },
+                // ---- Lane E: Phase 11 ----
+                NodeKind::Live(kind) => {
+                    NodeKind::Live(crate::live::map_mesh_kind(crate::live::remap_kind(kind, &pmap), moved))
+                }
                 k => k,
             };
             let xform = if n.xform.is_identity() { n.xform } else { n.xform.translated(offset) };
@@ -362,6 +397,8 @@ impl Clipboard {
                         .unwrap_or_else(|| hosts.get(&n.id).copied().unwrap_or(host)),
                 ),
                 children: n.children.iter().filter_map(|c| nmap.get(c).copied()).collect(),
+                // ---- Lane A ----
+                look: n.look,
                 mask_child: n.mask_child.and_then(|m| nmap.get(&m).copied()),
                 xform,
                 ..n.clone()
@@ -388,6 +425,9 @@ impl Clipboard {
         }
         doc.images.extend(new_images);
         doc.paths.extend(new_paths);
+        // ---- Lane H ----
+        typography_clipboard::paste(&self.typography, doc, &pmap, offset);
+        // ---- Lane H end ----
         doc.flatten();
         ids
     }

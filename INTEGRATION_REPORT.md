@@ -1,3 +1,92 @@
+# Wave 3 integration (`integ/w3`, 2026-10-10)
+
+Base: main `1851875` (format v9). Merged in the binding order with `git merge --no-ff`, one commit per
+lane (each lane tip = implementation → cross-model review → fix round, all committed):
+`dfde7b6` render · `db321fc` appearance · `14dcbe4` effects · `6ea7cc2` cmyk · `24c8b10` live ·
+`4418a2e` text2 · `aec8679` arabic-ui · `c54219f` a11y-updates · `ccf3d4a` format-14 finalisation.
+Nothing pushed; main untouched. `REPORT.md`: previous content kept, each lane report appended.
+
+## Format (binding numbers)
+- Chain **v9 → v10 appearance → v11 effects → v12 colour → v13 live → v14 typography**;
+  `FORMAT_VERSION = TYPOGRAPHY_VERSION = 14`, every era constant pinned literally and
+  `readable_versions() == 1..=14` (`format_pin.rs`). Named pure steps `migrate_v9_to_v10` …
+  `migrate_v13_to_v14` (v12→13 and v13→14 wrap the lanes' identities; the text lane's in-migration
+  typography check removed — its pre-decode gate already refuses the key).
+- Removed lane scaffolding: effects' `reserved_v9_to_v10`, cmyk's `reserved_colour_era` ×2, live's
+  `migrate_reserved_era` ×3, text2's v9→v14 bridge and its "10–13 are newer" version guard.
+- Era gates before typed decode: appearance (<10), effects (<11, now also `width_profile` inside an
+  appearance stroke entry — new integration gate), colour (<12, any managed paint), live (<13, moved
+  next to the other gates, after the container check), typography (<14).
+- Every refused-future fixture → **15**, restamped in place (JSON + PDF same-length stamps); the
+  appearance lane's `*_v11` duplicates and quicklook `future-v10/11` replaced by the originals /
+  `future-v15`; lane stamp helpers (`colour_era`, `support/future.rs`, `pdf_golden.rs`) dropped in favour
+  of the shared normalisers; SHA256SUMS regenerated (lane_c, next_gradients, text_next, v10, v12, v13,
+  w3-effects); READMEs note the restamp.
+- New: `fixtures/w3-cross-era/` (v10+width_profile in stack, v11+managed colour, v11+live node,
+  v13+typography; lane fixtures v10+effects and v12+live also asserted) with specific errors;
+  frozen v9–v13 header gates refuse v14 raw JSON / embedded model / catalog (`format_v14.rs`);
+  frozen mixed `fixtures/v14-mixed/` (image + gradient + corners + stack + effect + CMYK swatch +
+  live Repeat + styled area text) pins `…images, assets, swatches, text_boxes, typography, paths…`
+  and `Path = stack, effects, id…`, round-trips byte-for-byte in JSON and the native container, PDF
+  (image, shading, embedded font, DeviceCMYK), CPU pixels and SVG checked. Byte identity, precisely:
+  canonical v9 bodies (the compact JSON Varos itself writes, e.g. `v9/mixed.json`) re-save byte-identical apart from the stamp; the pretty-printed lane inputs `lane_c/next_corners.json`, `lane_c/next_live_round.json` and `w3-effects/v9-plain.json` are canonicalised on save (same decoded document, compact bytes — kept frozen as decode inputs); and rewriting a native v9 container changes its PDF text representation (text is embedded as real text since v14 instead of outlines), so only the outlined appearance and the non-text resources are compared to the v9 oracle. Old-era PDF goldens without text compare stamp-normalised.
+- Docs: VRS_FORMAT wave-3 section + rows 10–14; `ADR-0008-amendment-wave3-formats-10-14.md`; PLAN
+  bump schedule, phase headers, one wave-3 Progress table (rows kept, comment markers removed).
+
+## Per branch
+- **render**: no conflicts beyond REPORT. `layers::Prim` became `LayerPrim<D>` (alias `Prim` keeps
+  every lane call site/test) so a producer can draw its own payload through the same stack.
+- **appearance**: no code conflicts. **Unified** CPU: `Group::Composite` (opacity + alpha mask) now
+  lowers onto the render lane's `CpuLayers` (`layers::composite`, mask at LayerEnd); appearance's
+  tiny-skia layer path removed; preflight charges the real f32 storage (1 GiB / depth 12).
+- **effects** (27 files): Path key order stack→effects; `painted_extent` evaluates effects inside each
+  appearance paint; Expand nodes get `look: None`; command/bridge/dto unions; stamp-dynamic tests.
+- **cmyk** (27 files): **Unified** overprint = a Multiply layer on the same CPU stack; appearance GPU
+  nested pass gained the lane's approximate-multiply pipeline; appearance PDF forms receive the colour
+  resources (managed paints + form ColorSpace); colour preview recurses into composites (mask alpha
+  untouched); duplicate `lopdf` dev-dep removed. Bridge: `list_verbs` had grown to 16,498 B (> 16 KiB
+  reply page) → edit groups state `enabled/disabled_reason` once (+ ratchet test).
+- **live** (30 files): evaluation order live → effects in scene, PDF and SVG; live sources keep live
+  effects (corners resolve on authored anchors; Make no longer bakes effects) — `tests/integration_w3.rs`.
+- **text2** (28 files): PDF text embedding also inside appearance forms (fonts in form resources);
+  colour notes kept on the text-report export path. tools/list 1.2 hit 24,038 B → projection step:
+  every wave-3 edit verb is discovery-only (list_verbs + schema), as the live lane did.
+- **arabic-ui** (4 files): +34 en/ar catalog rows for the new Effect / Blend / Repeat / Envelope / Width
+  menus (menu + command coverage test).
+- **a11y-updates** (6 files): **Unified** labels: chrome controls, headings, messages and field hints
+  are announced with the catalog-resolved label the Arabic kit paints; pills use their galley text;
+  authored names (board cards, rows, tags) stay literal; shaped tooltips kept with AX activation.
+  +3 catalog rows. `ui.rs` 851 → 840 (frame glue moved to `ui/wave3.rs`).
+
+## Review fixes (Astra, FIX-THEN-MERGE)
+- P1: CPU alpha masks were rasterised for every sibling before rendering (100 masked siblings at 2048² ≈ 1.68 GB of retained coverage). Masks are now streamed — each is a deferred last draw of its layer, rasterised into one transient 8-bit surface, applied, dropped; preflight charges layer + mask stage per nesting level. GPU path already reuses two pool slots per level (pool sized by depth, not siblings). Regressions: `hundred_masked_siblings_stream_their_masks`, `hundred_masked_siblings_do_not_grow_the_pool`.
+- P2: byte-identity claim narrowed (above, VRS_FORMAT, ADR amendment); `pretty_printed_v9_inputs_canonicalise_without_changing_the_document`.
+
+## Keyboard
+All new chords equal Illustrator, no losers: W Blend, ⇧W Width, ⌥⌘B Make Blend, ⌥⇧⌘B Release
+Blend, ⇧⌘E Apply Last Effect, ⌥⇧⌘E Last Effect. Envelope Distort chords are not bound yet.
+
+## Final gates (after `ccf3d4a`)
+fmt PASS · dep directions PASS · `cargo test --offline --workspace -j 3 --no-fail-fast` **2,489
+passed / 0 failed / 17 ignored (173 suites)** · clippy native + `x86_64-pc-windows-msvc`
+`--all-targets -D warnings` PASS · shell + Bridge ratchets PASS, `ui.rs` 840/843 · Bridge 1.0/1.1
+byte-frozen 23,993 B · **1.2 tools/list 23,927 / 24,000 B**, list_verbs 12,389 B · wasm32
+varos-text PASS · vendor: cosmic-text PASS, egui_tiles SKIP (archive not cached).
+The three earlier lane failures pass on the merged tree (connection.rs:476 is a <5 s child-spawn
+timing assertion that tripped under load; live_nodes.rs:405 and release.rs:73 pass).
+
+## Deferred / open (stated, not hidden)
+- GPU canvas: appearance nested composites (and overprint inside them) still use the appearance
+  pool's MSAA surface-format pass; the render lane's `GpuLayers` needs single-sample RGBA16F targets,
+  so moving the canvas onto it waits for the first GPU producer of non-Normal blends / blur.
+- Effects stay Path-level (not per appearance entry); Expand Appearance keeps effects live per entry.
+- Text nodes carry no appearance stack; managed colour on text and gradients stays RGB.
+- Wave-3 panel copy (Appearance, Effect dialogs, Typography, Colour Management, Live) is not in the
+  Arabic catalog yet (English fallback); menus/commands are covered.
+- GUI/GPU pixels, VoiceOver, PDF viewers and owner design review unverified (no GUI run).
+
+---
+
 # Wave 2 — stage 1 integration (`integ/w2`, 2026-10-09)
 
 Base: main `c852a55` (includes the stroke engine hotfix). Merged in order with `git merge --no-ff`, one commit per

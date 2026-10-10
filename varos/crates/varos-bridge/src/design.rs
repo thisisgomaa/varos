@@ -201,6 +201,16 @@ pub(crate) fn apply_design_op(
     affected: &mut BTreeSet<String>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<u32>, Error> {
+    // ---- Lane A ----
+    if matches!(op, Operation::Appearance { .. } | Operation::Mask { .. }) {
+        *expanded += 1;
+        if *expanded > crate::MAX_OPS {
+            return Err(fail("limit_exceeded: expanded operations"));
+        }
+        crate::appearance::apply(ed, op)?;
+        affected.extend(crate::appearance::affected(op));
+        return Ok(None);
+    }
     // ---- Lane D: resolve locals and cap expanded targets before drawing ----
     if op.drawing() {
         let targets = op
@@ -236,13 +246,19 @@ pub(crate) fn apply_design_op(
         return Ok(None);
     }
     // ---- Lane C ----
+    // ---- Lane E: Phase 11 ----
+    if op.live() {
+        return crate::live::apply(ed, op, locals, affected, expanded);
+    }
     if op.lane_c() {
         return crate::path_advanced::apply(ed, op, locals, affected, expanded);
     }
     if op.slice4a() {
         let mut resolved = op.clone();
         let ids = match &mut resolved {
-            Operation::Colour { ids, .. }
+            // ---- w3-cmyk ----
+            Operation::ColourManagement { ids, .. }
+            | Operation::Colour { ids, .. }
             | Operation::Transform { ids, .. }
             | Operation::MagicWand { ids, .. }
             | Operation::Eyedropper { ids, .. }
@@ -588,7 +604,10 @@ pub(crate) fn apply_design_op(
         Operation::Move { delta, .. } => {
             ed.apply_targeted_op(&TargetEdit::Move { paths, delta: *delta }, 0).map_err(super::service::target_error)?
         }
-        Operation::OutlineStroke { .. }
+        // ---- Lane B w3-effects ----
+        Operation::WidthTool { .. } | Operation::LiveEffects { .. } | Operation::WidthProfile { .. } | Operation::ExpandLive { .. }
+        // ---- end Lane B w3-effects ----
+        | Operation::OutlineStroke { .. }
         | Operation::OffsetPath { .. }
         | Operation::Expand { .. }
         | Operation::LiveCorners { .. }

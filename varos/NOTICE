@@ -110,7 +110,8 @@ Lane B gradient mathematics:
 Adapted from VectorCraft color/src/gradient.rs @ a469568 (MIT OR Apache-2.0).
 Placement, spread and validation are Varos additions; see varos-core/src/gradient.rs.
 Appearance entry options/read-view shape: adapted from VectorCraft
-doc/src/appearance.rs @ a469568 (MIT OR Apache-2.0); no effects or new persisted keys.
+doc/src/appearance.rs @ a469568 (MIT OR Apache-2.0). Lane A v10 owns persisted
+stack entries and group looks; recursive GPU/PDF/SVG mask composition is independently built.
 Lane B swatches, palette codecs/library shape and Lab recoloring:
 Adapted from VectorCraft color/src/{swatch,palette_io,libraries,recolor}.rs and
 color/src/cms/lab.rs @ a469568. Copyright (c) 2026 ArtCraft Team and contributors.
@@ -122,3 +123,21 @@ Lane C — new_document.rs adapts VectorCraft engine/src/cmd/newdoc.rs:19,125;
 path_advanced.rs adapts pathops/src/offset.rs:79; live_corners.rs adapts
 geom/src/corners.rs:134,149 (a469568, MIT OR Apache-2.0), copyright 2026
 ArtCraft Team and VectorCraft contributors. No UI/assets/dependencies copied.
+
+Lane D: varos-raster/src/layers.rs adapts premultiplied compositing / effect coverage
+from PhotoCraft crates/compose/src/{effects.rs,psblend.rs} and crates/color/src/blend.rs @ 4cb7cf3.
+varos-render-wgpu/src/{layer_gpu.rs,layer_pass.wgsl} rebuilds separable map pass ideas
+from PhotoCraft crates/gpu/src/compose.wgsl:1029-1178 @ 4cb7cf3.
+Copyright (c) 2026 ArtCraft Team and the PhotoCraft contributors. MIT OR Apache-2.0;
+see LICENSE-MIT.photocraft and LICENSE-APACHE.photocraft. No new third-party dependencies.
+// ---- Lane B w3-effects ----
+VectorCraft (ArtCraft Team and contributors, 2026), MIT OR Apache-2.0:
+core effects/effects_warp adapt effects/src/{distort,warp,stylize,util}.rs and doc/src/live.rs;
+width_profile/width_geometry/width_geometry_helpers adapt doc/src/appearance.rs, effects/src/stroke/width.rs, geom/src/bez.rs.
+// ---- end Lane B w3-effects ----
+// ---- Lane E: Phase 11 ----
+varos-core/src/live/{mod,evaluate}.rs adapts interpolation, containers and spine placement
+from VectorCraft doc/src/blend.rs:35-380, doc/src/live.rs and engine/src/cmd/live.rs:27-117
+@ a469568. Copyright (c) 2026 ArtCraft Team. MIT OR Apache-2.0;
+see LICENSE-MIT.vectorcraft and LICENSE-APACHE.vectorcraft.
+Lane F UI text raster: shell/kit/text/raster.rs adapts epaint 0.35.0 font.rs (egui contributors, MIT OR Apache-2.0), https://github.com/emilk/egui.

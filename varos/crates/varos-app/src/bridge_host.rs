@@ -64,6 +64,16 @@ fn session(board: &str) -> Result<SessionId, Error> {
         .ok_or_else(|| Error::new("invalid_argument", "board must be a session handle bN"))
 }
 impl Host for Desktop<'_> {
+    // ---- Lane G ----
+    fn release(&mut self, v: &varos_bridge::release::Request) -> Result<varos_bridge::Reply, Error> {
+        let a = crate::release_ui::DesktopAction::from_action(&v.action)
+            .ok_or_else(|| Error::new("invalid_argument", "unsupported desktop action"))?;
+        if self.ui.as_deref_mut().is_some_and(|ui| ui.queue_app_command(crate::app_command::AppCommand::Release(a))) {
+            Ok(varos_bridge::Reply::success(serde_json::json!({"accepted":true})))
+        } else {
+            Err(Error::new("unsupported_host", "desktop release queue unavailable"))
+        }
+    }
     fn help(&mut self, v: &varos_bridge::application::HelpRequest) -> Result<varos_bridge::Reply, Error> {
         use varos_bridge::application::HelpAction;
         let action = match v.action {

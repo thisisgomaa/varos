@@ -88,3 +88,42 @@ fn discover_add_describe_set_atomic_history_and_legacy_refusal() {
         }
     }
 }
+
+#[test]
+fn typography_progressive_disclosure_api_gate_and_history() {
+    let mut host = TestHost { editor: Editor::new() };
+    let mut service = Service::new("test".into());
+    let added = invoke(
+        &mut service,
+        &mut host,
+        "edit",
+        json!({"api":"1.2","board":"b1","request_id":"r10","expected_rev":0,"ops":[{"verb":"add_text","text":text()}]}),
+    );
+    assert!(added.ok, "{added:?}");
+    let id = host.editor.doc.text_boxes[0].id;
+    let schema = varos_bridge::mcp::schema("edit", Some("typography")).unwrap().to_string();
+    assert!(schema.contains("define_character") && schema.contains("binding"));
+    assert!(varos_bridge::mcp::list_verbs().to_string().contains("typography"));
+    let args = json!({"api":"1.2","board":"b1","request_id":"r11","expected_rev":host.editor.rev,"ops":[{"verb":"typography","command":{"action":"features","text":id,"features":{"liga":1,"calt":1,"ss01":1}}}]});
+    let reply = invoke(&mut service, &mut host, "edit", args.clone());
+    assert!(reply.ok, "{reply:?}");
+    assert_eq!(reply.undo_steps, 1);
+    assert_eq!(host.editor.doc.typography.frames[&id].features["ss01"], 1);
+    host.editor.undo();
+    assert!(host.editor.doc.typography.is_empty());
+    for (n, api) in ["1.0", "1.1"].iter().enumerate() {
+        let mut args = args.clone();
+        args["api"] = json!(api);
+        args["expected_rev"] = json!(host.editor.rev);
+        args["request_id"] = json!(format!("r{}", n + 12));
+        if let Ok(request) = varos_bridge::mcp::decode_tool("edit", args) {
+            let reply = service.handle(
+                &mut host,
+                &Context { client: "text".into(), epoch: "test".into() },
+                request,
+                &AtomicBool::new(false),
+            );
+            assert!(!reply.ok);
+        }
+    }
+}

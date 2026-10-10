@@ -1,3 +1,6 @@
+// ---- Lane F: text adapters ----
+use varos_app::shell::kit::text::ShapedResponse as _;
+// ---- end Lane F ----
 use super::*;
 /// Mixed paint has diagonal stripes, distinct from the alpha checkerboard.
 pub(crate) fn mixed_swatch(p: &egui::Painter, r: egui::Rect) {
@@ -137,7 +140,7 @@ pub(crate) fn paint_row(ui: &mut egui::Ui, target: PaintTarget, color: Option<Rg
         if resp.double_clicked() {
             ops.push(Op::OpenPicker(MTarget::Paint(target)));
         }
-        resp.on_hover_text(match target {
+        resp.shaped_hover_text(match target {
             PaintTarget::Fill => "Fill — click to focus; double-click to edit",
             PaintTarget::Stroke => "Stroke — click to focus; double-click to edit",
         });
@@ -220,7 +223,7 @@ pub(crate) fn show(ui: &mut egui::Ui, origin: egui::Pos2, m: &ColorPanel, s: &Sn
                 ops.push(Op::PaintFocus(target));
             }
         }
-        response.on_hover_text(if hit == Some(PaintTarget::Stroke) { "Stroke (X)" } else { "Fill (X)" });
+        response.shaped_hover_text(if hit == Some(PaintTarget::Stroke) { "Stroke (X)" } else { "Fill (X)" });
     }
     for (icon, point, size, tip) in [
         (Icon::PickerSwap, t::PICKER_SWAP_POS, t::PICKER_GLYPH, "Swap Fill / Stroke (⇧X)"),
@@ -239,7 +242,7 @@ pub(crate) fn show(ui: &mut egui::Ui, origin: egui::Pos2, m: &ColorPanel, s: &Sn
                 ui.id().with(tip),
                 egui::Sense::click(),
             )
-            .on_hover_text(tip)
+            .shaped_hover_text(tip)
             .clicked()
         {
             match icon {

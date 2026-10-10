@@ -4,11 +4,12 @@ use super::*;
 
 pub(super) fn rows() -> Vec<Entry> {
     use KeyCode as K;
-    vec![
+    let mut rows = vec![
         item("obj.image.trace", "Image Trace…", None, MenuCmd::ImageSheet(crate::image_ui::SheetKind::Trace)),
         item("obj.image.rasterize", "Rasterize…", None, MenuCmd::ImageSheet(crate::image_ui::SheetKind::Rasterize)),
         item("obj.image.crop", "Crop Image…", None, MenuCmd::ImageSheet(crate::image_ui::SheetKind::Crop)),
         key("obj.again", "Transform Again", cmd(K::KeyD)),
+        // ---- Lane E: Phase 11 ----
         Entry::Sep,
         Entry::Sub {
             label: "Arrange",
@@ -118,5 +119,8 @@ pub(super) fn rows() -> Vec<Entry> {
                 ),
             ],
         },
-    ]
+    ];
+    // ---- Lane E: Phase 11 ----
+    rows.extend(crate::ui::live_menu_rows());
+    rows
 }

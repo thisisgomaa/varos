@@ -515,6 +515,8 @@ fn secret_doc() -> Document {
         clip_exempt: false,
         xform: Xform::default(),
         role: GroupRole::Normal,
+        // ---- Lane A ----
+        look: None,
         mask_child: None,
     });
     d.roots.insert(0, layer);

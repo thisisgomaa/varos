@@ -176,3 +176,200 @@ Evidence: /tmp/w2-app-fix-{workspace-final,clippy-native-final,clippy-windows-fi
 Ratchet files/limits and legacy Bridge fixtures unchanged; ui.rs remains 772 lines (cap 843).
 Pending integration: sibling BlobStore preview/save path, combined Bridge size budget, independent re-review and owner native acceptance.
 No git writes, push, merge, GUI launch, install or signed Quick Look packaging performed.
+
+---
+
+# feat/w3-render
+
+Lane D renderer capability — feat/w3-render; fix-round hand-back (no git writes).
+- Renderer-only primitives, CPU reference and encoder-only RGBA16F GPU passes; producer hookup remains pending.
+- New lane modules: raster/{layers,layer_tests,layer_scene}.rs; render-wgpu/{layer_gpu.rs,layer_pass.wgsl}; original shared lib.rs blocks remain unchanged.
+- Nested layers, 16 blend modes, masks at LayerEnd, Gaussian blur, shadow/glow; capped subtrees flatten explicitly.
+- Default depth 16 / 256 MiB; four surfaces per active layer, quarter-budget effect cache; CPU f32 / GPU f16 accounting.
+- Budget covers offscreen/cache reservations; root, geometry, staging/uniforms and encoder-retained resources are outside measured accounting.
+- Producer must provide RGBA16F geometry, bucket_zoom and complete-input revisions (including effects/pan); no model/format/API change.
+- Attribution headers/NOTICE retained; provisional owner review status unchanged; no GUI launch or installation.
+
+## Fix round
+- Accepted all three P2 findings; no disagreements. Cross-lane merge risks are integration obligations, not resolved by this isolated lane.
+- Reduced-budget admission trims retained pool against live scratch plus cache before allocating; cache insertion also trims surplus pool.
+- CPU/GPU share bounded LRU policy: replace obsolete object revisions, promote hits, evict oldest entries before replacement allocation.
+- CPU and WGSL Dodge/Burn use exact backdrop endpoints; independent near-endpoint goldens prevent inverted colours.
+- Added deep-pool→85-byte regression, revision 1/2/3/3 blur+shadow hits, bounded LRU recency; independent coloured goldens cover all 16 modes/alpha cases.
+- Numeric effect-refusal tests now enclose effects in valid layers and assert specific errors before rendering.
+- Targeted headless gate: 39 passed, 0 failed, 2 timing probes ignored; shader parsed/validated without GPU.
+- PASS fmt, dependency directions, workspace tests (2283 passed / 0 failed / 17 ignored), native + Windows Clippy -D warnings, core/UI ratchets, Bridge fixtures (6 passed; 1.0/1.1=23993 B frozen; 1.2=23879/24000 B). Evidence: /tmp/w3-render-fix-gates.json and /tmp/w3-render-fix-*.log.
+- Integration: reconcile appearance traversal/types/masks/formats/aggregate budgets, effects/live input revisions, CMYK overprint and text outline settlement.
+- GPU execution, renewed independent review, producer integration and owner hand-testing remain unverified; no commit/push/merge.
+
+---
+
+# feat/w3-appearance
+
+# Lane A — Appearance / FORMAT v10
+State: implemented (provisional UI, owner design review pending); committed baseline `29b46a7`, fix round uncommitted.
+Scope: ordered fills/strokes, container looks, Expand, nested clip/alpha masks; kit Properties/row hooks; Bridge/CLI; GPU/CPU/PDF/SVG.
+Format: pure v9→v10 migration, legacy byte identity, frozen output/refusal fixtures; moderator owns v10–v14 rechaining.
+Guards: GPU depth 6 / 512 MiB with reported flattening; CPU 128 MiB / depth 12 with refusal; existing ratchets unchanged.
+
+## Fix round
+Accepted all five findings; no disagreements.
+P1 geometry: bake every distinct affected transform unit, including separately rotated Layer children, before reparenting.
+P1 topology: stage and structurally/semantically validate masks before publication; Layer sources and targets containing sublayers refuse atomically.
+P1 rebuild: eliminate per-entry Editor clones / full export scenes / document-wide scene cache; reuse one evaluator, leaf geometry/stroke caches, culling and aggregate export budget.
+P2 drawing: mask-row selection/toggle/activation restores its authoritative Group drawing child.
+P2 swatches: preserve authored base/extra paint references separately from resolved display colours during opacity/visibility edits.
+Regressions: four added core tests + one UI test; existing pan test now measures real leaf-cache misses; focused core 13/13 passed.
+300-leaf debug probe: plain 13.8 ms / appearance 13.0 ms (reviewer's appearance probe: 922 ms); actual thermals remain unmeasured.
+Gates PASS: fmt, dependency directions, workspace (2273 logged passed / 0 failed / 15 ignored), native+Windows all-target clippy -D warnings; UI ratchets 3/3, Bridge 113 passed / 4 ignored; frozen 1.0/1.1 match, 1.2 tools/list 23,912/24,000 B; ui.rs 812/843.
+Integration: sibling effects/live order+Expand, CMYK/text Forms, GPU pool/CPU parity, Arabic/a11y hooks, format chain and combined UI/Bridge budgets still require moderator checks on the combined tree.
+Evidence: `/tmp/varos-appearance-fix.TyEBdP/`; GUI/GPU pixels, PDF viewer pixels, thermals and owner acceptance unverified.
+No git writes, commit, push, merge, GUI run or app installation; no dependencies or ratchet increases.
+
+---
+
+# feat/w3-effects
+
+# Lane B — Phase 10 live vector effects (2026-10-10)
+State: implemented (provisional UI, owner design review pending); fix-round edits uncommitted.
+Typed Offset/Zig Zag/Transform/15 Warp styles; width presets/custom points + ⇧W gestures; one-undo previews.
+Shared bounded evaluation feeds canvas/CPU/PDF/SVG/Expand; Bridge 1.2 progressive verbs + typed CLI.
+v11 writer + pure v10→v11 migration; temporary v10 reservation must be replaced during integration.
+ADR-0016 proposed; prior-art attribution/NOTICE retained; appearance integration deferred to integrator.
+No git writes, GUI, install, merge or push; owner visual acceptance remains unverified.
+## Fix round
+P1 recursion: atomic baking returns errors; command preflight propagates limit refusal before redispatch.
+P1 sibling edits: outline targets are replacement leaf IDs only; clear cloned anchor/group selection.
+P2 Width Escape: cancel before selection clearing; restores profile, closes transaction, release adds no history.
+P2 refusal: frozen v9 header/catalog gates check raw v11 JSON and emitted PDF/model with typed NewerVersion.
+Cheap coverage fix: production effects_document cache test proves idle reuse + geometry/paint/effect invalidation.
+Regression tests: 24/24 targeted PASS; oversized 41×1,000 copies, selected group leaf (0/2 copies), Escape (2 profiles).
+Disagreements: none with the four findings; sibling-lane pipeline/schema/GPU-budget/i18n risks remain integration work.
+fmt / dependency directions / diff check: PASS; full logs + exit codes: /tmp/w3-effects-fix-round/.
+cargo test --offline --workspace -j 3 --no-fail-fast: PASS 2,278 passed / 0 failed / 15 ignored (152 suites).
+Native + Windows x86_64-pc-windows-msvc clippy --all-targets -D warnings: PASS; app ratchets 3/3, Bridge 6/6.
+Bridge 1.0/1.1 byte-frozen 23,993 B; 1.2 23,937/24,000 B; ui.rs 821/843; effects SHA256 6/6 PASS.
+
+---
+
+# feat/w3-cmyk
+
+# Lane C — Phase 12 / FORMAT v12
+
+CMYK/Gray/Spot source paints, document mode and bounded ICC metadata; legacy RGB bodies preserved.
+Undoable edits, progressive Bridge 1.2 + CLI; provisional existing-kit UI, owner design review pending.
+PDF process/ICCBased/Separation/OutputIntent + guarded PDF/X-4; external conformance unverified.
+Proof is vector-only; overprint is approximate multiply; gradients stay RGB; images retain existing rendering.
+
+## Fix round
+
+P1: gradient forms reuse one document colour-resource set; no per-path ICC/spot duplication.
+P2: picker seeds resolved CMYK/Spot channels, name/tint/alpha; unchanged components remain bit-exact.
+P2: panel drafts track selection/target/resolved paints; document-scoped state and field IDs prevent leakage.
+P2: Paint/Live validate the prospective document before mutation; ColourManagement shares that check.
+P2: bounded editor-owned ICC cache retains screen/proof executors by content; fixed layouts/default intent.
+Eight new headless regressions cover all five findings, exact source round-trips, cache reuse/eviction and rollback.
+Gates PASS: fmt, dependency directions, workspace (2267 passed / 0 failed / 15 ignored; 150 suites), native + Windows Clippy -D warnings, ratchets.
+Bridge PASS: six fixture/ratchet tests; 1.0/1.1 frozen at 23,993 B; progressive 1.2 = 23,904 / 24,000 B (96 B headroom).
+ui.rs remains 807/843; tokens/ratchet ceilings unchanged; no new production unwrap; no disagreements.
+Integration still requires combined v10→v14 chain and cross-lane appearance/live/render/Arabic/text reconciliation.
+Evidence: /tmp/w3-cmyk-fix-round.45sFok/; no git writes, GUI, merge, push or app install; native acceptance pending.
+
+---
+
+# feat/w3-live
+
+# Lane E — Phase 11 — feat/w3-live
+Blend, Repeat and Envelope implemented (provisional UI, owner design review pending); FORMAT v13.
+Authored sources remain editable; bounded cached evaluation serves canvas, hit bounds, SVG/PDF and Expand.
+API 1.2 live verbs use progressive schemas; CLI and frozen native/refusal fixtures are covered.
+Sibling appearance/effects, CMYK, render, Arabic/a11y and text/v14 reconciliation remains integration work.
+
+## Fix round
+P1 spine replacement: released root-level spine returns to roots; structural precheck precedes publication.
+P1 mesh placement: points follow baked/live geometry transforms and offset Paste; duplicate maps only its copy.
+P2 swatches: Make preserves authored fill/stroke references; evaluation resolves paints without destroying links.
+Four new regressions cover root save/reopen/undo, recolour/Release, Move/copy/Paste, multi-source previews/undo/redo.
+Targeted live tests: 18 PASS; fmt, dependency directions, native + Windows all-target clippy -D warnings PASS.
+Full offline workspace gate: 2271 PASS / 0 FAIL / 15 ignored (--workspace -j 3 --no-fail-fast).
+UI ratchets: 3 PASS; Bridge ratchets/frozen 1.0/1.1 fixtures: 6 PASS; 1.2 tools/list 23887/24000 B.
+Ratchets, protected fixtures/tokens/kit and UI source unchanged; ui.rs remains 809/843 lines.
+Disagreements: none with the three reproduced defects; merge-risk items require sibling integration review.
+Evidence: /tmp/w3-live-fix-{targeted,fmt,deps,workspace,clippy-native,clippy-windows,ratchets,bridge-fixtures}.log.
+Fixes are uncommitted worktree edits; no git writes, merge, GUI launch, bundle rebuild, push or installation.
+Pending: fresh independent fix review, cross-lane integration, and owner native/design acceptance.
+
+---
+
+# feat/w3-text2
+
+# Lane H — Text P5–P8 / FORMAT 14
+
+- P5/P6/P8 implemented; provisional UI, owner design review pending; original work committed before this fix round.
+- P7 partial: named styles/OpenType/static faces delivered; variable axes and per-field cascading remain OPEN in the programme.
+
+## Fix round
+
+- Reviewed the independent FIX-THEN-MERGE findings; addressed all seven findings within the lane scope.
+- PDF: per-glyph page/clip eligibility prevents off-page extraction; regression covers page and persisted clip-tree exports.
+- Editing: composition, hit testing and scene snapshots remap named spans; deletion/empty/Arabic replacement + undo regression.
+- Clipboard: capture connected stories, boundaries, features and referenced style ancestry; remap IDs/names; cross-document and Cut/Paste/Undo tests.
+- Movement: binding origin + shared boundary-to-text conversion; text/joint translation, live rotation and path-caret tests. Disagree that flattening omitted live transforms: it already used world geometry.
+- Properties: resolved values, staged editable overrides and named-style update from the assigned range; headless regression.
+- Frozen v9: compare every legacy appearance object to the original oracle (only stamp/model normalization), plus real-writer image/shading resources; fixtures untouched.
+- Wire contract updated with v14 keys, limits, coordinate semantics, migrations/refusals; P7 completion claim explicitly narrowed.
+- Integration: per brief, retain isolated v9→14 bridge until integrator supplies real sibling v10–13 chain; sibling CMYK/appearance/effects reconciliation remains integration work.
+- Gates: fmt, dependency directions, whitespace PASS; final workspace: 2,274 passed / 0 failed / 15 ignored, 150 targets.
+- Native + Windows all-target Clippy -D warnings PASS; varos-text wasm32 check PASS; offline builds used -j 3.
+- UI ratchets 3/3 PASS (unchanged); ui.rs 805/843. Bridge 6/6 PASS: 1.0/1.1 frozen 23,993 B; 1.2 23,919/24,000 B.
+- No git writes, push, merge, GUI or installation; independent re-review and owner acceptance pending. Final suite evidence: /tmp/w3-text2-workspace-final.log; other gates: /tmp/w3-text2-*.log.
+
+---
+
+# feat/w3-arabic-ui
+
+# Lane F — Arabic UI / ADR-0012 T2–T3
+Baseline: committed `b157739`; this fix round is worktree-only. No git writes, GUI, install or merge.
+Status: implemented (provisional UI, owner design review pending).
+
+## Fix round
+Accepted all six reviewer findings; no disagreements.
+- Drag-selection anchors at pointer-down; event regression checks copied bytes and replacement boundaries.
+- Multiline fields scroll vertically; Arabic paste and return-to-start tests keep caret/IME rectangles inside the field.
+- Galley row budgets retain grapheme-safe elision, original row baselines and cell clipping; 1/2/3-row regressions.
+- Authored labels bypass translation; artboard/image/property names and isolation paths use the literal path.
+- Start Name/Tags/Folder/Modified and both Layers empty states have Arabic production-paint assertions; catalogs now contain 600 entries.
+- Complete production label and galley meshes match epaint at 1×/2×, including clipping, atlas updates and composition (mean ≤1/255, max ≤32/255).
+- Shared text/editor: 19 PASS; canvas artboard named `Delete` remains literal in Arabic mode.
+Gates: fmt, dependency directions, native/Windows workspace all-targets clippy `-D warnings`, varos-text WASM PASS (offline, `-j 3`).
+`cargo test --offline --workspace -j 3 --no-fail-fast`: PASS (exit 0; 2,272 passed, 0 failed, 15 ignored).
+Ratchets: shell 3/3, Bridge 6/6 PASS; limits unchanged; `ui.rs` 805 lines (cap 843).
+Bridge fixtures: 1.0/1.1 byte-identical, 23,993 B each; 1.2 23,879/24,000 B (121 B headroom).
+No writer/model/format changes or migration; existing v9 and refusal fixtures unchanged.
+Pending: independent re-review, sibling-lane conflict reconciliation (especially a11y), owner native IME/DPI/Arabic acceptance, U2-P and atlas-pressure heat validation; Arabic Medium/SemiBold assets remain absent.
+Evidence logs: `/tmp/w3-{workspace-final,clippy-native-final,clippy-windows-final,shell-ratchet,bridge-ratchet}.log`.
+
+---
+
+# feat/w3-a11y-updates
+
+# Lane G — accessibility / visible updates / crash viewer
+Implemented (provisional UI, owner design review pending); fix changes are uncommitted.
+9.9: AccessKit 0.24.1 semantics + offline objc2 macOS NSAccessibility adapter; accesskit_winit unavailable.
+9.7: signed manual update checks, explicit browser Download, bounded read-only crash viewer/folder actions.
+Configure HTTPS update_manifest_url + base64 Ed25519 update_public_key in settings.json; no endpoint/key bundled.
+API 1.2 release verbs use list_verbs/schema progressive disclosure + CLI; no format/writer or token changes.
+Implementation notes: docs/reference/LANE_G_ACCESSIBILITY_UPDATES.md.
+
+## Fix round
+Accepted all five reviewer findings; no disagreements or additional low findings were listed.
+P1 repaint: explicit immediate-request signal; delayed tooltip/caret deadlines stay with gui.repaint_at.
+P1 Home accessibility: drain before mode dispatch; shared publication replaces trees in Home/document/presentation.
+P2 release sheets: shared frame draws/processes updates and crash sheets in all three modes.
+P2 native bounds: preserve top-left coordinates in winit's flipped NSView; AppKit converts to screen space.
+P2 selection: transfer AXSelected for rows/tabs and numeric radio/tab AXValue ahead of count text.
+Seven new headless regressions pass: repaint scheduling, mode tree/activation, completion/sheets, bounds and selection.
+PASS: fmt, dependency directions, native + Windows Clippy (-D warnings), shell ratchets, Bridge fixtures/ratchets.
+PASS workspace + doctests: 2273 passed, 0 failed, 15 ignored; API 1.2 tools/list 23,879/24,000 B; API 1.0/1.1 byte-frozen; ui.rs 822/843 lines.
+Evidence: /var/folders/bq/2st8236n5xn501l970c3ny0w0000gn/T/w3-a11y-fix-f9adef0-qnjh2cwd (workspace.log + gate logs).
+No git writes, merge, GUI launch, install or live fetch; native VoiceOver/heat, owner review and independent re-review pending.

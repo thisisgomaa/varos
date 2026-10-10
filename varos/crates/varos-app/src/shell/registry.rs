@@ -1,6 +1,9 @@
 //! Panel registry — the named panels the box tree can host, plus their content.
 //! For the SANDBOX the bodies are DUMMY (fake rows) — the ids / titles / min-sizes are real and
 //! survive into Stage 4, where only the bodies get replaced by the live panels. (BOX_SYSTEM_PLAN §4.2)
+// ---- Lane F: shaped chrome ----
+use crate::shell::kit::text::{ShapedPainter as _, ShapedUi as _};
+// ---- end Lane F ----
 use super::tokens as T;
 use egui::{vec2, Align2, FontId, RichText, Sense, StrokeKind, Vec2};
 
@@ -95,7 +98,7 @@ pub fn render_panel(id: PanelId, ui: &mut egui::Ui) {
 
 fn micro(ui: &mut egui::Ui, s: &str) {
     ui.add_space(3.0);
-    ui.label(RichText::new(s).color(T::MUTED).size(9.5).strong());
+    ui.shaped_label(RichText::new(s).color(T::MUTED).size(9.5).strong());
     ui.add_space(4.0);
 }
 
@@ -106,10 +109,10 @@ fn fake_field(ui: &mut egui::Ui, letter: &str, value: &str, w: f32) {
     p.rect(rect, T::r_ctrl(), T::SURFACE, T::hairline(), StrokeKind::Middle);
     let mut x = rect.left() + 7.0;
     if !letter.is_empty() {
-        p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, letter, FontId::proportional(9.5), T::MUTED);
+        p.shaped_text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, letter, FontId::proportional(9.5), T::MUTED);
         x += 13.0;
     }
-    p.text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, value, T::numeric_value(11.0), T::TEXT);
+    p.shaped_text(egui::pos2(x, rect.center().y), Align2::LEFT_CENTER, value, T::numeric_value(11.0), T::TEXT);
 }
 
 /// A 26×24 hand-painted icon button (glyph placeholder — real Lucide icons arrive in Stage 4).
@@ -122,7 +125,7 @@ fn icon_btn(ui: &mut egui::Ui, glyph: &str, on: bool) {
         p.rect_filled(rect, T::r_ctrl(), T::VOID_HOVER);
     }
     let col = if on || resp.hovered() { T::TEXT } else { T::MUTED };
-    p.text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(13.0), col);
+    p.shaped_text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(13.0), col);
 }
 
 fn swatch(ui: &mut egui::Ui, color: egui::Color32) {
@@ -154,7 +157,7 @@ fn align_panel(ui: &mut egui::Ui) {
     });
     ui.add_space(10.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Align to").color(T::MUTED).size(11.5));
+        ui.shaped_label(RichText::new("Align to").color(T::MUTED).size(11.5));
         fake_field(ui, "", "Artboard        ⌄", 130.0);
     });
 }
@@ -178,7 +181,7 @@ fn pathfinder_panel(ui: &mut egui::Ui) {
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         icon_btn(ui, "⊙", true);
-        ui.label(RichText::new("Shape Builder").color(T::MUTED).size(11.5));
+        ui.shaped_label(RichText::new("Shape Builder").color(T::MUTED).size(11.5));
     });
 }
 
@@ -207,19 +210,19 @@ fn properties_panel(ui: &mut egui::Ui) {
     });
     section(ui, "appearance", "APPEARANCE", |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Fill").color(T::MUTED).size(11.5));
+            ui.shaped_label(RichText::new("Fill").color(T::MUTED).size(11.5));
             swatch(ui, T::AMBER);
             fake_field(ui, "", "F0B429", 92.0);
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Stroke").color(T::MUTED).size(11.5));
+            ui.shaped_label(RichText::new("Stroke").color(T::MUTED).size(11.5));
             swatch(ui, T::NONE_RED);
             fake_field(ui, "", "None", 92.0);
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Opacity").color(T::MUTED).size(11.5));
+            ui.shaped_label(RichText::new("Opacity").color(T::MUTED).size(11.5));
             fake_field(ui, "", "85 %", 72.0);
         });
     });
@@ -254,7 +257,7 @@ fn section(ui: &mut egui::Ui, key: &str, title: &str, body: impl FnOnce(&mut egu
         vec![egui::pos2(cx - 2.0, cy - 4.0), egui::pos2(cx - 2.0, cy + 4.0), egui::pos2(cx + 3.0, cy)]
     };
     p.add(egui::Shape::convex_polygon(tri, if resp.hovered() { T::MUTED } else { T::DISABLED }, egui::Stroke::NONE));
-    p.text(
+    p.shaped_text(
         egui::pos2(rect.left() + 15.0, rect.center().y),
         Align2::LEFT_CENTER,
         title,
@@ -276,7 +279,13 @@ fn layers_panel(ui: &mut egui::Ui) {
             p.rect_filled(rect, T::r_ctrl(), T::VOID_HOVER);
         }
         let x0 = rect.left() + 8.0 + depth as f32 * 14.0;
-        p.text(egui::pos2(x0, rect.center().y), Align2::LEFT_CENTER, "◉", FontId::proportional(12.0), T::MUTED); // eye
+        p.shaped_chrome(
+            egui::pos2(x0, rect.center().y),
+            Align2::LEFT_CENTER,
+            "◉",
+            FontId::proportional(12.0),
+            T::MUTED,
+        ); // eye
         p.rect(
             egui::Rect::from_min_size(egui::pos2(x0 + 18.0, rect.center().y - 8.0), vec2(16.0, 16.0)),
             r2(),
@@ -284,7 +293,13 @@ fn layers_panel(ui: &mut egui::Ui) {
             T::hairline(),
             StrokeKind::Middle,
         ); // thumb
-        p.text(egui::pos2(x0 + 42.0, rect.center().y), Align2::LEFT_CENTER, name, FontId::proportional(12.0), T::TEXT);
+        p.shaped_text(
+            egui::pos2(x0 + 42.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            name,
+            FontId::proportional(12.0),
+            T::TEXT,
+        );
     }
 }
 
@@ -310,7 +325,7 @@ fn history_panel(ui: &mut egui::Ui) {
         } else if resp.hovered() {
             p.rect_filled(rect, T::r_ctrl(), T::VOID_HOVER);
         }
-        p.text(
+        p.shaped_text(
             egui::pos2(rect.left() + 10.0, rect.center().y),
             Align2::LEFT_CENTER,
             *step,

@@ -143,6 +143,8 @@ pub enum Paint {
     #[default]
     None,
     Solid(Rgba),
+    // ---- w3-cmyk ----
+    Managed(crate::colour_management::ManagedColour),
     Gradient(crate::gradient::Gradient),
     SwatchRef {
         id: u32,
@@ -152,6 +154,8 @@ pub enum Paint {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case", deny_unknown_fields)]
 enum TaggedPaint {
+    // ---- w3-cmyk ----
+    Managed(crate::colour_management::ManagedColour),
     Gradient(crate::gradient::Gradient),
     SwatchRef { id: u32 },
 }
@@ -159,6 +163,8 @@ impl std::hash::Hash for Paint {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
+            // ---- w3-cmyk ----
+            Self::Managed(c) => c.hash_colour(state),
             Self::Gradient(g) => g.hash(state),
             Self::SwatchRef { id } => id.hash(state),
             Self::None => {}
@@ -179,6 +185,8 @@ impl Paint {
     /// Representative UI colour; callers resolve document references first.
     pub fn representative(&self) -> Option<Rgba> {
         match self {
+            // ---- w3-cmyk ----
+            Self::Managed(c) => Some(c.rgba()),
             Self::Solid(c) => Some(*c),
             Self::Gradient(g) => Some(g.sample(0.5)),
             _ => None,
@@ -203,6 +211,8 @@ impl Paint {
     /// or `representative` for a colour chip. `None` here does not mean unpainted.
     pub fn solid(&self) -> Option<Rgba> {
         match self {
+            // ---- w3-cmyk ----
+            Paint::Managed(c) => Some(c.rgba()),
             Paint::Solid(c) => Some(*c),
             _ => None,
         }
@@ -211,6 +221,8 @@ impl Paint {
 impl Serialize for Paint {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
+            // ---- w3-cmyk ----
+            Paint::Managed(c) => TaggedPaint::Managed(c.clone()).serialize(s),
             Paint::Gradient(g) => TaggedPaint::Gradient(g.clone()).serialize(s),
             Paint::SwatchRef { id } => TaggedPaint::SwatchRef { id: *id }.serialize(s),
             Paint::None => s.serialize_none(), // ⇒ JSON null  (old Option::None)
@@ -230,6 +242,8 @@ impl<'de> Deserialize<'de> for Paint {
             fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Paint, A::Error> {
                 let tagged = TaggedPaint::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
                 Ok(match tagged {
+                    // ---- w3-cmyk ----
+                    TaggedPaint::Managed(c) => Paint::Managed(c),
                     TaggedPaint::Gradient(g) => Paint::Gradient(g),
                     TaggedPaint::SwatchRef { id } => Paint::SwatchRef { id },
                 })
@@ -255,6 +269,13 @@ impl<'de> Deserialize<'de> for Paint {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Path {
+    // ---- Lane A ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stack: Vec<crate::appearance::StackItem>,
+    // ---- Lane B w3-effects ----
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<crate::effects::Effect>,
+    // ---- end Lane B w3-effects ----
     pub id: u32,
     pub anchors: Vec<Anchor>,
     pub closed: bool,
@@ -297,8 +318,13 @@ impl Path {
             fill: Paint::from_opt(fill),
             stroke: Paint::from_opt(stroke),
             stroke_width,
+            // ---- Lane A ----
+            stack: vec![],
             stroke_style: StrokeStyle::default(),
             corners: vec![],
+            // ---- Lane B w3-effects ----
+            effects: vec![],
+            // ---- end Lane B w3-effects ----
             holes: vec![],
             opacity: 1.0,
             hidden: false,
@@ -336,6 +362,8 @@ pub enum NodeKind {
     Image(u32),
     // ---- Lane G: text data ----
     Text(u32),
+    // ---- Lane E: Phase 11 ----
+    Live(crate::live::Kind),
 }
 
 /// Where a dragged row lands relative to the target row (the 3-zone drag model).
@@ -387,6 +415,9 @@ impl GroupRole {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
+    // ---- Lane A ----
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<crate::appearance::Look>,
     pub id: u32,
     pub kind: NodeKind,
     /// Display name for Layer/Group rows (Path leaves show their Path.name / auto-name instead).
@@ -637,6 +668,11 @@ pub struct Guide {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
+    // ---- w3-cmyk ----
+    #[serde(default, skip_serializing_if = "crate::colour_management::ColourMode::is_rgb")]
+    pub colour_mode: crate::colour_management::ColourMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_profile: Option<crate::colour_management::IccProfile>,
     /// BOARD METADATA (format 3, `crate::board`): the board's name. Empty = "use the file stem"
     /// (`board::display_name`). Older formats load with all three fields empty (`#[serde(default)]`);
     /// the format gate refuses these keys in a file that claims format 1 or 2.
@@ -664,6 +700,10 @@ pub struct Document {
     // ---- Lane G: text data ----
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_boxes: Vec<TextBox>,
+    // ---- Lane H ----
+    #[serde(default, skip_serializing_if = "crate::typography::Typography::is_empty")]
+    pub typography: crate::typography::Typography,
+    // ---- Lane H end ----
     pub paths: Vec<Path>,
     /// LEGACY registry (pre-tree files). Deserialized for compatibility, converted by
     /// `migrate_legacy()`, then stays empty. New code never writes it.
@@ -730,8 +770,13 @@ impl Default for Document {
             images: vec![],
             assets: vec![],
             raster_effects_ppi: crate::images::default_effects_ppi(),
+            // ---- w3-cmyk ----
+            colour_mode: Default::default(),
+            output_profile: None,
             swatches: vec![],
             text_boxes: vec![],
+            // ---- Lane H ----
+            typography: Default::default(),
             paths: vec![],
             groups: vec![],
             group_of: HashMap::new(),
@@ -747,6 +792,8 @@ impl Default for Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             }],
             roots: vec![1],
@@ -798,6 +845,9 @@ impl Document {
     /// ever produce a false *dirty*, never a false *clean*.
     pub fn content_eq(&self, other: &Document) -> bool {
         let Document {
+            // ---- w3-cmyk ----
+            colour_mode,
+            output_profile,
             name,
             description,
             tags,
@@ -807,6 +857,8 @@ impl Document {
             swatches,
             paths,
             text_boxes,
+            // ---- Lane H ----
+            typography,
             groups,
             group_of,
             nodes,
@@ -827,10 +879,15 @@ impl Document {
         // the unit settings split in two: ppi is content, the display unit a preference
         let DocUnits { ppi, display: _ } = *units;
         // cheap, discriminating fields first
-        images == &other.images
+        // ---- w3-cmyk ----
+        colour_mode == &other.colour_mode
+            && output_profile == &other.output_profile
+            && images == &other.images
             && assets == &other.assets
             && raster_effects_ppi == &other.raster_effects_ppi
             && text_boxes == &other.text_boxes
+            // ---- Lane H ----
+            && typography == &other.typography
             && paths.len() == other.paths.len()
             && nodes.len() == other.nodes.len()
             && name == &other.name
@@ -1282,7 +1339,12 @@ impl Document {
             .collect();
         Path {
             holes,
+            // ---- Lane B w3-effects ----
+            effects: src.effects.clone(),
+            // ---- end Lane B w3-effects ----
             corners: src.corners.clone(),
+            // ---- Lane A ----
+            stack: src.stack.clone(),
             stroke_style: src.stroke_style.clone(),
             fill: src.appearance().fill().resolved(self), // preserve the paint EXACTLY (future gradients too), not a solid snapshot
             stroke: src.appearance().stroke().resolved(self),
@@ -1317,7 +1379,8 @@ impl Document {
             let n = self.node(cur)?;
             match n.parent {
                 Some(p) => {
-                    if matches!(self.node(p)?.kind, NodeKind::Group) {
+                    // ---- Lane E: Phase 11 ----
+                    if matches!(self.node(p)?.kind, NodeKind::Group | NodeKind::Live(_)) {
                         top = Some(p);
                     }
                     cur = p;
@@ -1336,7 +1399,8 @@ impl Document {
         for _ in 0..4096 {
             let Some(c) = cur else { break };
             let Some(n) = self.node(c) else { break };
-            if matches!(n.kind, NodeKind::Group) {
+            // ---- Lane E: Phase 11 ----
+            if matches!(n.kind, NodeKind::Group | NodeKind::Live(_)) {
                 top = Some(c);
             }
             cur = n.parent;
@@ -1492,6 +1556,8 @@ impl Document {
             clip_exempt: false,
             xform: Xform::default(),
             role: GroupRole::Normal,
+            // ---- Lane A ----
+            look: None,
             mask_child: None,
         });
         for &u in &units {
@@ -1597,7 +1663,8 @@ impl Document {
             let mut cur = self.node_of_path(s).and_then(|n| self.node(n)).and_then(|n| n.parent);
             while let Some(g) = cur {
                 let Some(gn) = self.node(g) else { break };
-                if !matches!(gn.kind, NodeKind::Group) {
+                // ---- Lane E: Phase 11 ----
+                if !matches!(gn.kind, NodeKind::Group | NodeKind::Live(_)) {
                     break;
                 }
                 if !gset.contains(&g) {
@@ -1626,6 +1693,8 @@ impl Document {
                 clip_exempt: false,
                 xform,
                 role,
+                // ---- Lane A ----
+                look: self.node(og).and_then(|n| n.look),
                 mask_child: None, // remapped through gmap/leafmap in step 3b (both maps must exist first)
             });
             gmap.insert(og, ng);
@@ -1652,9 +1721,19 @@ impl Document {
                     clip_exempt: false,
                     xform,
                     role: GroupRole::Normal, // a leaf is never a clip group
+                    // ---- Lane A ----
+                    look: None,
                     mask_child: None,
                 });
                 leafmap.insert(old_leaf, nl);
+            }
+        }
+        // ---- Lane E: Phase 11: copies retain live parameters and own their spine ----
+        for (&old, &new) in &gmap {
+            if let Some(NodeKind::Live(kind)) = self.node(old).map(|n| n.kind) {
+                if let Some(n) = self.node_mut(new) {
+                    n.kind = NodeKind::Live(crate::live::remap_kind(kind, &pmap));
+                }
             }
         }
         // 3b) remap each copied clip group's `mask_child` through the id maps — the mask is either a
@@ -1799,6 +1878,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             self.roots.push(id);
@@ -1821,6 +1902,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             gmap.insert(g.id, id);
@@ -1848,6 +1931,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             self.attach_front(id);
@@ -1894,7 +1979,12 @@ impl Document {
             let empty: Vec<u32> = self
                 .nodes
                 .iter()
-                .filter(|n| matches!(n.kind, NodeKind::Group) && n.children.is_empty())
+                // ---- Lane A: keep an empty targeted mask container; Lane E: empty live containers go too ----
+                .filter(|n| {
+                    matches!(n.kind, NodeKind::Group | NodeKind::Live(_))
+                        && n.children.is_empty()
+                        && !self.nodes.iter().any(|p| p.role.is_mask_group() && p.mask_child == Some(n.id))
+                })
                 .map(|n| n.id)
                 .collect();
             if empty.is_empty() {
@@ -1918,11 +2008,14 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             self.roots.insert(0, id);
         }
-        if self.node(self.active_layer).is_none_or(|n| !matches!(n.kind, NodeKind::Layer)) {
+        // ---- Lane A: drawing may target a mask-child group ----
+        if self.node(self.active_layer).is_none_or(|n| !matches!(n.kind, NodeKind::Layer | NodeKind::Group)) {
             self.active_layer = self
                 .roots
                 .iter()
@@ -1949,6 +2042,8 @@ impl Document {
                 clip_exempt: false,
                 xform: Xform::default(),
                 role: GroupRole::Normal,
+                // ---- Lane A ----
+                look: None,
                 mask_child: None,
             });
             if let Some(h) = self.node_mut(host) {
@@ -2160,6 +2255,8 @@ impl Document {
                         clip_exempt: false,
                         xform,
                         role: GroupRole::Normal, // a flat copy is its own plain leaf
+                        // ---- Lane A ----
+                        look: None,
                         mask_child: None,
                     });
                     cid

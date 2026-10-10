@@ -18,10 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut future = Document::load_mem(old)?;
     let root_id = future.trailer.get(b"Root")?.as_reference()?;
     let id = future.get_dictionary(root_id)?.get(b"VAROS_Model")?.as_reference()?;
-    // integration w2: the refused future is format 10 (the wave-2 writer is 9)
-    future.get_object_mut(id)?.as_stream_mut()?.set_content(br#"{"varos":10,"doc":42}"#.to_vec());
-    future.get_dictionary_mut(root_id)?.set("VAROS_SchemaVersion", Object::Integer(10));
-    future.save(root.join("future-v10.pdf"))?;
-    std::fs::write(root.join("future-v10.json"), br#"{"varos":10,"doc":42}"#)?;
+    // integration w3: the refused future is format 15 (the wave-3 writer is 14)
+    future.get_object_mut(id)?.as_stream_mut()?.set_content(br#"{"varos":15,"doc":42}"#.to_vec());
+    future.get_dictionary_mut(root_id)?.set("VAROS_SchemaVersion", Object::Integer(15));
+    future.save(root.join("future-v15.pdf"))?;
+    std::fs::write(root.join("future-v15.json"), br#"{"varos":15,"doc":42}"#)?;
     Ok(())
 }

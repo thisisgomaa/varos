@@ -52,6 +52,17 @@ pub fn export_with_options(
                 bg[3]
             );
         }
+        // ---- Lane A ----
+        if crate::appearance_scene::needed(doc) {
+            crate::svg::appearance_with_images(&mut out, doc, store, page, preview, cancel, decimals)
+                .map_err(|e| e.to_string())?;
+            out.push_str("</svg>\n");
+            if let Some(options) = options {
+                out = options.apply(&out)?;
+            }
+            files.push(SvgFile { page: page.clone(), bytes: out.into_bytes() });
+            continue;
+        }
         for kind in paint_order(doc) {
             if cancel.load(Ordering::Relaxed) {
                 return Err("SVG export cancelled".into());
@@ -153,4 +164,44 @@ fn base64(bytes: &[u8]) -> String {
         out.push(if p.len() > 2 { CH[c & 63] as char } else { '=' });
     }
     out
+}
+
+// ---- Lane A: shared image leaf for recursive appearance export ----
+pub(crate) fn appearance_element(
+    out: &mut String,
+    doc: &Document,
+    store: &BlobStore,
+    id: u32,
+    preview: bool,
+) -> Result<(), String> {
+    let image = doc.images.iter().find(|i| i.id == id).ok_or("Missing SVG image metadata")?;
+    let b = store.get(&image.blob).ok_or("Missing SVG original")?;
+    if (b.original.is_none() || b.pixels.width != b.meta.px_w || b.pixels.height != b.meta.px_h) && !preview {
+        return Err("Production SVG requires full image originals".into());
+    }
+    let bytes = codec::encode_png(&b.pixels)?;
+    let c = world_corners(doc, image);
+    let p = &b.pixels;
+    let a = (c[1][0] - c[0][0]) / p.width as f32;
+    let bb = (c[1][1] - c[0][1]) / p.width as f32;
+    let cc = (c[3][0] - c[0][0]) / p.height as f32;
+    let d = (c[3][1] - c[0][1]) / p.height as f32;
+    if let Some(rects) = board_clips(doc, id) {
+        out.push_str(&format!("<defs><clipPath id=\"appearance-board-{id}\" clipPathUnits=\"userSpaceOnUse\">"));
+        for r in rects {
+            out.push_str(&format!(
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>",
+                r.0,
+                r.1,
+                r.2 - r.0,
+                r.3 - r.1
+            ));
+        }
+        out.push_str(&format!("</clipPath></defs><g clip-path=\"url(#appearance-board-{id})\">"));
+    }
+    out.push_str(&format!("<image id=\"image-{id}\" width=\"{}\" height=\"{}\" transform=\"matrix({a} {bb} {cc} {d} {} {})\" opacity=\"{}\" href=\"data:image/png;base64,{}\"/>\n",p.width,p.height,c[0][0],c[0][1],image.opacity,base64(&bytes)));
+    if board_clips(doc, id).is_some() {
+        out.push_str("</g>\n");
+    }
+    Ok(())
 }

@@ -11,6 +11,10 @@ pub(crate) fn apply(ed: &mut Editor, op: &Operation, affected: &mut BTreeSet<Str
     let ids = op.ids();
     match op {
         // ---- w2-gradients ----
+        // ---- w3-cmyk ----
+        Operation::ColourManagement { command, .. } => {
+            return crate::colour_management::apply(ed, op, command, affected)
+        }
         Operation::Colour { command, .. } => return crate::colour::apply(ed, op, command, affected),
         Operation::ToolOptions { wand, eyedropper } => {
             if let Some(o) = wand {

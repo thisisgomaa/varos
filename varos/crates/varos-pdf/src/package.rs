@@ -21,7 +21,8 @@ pub fn package(doc: &Document, store: &BlobStore, destination: &Path) -> Result<
     let result = (|| {
         std::fs::create_dir(stage.join("Links")).map_err(|e| e.to_string())?;
         let mut copy = doc.clone();
-        let mut report = String::from("Varos package\nFonts: —\n");
+        let mut report = String::from("Varos package\n");
+        report.push_str(&crate::font_package::collect(doc, &stage)?);
         for i in &mut copy.images {
             let blob = store.get(&i.blob).ok_or("Missing package resource")?;
             let bytes = blob.original.as_ref().ok_or("Package requires full originals; proxy-only asset found")?;
@@ -65,7 +66,7 @@ pub fn package(doc: &Document, store: &BlobStore, destination: &Path) -> Result<
     }
     result
 }
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e| e.to_string())?;
     f.write_all(bytes).and_then(|_| f.sync_all()).map_err(|e| e.to_string())
 }

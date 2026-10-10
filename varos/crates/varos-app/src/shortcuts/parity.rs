@@ -15,6 +15,11 @@ macro_rules! b {
     };
 }
 pub const BINDINGS: &[Binding] = &[
+    // ---- Lane B w3-effects ----
+    b!("KeyW", false, true, false, "Width Tool"),
+    b!("KeyE", true, true, false, "Apply Last Effect"),
+    b!("KeyE", true, true, true, "Last Effect"),
+    // ---- end Lane B w3-effects ----
     // ---- Lane E ----
     b!("KeyY", true, false, false, "Outline"),
     b!("KeyY", true, false, true, "Pixel Preview"),
@@ -76,6 +81,10 @@ pub const BINDINGS: &[Binding] = &[
     b!("Digit5", true, false, true, "Release Guides"),
     b!("Quote", true, false, false, "Show Grid"),
     b!("Quote", true, true, false, "Snap to Grid"),
+    // ---- Lane E: Phase 11 ----
+    b!("KeyW", false, false, false, "Blend"),
+    b!("KeyB", true, false, true, "Make Blend"),
+    b!("KeyB", true, true, true, "Release Blend"),
     b!("KeyZ", false, false, false, "Zoom"),
     b!("KeyH", false, false, false, "Hand"),
     b!("Numpad0", true, false, false, "Fit Artboard"),

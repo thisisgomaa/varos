@@ -1558,6 +1558,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "log",
  "peniko",
+ "png 0.18.1",
  "skrifa 0.42.1",
  "smallvec",
  "vello_common",
@@ -4265,6 +4266,7 @@ dependencies = [
 name = "varos-app"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "chrono",
  "egui",
  "egui-wgpu",
@@ -4284,9 +4286,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "skrifa 0.42.1",
  "tiny-skia",
  "ttf-parser",
  "unicode-normalization",
+ "unicode-segmentation",
  "varos-bridge",
  "varos-core",
  "varos-import",
@@ -4295,6 +4299,7 @@ dependencies = [
  "varos-render-wgpu",
  "varos-text",
  "varos-text-layout",
+ "vello_cpu",
  "windows",
  "winit",
 ]
@@ -4309,6 +4314,7 @@ dependencies = [
  "libc",
  "png 0.17.16",
  "proc-macro2",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4322,6 +4328,7 @@ name = "varos-cli"
 version = "0.1.0"
 dependencies = [
  "image",
+ "serde",
  "serde_json",
  "varos-bridge",
  "varos-core",
@@ -4341,6 +4348,7 @@ dependencies = [
  "image",
  "kurbo 0.13.1",
  "libc",
+ "moxcms",
  "proc-macro2",
  "resvg",
  "roxmltree",
@@ -4370,11 +4378,13 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "lopdf",
+ "moxcms",
  "pdf-writer",
  "resvg",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "ttf-parser",
  "varos-core",
  "varos-text-layout",
 ]
@@ -4384,6 +4394,7 @@ name = "varos-raster"
 version = "0.1.0"
 dependencies = [
  "image",
+ "lopdf",
  "resvg",
  "serde",
  "serde_json",
@@ -4442,6 +4453,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "log",
  "peniko",
+ "png 0.18.1",
  "smallvec",
  "thiserror 2.0.18",
 ]
@@ -4455,6 +4467,7 @@ dependencies = [
  "bytemuck",
  "glifo",
  "hashbrown 0.17.1",
+ "png 0.18.1",
  "vello_common",
 ]
 

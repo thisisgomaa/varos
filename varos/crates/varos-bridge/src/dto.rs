@@ -10,6 +10,8 @@ fn page() -> usize {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "arguments", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    // ---- Lane G ----
+    Release(crate::release::Request),
     // ---- Lane F ----
     Help(crate::application::HelpRequest),
     Preferences(crate::application::Preferences),
@@ -214,6 +216,35 @@ impl Paint {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "verb", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
+    // ---- Lane A ----
+    Appearance {
+        edit: varos_core::appearance_edits::AppearanceEdit,
+    },
+    Mask {
+        edit: varos_core::appearance_edits::MaskEdit,
+    },
+    // ---- Lane E: Phase 11 ----
+    LiveMake {
+        ids: Vec<String>,
+        kind: varos_core::live::Kind,
+    },
+    LiveOptions {
+        node: String,
+        kind: varos_core::live::Kind,
+    },
+    LiveRelease {
+        node: String,
+    },
+    LiveExpand {
+        node: String,
+    },
+    LiveIsolate {
+        node: Option<String>,
+    },
+    LiveSpine {
+        node: String,
+        path: String,
+    },
     // ---- Lane D: API 1.2 drawing ----
     ShapeTool {
         spec: varos_core::drawing::ShapeSpec,
@@ -244,6 +275,10 @@ pub enum Operation {
     DrawingOptions {
         options: varos_core::drawing::Options,
     },
+    // ---- Lane H ----
+    Typography {
+        command: varos_core::typography::Action,
+    },
     // ---- Lane G ----
     AddText {
         text: varos_core::text::TextBox,
@@ -257,6 +292,11 @@ pub enum Operation {
         text: varos_core::text::TextBox,
     },
     // ---- w2-gradients ----
+    // ---- w3-cmyk ----
+    ColourManagement {
+        ids: Vec<String>,
+        command: varos_core::colour_management_commands::Command,
+    },
     Colour {
         ids: Vec<String>,
         command: varos_core::colour_commands::ColourCommand,
@@ -274,6 +314,20 @@ pub enum Operation {
     Expand {
         ids: Vec<String>,
     },
+    // ---- Lane B w3-effects ----
+    LiveEffects {
+        ids: Vec<String>,
+        effects: Vec<varos_core::effects::Effect>,
+    },
+    WidthProfile {
+        ids: Vec<String>,
+        profile: Option<varos_core::width_profile::WidthProfile>,
+    },
+    WidthTool {},
+    ExpandLive {
+        ids: Vec<String>,
+    },
+    // ---- end Lane B w3-effects ----
     LiveCorners {
         ids: Vec<String>,
         corners: Vec<varos_core::live_corners::CornerParam>,
@@ -598,6 +652,18 @@ pub enum Order {
     Back,
 }
 impl Operation {
+    // ---- Lane E: Phase 11 ----
+    pub fn live(&self) -> bool {
+        matches!(
+            self,
+            Self::LiveMake { .. }
+                | Self::LiveOptions { .. }
+                | Self::LiveRelease { .. }
+                | Self::LiveExpand { .. }
+                | Self::LiveIsolate { .. }
+                | Self::LiveSpine { .. }
+        )
+    }
     pub fn drawing(&self) -> bool {
         matches!(
             self,
@@ -613,7 +679,13 @@ impl Operation {
     pub fn lane_c(&self) -> bool {
         matches!(
             self,
-            Self::OutlineStroke { .. }
+            // ---- Lane B w3-effects ----
+            Self::WidthTool { .. }
+                | Self::LiveEffects { .. }
+                | Self::WidthProfile { .. }
+                | Self::ExpandLive { .. }
+                // ---- end Lane B w3-effects ----
+                | Self::OutlineStroke { .. }
                 | Self::OffsetPath { .. }
                 | Self::Expand { .. }
                 | Self::LiveCorners { .. }
@@ -624,7 +696,9 @@ impl Operation {
     pub fn slice4a(&self) -> bool {
         matches!(
             self,
-            Self::Colour { .. }
+            // ---- w3-cmyk ----
+            Self::ColourManagement { .. }
+                | Self::Colour { .. }
                 | Self::ScaleStrokes { .. }
                 | Self::NewDocument { .. }
                 | Self::ToolOptions { .. }
@@ -638,6 +712,18 @@ impl Operation {
 
     pub fn ids(&self) -> &[String] {
         match self {
+            // ---- Lane A ----
+            Self::Appearance { .. } | Self::Mask { .. } => &[],
+            // ---- Lane E: Phase 11 ----
+            Self::LiveMake { ids, .. } => ids,
+            Self::LiveOptions { .. }
+            | Self::LiveRelease { .. }
+            | Self::LiveExpand { .. }
+            | Self::LiveIsolate { .. }
+            | Self::LiveSpine { .. } => &[],
+            // ---- Lane H ----
+            Self::Typography { .. } => &[],
+            // ---- Lane H end ----
             Self::AddText { .. }
             | Self::SetText { .. }
             | Self::ScaleStrokes { .. }
@@ -660,10 +746,20 @@ impl Operation {
             | Self::Pencil { .. }
             | Self::Curvature { .. }
             | Self::DrawingOptions { .. } => &[],
+            // ---- Lane B w3-effects ----
+            Self::WidthTool { .. } => &[],
+            // ---- end Lane B w3-effects ----
             Self::SmoothPath { ids, .. }
             | Self::PathErase { ids, .. }
             | Self::JoinTool { ids, .. }
+            // ---- w3-cmyk ----
+            | Self::ColourManagement { ids, .. }
             | Self::Colour { ids, .. }
+            // ---- Lane B w3-effects ----
+            | Self::LiveEffects { ids, .. }
+            | Self::WidthProfile { ids, .. }
+            | Self::ExpandLive { ids }
+            // ---- end Lane B w3-effects ----
             | Self::OutlineStroke { ids }
             | Self::OffsetPath { ids, .. }
             | Self::Expand { ids }
@@ -929,6 +1025,8 @@ impl Request {
     /// Wire tool name (for audit records; never carries arguments).
     pub fn tool(&self) -> &'static str {
         match self {
+            // ---- Lane G ----
+            Self::Release(_) => "release",
             Self::Help(_) => "help",
             Self::Preferences(_) => "preferences",
             Self::Shortcuts(_) => "shortcuts",
@@ -967,6 +1065,8 @@ impl Request {
     pub fn api(&self) -> &str {
         match self {
             Self::Capabilities(v) | Self::WindowMemory(v) | Self::ListVerbs(v) => &v.api,
+            // ---- Lane G ----
+            Self::Release(v) => &v.api,
             Self::Help(v) => &v.api,
             Self::Preferences(v) => &v.api,
             Self::Shortcuts(v) => &v.api,

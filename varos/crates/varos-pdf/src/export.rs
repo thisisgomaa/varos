@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicBool;
 use varos_core::model::{Artboard, Document, GroupRole, Paint};
 use varos_core::Rgba;
 
-use crate::write::{drawable, mask_paths, write_pages};
+use crate::write::{drawable, mask_paths};
 
 /// Which pages an export produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -123,6 +123,14 @@ pub fn default_scope(doc: &Document) -> ExportScope {
 
 /// Plan the pages `scope` exports, or say why it can't. Never a dummy page.
 pub fn plan_pdf_export(doc: &Document, scope: ExportScope) -> Result<ExportPlan, ExportUnavailable> {
+    // integration w3: evaluation order live → effects (→ corners → stroke → appearance stack)
+    // ---- Lane E: Phase 11 ----
+    let live = varos_core::live::evaluated_document(doc).map_err(|_| ExportUnavailable::NothingToExport)?;
+    let doc = live.as_ref().unwrap_or(doc);
+    // ---- Lane B w3-effects ----
+    let resolved = varos_core::effects_document::document(doc).map_err(|_| ExportUnavailable::NothingToExport)?;
+    let doc = resolved.as_ref();
+    // ---- end Lane B w3-effects ----
     // ---- Lane G ----
     let outlined;
     let doc = if doc.text_boxes.is_empty() {
@@ -190,6 +198,9 @@ pub fn plan_selection_export(
     varos_core::images::hide_unselected(&mut narrowed, selected);
     // the page reaches as far as the selection PAINTS: the outline grown by the shared painted extent
     // (`varos_core::geom::painted_padding` — the one rule cull and hit-test use too)
+    // ---- Lane E: Phase 11 ----
+    let evaluated = varos_core::live::evaluated_document(&narrowed).map_err(|_| ExportUnavailable::NothingToExport)?;
+    let narrowed = evaluated.unwrap_or(narrowed);
     let page = bounds_page(&narrowed, Reach::Painted).ok_or(ExportUnavailable::NothingToExport)?;
     Ok((narrowed, ExportPlan { scope: ExportScope::Selection, pages: vec![page] }))
 }
@@ -209,11 +220,18 @@ pub fn export_pdf_bytes_with_report(
     if plan.pages.is_empty() {
         return Err(ExportError::Unavailable(ExportUnavailable::NothingToExport));
     }
-    let bytes = write_pages(doc, &plan.pages, None, cancel)?;
-    let mut report = varos_core::ExportReport::default();
+    // ---- Lane H ----
+    let (bytes, mut report) = crate::write::write_text_report(doc, &plan.pages, cancel)?;
+    // ---- w3-cmyk ----
+    report.notes.extend(crate::colour_management::notes(doc));
     // ---- Lane G ----
     if !doc.text_boxes.is_empty() {
-        report.notes.extend(varos_text_layout::export_notes(doc).map_err(ExportError::InvalidDocument)?);
+        report.notes.extend(
+            varos_text_layout::export_notes(doc)
+                .map_err(ExportError::InvalidDocument)?
+                .into_iter()
+                .filter(|n| n.kind != "text_outlines"),
+        );
     }
     for p in &doc.paths {
         if [p.appearance().fill(), p.appearance().stroke()]
@@ -275,6 +293,8 @@ enum Reach {
 fn paints_nothing(p: &varos_core::model::Path) -> bool {
     let alpha = |paint: &Paint| match paint {
         Paint::None => 0.0,
+        // ---- w3-cmyk ----
+        Paint::Managed(c) => c.alpha,
         Paint::Solid(c) => c[3],
         Paint::Gradient(g) => g.stops.iter().map(|s| s.colour[3] * s.opacity).fold(0., f32::max),
         Paint::SwatchRef { .. } => 1.,
