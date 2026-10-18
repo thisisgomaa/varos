@@ -1,23 +1,42 @@
 //! Byte-fed, headless text layout. No host font or locale discovery.
+//!
+//! The default `cosmic` feature is the layout engine. Without it only the
+//! backend-neutral [`kashida`] policy remains, for hosts that shape with their
+//! own HarfRust and face.
 #![forbid(unsafe_code)]
+#[cfg(feature = "cosmic")]
 pub mod composer;
+#[cfg(feature = "cosmic")]
 mod engine;
+#[cfg(feature = "cosmic")]
 mod engine_support;
 pub mod kashida;
+#[cfg(feature = "cosmic")]
 mod labels;
+#[cfg(feature = "cosmic")]
 pub mod metrics;
+#[cfg(feature = "cosmic")]
 mod text_types;
+#[cfg(feature = "cosmic")]
 pub use converge::WorkCounters;
+#[cfg(feature = "cosmic")]
 pub use labels::*;
+#[cfg(feature = "cosmic")]
 mod converge;
+#[cfg(feature = "cosmic")]
 mod fonts;
+#[cfg(feature = "cosmic")]
 pub mod incremental;
+#[cfg(feature = "cosmic")]
 pub mod outlines;
+#[cfg(feature = "cosmic")]
 pub mod paths;
+#[cfg(feature = "cosmic")]
 pub use engine::*;
+#[cfg(feature = "cosmic")]
 pub use fonts::*;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cosmic"))]
 fn test_fonts() -> FontSet {
     FontSet::new(
         vec![
