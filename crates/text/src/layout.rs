@@ -14,6 +14,7 @@ use crate::composer::{Breakpoint, Params, compose};
 use crate::fontdb::FontDb;
 use crate::hyphen::hyphen_points_with;
 use crate::justify::{Flex, LineFit, apply_desired, fit_line, is_word_space};
+use crate::kashida;
 use crate::shape::{
     Punct, SGlyph, Tcy, cap_x_heights, hyphen_glyph, is_cjk, mark_word_ends, no_line_end, no_line_start, punct, shape_range, soft_line_start,
     style_metrics,
@@ -70,102 +71,6 @@ impl Ctx<'_> {
             }
         }
         v
-    }
-
-    /// Stage 0: replace only ordinary, single-run Arabic justified lines. On a
-    /// rejected backend result, the unchanged native spacing loop remains authoritative.
-    fn emit_arabic_line(&mut self, glyphs: &[SGlyph], range: Range<usize>, x: f64, baseline: f64, width: f64, line: usize) -> bool {
-        use unicode_script::{Script, UnicodeScript};
-        use vectorcraft_text_arabic::{FALLBACK_FAMILY, FALLBACK_FONT};
-        let Some(first) = glyphs.first() else { return false };
-        if self.vertical
-            || self.on_path
-            || self.opts.features != OtFeatures::default()
-            || !first.face.variations().is_empty()
-            || glyphs.iter().any(|g| g.run != first.run || g.inline.is_some() || g.face.id() != first.face.id())
-        {
-            return false;
-        }
-        let Some(source) = self.text.get(range.clone()) else { return false };
-        let content = source.trim_end_matches(' ');
-        let mut arabic = false;
-        for ch in content.chars() {
-            match ch.script() {
-                Script::Arabic => arabic = true,
-                Script::Common | Script::Inherited if !ch.is_control() => {}
-                _ => return false,
-            }
-        }
-        if !arabic {
-            return false;
-        }
-        let style = self.style_at(first.byte);
-        // Unimplemented typography must keep using the native shaper, not be discarded.
-        if style.tracking != 0.0
-            || style.kerning.is_some()
-            || style.h_scale != 100.0
-            || style.v_scale != 100.0
-            || style.rotation != 0.0
-            || style.baseline_shift != 0.0
-            || style.position != vectorcraft_doc::CharPosition::Normal
-            || style.small_caps.is_some()
-            || style.all_caps
-            || !style.features.is_empty()
-            || style.proportional_metrics
-            || style.digits != vectorcraft_doc::Digits::Default
-            || style.char_align != vectorcraft_doc::CharAlign::RomanBaseline
-        {
-            return false;
-        }
-        let size = style.size;
-        let result = vectorcraft_text_arabic::justify(content, first.face.file_data(), &first.face.family, first.face.weight as u16, size, width);
-        let shaped = match result {
-            Ok(line) => line,
-            Err(error) => {
-                log::debug!("Arabic justification retained native spacing: {error}");
-                return false;
-            }
-        };
-        let face = if shaped.used_fallback {
-            self.db.add_font(FALLBACK_FONT.to_vec());
-            let Some(face) = self.db.face(FALLBACK_FAMILY, "Regular").filter(|face| face.file_data() == FALLBACK_FONT) else { return false };
-            face
-        } else {
-            first.face.clone()
-        };
-        let scale = size / face.units_per_em();
-        let shift = Affine::translate((x, baseline));
-        let mut emitted = Vec::with_capacity(shaped.glyphs.len());
-        for g in shaped.glyphs {
-            let origin = Point::new(x + g.x, baseline + g.y);
-            let xf = Affine::translate((origin.x + g.offset[0], origin.y + g.offset[1])) * Affine::scale(scale);
-            let mut outline = g.outline;
-            outline.apply_affine(shift);
-            emitted.push(PositionedGlyph {
-                outline,
-                run: first.run,
-                byte: range.start + g.cluster.start,
-                len: g.cluster.len(),
-                origin,
-                advance: g.advance,
-                angle: 0.0,
-                line,
-                font_id: face.id(),
-                gid: g.gid,
-                xf,
-                rtl: g.rtl,
-                scale: 1.0,
-            });
-        }
-        // Logical trailing blanks belong outside the justified visible extent, on its left.
-        let trailing = glyphs.iter().filter(|g| g.byte >= range.start + content.len());
-        let mut blank_x = x - trailing.clone().map(|g| g.adv).sum::<f64>();
-        for g in trailing {
-            self.emit(g, Affine::translate((blank_x, baseline)), Point::new(blank_x, baseline), 0.0, g.adv, line);
-            blank_x += g.adv;
-        }
-        self.out.glyphs.extend(emitted);
-        true
     }
 
     fn emit(&mut self, g: &SGlyph, pre: Affine, origin: Point, angle: f64, advance: f64, line: usize) {
@@ -1421,6 +1326,8 @@ fn break_line(
     // cluster starts, so the resulting end always keeps each source cluster together.
     let (end, hy) = match last_break {
         Some(b) if b.0 > i => b,
+        // Varos: a joined (Arabic) word wider than the line overflows whole; it is never cut.
+        _ if kashida::joins(&g[j]) || kashida::joins(&g[j - 1]) => (kashida::word_end(g, j), false),
         _ => (j, false),
     };
     (end, hy)
@@ -1551,6 +1458,7 @@ mod wrapping_tests {
                 tcy: None,
                 inline: None,
                 word_end: false,
+                tatweel: false,
                 lead: 0.0,
                 proportional: false,
                 vpal: None,
@@ -1568,7 +1476,9 @@ mod wrapping_tests {
     #[test]
     fn greedy_wrap_keeps_an_oversized_first_cluster_and_its_source_range() {
         let text = "بَت";
-        let glyphs = synthetic_glyphs(&[(0, 4, 2.0, 'ب'), (0, 4, 2.0, 'ب'), (4, 2, 1.0, 'ت')]);
+        // Varos: an Arabic word too wide for the line now overflows whole (`kashida::joins`); the
+        // cluster rule is checked on non-joining letters at the same synthetic bytes.
+        let glyphs = synthetic_glyphs(&[(0, 4, 2.0, 'b'), (0, 4, 2.0, 'b'), (4, 2, 1.0, 't')]);
 
         let (end, hyphenated) = break_line(text, &glyphs, 0, 3.0, &[], 0.0, None, Burasagari::None, Kinsoku::Hard);
 
@@ -1581,7 +1491,8 @@ mod wrapping_tests {
     #[test]
     fn greedy_wrap_keeps_an_oversized_cluster_after_a_line_start_atomic() {
         let text = "بَتَث";
-        let glyphs = synthetic_glyphs(&[(0, 4, 1.0, 'ب'), (4, 4, 2.0, 'ت'), (4, 4, 2.0, 'ت'), (8, 2, 1.0, 'ث')]);
+        // Varos: non-joining letters, as above.
+        let glyphs = synthetic_glyphs(&[(0, 4, 1.0, 'b'), (4, 4, 2.0, 't'), (4, 4, 2.0, 't'), (8, 2, 1.0, 's')]);
 
         let (first_end, _) = break_line(text, &glyphs, 0, 3.0, &[], 0.0, None, Burasagari::None, Kinsoku::Hard);
         assert_eq!(first_end, 1);
@@ -1632,8 +1543,9 @@ mod wrapping_tests {
         object.kind = TextKind::Area { frame: PathData::from_bezpath(&Rect::new(0.0, 0.0, width, 100.0).to_path(0.1)) };
         let result = layout_with(db, &object, &LayoutOptions::default());
 
-        let next_cluster_byte = shaped.get(first_end).map(|g| g.byte);
-        assert_eq!(result.lines.first().map(|line| line.end), next_cluster_byte);
+        // Varos: the Arabic word overflows whole instead of breaking after its first cluster.
+        assert!(shaped.get(first_end).is_some());
+        assert_eq!(result.lines.first().map(|line| line.end), Some(text.len()));
     }
 }
 
@@ -1833,7 +1745,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
         let wakan = if para.mojikumi == Mojikumi::LineEndHalf { space_japanese_and_latin(&mut sg) } else { vec![] };
         // Justification…: the glyphs at Desired word and letter spacing and glyph scaling, and how
         // far a justified line may move each one from it.
-        let flex = apply_desired(&mut sg, &para.justification, !cx.vertical);
+        let mut flex = apply_desired(&mut sg, &para.justification, !cx.vertical);
         // …and Auto Leading: characters whose leading is Auto take this paragraph's share of their size.
         let auto_leading = |st: &CharStyle| st.leading.unwrap_or_else(|| para.justification.auto_leading_for(st.size));
         if para.justification.auto_leading != vectorcraft_doc::JustificationOptions::default().auto_leading {
@@ -1852,8 +1764,8 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
         if pi > 0 {
             pen.pending += para.space_before;
         }
-        let n = sg.len();
-        let composed = compose_para(cx, &sg, &flex, para, &pen, rtl);
+        let mut n = sg.len();
+        let mut composed = compose_para(cx, &sg, &flex, para, &pen, rtl);
         // Hyphenation options: the Hyphenation Zone applies with the Single-line Composer, and the
         // Hyphen Limit counts the lines in a row that end with a hyphen.
         let zone = if cx.opts.composer.unwrap_or(para.composer) == Composer::SingleLine { para.hyphenation.zone } else { 0.0 };
@@ -1881,7 +1793,7 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             }
             // Place, break, then settle the baseline on the line's real metrics (moving on to the
             // next row/column if it no longer fits).
-            let (baseline, x0, x1, end, hyph, m) = loop {
+            let (baseline, x0, x1, mut end, hyph, m) = loop {
                 let first_in_region = pen.prev.is_none();
                 let Some((mut baseline, x0, x1, same_baseline)) = pen.place(est, ind_l, para.right_indent, word) else {
                     cx.out.overflow = cx.text.len() > if i < n { sg[i].byte } else { pr.start };
@@ -1924,6 +1836,29 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             let mut trimmed = end;
             while trimmed > i && sg[trimmed - 1].is_space() {
                 trimmed -= 1;
+            }
+            // Varos: a justified right-to-left line first grows with kashida (tatweels) in its
+            // Arabic words, re-shaped in the paragraph's own face; its word spaces take the rest.
+            // The re-shaped words are spliced into the paragraph's glyphs: later indices move.
+            if rtl
+                && !cx.vertical
+                && !hyph
+                && regions.is_some()
+                && compressed.is_empty()
+                && wakan.is_empty()
+                && kashida::justified(para.justify, last_of_para)
+            {
+                let levels = bidi.as_ref().map_or(&[][..], |b| &b.levels[..]);
+                let shaper = kashida::Shaper { db: cx.db, text: cx.text, runs: &cx.runs, feats: &cx.opts.features, levels, para_start: pr.start };
+                let grown = kashida::stretch_line(&shaper, &mut sg, &mut flex, &para.justification, i, trimmed, end, width);
+                if grown != 0 {
+                    end = end.saturating_add_signed(grown);
+                    trimmed = trimmed.saturating_add_signed(grown);
+                    n = sg.len();
+                    for e in composed.iter_mut().flatten().skip(li_para + 1) {
+                        e.0 = e.0.saturating_add_signed(grown);
+                    }
+                }
             }
             let hyphen = (hyph && end > i).then(|| hyphen_glyph(&sg[end - 1]));
             // Mojikumi: a closing bracket, comma or full stop ending the line is set half width, and
@@ -2021,6 +1956,9 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 (true, SingleWordJustify::AlignCenter) => (1, false),
                 (true, SingleWordJustify::AlignRight) => (2, false),
             };
+            // Varos: the line holds a joining script (Arabic): see below.
+            let joined = sg[i..body].iter().any(kashida::joins);
+            let mut rtl_shift = 0.0;
             if justify && (room - w).abs() > EPS {
                 let line_flex = |j: usize| if held.contains(&j) { Flex::default() } else { flex.get(j).copied().unwrap_or_default() };
                 if cjk_gaps > 0 && room > w {
@@ -2041,13 +1979,22 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                     let rest = room - w - used;
                     let gaps =
                         (i..body).filter(|&j| j + 1 < body && !held.contains(&j) && sg.get(j + 1).is_some_and(|next| !next.continues_tcy())).count();
-                    if gaps > 0 && rest > EPS {
+                    // Varos: letters of a joining script are never spaced apart (the gaps would
+                    // break their joins); a right-to-left line keeps what is left at its start.
+                    if joined {
+                        rtl_shift = if rtl { rest.max(0.0) } else { 0.0 };
+                    } else if gaps > 0 && rest > EPS {
                         per_gap = rest / gaps as f64;
                     }
                 }
             }
+            // Varos: a right-to-left joined word too wide for its justified line overflows at the
+            // line's end (its left), not its start.
+            if justify && rtl && joined && spaces == 0 && w > room + EPS {
+                rtl_shift = room - w;
+            }
             let start_x = if justify {
-                ax0 - opt_l
+                ax0 - opt_l + rtl_shift
             } else if regions.is_none() {
                 match align {
                     0 => ind_l - opt_l,
@@ -2071,20 +2018,6 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             // A line with tabs is measured as if it started at the left (see `set_width`), then
             // aligned as a whole: its tabs stop where they were measured, however it is aligned.
             let tab_shift = start_x - if regions.is_some() { ax0 } else { ind_l };
-            // The native visual order is also used above for optical margins. Only replace
-            // emission after the new justification and single-word policies are resolved.
-            let order = if justify
-                && rtl
-                && width > w
-                && hyphen.is_none()
-                && para.justification == vectorcraft_doc::JustificationOptions::default()
-                && cx.emit_arabic_line(&sg[i..end], line_start..line_end, start_x, baseline, width, li)
-            {
-                x_end = start_x + width;
-                Vec::new() // The adapter already emitted this line in visual order.
-            } else {
-                order
-            };
             // RTL's logical trailing spaces precede the visible content. Keep them outside
             // the aligned content extent, just as LTR trailing spaces extend to its right.
             let leading_space_width: f64 =

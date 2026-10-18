@@ -1,152 +1,82 @@
-//! Private Stage 0 bridge: one native-selected Arabic line, normal positioned outlines.
-use kurbo::{Affine, BezPath};
-use std::{ops::Range, sync::Arc};
-pub use varos_text;
-use varos_text::{
-    Direction, Engine, FallbackPolicy, FontFace, FontSet, Issue, Request,
-    composer::{Alignment, ParagraphOptions},
-    kashida::Kashida,
-    outlines::{self, Command},
-};
+//! Arabic kashida (tatweel) justification for VectorCraft text.
+//!
+//! The policy (which joins may take a tatweel, in which order, within which budget)
+//! comes from Varos' `varos-text`, built without its own shaper. VectorCraft re-shapes
+//! with its own HarfRust and the paragraph's own face (`crates/text/src/shape.rs`), so
+//! measurement and stretching agree and no other font is ever substituted.
+//!
+//! Contract with `crates/text`:
+//! - lines are broken by VectorCraft; only a justified, right-to-left line is stretched;
+//! - [`plan`] proposes tatweel slots (source byte boundaries) and the host re-shapes the
+//!   words that hold them, reporting [`Measured`] widths and HarfRust's
+//!   safe-to-insert-tatweel boundaries;
+//! - a virtual tatweel glyph has zero source length, at the boundary byte it fills, so
+//!   carets, selection and exported text see only the authored characters.
+use unicode_script::{Script, UnicodeScript};
+pub use varos_text::kashida::{Candidate, Kashida, Measured, Plan, Width, WorkingText, candidates, joining_allows, plan};
 
-/// External spike input; no font binary is copied into VectorCraft.
-pub const FALLBACK_FONT: &[u8] = include_bytes!("~/Documents/AI workspace/varos/varos/crates/varos-text/assets/fonts/NotoSansArabic.ttf");
-pub const FALLBACK_FAMILY: &str = "Noto Sans Arabic";
+/// The kashida strength used for every justified right-to-left Arabic paragraph (no
+/// paragraph attribute yet).
+pub const POLICY: Kashida = Kashida::Balanced;
 
-#[derive(Debug)]
-pub struct Glyph {
-    pub outline: BezPath,
-    pub cluster: Range<usize>,
-    pub gid: u32,
-    /// Baseline-relative pen and outline offsets, in points, Y down.
-    pub x: f64,
-    pub y: f64,
-    pub offset: [f64; 2],
-    pub advance: f64,
-    pub rtl: bool,
-}
-#[derive(Debug)]
-pub struct Line {
-    pub glyphs: Vec<Glyph>,
-    pub width: f64,
-    pub ascent: f64,
-    pub descent: f64,
-    pub insertions: usize,
-    pub used_fallback: bool,
+/// The virtual elongation character.
+pub const TATWEEL: char = '\u{0640}';
+
+/// Is `c` written in a joining script whose words must not be cut or letter-spaced
+/// (Arabic, Syriac, N'Ko, Mongolian)?
+pub fn joining_script(c: char) -> bool {
+    matches!(c.script(), Script::Arabic | Script::Syriac | Script::Nko | Script::Mongolian | Script::Hanifi_Rohingya)
 }
 
-/// Exact conversion lifted from the proven standalone renderer adapter.
-pub fn bezpath(outline: &outlines::Outline) -> BezPath {
-    let point = |p: [f32; 2]| (f64::from(p[0]), f64::from(p[1]));
-    let mut path = BezPath::new();
-    for command in &outline.commands {
-        match *command {
-            Command::Move(p) => path.move_to(point(p)),
-            Command::Line(p) => path.line_to(point(p)),
-            Command::Cubic(a, b, c) => path.curve_to(point(a), point(b), point(c)),
-            Command::Close => path.close_path(),
-        }
-    }
-    path
-}
-
-// Varos requires &'static str metadata. Bounded spike table avoids leaking dynamic names.
-fn family_name(family: &str) -> Option<&'static str> {
-    [FALLBACK_FAMILY, "Noto Naskh Arabic", "Amiri", "Arial", "SF Arabic"].into_iter().find(|name| *name == family)
-}
-
-/// Try the native face, then Noto for collections, unsupported metadata or rejected shaping.
-/// Returns an error rather than changing the native-selected line breaks.
-pub fn justify(text: &str, font: &[u8], family: &str, weight: u16, size: f64, width: f64) -> Result<Line, &'static str> {
-    if text.len() > 16_384
-        || text.is_empty()
-        || text.contains(['\n', '\r', '\t'])
-        || !size.is_finite()
-        || !(0.1..=10_000.0).contains(&size)
-        || !width.is_finite()
-        || !(0.1..=1_000_000.0).contains(&width)
-    {
-        return Err("unsupported Arabic line input");
-    }
-    if let Some(family) = family_name(family)
-        && !font.starts_with(b"ttcf")
-        && let Ok(line) = compose(text, font, family, weight, size as f32, width as f32, false)
-    {
-        return Ok(line);
-    }
-    compose(text, FALLBACK_FONT, FALLBACK_FAMILY, 400, size as f32, width as f32, true)
-}
-
-fn compose(text: &str, font: &[u8], family: &'static str, weight: u16, size: f32, width: f32, used_fallback: bool) -> Result<Line, &'static str> {
-    let fonts = FontSet::new(vec![FontFace::new(family, weight, Arc::from(font))?], FallbackPolicy::default())?;
-    let mut engine = Engine::new(fonts.clone())?;
-    let mut request = Request::new(text, size, Some(width));
-    request.direction = Direction::Rtl;
-    request.language = "ar";
-    request.script = Some("Arab".parse()?);
-    let options = ParagraphOptions { alignment: Alignment::JustifyFull, kashida: Kashida::Balanced, ..Default::default() };
-    let layout = engine.compose(&request, &options)?;
-    let line = layout.lines.first().ok_or("Arabic composition produced no line")?;
-    if layout.lines.len() != 1
-        || layout.source != text
-        || line.glyphs.iter().any(|g| g.id == 0)
-        || !line.width.is_finite()
-        || (line.width - width).abs() > 0.01
-    {
-        return Err("Arabic composition changed line breaks, has missing glyphs or residual width");
-    }
-    let insertions = layout
-        .issues
-        .iter()
-        .filter_map(|issue| match issue {
-            Issue::KashidaInserted { count, .. } => Some(*count),
-            _ => None,
+/// Can the word `word` take kashida: it holds an Arabic letter and nothing but Arabic
+/// letters, marks (inherited script), joiners (ZWJ/ZWNJ) and punctuation (`الله،`)? Digits
+/// and other scripts keep the word as it is.
+pub fn kashida_word(word: &str) -> bool {
+    word.chars().any(|c| c.script() == Script::Arabic && c.is_alphabetic())
+        && word.chars().all(|c| match c.script() {
+            Script::Arabic => !c.is_numeric(),
+            Script::Inherited => true,
+            Script::Common => !c.is_numeric() && !c.is_whitespace(),
+            _ => false,
         })
-        .sum();
-    let mut glyphs = Vec::with_capacity(line.glyphs.len());
-    for g in &line.glyphs {
-        if text.get(g.cluster.clone()).is_none()
-            || !g.x.is_finite()
-            || !g.y.is_finite()
-            || !g.advance.is_finite()
-            || !g.offset.iter().all(|v| v.is_finite())
-        {
-            return Err("invalid Arabic glyph placement or source mapping");
-        }
-        let mut outline = bezpath(&outlines::glyph_outline(&fonts, g)?);
-        outline.apply_affine(Affine::translate((0.0, -f64::from(line.baseline))));
-        glyphs.push(Glyph {
-            outline,
-            cluster: g.cluster.clone(),
-            gid: u32::from(g.id),
-            x: f64::from(g.x),
-            y: f64::from(g.y - line.baseline),
-            offset: g.offset.map(f64::from),
-            advance: f64::from(g.advance),
-            rtl: g.level % 2 == 1,
-        });
-    }
-    Ok(Line { glyphs, width: f64::from(line.width), ascent: f64::from(line.ascent), descent: f64::from(line.descent), insertions, used_fallback })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     #[test]
-    fn justified_arabic_600_has_kashida() {
-        let text = "بسم الله الرحمن الرحيم";
-        let line = justify(text, FALLBACK_FONT, FALLBACK_FAMILY, 400, 48.0, 600.0).unwrap();
-        assert!(line.insertions >= 1);
-        assert!((line.width - 600.0).abs() <= 0.01);
-        assert!((line.glyphs.iter().map(|g| g.advance).sum::<f64>() - 600.0).abs() <= 0.01);
-        assert!(!line.used_fallback);
-        assert!(line.glyphs.iter().any(|g| !g.outline.is_empty()));
-        eprintln!("insertions={}, width={}, glyphs={}", line.insertions, line.width, line.glyphs.len());
+    fn words_that_may_take_kashida() {
+        assert!(kashida_word("الرحمن"));
+        assert!(kashida_word("بِسْمِ"));
+        assert!(kashida_word("الله،") && kashida_word("(الرحيم)"));
+        assert!(!kashida_word("رقم١"), "Arabic-Indic digits");
+        assert!(!kashida_word("abc"));
+        assert!(!kashida_word("رقم1"));
+        assert!(!kashida_word("١٢٣"), "digits are not letters");
+        assert!(!kashida_word(""));
+        assert!(joining_script('ب') && joining_script('ܐ') && !joining_script('a') && !joining_script('א'));
     }
+
     #[test]
-    fn rejected_font_falls_back_and_invalid_sizes_fail() {
-        let line = justify("بسم الله الرحمن الرحيم", b"ttcf", "Collection", 400, 48.0, 600.0).unwrap();
-        assert!(line.used_fallback && line.insertions > 0);
-        assert!(justify("بسم", FALLBACK_FONT, FALLBACK_FAMILY, 400, f64::NAN, 600.0).is_err());
+    fn plan_in_points_prefers_seen_and_stops_at_the_budget() {
+        let text = "بسم الله الرحمن الرحيم";
+        let safe: HashSet<usize> = candidates(text, 0..text.len()).into_iter().map(|c| c.byte).collect();
+        assert!(!safe.is_empty());
+        // Each tatweel adds 3 pt; slack 20 pt; Balanced uses at most 60 % of it.
+        let p = plan(text, 0..text.len(), 300.0f64, safe.clone(), 320.0, POLICY, |slots| {
+            Some(Measured { width: 300.0 + 3.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: slots.len() })
+        });
+        assert_eq!(p.slots.len(), 4);
+        assert_eq!(p.width, 312.0);
+        assert_eq!(p.payload, Some(4));
+        // The first slot is after a seen (priority 0).
+        let first = candidates(text, 0..text.len()).into_iter().find(|c| c.priority == 0).map(|c| c.byte);
+        assert!(p.slots.contains(&first.unwrap()));
+        // Virtual text keeps the authored bytes apart from the tatweels.
+        let w = WorkingText::new(text, &p.slots).unwrap();
+        assert_eq!(w.text.chars().filter(|&c| c == TATWEEL).count(), 4);
+        assert_eq!(w.text.replace(TATWEEL, ""), text);
     }
 }

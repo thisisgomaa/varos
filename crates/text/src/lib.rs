@@ -19,6 +19,8 @@ mod fontconfig;
 mod fontdb;
 pub mod hyphen;
 mod justify;
+// Varos: kashida (tatweel) justification of right-to-left Arabic lines.
+mod kashida;
 mod layout;
 mod shape;
 #[cfg(not(target_arch = "wasm32"))]
@@ -558,6 +560,8 @@ mod tests_fit;
 mod tests_inline;
 #[cfg(test)]
 mod tests_justify;
+#[cfg(test)]
+mod tests_kashida;
 #[cfg(test)]
 mod tests_scripts;
 #[cfg(test)]
