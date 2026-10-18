@@ -1,0 +1,13 @@
+Stage 0 lane B hook decision (before implementation)
+Automatic Arabic branch in crates/text/src/layout.rs::flow after line breaking,
+justification eligibility and source range calculation. No Justify enum/schema change.
+Only horizontal, single-run Arabic-script lines with ordinary character attributes;
+existing Latin/non-Arabic placement code stays intact. Compose a selected line with
+varos-text JustifyFull/Balanced, convert positioned outlines to BezPath, normalize
+the backend baseline, and emit normal PositionedGlyph/LineInfo data. Native line
+breaking stays authoritative. Errors retain existing space justification.
+Collections/rejected fonts fall back to externally include_bytes! Noto Sans Arabic;
+register that same font in the native FontDb for coherent glyph IDs/export transforms.
+Source cluster ranges are preserved, but exact virtual-tatweel caret fidelity requires
+verification and may remain a reported spike limitation. No commit or publication.
+Read ROADMAP assessment. plan/STATUS.md, execution-plan.md, architecture.md absent.

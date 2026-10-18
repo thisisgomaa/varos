@@ -58,6 +58,99 @@ impl Ctx<'_> {
         v
     }
 
+    /// Stage 0: replace only ordinary, single-run Arabic justified lines. On a
+    /// rejected backend result, the unchanged native spacing loop remains authoritative.
+    fn emit_arabic_line(&mut self, glyphs: &[SGlyph], range: Range<usize>, x: f64, baseline: f64, width: f64, line: usize) -> bool {
+        use unicode_script::{Script, UnicodeScript};
+        use vectorcraft_text_arabic::{FALLBACK_FAMILY, FALLBACK_FONT};
+        let Some(first) = glyphs.first() else { return false };
+        if self.vertical
+            || self.on_path
+            || self.opts.features != OtFeatures::default()
+            || !first.face.variations().is_empty()
+            || glyphs.iter().any(|g| g.run != first.run || g.inline.is_some() || g.face.id() != first.face.id())
+        {
+            return false;
+        }
+        let Some(source) = self.text.get(range.clone()) else { return false };
+        let content = source.trim_end_matches(' ');
+        let mut arabic = false;
+        for ch in content.chars() {
+            match ch.script() {
+                Script::Arabic => arabic = true,
+                Script::Common | Script::Inherited if !ch.is_control() => {}
+                _ => return false,
+            }
+        }
+        if !arabic {
+            return false;
+        }
+        let style = self.style_at(first.byte);
+        // Unimplemented typography must keep using the native shaper, not be discarded.
+        if style.tracking != 0.0
+            || style.kerning.is_some()
+            || style.h_scale != 100.0
+            || style.v_scale != 100.0
+            || style.rotation != 0.0
+            || style.baseline_shift != 0.0
+            || style.position != vectorcraft_doc::CharPosition::Normal
+            || style.small_caps.is_some()
+            || style.all_caps
+            || !style.features.is_empty()
+            || style.char_align != vectorcraft_doc::CharAlign::RomanBaseline
+        {
+            return false;
+        }
+        let size = style.size;
+        let result = vectorcraft_text_arabic::justify(content, first.face.file_data(), &first.face.family, first.face.weight as u16, size, width);
+        let shaped = match result {
+            Ok(line) => line,
+            Err(error) => {
+                log::debug!("Arabic justification retained native spacing: {error}");
+                return false;
+            }
+        };
+        let face = if shaped.used_fallback {
+            self.db.add_font(FALLBACK_FONT.to_vec());
+            let Some(face) = self.db.face(FALLBACK_FAMILY, "Regular").filter(|face| face.file_data() == FALLBACK_FONT) else { return false };
+            face
+        } else {
+            first.face.clone()
+        };
+        let scale = size / face.units_per_em();
+        let shift = Affine::translate((x, baseline));
+        let mut emitted = Vec::with_capacity(shaped.glyphs.len());
+        for g in shaped.glyphs {
+            let origin = Point::new(x + g.x, baseline + g.y);
+            let xf = Affine::translate((origin.x + g.offset[0], origin.y + g.offset[1])) * Affine::scale(scale);
+            let mut outline = g.outline;
+            outline.apply_affine(shift);
+            emitted.push(PositionedGlyph {
+                outline,
+                run: first.run,
+                byte: range.start + g.cluster.start,
+                len: g.cluster.len(),
+                origin,
+                advance: g.advance,
+                angle: 0.0,
+                line,
+                font_id: face.id(),
+                gid: g.gid,
+                xf,
+                rtl: g.rtl,
+            });
+        }
+        // Logical trailing blanks belong outside the justified visible extent, on its left.
+        let trailing = glyphs.iter().filter(|g| g.byte >= range.start + content.len());
+        let mut blank_x = x - trailing.clone().map(|g| g.adv).sum::<f64>();
+        for g in trailing {
+            self.emit(g, Affine::translate((blank_x, baseline)), Point::new(blank_x, baseline), 0.0, g.adv, line);
+            blank_x += g.adv;
+        }
+        self.out.glyphs.extend(emitted);
+        true
+    }
+
     fn emit(&mut self, g: &SGlyph, pre: Affine, origin: Point, angle: f64, advance: f64, line: usize) {
         let src = if g.inline.is_some() { std::sync::Arc::new(BezPath::new()) } else { self.db.outline(&g.face, g.gid) };
         // A glyph whose leading space was taken off (mojikumi) is drawn that much earlier: an
@@ -1511,7 +1604,17 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             let tab_origin = if regions.is_some() { x0 } else { 0.0 };
             let line_start = sg.get(i).map_or(pr.start, |g| g.byte);
             let line_end = sg.get(end).map_or(pr.end, |g| g.byte);
-            let order = visual_order(bidi.as_ref().filter(|_| !cx.vertical), pr.start, line_start..line_end, &sg[i..end]);
+            let order = if justify
+                && rtl
+                && width > w
+                && hyphen.is_none()
+                && cx.emit_arabic_line(&sg[i..end], line_start..line_end, start_x, baseline, width, li)
+            {
+                x_end = start_x + width;
+                Vec::new() // The adapter already emitted this line in visual order.
+            } else {
+                visual_order(bidi.as_ref().filter(|_| !cx.vertical), pr.start, line_start..line_end, &sg[i..end])
+            };
             // RTL's logical trailing spaces precede the visible content. Keep them outside
             // the aligned content extent, just as LTR trailing spaces extend to its right.
             let leading_space_width: f64 =
