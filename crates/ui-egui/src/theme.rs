@@ -10,14 +10,16 @@ pub enum Brightness {
     Dark,
     #[default]
     MediumDark,
+    Varos,
     MediumLight,
     Light,
 }
 
 impl Brightness {
-    pub const ALL: [Brightness; 4] = [Brightness::Dark, Brightness::MediumDark, Brightness::MediumLight, Brightness::Light];
+    pub const ALL: [Brightness; 5] = [Brightness::Varos, Brightness::Dark, Brightness::MediumDark, Brightness::MediumLight, Brightness::Light];
     pub fn label(self) -> &'static str {
         match self {
+            Brightness::Varos => "Varos",
             Brightness::Dark => "Dark",
             Brightness::MediumDark => "Medium Dark",
             Brightness::MediumLight => "Medium Light",
@@ -26,6 +28,7 @@ impl Brightness {
     }
     pub fn id(self) -> &'static str {
         match self {
+            Brightness::Varos => "varos",
             Brightness::Dark => "dark",
             Brightness::MediumDark => "mediumDark",
             Brightness::MediumLight => "mediumLight",
@@ -135,6 +138,7 @@ impl Tokens {
             warning: hex(0xf0a330),
         };
         match b {
+            Brightness::Varos => crate::varos::theme::tokens(),
             Brightness::Dark => base,
             // Measured from Illustrator 2026 (plan/illustrator/10-observed-ui.md §1).
             Brightness::MediumDark => Tokens {
@@ -234,6 +238,10 @@ pub fn mono(size: f32) -> FontId {
 }
 
 pub fn install_fonts(ctx: &egui::Context) {
+    ctx.set_fonts(font_definitions());
+}
+
+pub(crate) fn font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let add = |f: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
         f.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
@@ -255,7 +263,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     mono.extend(fallback);
     fonts.families.insert(FontFamily::Name(FONT_MONO.into()), mono);
     add_craft_fonts(&mut fonts);
-    ctx.set_fonts(fonts);
+    fonts
 }
 
 /// The egui name of a craft-fonts face.
@@ -278,6 +286,10 @@ fn add_craft_fonts(fonts: &mut FontDefinitions) {
 
 /// Apply tokens to egui's global style.
 pub fn apply(ctx: &egui::Context, b: Brightness) {
+    if b == Brightness::Varos {
+        crate::varos::theme::apply(ctx);
+        return;
+    }
     let t = Tokens::for_brightness(b);
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };

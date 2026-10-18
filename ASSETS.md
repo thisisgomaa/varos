@@ -331,3 +331,49 @@ Generated-in-code art is original and has no file to list. This covers the defau
 | `examples/ribbons.vectorcraft` | VectorCraft contributors | Original artwork built through the VectorCraft command API | MIT OR Apache-2.0 |  |
 | `examples/feature-sheet.vectorcraft` | VectorCraft contributors | Original artwork built through the VectorCraft command API | MIT OR Apache-2.0 |  |
 | `examples/perspective-city.vectorcraft` | VectorCraft contributors | Original artwork built through the VectorCraft command API | MIT OR Apache-2.0 |  |
+
+## Varos Stage 0 spike
+
+| Path | Author | Source URL | Licence | Notes |
+|---|---|---|---|---|
+| `crates/ui-egui/assets/varos/fonts/IBMPlexSansArabic-Regular.ttf` | IBM Corp. / IBM Plex Project Authors | https://github.com/IBM/plex | OFL-1.1 (fonts/plex-sans-arabic-LICENSE.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/fonts/Inter-Medium.ttf` | Rasmus Andersson / Inter Project Authors | https://github.com/rsms/inter | OFL-1.1 (fonts/Inter-OFL.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/fonts/Inter-OFL.txt` | Rasmus Andersson / Inter Project Authors | https://github.com/rsms/inter | OFL-1.1 (fonts/Inter-OFL.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/fonts/Inter-Regular.ttf` | Rasmus Andersson / Inter Project Authors | https://github.com/rsms/inter | OFL-1.1 (fonts/Inter-OFL.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/fonts/Inter-SemiBold.ttf` | Rasmus Andersson / Inter Project Authors | https://github.com/rsms/inter | OFL-1.1 (fonts/Inter-OFL.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/fonts/JetBrainsMono-OFL.txt` | JetBrains Mono Project Authors | https://github.com/JetBrains/JetBrainsMono | OFL-1.1 (fonts/JetBrainsMono-OFL.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/fonts/JetBrainsMono-Regular.ttf` | JetBrains Mono Project Authors | https://github.com/JetBrains/JetBrainsMono | OFL-1.1 (fonts/JetBrainsMono-OFL.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/fonts/plex-sans-arabic-LICENSE.txt` | IBM Corp. / IBM Plex Project Authors | https://github.com/IBM/plex | OFL-1.1 (fonts/plex-sans-arabic-LICENSE.txt) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/LICENSE` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/align-horizontal-distribute-center.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/align-horizontal-distribute-end.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/align-horizontal-distribute-start.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/align-vertical-distribute-center.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/align-vertical-distribute-end.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/align-vertical-distribute-start.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/chevron-down.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/chevron-left.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/chevron-right.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/copy.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/ellipsis.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/file-plus.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/folder-open.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/folder.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/frame.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/hand.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/history.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/house.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/lasso.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/layout-grid.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/link.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/menu.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/move.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/pen-tool.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/pipette.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/plus.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/rectangle-horizontal.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/ruler.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/square-dashed.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/trash-2.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/x.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |
+| `crates/ui-egui/assets/varos/icons/zoom-in.svg` | Lucide Contributors / Cole Bemis | https://lucide.dev | ISC / MIT (icons/LICENSE) | Varos Stage 0 spike; copied from owner-supplied Varos assets |

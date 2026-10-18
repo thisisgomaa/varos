@@ -181,7 +181,8 @@ fn window<K: LibraryKind>(app: &mut VectorcraftApp, ctx: &egui::Context, id: &st
     let area =
         egui::Area::new(egui::Id::new(("library-panel", K::KIND))).order(egui::Order::Foreground).default_pos(at).movable(true).constrain(true);
     area.show(ctx, |ui| {
-        egui::Frame::popup(ui.style()).fill(t.panel).corner_radius(CornerRadius::same(4)).inner_margin(egui::Margin::ZERO).show(ui, |ui| {
+        let radius = crate::varos::theme::box_radius(&t, 4);
+        egui::Frame::popup(ui.style()).fill(t.panel).corner_radius(radius).inner_margin(egui::Margin::ZERO).show(ui, |ui| {
             ui.set_width(256.0);
             let (strip, _) = ui.allocate_exact_size(vec2(256.0, 26.0), Sense::hover());
             ui.painter().rect_filled(strip, CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 }, t.panel_darker);

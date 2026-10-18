@@ -111,6 +111,9 @@ pub fn tool_icon(name: &str) -> &'static str {
 }
 
 pub fn source(name: &str) -> ImageSource<'static> {
+    if let Some(source) = crate::varos::icons::source(name) {
+        return source;
+    }
     let bytes = table().get(name).or_else(|| table().get("square-dashed")).copied().unwrap_or(&[]);
     ImageSource::Bytes { uri: format!("bytes://icon/{name}.svg").into(), bytes: egui::load::Bytes::Static(bytes) }
 }

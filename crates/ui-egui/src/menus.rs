@@ -243,7 +243,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "",
         "{collapsed?: bool} collapse the dock's Properties | Layers | Libraries group to icons (true), expand it (false) or toggle (omitted), as the double arrow at the top of the dock does; returns the new state",
     ),
-    ("window.brightness", "UI Brightness", "", "{brightness: dark|mediumDark|mediumLight|light}"),
+    ("window.brightness", "UI Brightness", "", "{brightness: varos|dark|mediumDark|mediumLight|light}"),
     ("window.workspace", "Workspace", "", "{name} switch workspace (Essentials, Essentials Classic, Painting, …)"),
     ("window.workspace.reset", "Reset Essentials", "", "{} reset the current workspace"),
     ("window.workspace.new", "New Workspace…", "", "{name?} save the current layout"),

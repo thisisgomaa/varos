@@ -54,6 +54,7 @@ pub mod toolbar;
 mod touch;
 mod ui_fonts;
 pub mod unsaved;
+pub mod varos;
 pub mod widgets;
 pub mod workspaces;
 
@@ -784,6 +785,8 @@ impl VectorcraftApp {
         }
         self.adopt_context(ctx);
         if !self.styled {
+            self.ui.brightness = theme::Brightness::Varos;
+            self.session.prefs.ui_brightness = "varos".into();
             theme::install_fonts(ctx);
             theme::apply(ctx, self.ui.brightness);
             egui_extras::install_image_loaders(ctx);

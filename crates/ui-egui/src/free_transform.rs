@@ -56,9 +56,9 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &Ui, canvas: Rect) {
         egui::Frame::NONE
             .fill(t.panel)
             .stroke(Stroke::new(1.0, t.button_border))
-            .corner_radius(CornerRadius::same(4))
+            .corner_radius(crate::varos::theme::box_radius(&t, 4))
             .inner_margin(egui::Margin::same(3))
-            .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(60) })
+            .shadow(crate::varos::theme::chrome_shadow(&t, [0, 2], 8, 60))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 // Constrain shapes only what the Free Transform mode does.
