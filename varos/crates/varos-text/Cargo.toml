@@ -2,7 +2,7 @@
 name = "varos-text"
 version = "0.1.0"
 edition = "2021"
-license = "GPL-3.0-only"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 cosmic-text = { version = "=0.19.0", default-features = false, features = ["std", "shape-run-cache"] }

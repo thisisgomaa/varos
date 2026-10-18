@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
   <title>Varos — Resize vertical</title>
-  <desc>Varos cursor v1 — resize-v. Hotspot 10,10 (32px space). Original geometric drawing (Varos project, GPL-3.0); drawn from primitives, no third-party path data. = resize-h turned 90°.</desc>
+  <desc>Varos cursor v1 — resize-v. Hotspot 10,10 (32px space). Original geometric drawing (Varos project, MIT OR Apache-2.0); drawn from primitives, no third-party path data. = resize-h turned 90°.</desc>
   <g transform="translate(.25 .25)" stroke-linecap="round" stroke-linejoin="round">
     <g transform="rotate(90 10 10)">
       <g fill="none" stroke="#ffffff" stroke-width="3.5">
