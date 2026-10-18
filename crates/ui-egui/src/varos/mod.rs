@@ -109,3 +109,4 @@ mod tests {
         assert_eq!(label("my VectorCraft artwork.svg"), "my VectorCraft artwork.svg");
     }
 }
+pub(crate) mod cursors;

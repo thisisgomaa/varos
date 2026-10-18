@@ -1414,11 +1414,15 @@ impl VectorcraftApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        #[cfg(target_os = "macos")]
+        varos::cursors::begin_frame();
         let confined = self.synthetic_frame.then(|| self.automation_roots.clone()).flatten();
         if let Err(msg) = file_access::confine(confined.as_ref(), || vectorcraft_engine::guard::catch_panic(|| self.ui_frame(ui))) {
             self.picks.recover();
             self.status(format!("Internal error: {msg} (please report this bug)"));
         }
+        #[cfg(target_os = "macos")]
+        varos::cursors::end_frame(ui.ctx());
     }
 
     fn ui_frame(&mut self, ui: &mut egui::Ui) {

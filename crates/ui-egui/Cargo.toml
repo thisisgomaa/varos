@@ -32,6 +32,8 @@ image = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# Varos cursor SVGs; the existing offline rasterizer, without fonts or image decoders.
+resvg = { version = "0.45", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `now_ms` (src/lib.rs) reads the page's `performance.now()` with this crate in the web build. It is
@@ -48,3 +50,9 @@ wat = { workspace = true }
 [build-dependencies]
 serde_json = { workspace = true }
 toml = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Already used by the desktop app/winit; safe AppKit Retina cursor construction.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSCursor", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSGeometry"] }

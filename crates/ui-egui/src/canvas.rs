@@ -574,14 +574,19 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             // User Interface › Scale Cursor Proportional to UI: the glyphs grow with UI Scaling;
             // off, they keep their size.
             let ui_scale = if app.session.prefs.scale_cursor_with_ui { 1.0 } else { ui.ctx().zoom_factor() };
+            let varos_tool = if app.session.prefs.use_precise_cursors && c == Cursor::Crosshair { "" } else { app.session.tool_id() };
             match ui.input(|i| i.pointer.hover_pos()) {
+                #[cfg(target_os = "macos")]
+                Some(_) if custom && crate::varos::cursors::request(c, varos_tool, ui.ctx().zoom_factor() / ui_scale, ui.input(|i| i.focused)) => {
+                    egui::CursorIcon::Default
+                }
                 // An OS cursor: the system moves it at once, where a painted one trails the pointer
                 // (#444). The system cursor stands in for cursors without a glyph. Over a window
                 // without the focus, macOS shows its own pointer whichever cursor the window sets,
                 // and the glyph is not painted there.
                 Some(_) if custom && crate::cursors::os_cursors(crate::cursors::OS_CURSORS, app.services.wayland) => {
                     let ppp = ui.ctx().pixels_per_point() / ui_scale;
-                    ui.ctx().set_cursor_image(app.canvas.cursors.get(c, ppp));
+                    ui.ctx().set_cursor_image(crate::varos::cursors::image(c, varos_tool, ppp).or_else(|| app.canvas.cursors.get(c, ppp)));
                     cursor_icon(c)
                 }
                 Some(hp)
