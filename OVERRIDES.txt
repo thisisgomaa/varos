@@ -1,0 +1,202 @@
+Lane ICONS — 2026-10-18
+Catalogue overrides: 117 {'exact': 92, 'close': 25}
+Tool alias rows covered: 36
+Skipped map rows by category: {'NEEDS_DRAWING': 69, 'LUCIDE_IMPORT': 77, 'placeholder': 6, 'unavailable': 18, 'painter/brand': 13}
+
+OVERRIDDEN CATALOGUE IDS (id	confidence	asset)
+align-center-horizontal	exact	legacy-al-m.svg
+align-center-vertical	exact	legacy-al-ch.svg
+align-end-horizontal	exact	legacy-al-b.svg
+align-end-vertical	exact	legacy-al-r.svg
+align-horizontal-justify-start	close	align-horizontal-distribute-start.svg
+align-start-horizontal	exact	legacy-al-t.svg
+align-start-vertical	exact	legacy-al-l.svg
+arrow-left-right	close	varos-picker-swap.svg
+chevron-down	exact	chevron-down.svg
+chevron-left	exact	chevron-left.svg
+chevron-right	exact	chevron-right.svg
+circle	close	varos-draw-ellipse.svg
+copy	exact	copy.svg
+dc-al-bottom	exact	legacy-al-b.svg
+dc-al-hcenter	exact	legacy-al-ch.svg
+dc-al-left	exact	legacy-al-l.svg
+dc-al-right	exact	legacy-al-r.svg
+dc-al-top	exact	legacy-al-t.svg
+dc-al-vcenter	exact	legacy-al-m.svg
+dc-align	close	legacy-al-ch.svg
+dc-alignto-artboard	exact	frame.svg
+dc-alignto-selection	exact	square-dashed.svg
+dc-arc	exact	varos-draw-arc.svg
+dc-artboards	exact	frame.svg
+dc-color-guide	close	varos-picker-harmony.svg
+dc-direct	exact	varos-draw-direct.svg
+dc-dist-bottom	exact	align-vertical-distribute-end.svg
+dc-dist-hcenter	exact	align-horizontal-distribute-center.svg
+dc-dist-hspace	close	align-horizontal-distribute-center.svg
+dc-dist-left	exact	align-horizontal-distribute-start.svg
+dc-dist-right	exact	align-horizontal-distribute-end.svg
+dc-dist-top	exact	align-vertical-distribute-start.svg
+dc-dist-vcenter	exact	align-vertical-distribute-center.svg
+dc-dist-vspace	close	align-vertical-distribute-center.svg
+dc-ellipse	exact	varos-draw-ellipse.svg
+dc-fill-none	exact	varos-picker-none.svg
+dc-folder	exact	folder.svg
+dc-grad-linear	close	varos-picker-gradient.svg
+dc-gradient	exact	varos-picker-gradient.svg
+dc-grid-view	exact	layout-grid.svg
+dc-join	close	link.svg
+dc-knife	exact	varos-path-knife.svg
+dc-line	exact	varos-draw-line.svg
+dc-line-cut	close	varos-path-knife.svg
+dc-list-view	exact	list.svg
+dc-mask-none	close	varos-picker-none.svg
+dc-measure	exact	ruler.svg
+dc-new-fill	close	plus.svg
+dc-new-item	exact	plus.svg
+dc-new-stroke	close	plus.svg
+dc-path-eraser	exact	varos-path-eraser.svg
+dc-pathfinder	close	varos-path-merge.svg
+dc-pf-divide	exact	varos-path-divide.svg
+dc-pf-merge	exact	varos-path-merge.svg
+dc-pf-minus-back	exact	varos-path-minus-back.svg
+dc-pf-outline	exact	varos-path-outline.svg
+dc-pf-trim	exact	varos-path-trim.svg
+dc-polar-grid	exact	varos-draw-polar-grid.svg
+dc-polygon	exact	varos-draw-polygon.svg
+dc-rect-cut	close	varos-path-knife.svg
+dc-rect-grid	exact	layout-grid.svg
+dc-remove-brush	close	trash-2.svg
+dc-reverse	close	varos-picker-swap.svg
+dc-rounded-rect	exact	varos-draw-rounded-rect.svg
+dc-selection	exact	varos-draw-select.svg
+dc-shape-builder	exact	varos-path-merge.svg
+dc-smooth	exact	varos-draw-smooth.svg
+dc-stroke	close	legacy-strokew.svg
+dc-swap	exact	varos-picker-swap.svg
+dc-swatch-kinds	close	list-filter.svg
+dc-transform-panel	close	legacy-scale.svg
+dc-transparency	close	legacy-opacity.svg
+dc-zoom-large	close	zoom-in.svg
+ellipsis	exact	ellipsis.svg
+eraser	exact	varos-path-eraser.svg
+eye	exact	legacy-l-eye.svg
+eye-off	exact	legacy-l-eyeoff.svg
+file-plus	exact	file-plus.svg
+flip-horizontal-2	exact	square-centerline-dashed-horizontal.svg
+flip-vertical-2	exact	square-centerline-dashed-vertical.svg
+folder-open	exact	folder-open.svg
+frame	exact	frame.svg
+grid-3x3	close	grip.svg
+group	exact	folder.svg
+hand	exact	hand.svg
+history	exact	history.svg
+house	exact	house.svg
+lasso	exact	lasso.svg
+layout-grid	exact	layout-grid.svg
+link	exact	link.svg
+link-2-off	close	link.svg
+lock	exact	legacy-l-lock.svg
+lock-open	exact	legacy-l-unlock.svg
+menu	exact	menu.svg
+move	exact	move.svg
+palette	close	varos-picker-wheel.svg
+pen-tool	exact	pen-tool.svg
+pen-tool-add	exact	pen-line.svg
+pen-tool-delete	exact	pen-off.svg
+pencil	exact	varos-draw-pencil.svg
+pipette	exact	pipette.svg
+plus	exact	plus.svg
+rotate-cw	exact	legacy-rotate.svg
+ruler	exact	ruler.svg
+scaling	exact	legacy-scale.svg
+scissors	exact	varos-path-scissors.svg
+search	exact	legacy-l-search.svg
+spline	exact	varos-draw-curvature.svg
+square	exact	varos-draw-rect.svg
+square-dashed	exact	square-dashed.svg
+star	exact	varos-draw-star.svg
+tornado	exact	varos-draw-spiral.svg
+trash-2	exact	trash-2.svg
+triangle	exact	varos-draw-triangle.svg
+type	exact	legacy-type.svg
+x	exact	x.svg
+zoom-in	exact	zoom-in.svg
+
+COVERED TOOL ALIASES (alias	catalogue)
+tool-arc	dc-arc
+tool-artboard	frame
+tool-curvature	spline
+tool-direct	dc-direct
+tool-ellipse	dc-ellipse
+tool-eraser	eraser
+tool-eyedropper	pipette
+tool-gradient	dc-gradient
+tool-hand	hand
+tool-join	dc-join
+tool-knife	dc-knife
+tool-lasso	lasso
+tool-line	dc-line
+tool-line-cut	dc-line-cut
+tool-measure	dc-measure
+tool-path-eraser	dc-path-eraser
+tool-pen	pen-tool
+tool-pen-add	pen-tool-add
+tool-pen-delete	pen-tool-delete
+tool-pencil	pencil
+tool-polar-grid	dc-polar-grid
+tool-polygon	dc-polygon
+tool-rect	square
+tool-rect-cut	dc-rect-cut
+tool-rect-grid	dc-rect-grid
+tool-reflect	flip-horizontal-2
+tool-rounded-rect	dc-rounded-rect
+tool-scale	scaling
+tool-scissors	scissors
+tool-selection	dc-selection
+tool-shape-builder	dc-shape-builder
+tool-smooth	dc-smooth
+tool-spiral	tornado
+tool-star	star
+tool-type	type
+tool-zoom	zoom-in
+
+SKIPPED PLACEHOLDERS (including unavailable placeholder rows)
+tool-blend	alias->dc-blend; suggest=LUCIDE_IMPORT:blend ; Blend tool; Varos rail uses Link placeholder
+tool-free-transform	alias->dc-free-transform; Varos rail uses Icon::Fit (maximize) as FreeTransform/Scale placeholder; a real glyph is NEEDS_DRAWING
+tool-magic-wand	alias->wand-sparkles; suggest=LUCIDE_IMPORT:wand-sparkles ; Magic Wand tool + header; Varos rail uses SmartGuides placeholder
+tool-rotate	alias->rotate-ccw; Rotate tool + angle fields; Varos glyph is rotate-CW, rail uses History placeholder
+tool-shear	alias->dc-shear; Varos rail uses Icon::MoveArtwork as Shear placeholder; real glyph NEEDS_DRAWING
+tool-width	alias->dc-width; suggest=NEEDS_DRAWING ; Width tool; Varos rail uses MoveArtwork placeholder
+blend	suggest=LUCIDE_IMPORT:blend ; Blend tool + blend-mode row; Varos rail uses Link as placeholder
+dc-blend	suggest=LUCIDE_IMPORT:blend ; Blend tool; Varos rail uses Link placeholder
+dc-free-transform	Varos rail uses Icon::Fit (maximize) as FreeTransform/Scale placeholder; a real glyph is NEEDS_DRAWING
+dc-shear	Varos rail uses Icon::MoveArtwork as Shear placeholder; real glyph NEEDS_DRAWING
+dc-width	suggest=NEEDS_DRAWING ; Width tool; Varos rail uses MoveArtwork placeholder
+rotate-ccw	Rotate tool + angle fields; Varos glyph is rotate-CW, rail uses History placeholder
+wand-sparkles	suggest=LUCIDE_IMPORT:wand-sparkles ; Magic Wand tool + header; Varos rail uses SmartGuides placeholder
+
+EXTRACTED INLINE GLYPHS (constant	asset)
+Icon::Type	legacy-type.svg
+LEGACY_AL_B	legacy-al-b.svg
+LEGACY_AL_CH	legacy-al-ch.svg
+LEGACY_AL_L	legacy-al-l.svg
+LEGACY_AL_M	legacy-al-m.svg
+LEGACY_AL_R	legacy-al-r.svg
+LEGACY_AL_T	legacy-al-t.svg
+LEGACY_L_EYE	legacy-l-eye.svg
+LEGACY_L_EYEOFF	legacy-l-eyeoff.svg
+LEGACY_L_LOCK	legacy-l-lock.svg
+LEGACY_L_SEARCH	legacy-l-search.svg
+LEGACY_L_UNLOCK	legacy-l-unlock.svg
+LEGACY_OPACITY	legacy-opacity.svg
+LEGACY_ROTATE	legacy-rotate.svg
+LEGACY_SCALE	legacy-scale.svg
+LEGACY_STROKEW	legacy-strokew.svg
+
+NOTES
+Scale uses the actual exact LEGACY_SCALE glyph; only Fit-based Free Transform is skipped.
+History remains eligible as History; Rotate-to-History placeholder is skipped.
+No upstream locale mirroring exists in icons::source/paint; chevrons retain their call-site path.
+Paragraph LTR/RTL icons have no ready Varos equivalent and retain upstream sources.
+Selection/Direct Selection suppress the old upstream fill underlay when overridden.
+File SVGs were copied verbatim, inline filled alignment glyphs remain filled.
