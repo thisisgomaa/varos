@@ -99,13 +99,26 @@ pub struct Candidate {
     pub priority: u8,
     pub word: usize,
 }
+/// `range` is an ordered, in-bounds range of `text` on UTF-8 boundaries.
+fn check_range(text: &str, range: &Range<usize>) -> Result<(), &'static str> {
+    if range.start > range.end
+        || range.end > text.len()
+        || !text.is_char_boundary(range.start)
+        || !text.is_char_boundary(range.end)
+    {
+        return Err("invalid kashida text range");
+    }
+    Ok(())
+}
 /// Joining-legal insertion points of `text[range]`, in byte order. Whether the
 /// font may take a tatweel there is the shaper's answer ([`Measured::safe`]).
-pub fn candidates(text: &str, range: Range<usize>) -> Vec<Candidate> {
-    candidate_index(text, &range)
+/// A reversed, out-of-bounds or mid-character `range` is an error.
+pub fn candidates(text: &str, range: Range<usize>) -> Result<Vec<Candidate>, &'static str> {
+    check_range(text, &range)?;
+    Ok(candidate_index(text, &range)
         .into_iter()
         .map(|(byte, (priority, word))| Candidate { byte, priority, word })
-        .collect()
+        .collect())
 }
 /// One host re-shape of a line with virtual tatweels at the trial slots.
 #[derive(Clone, Debug)]
@@ -137,7 +150,8 @@ impl<W> Width for W where W: Copy + PartialOrd + Add<Output = Self> + Sub<Output
 /// virtual tatweels at `slots` (sorted source bytes); `None` rejects the trial.
 /// Each accepted trial must widen the line, stay within the budget and target,
 /// and keep every glyph; safe boundaries are re-read after each acceptance.
-/// Spaces are not stretched here: the host spreads what is left.
+/// Spaces are not stretched here: the host spreads what is left. A reversed,
+/// out-of-bounds or mid-character `range` is an error (nothing is re-shaped).
 pub fn plan<W: Width, T>(
     text: &str,
     range: Range<usize>,
@@ -146,7 +160,8 @@ pub fn plan<W: Width, T>(
     target: W,
     policy: Kashida,
     mut reshape: impl FnMut(&[usize]) -> Option<Measured<W, T>>,
-) -> Plan<W, T> {
+) -> Result<Plan<W, T>, &'static str> {
+    check_range(text, &range)?;
     let mut width = natural;
     let initial = natural;
     let (per_word, fraction) = policy.policy();
@@ -193,7 +208,7 @@ pub fn plan<W: Width, T>(
             }
         }
     }
-    Plan { slots: inserted, width, payload }
+    Ok(Plan { slots: inserted, width, payload })
 }
 #[cfg(feature = "cosmic")]
 fn safe_slots(shape: &ShapeLine) -> HashSet<usize> {
@@ -246,7 +261,9 @@ pub(crate) fn justify(
             missing_glyph: measured.glyphs.iter().any(|g| g.glyph_id == 0),
             payload: measured,
         })
-    });
+    })
+    // The composer's line ranges are always valid; an invalid one takes no kashida.
+    .unwrap_or(Plan { slots: vec![], width: initial, payload: None });
     let inserted = chosen.slots;
     let mut line = chosen.payload.unwrap_or(natural);
     // Only ordinary internal spaces stretch; NBSP/tabs/trailing spaces do not.
@@ -353,6 +370,39 @@ pub(crate) fn reshape_virtual(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The checked API on ranges the tests know are valid.
+    fn candidates(text: &str, range: Range<usize>) -> Vec<Candidate> {
+        super::candidates(text, range).expect("valid range")
+    }
+    fn plan<W: Width, T>(
+        text: &str,
+        range: Range<usize>,
+        natural: W,
+        safe: HashSet<usize>,
+        target: W,
+        policy: Kashida,
+        reshape: impl FnMut(&[usize]) -> Option<Measured<W, T>>,
+    ) -> Plan<W, T> {
+        super::plan(text, range, natural, safe, target, policy, reshape).expect("valid range")
+    }
+    #[test]
+    fn invalid_ranges_are_errors_not_panics() {
+        let text = "بسم الله";
+        let mid = 1; // inside the two-byte ب
+        let reversed = Range { start: 4, end: 2 };
+        let past = 0..text.len() + 1;
+        for range in [reversed.clone(), mid..text.len(), 0..mid, past.clone()] {
+            assert!(super::candidates(text, range.clone()).is_err(), "{range:?}");
+            let calls = std::cell::Cell::new(0);
+            let p = super::plan(text, range.clone(), 1f64, HashSet::new(), 10., Kashida::Display, |_| {
+                calls.set(calls.get() + 1);
+                None::<Measured<f64, ()>>
+            });
+            assert!(p.is_err() && calls.get() == 0, "{range:?}");
+        }
+        assert!(super::candidates(text, 0..0).unwrap().is_empty());
+        assert!(super::candidates(text, 0..text.len()).is_ok());
+    }
     #[test]
     fn indexed_candidates_match_join_and_word_oracle() {
         let text = "prefix سسس بَب سلام\tششش لا لأ bb 123 سسس";
