@@ -1,0 +1,16 @@
+warning: patch `egui_tiles v0.16.0 (~/Documents/AI workspace/varos/varos/vendor/egui_tiles)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+   Compiling vectorcraft-text-arabic v0.7.0 (~/Documents/AI workspace/reference/artcraft/spikes/vc-arabic/crates/text-arabic)
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.85s
+     Running unittests src/lib.rs (target/debug/deps/vectorcraft_text_arabic-cdc1607ac68dbe9c)
+
+running 2 tests
+insertions=6, width=600, glyphs=25
+test tests::rejected_font_falls_back_and_invalid_sizes_fail ... ok
+test tests::justified_arabic_600_has_kashida ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

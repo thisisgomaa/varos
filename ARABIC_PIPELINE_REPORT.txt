@@ -1,0 +1,113 @@
+VERDICT hook works through their text node
+
+Scope
+Stage 0 lane B on a469568c / spike-arabic. No git commit. All authored files and
+Cargo outputs are inside vc-arabic; no CARGO_TARGET_DIR was set. Cargo ran offline.
+No Adobe applications/resources were used. Licensing was out of scope.
+
+Hook
+crates/text/src/layout.rs:63: emit_arabic_line helper (93 added lines including
+its comments/separator); flow call/dispatch at :1607-1620. Total layout.rs diff:
+104 lines added, 1 removed (net +103). Original glyph-spacing loop unchanged.
+Automatic branch, no Justify enum or document-format change. Existing crates/*
+workspace membership includes text-arabic; the root dependency alias was added.
+
+Eligible case: justified horizontal area text, RTL paragraph, one source run and
+one native face, Arabic with Common/Inherited characters, ordinary character
+attributes, default layout OpenType options, positive spare width, no hyphen.
+Tracking, manual kerning, scaling, rotation, super/subscript, named variable
+instances, mixed scripts/styles, vertical/path text retain the native path.
+Native line breaks and native line metrics remain authoritative. Backend errors,
+missing glyphs, extra breaks or >0.01 backend width residual retain native spacing.
+
+Engine::compose(JustifyFull, Balanced) -> baseline-normalized positioned BezPaths
+-> ordinary PositionedGlyph entries (byte/len/run, origin, advance, gid, actual
+native font_id and font-unit transform). Existing LineInfo covers the new glyphs.
+Logical trailing blanks remain outside the justified visible extent.
+
+Fonts
+The adapter first tries the supplied native font bytes and supported static
+family metadata. TTCs, unsupported metadata and rejected compositions fall back
+to NotoSansArabic.ttf via include_bytes! at the exact external Varos assets path.
+That same fallback is registered with FontDb so export IDs/transforms reference
+its real glyphs. No font binary was copied here. Main proof uses Noto directly;
+unit tests also exercise collection rejection and native-face fallback registration.
+
+Upstream files touched (complete source/config list)
+Cargo.toml
+Cargo.lock
+crates/text/Cargo.toml
+crates/text/src/layout.rs
+crates/text/src/tests_typo.rs
+crates/text/examples/latin_baseline.rs (new; baseline capture helper)
+crates/text-arabic/Cargo.toml (new)
+crates/text-arabic/src/lib.rs (new; 152 lines)
+crates/text-arabic/examples/arabic_canvas.rs (new; 61 lines)
+
+Additional local evidence files
+ARABIC_PIPELINE_PLAN.txt (hook choice written before implementation)
+ARABIC_PIPELINE_REPORT.txt
+arabic_adapter_test.log
+arabic_text_test.log
+arabic_canvas.log
+arabic_clippy.log
+arabic_wasm.log
+arabic_textnode.png (render evidence, not an application asset)
+
+Results actually run
+Adapter: 2 passed, 0 failed. Sample: 6 kashida insertions, 25 glyphs,
+width 600.0 and summed advances within 0.01 of 600.
+vectorcraft-text: 168 unit tests + 1 integration test passed, 0 failed;
+0 doctests. Includes exact f64-bit Latin position/advance fixture captured before
+the hook, adapter-vs-native glyph/cluster/outline comparisons, native font-unit
+transform bounds (the data PDF uses), wrapped source ranges and fallback font IDs.
+Total reported passing tests across the two commands: 171.
+Clippy --lib -D warnings: passed for both affected crates.
+WASM: cargo check of vectorcraft-text for wasm32-unknown-unknown passed.
+Formatting and git diff --check: passed.
+
+Real text-node renderer proof: NodeKind::Text, not path nodes; 1 line, 25 glyphs,
+6 insertions, width 600.000000, 4833 ink pixels, PNG 648x180. PNG inspected visually:
+connected Arabic and elongations render across the frame without visible clipping.
+No GUI interaction test or actual PDF export was run; PDF-facing glyph IDs and
+transforms were tested, not PDF extraction/search or a PDF viewer.
+
+Caret/selection
+Source text stays unchanged; cluster offsets are valid, selection produces 25
+quads and endpoint carets have the correct RTL order. Exact caret fidelity is
+incomplete. The sample caret->hit roundtrip fails at (source byte, hit byte):
+(9,7), (11,7), (13,15). Native caret code takes the first glyph covering a cluster;
+virtual kashidas and ligature components share source ranges. Full selection
+geometry/affinity and editing interaction were not verified.
+
+Three real pain points
+1. Font identity/metadata: Varos requires static family names and rejects TTCs.
+   The bounded family table and external Noto fallback are spike-only; original
+   font breaks/metrics can differ from fallback. An added fallback fixture first
+   failed because Source Sans missing-glyph widths already wrapped into two lines;
+   the final 1200pt fixture tests fallback identity without assuming new breaks.
+2. Editing maps: overlapping clusters from virtual glyphs/ligatures disagree with
+   the native one-glyph caret lookup, with the three measured mismatches above.
+3. Composition integration: the adapter composes each already-selected line with
+   a fresh Engine/FontSet and accepts only one-run/default-attribute RTL lines.
+   Proper mixed-run shaping, shared font/shape caches and paragraph-wide kashida
+   break/metric decisions require more than this additive hook. Absolute local
+   dependency/font paths also need replacing for a portable implementation.
+
+Effort for the proper version: L (font/instance registry and caches, mixed runs,
+paragraph composition and exact editing maps, then runtime native/web/PDF QA).
+
+Exact validation commands (from the worktree root)
+cargo run --offline -p vectorcraft-text --example latin_baseline
+cargo test --offline -p vectorcraft-text-arabic --lib -- --nocapture > arabic_adapter_test.log 2>&1
+cargo test --offline -p vectorcraft-text > arabic_text_test.log 2>&1
+cargo run --offline -p vectorcraft-text-arabic --example arabic_canvas > arabic_canvas.log 2>&1
+cargo clippy --offline -p vectorcraft-text -p vectorcraft-text-arabic --lib -- -D warnings > arabic_clippy.log 2>&1
+cargo check --offline -p vectorcraft-text --target wasm32-unknown-unknown > arabic_wasm.log 2>&1
+cargo --offline fmt --package vectorcraft-text --package vectorcraft-text-arabic
+git diff --check
+
+Native tests were rerun after correcting the fallback fixture; counts above are
+from the final green run. An initial cargo fmt --offline --package vectorcraft-text
+--package vectorcraft-text-arabic invocation rejected the flag position; the
+cargo --offline fmt invocation above succeeded. Full xtask CI was not run.

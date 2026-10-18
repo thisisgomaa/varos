@@ -19,6 +19,7 @@ vectorcraft-pathops = { path = "crates/pathops" }
 vectorcraft-brush = { path = "crates/brush" }
 vectorcraft-trace = { path = "crates/trace" }
 vectorcraft-text = { path = "crates/text" }
+vectorcraft-text-arabic = { path = "crates/text-arabic" }
 vectorcraft-effects = { path = "crates/effects" }
 vectorcraft-render = { path = "crates/render" }
 vectorcraft-svg = { path = "crates/svg" }
@@ -100,3 +101,8 @@ opt-level = 1
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Private Arabic technical spike; local Varos forks.
+[patch.crates-io]
+egui_tiles = { path = "~/Documents/AI workspace/varos/varos/vendor/egui_tiles" }
+cosmic-text = { path = "~/Documents/AI workspace/varos/varos/vendor/cosmic-text" }
