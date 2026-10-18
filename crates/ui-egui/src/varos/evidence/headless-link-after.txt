@@ -1,0 +1,3 @@
+$ rustc --edition 2024 -C opt-level=1 crates/ui-egui/src/varos/evidence/tests_headless.rs -L dependency=target/debug/deps -o target/perf-1/headless --extern vectorcraft_ui_egui=target/debug/deps/libvectorcraft_ui_egui-9457e67b6ca425a0.rlib --extern vectorcraft_engine=target/debug/deps/libvectorcraft_engine-e203109db08198d7.rlib --extern egui=target/debug/deps/libegui-006048695f7eb5d1.rlib
+
+exit=0; wall=2.847s

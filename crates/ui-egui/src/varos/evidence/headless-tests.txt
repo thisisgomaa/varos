@@ -1,0 +1,282 @@
+$ VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui varos::perf_tests::headless_ui_breakdown -- --ignored --nocapture --test-threads=1
+    Blocking waiting for file lock on build directory
+   Compiling syn v3.0.6
+   Compiling vectorcraft-text v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/text)
+   Compiling objc2-core-foundation v0.3.2
+   Compiling rustix v1.1.5
+   Compiling getrandom v0.3.4
+   Compiling wgpu-hal v30.0.1
+   Compiling winnow v1.0.4
+   Compiling getrandom v0.4.3
+   Compiling wgpu-core v30.0.1
+   Compiling fastrand v2.5.0
+   Compiling wgpu v30.0.1
+   Compiling anyhow v1.0.104
+   Compiling objc2-foundation v0.3.2
+   Compiling objc2-core-graphics v0.3.2
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling wait-timeout v0.2.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_core v0.9.5
+   Compiling leb128fmt v0.1.0
+   Compiling lazy_static v1.5.1
+   Compiling bit-vec v0.8.0
+   Compiling fnv v1.0.7
+   Compiling quick-error v1.2.3
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.9.5
+   Compiling toml v1.1.6+spec-1.1.0
+   Compiling bit-set v0.8.0
+   Compiling rand_xorshift v0.4.0
+   Compiling colored v2.2.0
+   Compiling wasm-encoder v0.261.0
+   Compiling accesskit_consumer v0.35.0
+   Compiling synstructure v0.14.0
+   Compiling tempfile v3.27.0
+   Compiling objc2-metal v0.3.2
+   Compiling rusty-fork v0.3.1
+   Compiling getopts v0.2.24
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling regex-syntax v0.8.11
+   Compiling unarray v0.1.4
+   Compiling wast v261.0.0
+   Compiling kittest v0.4.0
+   Compiling vectorcraft-ui-egui v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/ui-egui)
+   Compiling open v5.4.4
+   Compiling proptest v1.11.0
+   Compiling objc2-quartz-core v0.3.2
+   Compiling raw-window-metal v1.1.0
+   Compiling bytemuck_derive v1.12.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.3
+   Compiling zerovec-derive v0.11.6
+   Compiling displaydoc v0.2.7
+   Compiling wat v1.261.0
+   Compiling zerotrie v0.2.5
+   Compiling bytemuck v1.25.2
+   Compiling zerofrom v0.1.8
+   Compiling yoke v0.8.3
+   Compiling font-types v0.12.5
+   Compiling image v0.25.10
+   Compiling zerovec v0.11.8
+   Compiling font-types v0.11.3
+   Compiling thiserror v2.0.21
+   Compiling color v0.3.3
+   Compiling read-fonts v0.39.2
+   Compiling read-fonts v0.44.0
+   Compiling serde v1.0.229
+   Compiling tinystr v0.8.4
+   Compiling icu_locale_core v2.3.0
+   Compiling smallvec v1.16.2
+   Compiling arrayvec v0.7.8
+   Compiling polycool v0.4.0
+   Compiling kurbo v0.13.1
+   Compiling potential_utf v0.1.6
+   Compiling icu_provider v2.3.1
+   Compiling vectorcraft-geom v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/geom)
+   Compiling vectorcraft-color v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/color)
+   Compiling peniko v0.6.1
+   Compiling write-fonts v0.48.1
+   Compiling skrifa v0.42.1
+   Compiling vectorcraft-doc v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/doc)
+   Compiling skrifa v0.47.0
+   Compiling icu_locale_fallback v2.3.0
+   Compiling linesweeper v0.5.0
+   Compiling subsetter v0.2.6
+   Compiling icu_collections v2.3.0
+   Compiling read-fonts v0.43.3
+   Compiling icu_segmenter v2.3.0
+   Compiling vectorcraft-pathops v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/pathops)
+   Compiling parking_lot_core v0.9.12
+   Compiling parking_lot v0.12.5
+   Compiling vectorcraft-three-d v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/three-d)
+   Compiling vectorcraft-plugins v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/plugins)
+   Compiling harfrust v0.13.3
+   Compiling naga-types v30.0.1
+   Compiling vectorcraft-brush v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/brush)
+   Compiling read-fonts v0.41.0
+   Compiling vectorcraft-effects v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/effects)
+   Compiling tiny-skia-path v0.12.0
+   Compiling naga v30.0.1
+   Compiling wgpu-types v30.0.1
+   Compiling vello_common v0.1.0
+   Compiling emath v0.36.2
+   Compiling ecolor v0.36.2
+   Compiling wgpu-naga-bridge v30.0.1
+   Compiling vello_cpu v0.1.0
+   Compiling skrifa v0.44.0
+   Compiling harfrust v0.12.0
+   Compiling hayro-syntax v0.7.2 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling epaint v0.36.2
+   Compiling hayro-interpret v0.7.0 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling krilla v0.8.2 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling vello_common v0.2.0
+   Compiling craft-pdf v0.1.0 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling vello_cpu v0.2.0
+   Compiling wgpu-core-deps-apple v30.0.1
+   Compiling svgtypes v0.16.1
+   Compiling kurbo v0.11.3
+   Compiling tiny-skia-path v0.11.4
+   Compiling svgtypes v0.15.3
+   Compiling usvg v0.48.1
+   Compiling vectorcraft-render v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/render)
+   Compiling vectorcraft-pdf v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/pdf)
+   Compiling egui v0.36.2
+   Compiling vectorcraft-metafile v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/metafile)
+   Compiling vectorcraft-eps v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/eps)
+   Compiling vectorcraft-svg v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/svg)
+   Compiling usvg v0.45.1
+   Compiling tiny-skia v0.11.4
+   Compiling vectorcraft-tools v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/tools)
+   Compiling vectorcraft-cad v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/cad)
+   Compiling vectorcraft-format v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/format)
+   Compiling vectorcraft-trace v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/trace)
+   Compiling vectorcraft-affinity v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/affinity)
+   Compiling rgb v0.8.53
+   Compiling resvg v0.45.1
+   Compiling vectorcraft-engine v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/engine)
+   Compiling egui-wgpu v0.36.2
+   Compiling dify v0.8.0
+   Compiling egui_kittest v0.36.2
+   Compiling egui_extras v0.36.2
+   Compiling craft-ui v0.1.0 (https://github.com/storytold/craft-libs?rev=5c874d51eeb3de70e735c8ce87a59a7dedd47675#5c874d51)
+   Compiling vectorcraft-testkit v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/testkit)
+    Finished `test` profile [optimized + debuginfo] target(s) in 69m 59s
+     Running unittests src/lib.rs (target/debug/deps/vectorcraft_ui_egui-92079f7a3e9f51d2)
+
+running 1 test
+test varos::perf_tests::headless_ui_breakdown ... VAROS_PROFILE 1.62s, inclusive CPU sections (not GPU/present):
+  ui.total: 810.265 ms/call, 1620.531 ms max, 1620.531 ms total / 2 calls
+  native_menu: 1547.842 ms/call, 1547.842 ms max, 1547.842 ms total / 1 calls
+  canvas: 52.968 ms/call, 52.968 ms max, 52.968 ms total / 1 calls
+  canvas.raster: 51.263 ms/call, 51.263 ms max, 51.263 ms total / 1 calls
+  dock: 6.062 ms/call, 6.062 ms max, 6.062 ms total / 1 calls
+  app_bar: 5.131 ms/call, 5.131 ms max, 5.131 ms total / 1 calls
+  properties: 4.558 ms/call, 4.558 ms max, 4.558 ms total / 1 calls
+  toolbar: 2.629 ms/call, 2.629 ms max, 2.629 ms total / 1 calls
+  hint_bar: 2.343 ms/call, 2.343 ms max, 2.343 ms total / 1 calls
+  status_bar: 2.312 ms/call, 2.312 ms max, 2.312 ms total / 1 calls
+PERF empty-still: first three full egui+logic frames (font initialization included): [3.8195419999999998, 1624.7695420000002, 1.82425] ms
+PERF empty-still: 1440x900 logical px, ppp=1, dev build, 200 warm frames; full egui+logic p50=0.235ms p95=0.380ms mean=0.289ms
+  candidate shortcut-table build: 1.475ms/call (100 calls)
+  ui.total: mean=0.281ms max=7.072ms calls=200
+  dock: mean=0.102ms max=0.377ms calls=200
+  toolbar: mean=0.081ms max=0.151ms calls=200
+  properties: mean=0.060ms max=0.291ms calls=200
+  status_bar: mean=0.058ms max=6.484ms calls=200
+  app_bar: mean=0.017ms max=0.049ms calls=200
+  hint_bar: mean=0.006ms max=0.017ms calls=200
+  canvas: mean=0.005ms max=0.029ms calls=200
+  doc_tabs: mean=0.003ms max=0.010ms calls=200
+  host.logic: mean=0.002ms max=0.052ms calls=200
+  ui_fonts: mean=0.002ms max=0.007ms calls=200
+  host.shortcuts: mean=0.001ms max=0.004ms calls=200
+  canvas.input: mean=0.001ms max=0.004ms calls=200
+  native_menu: mean=0.000ms max=0.002ms calls=200
+  dialogs: mean=0.000ms max=0.002ms calls=200
+  library.tidy: mean=0.000ms max=0.000ms calls=200
+  floating: mean=0.000ms max=0.001ms calls=200
+  export_progress: mean=0.000ms max=0.000ms calls=200
+  dock.flyout: mean=0.000ms max=0.000ms calls=200
+  palette: mean=0.000ms max=0.000ms calls=200
+PERF empty-pointer: first three full egui+logic frames (font initialization included): [0.705417, 80.932834, 2.6308339999999997] ms
+PERF empty-pointer: 1440x900 logical px, ppp=1, dev build, 200 warm frames; full egui+logic p50=0.309ms p95=4.838ms mean=0.885ms
+  candidate shortcut-table build: 2.055ms/call (100 calls)
+  ui.total: mean=0.865ms max=18.366ms calls=200
+  toolbar: mean=0.258ms max=6.348ms calls=200
+  status_bar: mean=0.199ms max=9.818ms calls=200
+  dock: mean=0.198ms max=7.507ms calls=200
+  properties: mean=0.141ms max=7.390ms calls=200
+  hint_bar: mean=0.117ms max=17.838ms calls=200
+  app_bar: mean=0.038ms max=3.121ms calls=200
+  canvas: mean=0.036ms max=3.452ms calls=200
+  host.logic: mean=0.004ms max=0.049ms calls=200
+  doc_tabs: mean=0.004ms max=0.089ms calls=200
+  canvas.input: mean=0.003ms max=0.013ms calls=200
+  ui_fonts: mean=0.003ms max=0.066ms calls=200
+  host.shortcuts: mean=0.001ms max=0.005ms calls=200
+  native_menu: mean=0.001ms max=0.002ms calls=200
+  dialogs: mean=0.000ms max=0.002ms calls=200
+  library.tidy: mean=0.000ms max=0.001ms calls=200
+  floating: mean=0.000ms max=0.001ms calls=200
+  export_progress: mean=0.000ms max=0.001ms calls=200
+  dock.flyout: mean=0.000ms max=0.000ms calls=200
+  palette: mean=0.000ms max=0.000ms calls=200
+PERF selected-pointer: first three full egui+logic frames (font initialization included): [0.436625, 93.243083, 0.9223750000000001] ms
+PERF selected-pointer: 1440x900 logical px, ppp=1, dev build, 200 warm frames; full egui+logic p50=0.525ms p95=9.410ms mean=1.276ms
+  candidate shortcut-table build: 1.699ms/call (100 calls)
+  ui.total: mean=1.179ms max=24.105ms calls=200
+  dock: mean=0.779ms max=15.179ms calls=200
+  properties: mean=0.601ms max=15.088ms calls=200
+  status_bar: mean=0.170ms max=17.799ms calls=200
+  toolbar: mean=0.111ms max=0.251ms calls=200
+  canvas: mean=0.057ms max=0.121ms calls=200
+  app_bar: mean=0.032ms max=0.516ms calls=200
+  hint_bar: mean=0.008ms max=0.028ms calls=200
+  host.logic: mean=0.006ms max=0.055ms calls=200
+  canvas.input: mean=0.006ms max=0.027ms calls=200
+  doc_tabs: mean=0.005ms max=0.029ms calls=200
+  ui_fonts: mean=0.004ms max=0.009ms calls=200
+  host.shortcuts: mean=0.002ms max=0.006ms calls=200
+  native_menu: mean=0.001ms max=0.002ms calls=200
+  dialogs: mean=0.000ms max=0.002ms calls=200
+  library.tidy: mean=0.000ms max=0.001ms calls=200
+  floating: mean=0.000ms max=0.001ms calls=200
+  export_progress: mean=0.000ms max=0.001ms calls=200
+  dock.flyout: mean=0.000ms max=0.001ms calls=200
+  palette: mean=0.000ms max=0.000ms calls=200
+PERF empty-pointer-retina: first three full egui+logic frames (font initialization included): [0.37962500000000005, 81.47075, 2.491167] ms
+PERF empty-pointer-retina: 1440x900 logical px, ppp=2, dev build, 200 warm frames; full egui+logic p50=0.328ms p95=0.635ms mean=0.757ms
+  candidate shortcut-table build: 1.536ms/call (100 calls)
+  ui.total: mean=0.674ms max=21.489ms calls=200
+  toolbar: mean=0.193ms max=10.116ms calls=200
+  status_bar: mean=0.169ms max=14.560ms calls=200
+  app_bar: mean=0.144ms max=20.790ms calls=200
+  dock: mean=0.126ms max=0.634ms calls=200
+  properties: mean=0.076ms max=0.454ms calls=200
+  host.logic: mean=0.069ms max=13.040ms calls=200
+  host.shortcuts: mean=0.066ms max=13.034ms calls=200
+  canvas: mean=0.013ms max=0.076ms calls=200
+  hint_bar: mean=0.008ms max=0.111ms calls=200
+  doc_tabs: mean=0.008ms max=0.782ms calls=200
+  canvas.input: mean=0.003ms max=0.015ms calls=200
+  ui_fonts: mean=0.003ms max=0.020ms calls=200
+  native_menu: mean=0.000ms max=0.003ms calls=200
+  dialogs: mean=0.000ms max=0.002ms calls=200
+  library.tidy: mean=0.000ms max=0.001ms calls=200
+  floating: mean=0.000ms max=0.001ms calls=200
+  export_progress: mean=0.000ms max=0.001ms calls=200
+  palette: mean=0.000ms max=0.000ms calls=200
+  dock.flyout: mean=0.000ms max=0.000ms calls=200
+PERF selected-pointer-retina: first three full egui+logic frames (font initialization included): [0.35179200000000005, 112.8985, 0.836583] ms
+PERF selected-pointer-retina: 1440x900 logical px, ppp=2, dev build, 200 warm frames; full egui+logic p50=0.511ms p95=4.396ms mean=1.055ms
+  candidate shortcut-table build: 1.916ms/call (100 calls)
+  ui.total: mean=0.959ms max=19.898ms calls=200
+  dock: mean=0.415ms max=14.180ms calls=200
+  properties: mean=0.321ms max=14.090ms calls=200
+  toolbar: mean=0.287ms max=19.221ms calls=200
+  status_bar: mean=0.138ms max=8.520ms calls=200
+  host.logic: mean=0.074ms max=13.769ms calls=200
+  canvas: mean=0.054ms max=0.133ms calls=200
+  app_bar: mean=0.030ms max=0.786ms calls=200
+  hint_bar: mean=0.013ms max=0.899ms calls=200
+  canvas.input: mean=0.005ms max=0.016ms calls=200
+  doc_tabs: mean=0.005ms max=0.083ms calls=200
+  ui_fonts: mean=0.003ms max=0.010ms calls=200
+  host.shortcuts: mean=0.002ms max=0.009ms calls=200
+  native_menu: mean=0.001ms max=0.002ms calls=200
+  dialogs: mean=0.000ms max=0.002ms calls=200
+  library.tidy: mean=0.000ms max=0.001ms calls=200
+  floating: mean=0.000ms max=0.001ms calls=200
+  export_progress: mean=0.000ms max=0.001ms calls=200
+  dock.flyout: mean=0.000ms max=0.000ms calls=200
+  palette: mean=0.000ms max=0.000ms calls=200
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1669 filtered out; finished in 3.89s
+
+
+exit=0; wall=4206.203s

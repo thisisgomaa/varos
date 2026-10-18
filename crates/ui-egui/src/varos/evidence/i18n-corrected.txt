@@ -1,0 +1,11 @@
+$ cargo test --offline -p vectorcraft-ui-egui i18n::tests::complete_languages_translate_every_message
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.10s
+     Running unittests src/lib.rs (target/debug/deps/vectorcraft_ui_egui-92079f7a3e9f51d2)
+
+running 1 test
+test i18n::tests::complete_languages_translate_every_message ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1669 filtered out; finished in 0.24s
+
+
+exit=0; wall=1.467s

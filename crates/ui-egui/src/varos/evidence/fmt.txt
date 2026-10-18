@@ -1,0 +1,3 @@
+$ cargo --offline fmt --all -- --check
+
+exit=0; wall=32.505s

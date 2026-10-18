@@ -1,0 +1,5 @@
+{
+  "vectorcraft_ui_egui": "target/debug/deps/libvectorcraft_ui_egui-9457e67b6ca425a0.rlib",
+  "vectorcraft_engine": "target/debug/deps/libvectorcraft_engine-e203109db08198d7.rlib",
+  "egui": "target/debug/deps/libegui-006048695f7eb5d1.rlib"
+}

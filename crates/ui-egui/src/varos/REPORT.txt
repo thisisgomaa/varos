@@ -358,3 +358,371 @@ assets/cursors/v1/zoom-out.svg: 21 lines
 cursors.rs: 433 lines
 mod.rs: 2 lines
 REPORT.txt: 155 lines
+PERF-1: UI timing and frame-flow investigation
+
+DONE: opt-in profiling, measured headless baseline/after runs, source-level frame
+flow/presentation audit, and a small no-key shortcut-table gate. Native build,
+1668 UI tests, formatting/diff checks and the frontend WASM check pass.
+PARTIAL: physical desktop latency and saved-workspace costs require the owner's
+window; no window was opened. No specific frame of latency saved is claimed.
+SKIPPED: cursor/renderer work, tile cache, present-mode changes and panel-body
+caching. No commits or edits to Varos sources. Four upstream files: +34 / -22.
+Observed matched empty-pointer full-frame p50: 2.146 -> 0.390ms under heavy load.
+
+Worktree: lane-perf, base cdba0aac03f83bbc633f5e2aa9500354648938d3
+Date: 2026-10-18. No window opened. No commits. Varos sources untouched.
+
+IMPLEMENTATION
+No app per-panel profiler or puffin backend is configured. egui/eframe contain
+profiling crate scopes, but the app has no configured collector for them; the
+existing perf.frame_ms only measures the whole app UI pass.
+Change A (diagnostics): opt-in native VAROS_PROFILE=1 section timers, reporting
+at most once a second, top ten by total inclusive CPU time; mean, max and call
+count. Timings are wall-clock durations of CPU-side sections and include any
+scheduler preemption, not isolated per-thread CPU accounting. Sections overlap:
+do not add ui.total + canvas + canvas.raster, or dock + its panel. Disabled scopes do not read a clock, allocate, touch egui state,
+or request repaint. stderr failure is ignored intentionally. No dependencies.
+WASM hooks are inactive. Individual dock/floating panel ids are timed, plus the
+major chrome sections, canvas input/raster, font fallback and native menu sync.
+The host logic and shortcuts are separate from the existing status-bar UI time.
+
+The ignored headless benchmark exercises app.logic + app.ui in egui Context::run_ui,
+using a fake native-menu backend (no AppKit). Each case uses 20 warmup frames,
+waits for UI fallback fonts, applies them over two more frames, then measures
+200 frames at 1440x900 logical pixels. Cases include still/moving
+empty documents, a selected rectangle, and moving cases at pixels-per-point 2.
+It also times shortcut-table construction separately. It excludes tessellation,
+GPU upload/compositing, drawable acquisition, WindowServer, and input-to-photon
+latency. The pointer regression checks that two new positions reach hover_doc in
+the same frame and do not edit the document.
+
+Change B (performance, separate from diagnostics): varos/shortcuts.rs adds a
+pressed-key gate at the two command-shortcut table call sites. egui consumes
+only pressed Key events (repeats included) from input.events. With none left,
+all of the old command-chord checks would be false. The surrounding handler
+still runs, including clipboard, text/IME, Escape bookkeeping and tool routing.
+Key frames call the ORIGINAL builder, without caching, preserving ordering,
+parameters and current overrides. No tool actions or command enablement changed.
+Fixed call sites: shortcuts.rs:352 and :514; builder at :66. Default lookups
+reach crates/engine/src/cmd/mod.rs:304 (a linear search). The builder did this
+for every command even on pointer-only frames; its measured wall cost justified this fix.
+This work happens in host.logic, OUTSIDE the existing status-bar UI timer.
+Expected effect: less main-thread work on pointer/idle/text-only frames and
+less pressure on refresh deadlines when CPU-bound. Input-to-photon improvement
+still needs a window test; a vsync-bound case may show no latency change. This
+does not by itself reduce the UI pass's displayed milliseconds.
+
+A second runner, evidence/tests_headless.rs, links against the normal dev library's
+public API and avoids waiting for test-only dependency builds. It runs one
+case per process: at least 20 frames and 1.2s warming, then at least 200 samples
+and 2.2s sampling (20,000 frame safety cap). It records full-frame p50/p95/mean
+and the existing status UI mean. Its section breakdowns come from the opt-in
+one-second profiler. Unlike the unit benchmark it cannot explicitly wait on
+private fallback-font state; its warmup and process start are shown in raw logs.
+Both runners set max_texture_side=8192 explicitly, matching a realistic native
+texture allowance. Initial Retina runs used headless egui's 2048 default,
+triggered caught internal errors and were REJECTED, not used as measurements.
+The public runner now fails on an internal UI error; the unit runner asserts it.
+The final profiler also flushes only AFTER the outer UI scope has closed, to
+avoid splitting active parent/child section totals between reporting intervals.
+
+FRAME FLOW (line numbers are in the final working tree unless noted)
+- lib.rs:1433..1477 times the entire ui_frame, including canvas::show. Thus the
+  status bar's 'ui 8.7 ms' is not a separate pure-egui cost to add to render 3.8.
+  canvas.rs:394 chooses synchronous rendering below the previous-render >8ms
+  threshold (also requiring same document and an existing texture for async).
+  canvas.rs:399..403 performs rasterization and CPU-side texture preparation
+  inside ui_frame in the synchronous case. Conversely render_ms is the latest
+  render duration and remains displayed on frames that reuse the texture; it
+  must not simply be subtracted from every UI sample.
+- canvas.rs:233..237 handles current input before reading document state,
+  rendering and painting overlays. canvas.rs:696..701 uses THIS pass's pointer
+  hover position; canvas.rs:918..922 delivers motion to the tool before paint.
+  No extra application pointer-event queue was found on the native input path.
+  Automation's synthetic input queue intentionally spans frames (lib.rs input
+  hook); it is not the native mouse path.
+- canvas.rs:948..949 already requests immediate repaint on motion, a drag, or a
+  modifier change. canvas.rs:692 does so during wheel glide. Adding another
+  request on pointer motion would duplicate existing behavior.
+- canvas.rs:323..324's 30ms request is ONLY placed-document bitmap polling.
+  It is not a general 30ms frame/pointer throttle. render_worker.rs:59 wakes
+  egui immediately after sending a finished render. No worker polling timer
+  needs shortening.
+- canvas.rs:333..340 uploads completed renders. canvas.rs:394..396 may submit a
+  new job and canvas.rs:407..436 draws the previous same-document texture,
+  reprojected for the current view. Current overlays are painted later in the
+  same pass. On heavy documents the artwork can therefore be older than the
+  overlay/UI by one OR MORE frames, depending on render completion. That is
+  intentional asynchronous artwork latency, not an unconditional N/N+1 pair.
+- lib.rs:1440..1457 draws control/status/dock chrome BEFORE canvas input. Those
+  readouts can show the previous tool/selection state; in particular chrome.rs:734
+  reads hover_doc before the canvas updates it. The status timings themselves
+  are necessarily from an earlier completed pass. A forced second egui pass
+  might refresh chrome, but adds CPU work; changing frame order or tool input
+  routing is beyond a small measured fix here.
+- macOS software cursor path: cursors.rs:575 disables OS bitmap cursors there;
+  canvas.rs:585..593 paints the glyph through an egui tooltip-layer painter.
+  It therefore waits for the current window frame's CPU work and presentation,
+  whereas a hardware/OS cursor can move independently. This is display latency,
+  not evidence that hover_pos contains the previous event. That path belongs to
+  the cursor lane: cursors.rs was read only and was not changed.
+- egui 0.36.2 context.rs:478..505 hit-tests CURRENT pointer input against previous
+  PASS widget rectangles/layers. This can affect hover after layout changes;
+  it does not delay the pointer coordinates on a stable canvas. Multiple
+  layout passes can occur within one presented frame.
+- egui-winit 0.36.2 lib.rs:352..355 requests repaint for CursorMoved. eframe
+  0.36.2 epi_integration.rs:288..301 runs logic and UI in Context::run_ui, then
+  wgpu_integration.rs paints that output. No extra egui frame queue was found.
+
+METAL / PRESENTATION
+apps/vectorcraft/src/main.rs:840 already selects SurfaceConfig::LOW_LATENCY.
+Pinned Cargo.lock: egui/eframe/egui-wgpu 0.36.2, wgpu/wgpu-hal 30.0.1.
+Cached dependency source was inspected read-only:
+- egui-wgpu/src/lib.rs:87..95: AutoVsync and desired_maximum_frame_latency=1
+  on macOS (the iOS exception does not apply).
+- egui-wgpu/src/winit.rs:132..133 copies the requested latency into the actual
+  SurfaceConfiguration before configure(). There IS a live-resize exception at
+  :111..114: on macOS with macos-window-resize-jitter-fix it temporarily requests
+  latency >=2 (three drawables) while resizing, then returns to the configured
+  value. That feature is enabled in the normal app's resolved egui-wgpu build.
+  This is window live resize, not ordinary canvas pointer motion.
+- wgpu-core/src/device/surface_config.rs:66..68: AutoVsync tries FifoRelaxed,
+  then Fifo. Metal adapter.rs:463..467 offers Fifo/Immediate, so this is Fifo.
+- wgpu-core/src/device/resource.rs:5305 clamps the requested latency to caps.
+  Metal adapter.rs:450..462 permits 1..=2 on supported macOS versions.
+- wgpu-hal/src/metal/surface.rs:330 sets maximumDrawableCount to latency+1:
+  normal requested latency 1 means TWO drawables, not one drawable. :337 enables
+  display sync for Fifo. This configuration is not ignored on modern macOS.
+- egui-wgpu/src/winit.rs:595..598 acquires the surface texture during painting,
+  after app UI has run; :767 presents it. Acquisition/presentation/compositor
+  waiting is not included in the app's 'ui' diagnostic. No actual Metal
+  display, compositor queue depth, or scan-out latency was measured here.
+Changing to Immediate risks tearing and needs an owner's window A/B test.
+There is no supported evidence for changing the existing latency-1 setting.
+
+DEFERRED / SKIPPED
+No tile cache, renderer redesign, cursor code or tool behavior changes.
+No blind panel-body skipping based on has_requested_repaint: egui still needs
+widgets registered and painted for interaction; the repaint flag is not a
+panel-cache invalidation key. No speculative full-widget memoization.
+plan/STATUS.md, plan/execution-plan.md and plan/architecture.md are absent in
+this worktree. ROADMAP.md and the G15 ranked gap were read. No parity scores or
+feature claims changed in this investigation.
+
+OWNER HAND TEST (not performed here)
+Start the built app from this worktree with VAROS_PROFILE=1, using a free control
+port if needed; save its stderr log. Keep document, workspace, window size,
+Retina scale and zoom identical before/after. Warm for a few seconds.
+1. Move over selection handles and smart-guide targets; stop abruptly. Check
+   cursor/overlays and distinguish them from the artwork and coordinate readout.
+2. Drag a rectangle/selection box, then release; check immediate feedback and
+   the final artwork. Repeat with a heavier document to expose worker latency.
+3. Type in a text object and a numeric field; exercise Cmd+Z, Cmd+Shift+Z, Escape,
+   clipboard shortcuts, keyboard repeat and a customized shortcut.
+4. Open/switch/float a panel and check its controls still respond.
+One status-bar measurement: read 'ui X ms' during steady pointer movement on an
+EMPTY document, before and after, at the same size/scale; do not add the stale
+'render' number to it. Save the profiler's host.logic/host.shortcuts and top
+panel costs too: status 'ui' excludes logic and all GPU/presentation waiting.
+
+MEASUREMENTS BEFORE CHANGE B
+Normal dev library, public-API runner, default workspace/preferences and fake
+native menu/services; no tessellation/GPU/presentation. These are BUSY-machine
+measurements: 1-minute load 96.05..100.11 on 10 logical cores during these runs.
+Raw logs: evidence/before-*.txt. All four corrected runs had zero internal errors.
+Each took 200 steady samples (the 2.2s minimum was already exceeded).
+
+Case                       full mean   p50     p95       status UI mean (ms)
+empty, pointer, ppp=1       16.542      2.146   100.620     5.917
+selected rectangle, ppp=1   15.418      2.777    66.156     9.339
+empty, pointer, ppp=2       14.009      2.198    69.619     6.923
+selected rectangle, ppp=2   21.057      4.720    84.529    11.208
+
+A representative warmed 1-second interval from before-empty.txt (54 UI calls):
+  ui.total       8.554 ms/call  (includes the following sections)
+  status_bar     2.224
+  dock           2.123         (includes properties 0.690)
+  app_bar        2.002
+  toolbar        0.819
+  canvas         0.774
+  shortcuts.table 9.632 ms/call / 55 calls, separately in host logic, outside UI.
+These are wall-time samples with large scheduling outliers, NOT isolated widget
+CPU instruction costs or an idle-machine estimate. The table timer records
+actual work whose result is unused on a pointer-only frame; the fix removes that
+work rather than claiming a particular desktop millisecond improvement.
+Cold native-menu construction was 2327.900 ms once in this run; excluded from
+steady samples. The hot canvas reused its texture; the old render diagnostic
+must not be added as if that render ran on every pointer frame.
+
+Timer implementation checks: two standalone unit tests pass (0.528s process
+wall, standalone rustc test compilation 1.397s). Earlier unoptimized rustc micro
+measurement: 100,000 scopes took 1.567ms disabled and 12.202ms enabled. These
+micro timings are also supporting evidence, not a GUI latency measurement.
+
+WHAT FOUGHT THIS RUN
+The initial offline build/test could not resolve cached icu_segmenter v2.3.0;
+no online Cargo invocation or dependency edit was used. The cache populated
+while the moderator/prebuild work continued. The first required app build then
+passed after 2356.335s (39m16s), including the existing build-directory lock wait.
+The UI tests have a separate, initially cold dependency graph and serialize
+other Cargo commands behind that build lock. System load reached over 150 on
+10 logical cores. No other processes or targets were killed or deleted.
+The initial headless Retina configuration used a 2048 texture limit; those
+caught-error runs are preserved as rejected-2048-limit-* evidence and excluded.
+
+
+MEASUREMENTS AFTER CHANGE B
+Same public-API runner, normal dev library, dimensions, scale, fixtures, services,
+max texture side and warmup/sampling rules. Raw logs: evidence/after-*.txt.
+Load was HIGHER, 124.37..130.93 on 10 logical cores; still not an idle-machine
+A/B measurement. All four cases completed with zero internal UI errors.
+
+Case                       samples  full mean   p50     p95    status UI mean (ms)
+empty, pointer, ppp=1          660     3.373     0.390   21.475     3.207
+selected rectangle, ppp=1      570     3.854     0.521   25.369     3.582
+empty, pointer, ppp=2          528     4.171     0.436   22.790     3.795
+selected rectangle, ppp=2      624     3.501     0.509   17.592     3.333
+
+The exact 200-frame collector benchmark also passed (evidence/headless-tests.txt):
+case                        full mean  p50    p95     host.shortcuts mean (ms)
+empty, still                 0.289    0.235  0.380      0.001
+empty, pointer               0.885    0.309  4.838      0.001
+selected, pointer            1.276    0.525  9.410      0.002
+empty, pointer, ppp=2         0.757    0.328  0.635      0.066
+selected, pointer, ppp=2      1.055    0.511  4.396      0.002
+The complete captured maps contain NO shortcuts.table calls during those warm
+no-key frames. The separate original-builder control, 100 calls per case,
+still costs 1.475..2.055ms/call: the fix skips real work, not just timer output.
+The 0.066ms mean above includes one 13.034ms scheduling outlier; this is why
+wall-time tails and physical desktop latency remain qualified.
+
+Native test-build and normal dev runner numbers are not interchangeable; use
+the matched before/after public-runner tables for comparison. Removing the
+shortcut work explains less main-thread work. Do not attribute all changes in
+UI means or long-tail timing to this patch: scheduling and test concurrency
+varied. No particular millisecond or whole-frame input-to-photon win is claimed.
+
+VALIDATION
+PASS cargo build --offline -p vectorcraft
+  Before Change B: 2356.335s, including the prebuild-directory lock wait.
+  Final changed native app: 1934.567s, including the test-build lock wait.
+  Final executable: target/debug/vectorcraft. Not launched or installed here.
+PASS cargo test --offline -p vectorcraft-ui-egui
+  Corrected final run: 68.012s total; 61.93s running tests.
+  1668 passed, 0 failed, 2 ignored; 0 doc tests.
+  Includes the new pointer-coordinate, no-key gate, repeats/overrides and timer
+  tests plus the existing tool, clipboard, IME, canvas, panel and shortcut tests.
+PASS VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui
+     varos::perf_tests::headless_ui_breakdown -- --ignored --nocapture --test-threads=1
+  1 passed; 3.89s executing, 4206.203s including queued/cold compilation.
+PASS cargo --offline fmt --all -- --check: 23.678s on final Rust content.
+PASS git diff --check: 0.509s; only local uncommitted changes, no index staging.
+PASS corrected localization audit alone: 1.467s total / 0.24s executing.
+
+The first two full test attempts each reported 1667 passed / 1 failed / 2 ignored:
+the source-wide localization scanner mistook two standalone diagnostic errors
+for product status messages. The runner is not part of the app, so its file was
+renamed to tests_headless.rs under the existing test-file exclusion convention.
+No translation catalogs or scanner code were changed. The audit and full suite
+then passed. Failing attempts: evidence/tests.txt and evidence/tests-final.txt.
+
+PARTIAL / SKIPPED
+Actual Metal input-to-photon latency, live per-panel costs in the owner's saved
+workspace, and native pointer/drag/typing feel remain for the moderator's window.
+Headless timings do not validate physical refresh rate or compositor queues.
+No physical/manual PASS is claimed. Present-mode changes, panel-body caching,
+50k renderer budgets, tile caching, cursor implementation and renderer work
+were skipped: existing minimum-latency settings/repaint sites are already in
+place, no renderer algorithms changed, and live evidence is needed for more.
+No score/roadmap headline was changed, and no git commit, push or PR was made.
+
+PASS cargo check --offline --target wasm32-unknown-unknown -p vectorcraft-ui-egui
+  233.653s. New clock/TLS/input code compiles for WASM. Two warnings refer to
+  unchanged font_install_check_at and FONT_INSTALL_POLL; neither was modified.
+  This checks the frontend and dependencies, not the whole workspace CI suite.
+Command times above include overlapping lock waits and are NOT additive.
+
+Repeat the precise collector benchmark from this worktree:
+  VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui \
+    varos::perf_tests::headless_ui_breakdown -- --ignored --nocapture --test-threads=1
+The standalone runner's exact rustc --extern invocation and dependency paths are
+in evidence/headless-link-after.txt and evidence/link-state.json. Its current
+source is evidence/tests_headless.rs (the pre-change link log records its old
+non-test filename). All source and evidence additions are inside src/varos/.
+
+UPSTREAM FILES TOUCHED
+Counts are git diff line additions/removals, including small formatting changes.
+All line numbers below refer to the final working tree's new-side hunk starts.
+
+crates/ui-egui/src/canvas.rs: total +3 / -2
+  crates/ui-egui/src/canvas.rs:237: +1 / -1
+  crates/ui-egui/src/canvas.rs:399: +1 / -1
+  crates/ui-egui/src/canvas.rs:2827: +1 / -0
+
+crates/ui-egui/src/dock.rs: total +2 / -0
+  crates/ui-egui/src/dock.rs:88: +1 / -0
+  crates/ui-egui/src/dock.rs:402: +1 / -0
+
+crates/ui-egui/src/lib.rs: total +23 / -18
+  crates/ui-egui/src/lib.rs:63: +1 / -0
+  crates/ui-egui/src/lib.rs:1162: +1 / -0
+  crates/ui-egui/src/lib.rs:1269: +1 / -1
+  crates/ui-egui/src/lib.rs:1418: +3 / -1
+  crates/ui-egui/src/lib.rs:1424: +1 / -0
+  crates/ui-egui/src/lib.rs:1440: +1 / -1
+  crates/ui-egui/src/lib.rs:1442: +1 / -1
+  crates/ui-egui/src/lib.rs:1446: +2 / -2
+  crates/ui-egui/src/lib.rs:1453: +1 / -1
+  crates/ui-egui/src/lib.rs:1455: +1 / -1
+  crates/ui-egui/src/lib.rs:1457: +1 / -1
+  crates/ui-egui/src/lib.rs:1461: +1 / -1
+  crates/ui-egui/src/lib.rs:1463: +1 / -1
+  crates/ui-egui/src/lib.rs:1465: +5 / -5
+  crates/ui-egui/src/lib.rs:1473: +1 / -1
+  crates/ui-egui/src/lib.rs:1475: +1 / -1
+
+crates/ui-egui/src/shortcuts.rs: total +6 / -2
+  crates/ui-egui/src/shortcuts.rs:67: +1 / -0
+  crates/ui-egui/src/shortcuts.rs:352: +4 / -1
+  crates/ui-egui/src/shortcuts.rs:514: +1 / -1
+
+NEW FILES AND LINE COUNTS
+All paths below are relative to crates/ui-egui/src/varos/.
+  REPORT.txt: 368 lines
+  evidence/after-empty-retina.txt: 39 lines
+  evidence/after-empty.txt: 39 lines
+  evidence/after-selected-retina.txt: 39 lines
+  evidence/after-selected.txt: 39 lines
+  evidence/before-empty-retina.txt: 50 lines
+  evidence/before-empty.txt: 50 lines
+  evidence/before-selected-retina.txt: 61 lines
+  evidence/before-selected.txt: 50 lines
+  evidence/build-final.txt: 7 lines
+  evidence/build.txt: 5 lines
+  evidence/diff-check-final.txt: 3 lines
+  evidence/diff-check.txt: 3 lines
+  evidence/fmt-final.txt: 3 lines
+  evidence/fmt-now.txt: 3 lines
+  evidence/fmt-utilities.txt: 3 lines
+  evidence/fmt.txt: 3 lines
+  evidence/headless-link-after.txt: 3 lines
+  evidence/headless-link-before.txt: 3 lines
+  evidence/headless-tests.txt: 282 lines
+  evidence/i18n-corrected.txt: 11 lines
+  evidence/link-state.json: 5 lines
+  evidence/perf-baseline.log: 4 lines
+  evidence/perf-build.log: 4 lines
+  evidence/rejected-2048-limit-empty-retina.txt: 829 lines
+  evidence/rejected-2048-limit-selected-retina.txt: 865 lines
+  evidence/standalone.rs: 3 lines
+  evidence/tests-corrected.txt: 1686 lines
+  evidence/tests-final.txt: 1696 lines
+  evidence/tests.txt: 1698 lines
+  evidence/tests_headless.rs: 85 lines
+  evidence/timer-tests-final.txt: 14 lines
+  evidence/timer-tests.txt: 33 lines
+  evidence/wasm-check.txt: 276 lines
+  mod.rs: 6 lines
+  perf_tests.rs: 129 lines
+  profile.rs: 155 lines
+  shortcuts.rs: 59 lines

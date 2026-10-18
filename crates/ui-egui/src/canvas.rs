@@ -234,7 +234,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     } else if resp.context_menu_opened() && resp.hovered() && ui.input(|i| i.pointer.any_pressed()) {
         egui::Popup::close_all(ui.ctx());
     } else {
-        handle_input(app, ui, &resp, rect);
+        crate::varos::profile::measure("canvas.input", || handle_input(app, ui, &resp, rect));
     }
     let v = *app.view().unwrap_or(&View::default());
     let xf = Xf::new(rect, &v);
@@ -396,7 +396,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             (Some(worker), true) => worker.submit(crate::render_worker::Job { key: key.clone(), doc: doc.clone(), w, h, view, opts }),
             _ => {
                 let t0 = now_ms();
-                let img = app.canvas.renderer.render(&doc, w, h, view, &opts);
+                let img = crate::varos::profile::measure("canvas.raster", || app.canvas.renderer.render(&doc, w, h, view, &opts));
                 upload(app, ui.ctx(), &img, pixel.is_some());
                 app.canvas.key = Some(key.clone());
                 app.perf.render_ms = now_ms() - t0;
@@ -2825,6 +2825,7 @@ fn kurbo_flatten(p: &BezPath, tol: f64, f: &mut impl FnMut(PathEl)) {
 
 /// Upload the art's raster; Pixel Preview's document pixels keep hard edges when magnified.
 fn upload(app: &mut VectorcraftApp, ctx: &egui::Context, img: &vectorcraft_render::Rendered, pixel: bool) {
+    let _profile = crate::varos::profile::scope("canvas.texture_prepare");
     let color = egui::ColorImage::from_rgba_premultiplied([img.width as usize, img.height as usize], &img.pixels);
     let options = if pixel { egui::TextureOptions::NEAREST } else { egui::TextureOptions::LINEAR };
     match &mut app.canvas.texture {

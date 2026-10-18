@@ -1,0 +1,865 @@
+$ VAROS_PROFILE=1 VECTORCRAFT_SYNC_RENDER=1 target/perf-1/headless selected-retina
+load_before=(79.0224609375, 94.8671875, 96.361328125)
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.11s, inclusive CPU sections (not GPU/present):
+  ui.total: 56.377 ms/call, 267.881 ms max, 1071.154 ms total / 19 calls
+  canvas: 51.683 ms/call, 267.029 ms max, 930.298 ms total / 18 calls
+  canvas.raster: 41.011 ms/call, 260.939 ms max, 738.198 ms total / 18 calls
+  canvas.texture_prepare: 10.564 ms/call, 55.556 ms max, 190.147 ms total / 18 calls
+  status_bar: 4.641 ms/call, 72.658 ms max, 83.544 ms total / 18 calls
+  dock: 2.185 ms/call, 33.873 ms max, 39.334 ms total / 18 calls
+  host.logic: 1.983 ms/call, 17.878 ms max, 37.680 ms total / 19 calls
+  host.shortcuts: 1.083 ms/call, 1.954 ms max, 19.499 ms total / 18 calls
+  shortcuts.table: 1.060 ms/call, 1.829 ms max, 19.078 ms total / 18 calls
+  properties: 0.579 ms/call, 6.302 ms max, 10.426 ms total / 18 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+STEADY selected-retina; 1440x900 points, ppp=2; 1.2s warmup; fake native services
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.00s, inclusive CPU sections (not GPU/present):
+  ui.total: 65.483 ms/call, 245.033 ms max, 982.246 ms total / 15 calls
+  canvas: 53.937 ms/call, 209.401 ms max, 809.059 ms total / 15 calls
+  canvas.raster: 31.919 ms/call, 116.605 ms max, 478.789 ms total / 15 calls
+  canvas.texture_prepare: 21.944 ms/call, 203.072 ms max, 329.164 ms total / 15 calls
+  dock: 5.587 ms/call, 78.407 ms max, 83.801 ms total / 15 calls
+  toolbar: 5.534 ms/call, 79.432 ms max, 83.010 ms total / 15 calls
+  properties: 5.480 ms/call, 78.307 ms max, 82.201 ms total / 15 calls
+  host.logic: 1.153 ms/call, 1.781 ms max, 17.301 ms total / 15 calls
+  host.shortcuts: 1.135 ms/call, 1.761 ms max, 17.027 ms total / 15 calls
+  shortcuts.table: 1.111 ms/call, 1.744 ms max, 16.660 ms total / 15 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.02s, inclusive CPU sections (not GPU/present):
+  ui.total: 82.569 ms/call, 276.584 ms max, 990.831 ms total / 12 calls
+  canvas: 75.429 ms/call, 275.789 ms max, 905.151 ms total / 12 calls
+  canvas.raster: 57.354 ms/call, 174.620 ms max, 688.249 ms total / 12 calls
+  canvas.texture_prepare: 17.989 ms/call, 101.107 ms max, 215.870 ms total / 12 calls
+  host.logic: 2.355 ms/call, 12.207 ms max, 28.264 ms total / 12 calls
+  host.shortcuts: 2.336 ms/call, 12.185 ms max, 28.033 ms total / 12 calls
+  shortcuts.table: 2.318 ms/call, 12.164 ms max, 27.817 ms total / 12 calls
+  dock: 2.218 ms/call, 22.232 ms max, 26.615 ms total / 12 calls
+  status_bar: 1.442 ms/call, 14.507 ms max, 17.305 ms total / 12 calls
+  toolbar: 1.026 ms/call, 10.184 ms max, 12.317 ms total / 12 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.22s, inclusive CPU sections (not GPU/present):
+  ui.total: 84.015 ms/call, 245.754 ms max, 1176.214 ms total / 14 calls
+  canvas: 83.189 ms/call, 244.668 ms max, 1164.643 ms total / 14 calls
+  canvas.raster: 64.810 ms/call, 139.477 ms max, 907.333 ms total / 14 calls
+  canvas.texture_prepare: 18.316 ms/call, 156.736 ms max, 256.429 ms total / 14 calls
+  host.logic: 3.225 ms/call, 33.454 ms max, 45.156 ms total / 14 calls
+  host.shortcuts: 3.208 ms/call, 33.435 ms max, 44.905 ms total / 14 calls
+  shortcuts.table: 3.191 ms/call, 33.417 ms max, 44.679 ms total / 14 calls
+  dock: 0.317 ms/call, 0.561 ms max, 4.440 ms total / 14 calls
+  properties: 0.240 ms/call, 0.457 ms max, 3.354 ms total / 14 calls
+  toolbar: 0.173 ms/call, 0.226 ms max, 2.423 ms total / 14 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.12s, inclusive CPU sections (not GPU/present):
+  ui.total: 83.282 ms/call, 243.013 ms max, 1082.662 ms total / 13 calls
+  canvas: 81.662 ms/call, 242.129 ms max, 1061.609 ms total / 13 calls
+  canvas.raster: 49.050 ms/call, 107.858 ms max, 637.652 ms total / 13 calls
+  canvas.texture_prepare: 32.542 ms/call, 209.094 ms max, 423.048 ms total / 13 calls
+  host.logic: 2.741 ms/call, 19.603 ms max, 35.633 ms total / 13 calls
+  host.shortcuts: 2.714 ms/call, 19.559 ms max, 35.279 ms total / 13 calls
+  shortcuts.table: 2.695 ms/call, 19.531 ms max, 35.032 ms total / 13 calls
+  status_bar: 0.799 ms/call, 8.548 ms max, 10.385 ms total / 13 calls
+  dock: 0.394 ms/call, 0.942 ms max, 5.128 ms total / 13 calls
+  properties: 0.297 ms/call, 0.696 ms max, 3.860 ms total / 13 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.11s, inclusive CPU sections (not GPU/present):
+  ui.total: 78.352 ms/call, 243.312 ms max, 1018.581 ms total / 13 calls
+  canvas: 77.373 ms/call, 242.396 ms max, 1005.848 ms total / 13 calls
+  canvas.texture_prepare: 41.009 ms/call, 227.251 ms max, 533.114 ms total / 13 calls
+  canvas.raster: 36.296 ms/call, 96.693 ms max, 471.854 ms total / 13 calls
+  host.logic: 7.192 ms/call, 70.856 ms max, 93.490 ms total / 13 calls
+  host.shortcuts: 7.166 ms/call, 70.838 ms max, 93.164 ms total / 13 calls
+  shortcuts.table: 7.148 ms/call, 70.819 ms max, 92.920 ms total / 13 calls
+  dock: 0.317 ms/call, 0.345 ms max, 4.121 ms total / 13 calls
+  properties: 0.238 ms/call, 0.261 ms max, 3.093 ms total / 13 calls
+  toolbar: 0.230 ms/call, 0.787 ms max, 2.987 ms total / 13 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.01s, inclusive CPU sections (not GPU/present):
+  ui.total: 70.026 ms/call, 250.448 ms max, 980.366 ms total / 14 calls
+  canvas: 69.085 ms/call, 249.566 ms max, 967.189 ms total / 14 calls
+  canvas.raster: 55.092 ms/call, 162.678 ms max, 771.289 ms total / 14 calls
+  canvas.texture_prepare: 13.821 ms/call, 86.796 ms max, 193.500 ms total / 14 calls
+  host.logic: 1.284 ms/call, 3.836 ms max, 17.975 ms total / 14 calls
+  host.shortcuts: 1.261 ms/call, 3.812 ms max, 17.654 ms total / 14 calls
+  shortcuts.table: 1.244 ms/call, 3.790 ms max, 17.413 ms total / 14 calls
+  dock: 0.361 ms/call, 0.726 ms max, 5.054 ms total / 14 calls
+  properties: 0.276 ms/call, 0.638 ms max, 3.860 ms total / 14 calls
+  toolbar: 0.241 ms/call, 0.606 ms max, 3.373 ms total / 14 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.02s, inclusive CPU sections (not GPU/present):
+  ui.total: 120.960 ms/call, 287.481 ms max, 967.680 ms total / 8 calls
+  canvas: 118.536 ms/call, 286.131 ms max, 948.291 ms total / 8 calls
+  canvas.texture_prepare: 67.122 ms/call, 188.272 ms max, 536.974 ms total / 8 calls
+  canvas.raster: 47.569 ms/call, 86.854 ms max, 380.555 ms total / 8 calls
+  host.logic: 6.210 ms/call, 38.608 ms max, 49.683 ms total / 8 calls
+  host.shortcuts: 6.187 ms/call, 38.585 ms max, 49.497 ms total / 8 calls
+  shortcuts.table: 6.167 ms/call, 38.562 ms max, 49.333 ms total / 8 calls
+  canvas.input: 1.205 ms/call, 9.484 ms max, 9.641 ms total / 8 calls
+  dock: 0.618 ms/call, 1.943 ms max, 4.941 ms total / 8 calls
+  properties: 0.504 ms/call, 1.739 ms max, 4.036 ms total / 8 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.21s, inclusive CPU sections (not GPU/present):
+  ui.total: 83.452 ms/call, 261.730 ms max, 1168.323 ms total / 14 calls
+  canvas: 67.661 ms/call, 259.880 ms max, 947.252 ms total / 14 calls
+  canvas.raster: 50.654 ms/call, 207.458 ms max, 709.159 ms total / 14 calls
+  canvas.texture_prepare: 16.918 ms/call, 81.376 ms max, 236.847 ms total / 14 calls
+  status_bar: 6.344 ms/call, 79.501 ms max, 88.812 ms total / 14 calls
+  hint_bar: 3.200 ms/call, 44.584 ms max, 44.804 ms total / 14 calls
+  dock: 3.117 ms/call, 34.450 ms max, 43.641 ms total / 14 calls
+  properties: 2.928 ms/call, 34.326 ms max, 40.986 ms total / 14 calls
+  host.logic: 2.619 ms/call, 13.714 ms max, 36.666 ms total / 14 calls
+  host.shortcuts: 2.594 ms/call, 13.693 ms max, 36.312 ms total / 14 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.02s, inclusive CPU sections (not GPU/present):
+  ui.total: 67.285 ms/call, 138.990 ms max, 941.984 ms total / 14 calls
+  canvas: 66.287 ms/call, 137.709 ms max, 928.012 ms total / 14 calls
+  canvas.raster: 42.958 ms/call, 95.823 ms max, 601.410 ms total / 14 calls
+  canvas.texture_prepare: 23.252 ms/call, 105.653 ms max, 325.526 ms total / 14 calls
+  host.logic: 5.768 ms/call, 59.888 ms max, 80.755 ms total / 14 calls
+  host.shortcuts: 5.723 ms/call, 59.868 ms max, 80.125 ms total / 14 calls
+  shortcuts.table: 5.705 ms/call, 59.848 ms max, 79.867 ms total / 14 calls
+  dock: 0.393 ms/call, 0.803 ms max, 5.497 ms total / 14 calls
+  properties: 0.284 ms/call, 0.675 ms max, 3.970 ms total / 14 calls
+  toolbar: 0.248 ms/call, 0.475 ms max, 3.474 ms total / 14 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.14s, inclusive CPU sections (not GPU/present):
+  ui.total: 79.387 ms/call, 172.775 ms max, 1111.413 ms total / 14 calls
+  canvas: 77.252 ms/call, 171.836 ms max, 1081.522 ms total / 14 calls
+  canvas.raster: 52.439 ms/call, 148.138 ms max, 734.140 ms total / 14 calls
+  canvas.texture_prepare: 24.752 ms/call, 126.176 ms max, 346.525 ms total / 14 calls
+  host.logic: 2.297 ms/call, 17.527 ms max, 32.158 ms total / 14 calls
+  host.shortcuts: 2.279 ms/call, 17.509 ms max, 31.907 ms total / 14 calls
+  shortcuts.table: 2.263 ms/call, 17.490 ms max, 31.683 ms total / 14 calls
+  status_bar: 0.760 ms/call, 6.488 ms max, 10.640 ms total / 14 calls
+  app_bar: 0.745 ms/call, 9.134 ms max, 10.428 ms total / 14 calls
+  dock: 0.337 ms/call, 0.450 ms max, 4.714 ms total / 14 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.04s, inclusive CPU sections (not GPU/present):
+  ui.total: 72.783 ms/call, 176.607 ms max, 1018.968 ms total / 14 calls
+  canvas: 70.773 ms/call, 175.034 ms max, 990.828 ms total / 14 calls
+  canvas.raster: 44.205 ms/call, 154.745 ms max, 618.874 ms total / 14 calls
+  canvas.texture_prepare: 26.124 ms/call, 153.268 ms max, 365.736 ms total / 14 calls
+  host.logic: 1.596 ms/call, 4.992 ms max, 22.348 ms total / 14 calls
+  host.shortcuts: 1.571 ms/call, 4.895 ms max, 21.989 ms total / 14 calls
+  shortcuts.table: 1.553 ms/call, 4.879 ms max, 21.744 ms total / 14 calls
+  toolbar: 0.765 ms/call, 3.918 ms max, 10.710 ms total / 14 calls
+  dock: 0.737 ms/call, 4.959 ms max, 10.318 ms total / 14 calls
+  properties: 0.654 ms/call, 4.859 ms max, 9.153 ms total / 14 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.20s, inclusive CPU sections (not GPU/present):
+  ui.total: 115.464 ms/call, 291.640 ms max, 1154.638 ms total / 10 calls
+  canvas: 109.058 ms/call, 290.929 ms max, 1090.582 ms total / 10 calls
+  canvas.texture_prepare: 55.672 ms/call, 183.850 ms max, 556.722 ms total / 10 calls
+  canvas.raster: 52.338 ms/call, 157.502 ms max, 523.377 ms total / 10 calls
+  host.logic: 4.528 ms/call, 30.477 ms max, 45.278 ms total / 10 calls
+  host.shortcuts: 4.505 ms/call, 30.456 ms max, 45.054 ms total / 10 calls
+  shortcuts.table: 4.327 ms/call, 30.437 ms max, 43.269 ms total / 10 calls
+  app_bar: 3.288 ms/call, 19.716 ms max, 32.882 ms total / 10 calls
+  status_bar: 1.513 ms/call, 13.135 ms max, 15.127 ms total / 10 calls
+  dock: 0.901 ms/call, 5.313 ms max, 9.010 ms total / 10 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.25s, inclusive CPU sections (not GPU/present):
+  ui.total: 195.883 ms/call, 403.340 ms max, 1175.297 ms total / 6 calls
+  canvas: 188.820 ms/call, 400.693 ms max, 1132.918 ms total / 6 calls
+  canvas.texture_prepare: 109.907 ms/call, 263.902 ms max, 659.441 ms total / 6 calls
+  canvas.raster: 78.077 ms/call, 132.421 ms max, 468.459 ms total / 6 calls
+  host.logic: 9.954 ms/call, 46.815 ms max, 59.725 ms total / 6 calls
+  host.shortcuts: 9.904 ms/call, 46.698 ms max, 59.422 ms total / 6 calls
+  shortcuts.table: 9.881 ms/call, 46.675 ms max, 59.288 ms total / 6 calls
+  dock: 4.223 ms/call, 19.062 ms max, 25.337 ms total / 6 calls
+  properties: 3.890 ms/call, 18.941 ms max, 23.338 ms total / 6 calls
+  toolbar: 1.400 ms/call, 5.378 ms max, 8.397 ms total / 6 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.00s, inclusive CPU sections (not GPU/present):
+  ui.total: 121.000 ms/call, 171.473 ms max, 968.003 ms total / 8 calls
+  canvas: 106.930 ms/call, 170.227 ms max, 855.441 ms total / 8 calls
+  canvas.raster: 61.123 ms/call, 115.413 ms max, 488.985 ms total / 8 calls
+  canvas.texture_prepare: 45.459 ms/call, 150.115 ms max, 363.669 ms total / 8 calls
+  status_bar: 9.284 ms/call, 71.826 ms max, 74.273 ms total / 8 calls
+  host.logic: 3.058 ms/call, 7.179 ms max, 24.465 ms total / 8 calls
+  host.shortcuts: 2.667 ms/call, 7.150 ms max, 24.006 ms total / 9 calls
+  shortcuts.table: 2.635 ms/call, 7.120 ms max, 23.714 ms total / 9 calls
+  toolbar: 1.545 ms/call, 10.590 ms max, 12.363 ms total / 8 calls
+  dock: 0.408 ms/call, 0.573 ms max, 3.262 ms total / 8 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.03s, inclusive CPU sections (not GPU/present):
+  ui.total: 88.386 ms/call, 213.360 ms max, 972.243 ms total / 11 calls
+  canvas: 83.809 ms/call, 212.559 ms max, 921.895 ms total / 11 calls
+  canvas.raster: 56.316 ms/call, 127.216 ms max, 619.476 ms total / 11 calls
+  canvas.texture_prepare: 27.423 ms/call, 85.282 ms max, 301.648 ms total / 11 calls
+  host.logic: 4.872 ms/call, 29.495 ms max, 53.593 ms total / 11 calls
+  host.shortcuts: 4.061 ms/call, 29.475 ms max, 40.607 ms total / 10 calls
+  toolbar: 3.279 ms/call, 34.007 ms max, 36.066 ms total / 11 calls
+  shortcuts.table: 3.369 ms/call, 22.729 ms max, 33.694 ms total / 10 calls
+  dock: 0.663 ms/call, 3.737 ms max, 7.290 ms total / 11 calls
+  properties: 0.267 ms/call, 0.325 ms max, 2.936 ms total / 11 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.07s, inclusive CPU sections (not GPU/present):
+  ui.total: 104.660 ms/call, 267.537 ms max, 1046.601 ms total / 10 calls
+  canvas: 102.672 ms/call, 257.792 ms max, 1026.721 ms total / 10 calls
+  canvas.raster: 57.932 ms/call, 134.037 ms max, 579.320 ms total / 10 calls
+  canvas.texture_prepare: 44.657 ms/call, 140.542 ms max, 446.572 ms total / 10 calls
+  host.logic: 2.211 ms/call, 9.384 ms max, 22.105 ms total / 10 calls
+  host.shortcuts: 2.189 ms/call, 9.363 ms max, 21.890 ms total / 10 calls
+  shortcuts.table: 2.170 ms/call, 9.343 ms max, 21.699 ms total / 10 calls
+  status_bar: 0.814 ms/call, 6.817 ms max, 8.135 ms total / 10 calls
+  dock: 0.551 ms/call, 2.023 ms max, 5.514 ms total / 10 calls
+  properties: 0.448 ms/call, 1.886 ms max, 4.481 ms total / 10 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+VAROS_PROFILE 1.02s, inclusive CPU sections (not GPU/present):
+  ui.total: 86.160 ms/call, 147.173 ms max, 947.763 ms total / 11 calls
+  canvas: 77.559 ms/call, 146.410 ms max, 853.144 ms total / 11 calls
+  canvas.raster: 54.540 ms/call, 103.788 ms max, 599.940 ms total / 11 calls
+  canvas.texture_prepare: 22.945 ms/call, 78.414 ms max, 252.396 ms total / 11 calls
+  host.logic: 6.395 ms/call, 23.328 ms max, 70.350 ms total / 11 calls
+  host.shortcuts: 5.081 ms/call, 23.304 ms max, 55.890 ms total / 11 calls
+  shortcuts.table: 5.061 ms/call, 23.283 ms max, 55.675 ms total / 11 calls
+  status_bar: 4.510 ms/call, 41.958 ms max, 49.613 ms total / 11 calls
+  toolbar: 2.735 ms/call, 27.792 ms max, 30.087 ms total / 11 calls
+  dock: 0.591 ms/call, 1.272 ms max, 6.497 ms total / 11 calls
+
+thread 'main' (17764947) panicked at ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/egui-0.36.2/src/context.rs:2399:9:
+Texture "canvas" has size 2074x1534, but the maximum texture side is 2048
+RESULT selected-retina frames=200 full_mean=91.966ms p50=72.853ms p95=247.394ms status_ui_mean=0.000ms
+
+exit=0; wall=19.718s; load_after=(82.59228515625, 94.5068359375, 96.1884765625)

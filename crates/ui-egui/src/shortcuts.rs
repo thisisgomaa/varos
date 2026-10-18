@@ -64,6 +64,7 @@ pub(crate) fn is_modifier(key: Key) -> bool {
 /// Every command shortcut in effect (user overrides from Edit → Keyboard Shortcuts win), with the
 /// command's params: `{}`, or `{panel}` for the panel shortcuts (`window.panel`).
 pub(crate) fn all_shortcuts() -> Vec<(KeyboardShortcut, &'static str, serde_json::Value)> {
+    let _profile = crate::varos::profile::scope("shortcuts.table");
     let mut v = vec![];
     for c in vectorcraft_engine::command_specs() {
         if let Some(sc) = crate::menus::shortcut_of(c.id).and_then(parse) {
@@ -348,7 +349,10 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         // Editing keys with modifiers and the clipboard (Cmd+A is Select All's, below: the text).
         crate::panels::character::route_type_input(app, ctx);
         // Enter was already delivered above as ToolKey::Enter (newline).
-        let fire = all_shortcuts().into_iter().filter(|(sc, ..)| sc.modifiers.command).find(|(sc, ..)| ctx.input_mut(|i| consume(i, sc)));
+        let fire = crate::varos::shortcuts::for_frame(ctx)
+            .into_iter()
+            .filter(|(sc, ..)| sc.modifiers.command)
+            .find(|(sc, ..)| ctx.input_mut(|i| consume(i, sc)));
         if let Some((_, id, p)) = fire {
             crate::menus::invoke(app, id, p);
         }
@@ -507,7 +511,7 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     }
     // Command shortcuts.
     let mut fire = None;
-    for (sc, id, p) in all_shortcuts() {
+    for (sc, id, p) in crate::varos::shortcuts::for_frame(ctx) {
         // Letter / punctuation keys without Cmd/Alt/Ctrl are handled below as text (tool shortcuts,
         // X, D, /, `,` and `.`).
         let plain = !(sc.modifiers.command || sc.modifiers.alt || sc.modifiers.ctrl);

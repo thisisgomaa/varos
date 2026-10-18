@@ -2,6 +2,7 @@
 pub mod icons;
 pub mod theme;
 pub mod names;
+pub mod perf_tests;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -110,3 +111,5 @@ mod tests {
     }
 }
 pub(crate) mod cursors;
+pub(crate) mod profile;
+pub(crate) mod shortcuts;
