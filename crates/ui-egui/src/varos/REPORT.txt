@@ -1,0 +1,155 @@
+Lane CURSORS — final plain-text report
+Branch: lane-cursors; base/HEAD: cdba0aac. No commit, push, merge or installation.
+Completed: 2026-10-18 20:40:49 UTC
+
+DONE
+- Embedded the original permitted Varos v1.1 set: 38 SVGs, hotspots.json and both
+  LICENSE-MIT / LICENSE-APACHE. All 41 copies were SHA-256 compared byte-for-byte
+  with the owner-supplied read-only source. ASSETS.md and NOTICE record provenance.
+- resvg 0.45.1 (already in Cargo.lock) rasterizes with its matching usvg parser.
+  Hotspots come from the JSON files map; dimensions and coordinates are bounded.
+  Straight RGBA uses checked alpha division and stable cached Arcs.
+- macOS: true NSCursor objects cached by asset and point size. At default scale,
+  each image is 32 points with both 32px and 64px representations and a point
+  hotspot. Existing UI cursor scaling is respected; display DPI selects the rep.
+- Mapped macOS states skip the painted tool glyph. A scoped cursor-rectangle lease
+  prevents winit from restoring its stored system cursor over the native cursor.
+  Rectangles are restored on leave, focus loss, overlays, opt-out or fallback.
+- NSCursor::set runs on requested appearance/size/window changes, or when AppKit's
+  actual cursor changed independently. Unchanged frames do not set it again.
+  The active cursor is retained independently of bounded cache eviction.
+- Windows/X11 receive the same bitmaps through the existing CustomCursorImage
+  application path. The upstream Images cache remains the unmatched fallback.
+- Mappings include selection/direct-selection hover badges, copy, pen states,
+  eyedropper, resize, all rotation octants, hand/grab, zoom, shape/transform badges
+  and artboard. Selection's selected-object/Alt hover uses select-object.svg;
+  its actual drag emits Arrow/ArrowHollow and drops the hover badge.
+- Five new tests pass. Coverage includes 27 named states, eight rotation octants,
+  seven Crosshair tool routes and artboard Move at 1x/2x; all 38 SVGs; hotspots,
+  cache identity, invalid sizes, precise/unmatched fallbacks; and actual AppKit
+  NSCursor images with 1x/2x representations and point-sized geometry.
+- All new delivered files are under crates/ui-egui/src/varos/. No app-crate edits;
+  upstream cursors.rs, tools, Cursor enum and cursors.toml are unchanged.
+
+PARTIAL / HAND-TEST PENDING
+- The moderator must test actual pointer feel/lag, Retina sharpness and size,
+  cursor alignment, transitions to panels/text fields, native menus/sheets,
+  focus loss, canvas exit/re-entry, and UI scaling. No window was opened or app
+  launched by this agent. NSCursor construction is tested; its live window lease
+  and on-screen movement have not been exercised here.
+- There is no I-beam in v1. Text, vertical text, Group Selection, Curvature, width,
+  plain/precise Crosshair and other unmatched states retain upstream glyphs,
+  including the painted macOS fallback. Their position lag is not addressed.
+- cross-triangle.svg is retained and validated. Upstream has no distinct triangle
+  cursor/tool ID; polygon continues to use the polygon badge.
+- Unselected-object hover shares Arrow with empty space upstream and therefore
+  keeps the plain arrow. Selected-object/Alt hover is mapped through Move.
+- Wayland and web retain upstream painted-fallback policy; their OS-cursor policy
+  was not changed. Windows/Linux/browser runtime appearance remains unverified.
+
+SKIPPED
+- Commit, PR, merge, install, app launch and window-based QA, per lane instructions.
+- Full workspace cargo xtask ci and performance benches. Targeted checks below
+  cover this change; no document renderer, geometry or file-format code changed.
+- No parity scores or progress headlines were changed for an unmerged spike.
+
+FINAL VALIDATION (wall times include any shared-lock wait)
+PASS cargo build --offline -p vectorcraft
+     94.54s final; binary target/debug/vectorcraft (120 MB, dev/debug build).
+     Earlier complete build: 63m 37s, dominated by shared prebuild/test lock wait.
+PASS cargo test --offline -p vectorcraft-ui-egui
+     179.18s final; 1668 passed, 0 failed, 0 ignored; test execution 11.70s;
+     doc tests: 0. All five new cursor tests passed.
+PASS cargo clippy --offline -p vectorcraft-ui-egui --all-targets --no-deps -- -D warnings
+     68.45s; production and test targets; no lint allowances added.
+PASS cargo check --offline -p vectorcraft-ui-egui --lib --target wasm32-unknown-unknown
+     1.96s final incremental check; initial cold check 244.85s.
+     Two warnings in unchanged font-polling code: font_install_check_at at
+     crates/ui-egui/src/lib.rs:461 and FONT_INSTALL_POLL at :508. No Varos warnings.
+PASS cargo --offline fmt --all -- --check
+     3.80s final. CARGO_NET_OFFLINE=true was also set for fmt and final Cargo gates.
+PASS cargo --offline xtask assets
+     365 recognized asset files attributed; 3578.92s wall including long lock wait.
+PASS git diff --check
+     0.25s final.
+PASS manual SHA-256 copy audit
+     41 files identical to permitted v1 sources; 38 SVGs and 36 CK manifest entries.
+
+UPSTREAM FILES TOUCHED (new-file line anchors; insertions/deletions)
+crates/ui-egui/src/canvas.rs:577  +1/-0  tool context, preserving precise mode
+crates/ui-egui/src/canvas.rs:579  +4/-0  cfg(macos) native cursor branch
+crates/ui-egui/src/canvas.rs:589  +1/-1  Varos bitmap before upstream bitmap fallback
+  canvas.rs total: +6/-1
+crates/ui-egui/src/lib.rs:63     +1/-0  mod varos
+crates/ui-egui/src/lib.rs:1416   +2/-0  cfg(macos) begin-frame hook
+crates/ui-egui/src/lib.rs:1423   +2/-0  cfg(macos) end-frame hook
+  lib.rs total: +5/-0
+crates/ui-egui/Cargo.toml:35     +2/-0  existing resvg dependency
+crates/ui-egui/Cargo.toml:53     +6/-0  existing objc2 crates, macOS-only features
+  Cargo.toml total: +8/-0
+Cargo.lock:4977                 +4/-0  UI crate dependency edges; no new package versions
+ASSETS.md:367                   +48/-0 attribution for every copied file
+NOTICE:95                       +7/-0  Varos attribution and licence locations
+Total upstream: six files, +78/-1. Functional Rust hooks: two files, +11/-1.
+
+WHAT FOUGHT THE WORK
+- The first offline build stopped in under a second on uncached icu_segmenter
+  2.3.0. It subsequently appeared in the cache during the supplied prebuild; this
+  agent did not fetch dependencies or change CARGO_TARGET_DIR.
+- Most early elapsed time was shared build-lock waiting, then cold UI-test
+  dependency compilation. The existing target directory was preserved.
+- A hotspot closure initially needed an explicit usize index type (E0282); fixed.
+- NSApplication and NSWindow also require AppKit's NSResponder feature. The first
+  test invocation resolved its graph before that feature was added, then waited
+  on the lock and failed E0432. A fresh invocation with the final manifest passed.
+- Rust 1.98 Clippy required array chunks and checked alpha division. Both were
+  fixed in the new module; build, all tests, Clippy, WASM and fmt were rerun.
+- Merely setting an NSCursor is insufficient while winit owns a cursor rectangle;
+  the scoped rectangle lease handles that without unconditional per-frame sets.
+- Local plan/STATUS.md, plan/execution-plan.md and plan/architecture.md were absent.
+
+NEW DELIVERED FILES (44 total; paths relative to crates/ui-egui/src/varos/)
+assets/cursors/v1/LICENSE-APACHE: 202 lines
+assets/cursors/v1/LICENSE-MIT: 21 lines
+assets/cursors/v1/artboard.svg: 34 lines
+assets/cursors/v1/convert.svg: 24 lines
+assets/cursors/v1/copy.svg: 10 lines
+assets/cursors/v1/cross-ellipse.svg: 24 lines
+assets/cursors/v1/cross-polygon.svg: 24 lines
+assets/cursors/v1/cross-rect.svg: 24 lines
+assets/cursors/v1/cross-rotate.svg: 26 lines
+assets/cursors/v1/cross-scale.svg: 24 lines
+assets/cursors/v1/cross-triangle.svg: 24 lines
+assets/cursors/v1/direct-anchor.svg: 11 lines
+assets/cursors/v1/direct-path.svg: 11 lines
+assets/cursors/v1/direct.svg: 9 lines
+assets/cursors/v1/eyedropper.svg: 16 lines
+assets/cursors/v1/grab.svg: 36 lines
+assets/cursors/v1/hand.svg: 36 lines
+assets/cursors/v1/hotspots.json: 86 lines
+assets/cursors/v1/no-drop.svg: 11 lines
+assets/cursors/v1/pen-add.svg: 26 lines
+assets/cursors/v1/pen-close.svg: 24 lines
+assets/cursors/v1/pen-connect.svg: 24 lines
+assets/cursors/v1/pen-delete.svg: 24 lines
+assets/cursors/v1/pen-new.svg: 28 lines
+assets/cursors/v1/pen.svg: 18 lines
+assets/cursors/v1/resize-h.svg: 16 lines
+assets/cursors/v1/resize-ne.svg: 18 lines
+assets/cursors/v1/resize-nw.svg: 18 lines
+assets/cursors/v1/resize-v.svg: 18 lines
+assets/cursors/v1/rotate-e.svg: 18 lines
+assets/cursors/v1/rotate-n.svg: 18 lines
+assets/cursors/v1/rotate-ne.svg: 16 lines
+assets/cursors/v1/rotate-nw.svg: 18 lines
+assets/cursors/v1/rotate-s.svg: 18 lines
+assets/cursors/v1/rotate-se.svg: 18 lines
+assets/cursors/v1/rotate-sw.svg: 18 lines
+assets/cursors/v1/rotate-w.svg: 18 lines
+assets/cursors/v1/select-object.svg: 10 lines
+assets/cursors/v1/select.svg: 8 lines
+assets/cursors/v1/zoom-in.svg: 22 lines
+assets/cursors/v1/zoom-out.svg: 21 lines
+cursors.rs: 433 lines
+mod.rs: 2 lines
+REPORT.txt: 155 lines
