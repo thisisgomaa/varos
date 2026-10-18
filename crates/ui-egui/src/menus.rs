@@ -3151,6 +3151,9 @@ pub fn ruler_menu_body(app: &VectorcraftApp, ui: &mut egui::Ui, clicked: &mut Op
 /// Render the menu bar.
 /// The in-window menu bar. Returns where its titles end (x): the bar itself takes the full width.
 pub fn menu_bar(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> f32 {
+    if !document_menus_showing(app) {
+        return ui.cursor().min.x;
+    }
     let t = Tokens::get(ui.ctx());
     let ctx = ui.ctx().clone();
     // The press that opens a menu takes the keyboard from a focused text field: the field and its
@@ -3309,6 +3312,11 @@ pub(crate) fn home_key(app: &VectorcraftApp) -> (Option<u64>, usize) {
 /// an app with no document shows an empty window, and the Home button still opens the screen.
 pub(crate) fn home_showing(app: &VectorcraftApp) -> bool {
     app.ui.home.is_some() || (app.session.active().is_none() && app.session.prefs.show_home_screen)
+}
+
+/// Editor menus belong to an active document, never to Home (even over open tabs).
+pub(crate) fn document_menus_showing(app: &VectorcraftApp) -> bool {
+    app.session.active().is_some() && !home_showing(app)
 }
 
 /// What a menu click runs: items whose label ends with "…" and that carry default params open a
@@ -4065,6 +4073,7 @@ mod tests {
     #[test]
     fn the_bar_starts_at_file() {
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
         let ctx = egui::Context::default();
         theme::install_fonts(&ctx);
         theme::apply(&ctx, Default::default());
@@ -4090,8 +4099,21 @@ mod tests {
     }
 
     #[test]
+    fn menu_bar_is_absent_on_home_and_present_with_a_document() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        assert!(bar_frame(&mut app, &ctx, vec![]).is_empty());
+        app.run("file.new", json!({})).unwrap();
+        assert_eq!(bar_frame(&mut app, &ctx, vec![]).len(), menu_tree().len() - 1);
+        app.run("app.home", json!({})).unwrap();
+        assert!(bar_frame(&mut app, &ctx, vec![]).is_empty());
+    }
+
+    #[test]
     fn hovering_another_title_switches_the_open_menu() {
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
         let ctx = egui::Context::default();
         theme::install_fonts(&ctx);
         theme::apply(&ctx, Default::default());

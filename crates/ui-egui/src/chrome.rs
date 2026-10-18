@@ -44,6 +44,10 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 crate::brand::paint_mark(ui, r);
                 ui.add_space(6.0);
             }
+            // Home keeps the brand and window controls, without editor menus or workspace popup.
+            if !menus::document_menus_showing(app) {
+                return;
+            }
             let on_home = menus::home_showing(app);
             if widgets::icon_button(ui, "house", tl!("Home"), on_home, 20.0).clicked() {
                 app.run("app.home", json!({})).ok();
@@ -1992,6 +1996,7 @@ mod visual_regressions {
                     theme::install_fonts(&ctx);
                     theme::apply(&ctx, brightness);
                     let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+                    app.run("file.new", json!({})).unwrap();
                     app.services.native_menu = Some(crate::native_menu::NativeMenu::new(Box::new(NativeMenus)));
                     let mut output = ctx.run_ui(scaled_input(vec2(width, 640.0), scale), |ui| app_bar(&mut app, ui));
                     output.textures_delta.clear();

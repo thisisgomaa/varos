@@ -2764,7 +2764,12 @@ fn home(app: &mut VectorcraftApp, ui: &mut Ui, rect: egui::Rect) {
     let inner = rect.shrink2(vec2((rect.width() - 820.0).max(40.0) / 2.0, 60.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
     let ui = &mut child;
-    ui.label(egui::RichText::new(tl!("Welcome to VectorCraft")).font(theme::semibold(26.0)).color(t.text));
+    ui.horizontal(|ui| {
+        let (mark, _) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::hover());
+        crate::brand::paint_mark(ui, mark);
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new(tl!("Welcome to VectorCraft")).font(theme::semibold(26.0)).color(t.text));
+    });
     ui.add_space(4.0);
     ui.label(egui::RichText::new(tl!("Vector illustration — fast, open, scriptable.")).size(14.0).color(t.text_dim));
     ui.add_space(22.0);
