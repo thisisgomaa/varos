@@ -4,14 +4,57 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
-[dependencies]
-cosmic-text = { version = "=0.19.0", default-features = false, features = ["std", "shape-run-cache"] }
-skrifa = "=0.42.1"
-fontdb = { version = "=0.23.0", default-features = false }
-unicode-script = "=0.5.8"
-unicode-bidi = "=0.3.18"
-unicode-linebreak = "=0.1.5"
-unicode-segmentation = "=1.13.3"
-tiny-skia = { version = "=0.11.4", default-features = false, features = ["std"] }
-sha2 = "0.10"
+[features]
+# The COSMIC/HarfRust layout engine. Hosts that only need the backend-neutral
+# kashida policy (`varos_text::kashida`) build with `default-features = false`.
+default = ["cosmic"]
+cosmic = ["dep:cosmic-text", "dep:skrifa", "dep:fontdb", "dep:unicode-script", "dep:unicode-bidi", "dep:unicode-linebreak", "dep:tiny-skia", "dep:sha2"]
 
+[dependencies]
+cosmic-text = { version = "=0.19.0", default-features = false, features = ["std", "shape-run-cache"], optional = true }
+skrifa = { version = "=0.42.1", optional = true }
+fontdb = { version = "=0.23.0", default-features = false, optional = true }
+unicode-script = { version = "=0.5.8", optional = true }
+unicode-bidi = { version = "=0.3.18", optional = true }
+unicode-linebreak = { version = "=0.1.5", optional = true }
+unicode-segmentation = "=1.13.3"
+tiny-skia = { version = "=0.11.4", default-features = false, features = ["std"], optional = true }
+sha2 = { version = "0.10", optional = true }
+
+
+# Integration tests and examples drive the COSMIC engine.
+[[test]]
+name = "corpus"
+required-features = ["cosmic"]
+
+[[test]]
+name = "incremental"
+required-features = ["cosmic"]
+
+[[test]]
+name = "language"
+required-features = ["cosmic"]
+
+[[test]]
+name = "path_contract"
+required-features = ["cosmic"]
+
+[[test]]
+name = "production"
+required-features = ["cosmic"]
+
+[[test]]
+name = "programme"
+required-features = ["cosmic"]
+
+[[test]]
+name = "wrapping"
+required-features = ["cosmic"]
+
+[[example]]
+name = "programme_budget"
+required-features = ["cosmic"]
+
+[[example]]
+name = "ui_budget"
+required-features = ["cosmic"]
