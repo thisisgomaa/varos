@@ -1,0 +1,80 @@
+Lane ICONS report
+
+Implemented: 117 catalogue overrides (92 exact, 25 close), covering another 36 tool-alias map rows.
+Total eligible map rows: 153 / 336; 183 skipped.
+Skipped categories (mutually exclusive): NEEDS_DRAWING 69; LUCIDE_IMPORT 77; explicit close-placeholder exclusions 6; unavailable 18; painter/brand 13.
+The placeholder-related list has 13 rows total, including none-confidence rows counted under NEEDS_DRAWING/LUCIDE_IMPORT.
+New assets: 51 SVGs (28 Varos file originals, 7 Lucide files, 16 inline extractions), plus 2 licence files.
+Existing overrides: 35; final overrides: 117 (+82). Existing asset files unchanged.
+
+Files added (path: lines)
+crates/ui-egui/assets/varos/icons/LICENSE-APACHE: 202
+crates/ui-egui/assets/varos/icons/LICENSE-MIT: 21
+crates/ui-egui/assets/varos/icons/grip.svg: 23
+crates/ui-egui/assets/varos/icons/legacy-al-b.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-al-ch.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-al-l.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-al-m.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-al-r.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-al-t.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-l-eye.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-l-eyeoff.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-l-lock.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-l-search.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-l-unlock.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-opacity.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-rotate.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-scale.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-strokew.svg: 4
+crates/ui-egui/assets/varos/icons/legacy-type.svg: 4
+crates/ui-egui/assets/varos/icons/list-filter.svg: 17
+crates/ui-egui/assets/varos/icons/list.svg: 20
+crates/ui-egui/assets/varos/icons/pen-line.svg: 5
+crates/ui-egui/assets/varos/icons/pen-off.svg: 6
+crates/ui-egui/assets/varos/icons/square-centerline-dashed-horizontal.svg: 20
+crates/ui-egui/assets/varos/icons/square-centerline-dashed-vertical.svg: 20
+crates/ui-egui/assets/varos/icons/varos-draw-arc.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-curvature.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-direct.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-ellipse.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-line.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-pencil.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-polar-grid.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-polygon.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-rect.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-rounded-rect.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-select.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-smooth.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-spiral.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-star.svg: 2
+crates/ui-egui/assets/varos/icons/varos-draw-triangle.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-divide.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-eraser.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-knife.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-merge.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-minus-back.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-outline.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-scissors.svg: 2
+crates/ui-egui/assets/varos/icons/varos-path-trim.svg: 2
+crates/ui-egui/assets/varos/icons/varos-picker-gradient.svg: 2
+crates/ui-egui/assets/varos/icons/varos-picker-harmony.svg: 2
+crates/ui-egui/assets/varos/icons/varos-picker-none.svg: 2
+crates/ui-egui/assets/varos/icons/varos-picker-swap.svg: 2
+crates/ui-egui/assets/varos/icons/varos-picker-wheel.svg: 2
+OVERRIDES.txt: 202
+
+Tracked-file changes (+/-):
+54	0	ASSETS.md
+6	0	NOTICE
+6	6	crates/ui-egui/src/icons.rs
+215	53	crates/ui-egui/src/varos/icons.rs
+
+Upstream hook: crates/ui-egui/src/icons.rs:122-123 guards the old selection-arrow underlay; test at line 161 expects Varos geometry alone.
+Existing source(name) hook at crates/ui-egui/src/icons.rs:106 remains unchanged.
+Tool aliases resolve before source(name): toolbar.rs:234,646,705; no per-call-site replacements.
+RTL: no locale-based mirroring exists in source/paint in this checkout. Chevron call sites remain intact; paragraph-direction glyphs remain upstream.
+Stroke: all overrides use currentColor -> white tint mask and stroke-width 2 -> 1.6. Owner 2.0 TODO included.
+Sources: Varos was read only. No Adobe application or installation content used.
+No commit made.
+
+Verification results will be filled after the prebuild releases its lock.

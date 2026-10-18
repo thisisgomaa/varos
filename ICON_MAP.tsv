@@ -1,0 +1,337 @@
+upstream_id	where_used	varos_svg	confidence	note
+tool-anchor	toolbar+flyouts+All Tools dialog: Anchor Point Tool (Shift+C)	EMPTY	none	alias->dc-anchor; suggest=NEEDS_DRAWING ; convert anchor to corner (control bar); Varos has none
+tool-arc	toolbar+flyouts+All Tools dialog: Arc Tool	varos/draw-arc.svg	exact	alias->dc-arc
+tool-artboard	toolbar+flyouts+All Tools dialog: Artboard Tool (Shift+O)	frame.svg	exact	alias->frame; Artboard tool / Layers artboard row
+tool-blend	toolbar+flyouts+All Tools dialog: Blend Tool (W)	EMPTY	none	alias->dc-blend; suggest=LUCIDE_IMPORT:blend ; Blend tool; Varos rail uses Link placeholder
+tool-bloat	toolbar+flyouts+All Tools dialog: Bloat Tool	EMPTY	none	alias->dc-bloat; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+tool-blob-brush	toolbar+flyouts+All Tools dialog: Blob Brush Tool (Shift+B)	EMPTY	none	alias->brush; suggest=LUCIDE_IMPORT:brush ; Blob Brush tool; nearest in set: varos/draw-pencil.svg
+tool-brush	toolbar+flyouts+All Tools dialog: Paintbrush Tool (B)	EMPTY	none	alias->paintbrush; suggest=LUCIDE_IMPORT:paintbrush ; Paintbrush tool + Brushes panel header; nearest in set varos/draw-pencil.svg
+tool-bucket	toolbar+flyouts+All Tools dialog: Live Paint Bucket (K)	EMPTY	none	alias->dc-live-bucket; suggest=LUCIDE_IMPORT:paint-bucket ; Live Paint Bucket
+tool-crystallize	toolbar+flyouts+All Tools dialog: Crystallize Tool	EMPTY	none	alias->dc-crystallize; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+tool-curvature	toolbar+flyouts+All Tools dialog: Curvature Tool (Shift+~)	varos/draw-curvature.svg	exact	alias->spline; Curvature tool (also Simplify / freeform lines)
+tool-direct	toolbar+flyouts+All Tools dialog: Direct Selection Tool (A)	varos/draw-direct.svg	exact	alias->dc-direct; Direct Selection tool
+tool-ellipse	toolbar+flyouts+All Tools dialog: Ellipse Tool (L)	varos/draw-ellipse.svg	exact	alias->dc-ellipse
+tool-eraser	toolbar+flyouts+All Tools dialog: Eraser Tool (Shift+E)	varos/path-eraser.svg	exact	alias->eraser; Eraser tool; Varos Eraser|PathEraser share path-eraser
+tool-eyedropper	toolbar+flyouts+All Tools dialog: Eyedropper Tool (I)	pipette.svg	exact	alias->pipette; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+tool-flare	toolbar+flyouts+All Tools dialog: Flare Tool	EMPTY	none	alias->dc-flare; suggest=LUCIDE_IMPORT:sun ; Flare tool; Illustrator-specific, sun is a stand-in
+tool-free-transform	toolbar+flyouts+All Tools dialog: Free Transform Tool (E)	maximize.svg	close	alias->dc-free-transform; Varos rail uses Icon::Fit (maximize) as FreeTransform/Scale placeholder; a real glyph is NEEDS_DRAWING
+tool-gradient	toolbar+flyouts+All Tools dialog: Gradient Tool (G)	varos/picker-gradient.svg	exact	alias->dc-gradient; Gradient panel header
+tool-graph	toolbar+flyouts+All Tools dialog: Column Graph Tool (J), Stacked Column Graph Tool, Bar Graph Tool, Stacked Bar Graph Tool, Line Graph Tool (+4)	EMPTY	none	alias->chart-column; suggest=LUCIDE_IMPORT:chart-column ; graph tools; Varos has no graphs
+tool-group-select	toolbar+flyouts+All Tools dialog: Group Selection Tool	EMPTY	none	alias->dc-group-select; suggest=NEEDS_DRAWING ; Group Selection tool; stand-in varos/draw-select.svg
+tool-hand	toolbar+flyouts+All Tools dialog: Hand Tool (H)	hand.svg	exact	alias->hand; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+tool-join	toolbar+flyouts+All Tools dialog: Join Tool	link.svg	close	alias->dc-join; Varos Join tool uses Icon::Link
+tool-knife	toolbar+flyouts+All Tools dialog: Knife	varos/path-knife.svg	exact	alias->dc-knife
+tool-lasso	toolbar+flyouts+All Tools dialog: Lasso Tool (Q)	lasso.svg	exact	alias->lasso; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+tool-line	toolbar+flyouts+All Tools dialog: Line Segment Tool (\\)	varos/draw-line.svg	exact	alias->dc-line
+tool-line-cut	toolbar+flyouts+All Tools dialog: Line Cut Tool	varos/path-knife.svg	close	alias->dc-line-cut; Line Cut tool (not an Illustrator tool); knife is the nearest
+tool-live-select	toolbar+flyouts+All Tools dialog: Live Paint Selection Tool (Shift+L)	EMPTY	none	alias->dc-live-select; suggest=NEEDS_DRAWING ; Live Paint Selection; stand-in varos/draw-select.svg
+tool-magic-wand	toolbar+flyouts+All Tools dialog: Magic Wand Tool (Y)	EMPTY	none	alias->wand-sparkles; suggest=LUCIDE_IMPORT:wand-sparkles ; Magic Wand tool + header; Varos rail uses SmartGuides placeholder
+tool-measure	toolbar+flyouts+All Tools dialog: Measure Tool	ruler.svg	exact	alias->dc-measure; spike override; Varos Ruler
+tool-mesh	toolbar+flyouts+All Tools dialog: Mesh Tool (U)	EMPTY	none	alias->dc-mesh; suggest=LUCIDE_IMPORT:grid-3x3 ; Mesh tool / envelope mesh
+tool-mirror-cut	toolbar+flyouts+All Tools dialog: Mirror & Cut Tool	EMPTY	none	alias->dc-mirror-cut; suggest=NEEDS_DRAWING ; Mirror & Cut tool; stand-in varos/path-knife.svg
+tool-path-eraser	toolbar+flyouts+All Tools dialog: Path Eraser Tool	varos/path-eraser.svg	exact	alias->dc-path-eraser
+tool-pen	toolbar+flyouts+All Tools dialog: Pen Tool (P)	pen-tool.svg	exact	alias->pen-tool; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+tool-pen-add	toolbar+flyouts+All Tools dialog: Add Anchor Point Tool (+)	pen-line.svg	exact	alias->pen-tool-add; Varos AddAnchor -> PenLine
+tool-pen-delete	toolbar+flyouts+All Tools dialog: Delete Anchor Point Tool (-)	pen-off.svg	exact	alias->pen-tool-delete; Varos DeleteAnchor -> PenOff
+tool-pencil	toolbar+flyouts+All Tools dialog: Pencil Tool (N)	varos/draw-pencil.svg	exact	alias->pencil; Pencil tool; other uses are generic 'edit'
+tool-perspective	toolbar+flyouts+All Tools dialog: Perspective Grid Tool (Shift+P)	EMPTY	none	alias->dc-perspective; suggest=NEEDS_DRAWING ; Perspective Grid tool
+tool-perspective-select	toolbar+flyouts+All Tools dialog: Perspective Selection Tool (Shift+V)	EMPTY	none	alias->dc-perspective; suggest=NEEDS_DRAWING ; Perspective Grid tool
+tool-polar-grid	toolbar+flyouts+All Tools dialog: Polar Grid Tool	varos/draw-polar-grid.svg	exact	alias->dc-polar-grid
+tool-polygon	toolbar+flyouts+All Tools dialog: Polygon Tool	varos/draw-polygon.svg	exact	alias->dc-polygon
+tool-print-tiling	toolbar+flyouts+All Tools dialog: Print Tiling Tool	EMPTY	none	alias->printer; suggest=LUCIDE_IMPORT:printer
+tool-pucker	toolbar+flyouts+All Tools dialog: Pucker Tool	EMPTY	none	alias->dc-pucker; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+tool-puppet	toolbar+flyouts+All Tools dialog: Puppet Warp Tool	EMPTY	none	alias->dc-puppet; suggest=NEEDS_DRAWING ; Puppet Warp tool
+tool-rect	toolbar+flyouts+All Tools dialog: Rectangle Tool (M)	varos/draw-rect.svg	exact	alias->square; Rectangle tool (tool-rect); also generic square/cap-square
+tool-rect-cut	toolbar+flyouts+All Tools dialog: Rectangle Cut Tool	varos/path-knife.svg	close	alias->dc-rect-cut; Rectangle Cut tool; knife is the nearest
+tool-rect-grid	toolbar+flyouts+All Tools dialog: Rectangular Grid Tool	layout-grid.svg	exact	alias->dc-rect-grid; Varos RectGrid tool uses Icon::Grid
+tool-reflect	toolbar+flyouts+All Tools dialog: Reflect Tool (O)	square-centerline-dashed-horizontal.svg	exact	alias->flip-horizontal-2; Varos Icon::FlipH / Reflect tool
+tool-reshape	toolbar+flyouts+All Tools dialog: Reshape Tool	EMPTY	none	alias->dc-reshape; suggest=NEEDS_DRAWING ; Reshape tool
+tool-rotate	toolbar+flyouts+All Tools dialog: Rotate Tool (R)	inline:LEGACY_ROTATE	close	alias->rotate-ccw; Rotate tool + angle fields; Varos glyph is rotate-CW, rail uses History placeholder
+tool-rotate-view	toolbar+flyouts+All Tools dialog: Rotate View Tool (Shift+H)	EMPTY	none	alias->dc-rotate-view; suggest=NEEDS_DRAWING ; Rotate View tool; or LUCIDE_IMPORT:rotate-3d
+tool-rounded-rect	toolbar+flyouts+All Tools dialog: Rounded Rectangle Tool	varos/draw-rounded-rect.svg	exact	alias->dc-rounded-rect
+tool-scale	toolbar+flyouts+All Tools dialog: Scale Tool (S)	inline:LEGACY_SCALE	exact	alias->scaling; Scale tool + scale fields (Varos 'transform-tool rail icon: scale')
+tool-scallop	toolbar+flyouts+All Tools dialog: Scallop Tool	EMPTY	none	alias->dc-scallop; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+tool-scissors	toolbar+flyouts+All Tools dialog: Scissors Tool (C)	varos/path-scissors.svg	exact	alias->scissors
+tool-selection	toolbar+flyouts+All Tools dialog: Selection Tool (V)	varos/draw-select.svg	exact	alias->dc-selection; Selection tool
+tool-shape-builder	toolbar+flyouts+All Tools dialog: Shape Builder Tool (Shift+M)	varos/path-merge.svg	exact	alias->dc-shape-builder; Varos ShapeBuilder -> PathMerge
+tool-shaper	toolbar+flyouts+All Tools dialog: Shaper Tool (Shift+N)	EMPTY	none	alias->shapes; suggest=LUCIDE_IMPORT:shapes ; Shaper tool + live shape row
+tool-shear	toolbar+flyouts+All Tools dialog: Shear Tool	move.svg	close	alias->dc-shear; Varos rail uses Icon::MoveArtwork as Shear placeholder; real glyph NEEDS_DRAWING
+tool-slice	toolbar+flyouts+All Tools dialog: Slice Tool (Shift+K), Slice Selection Tool	EMPTY	none	alias->slice; suggest=LUCIDE_IMPORT:slice ; Slice tool
+tool-smooth	toolbar+flyouts+All Tools dialog: Smooth Tool	varos/draw-smooth.svg	exact	alias->dc-smooth
+tool-spiral	toolbar+flyouts+All Tools dialog: Spiral Tool	varos/draw-spiral.svg	exact	alias->tornado; Spiral tool
+tool-star	toolbar+flyouts+All Tools dialog: Star Tool	varos/draw-star.svg	exact	alias->star; Star tool; file_info 'favourite' use is a different meaning
+tool-symbol	toolbar+flyouts+All Tools dialog: Symbol Sprayer Tool (Shift+S), Symbol Shifter Tool, Symbol Scruncher Tool, Symbol Sizer Tool, Symbol Spinner Tool (+3)	EMPTY	none	alias->dc-symbol-sprayer; suggest=LUCIDE_IMPORT:spray-can ; Symbol tools
+tool-touch-type	toolbar+flyouts+All Tools dialog: Touch Type Tool (Shift+T)	EMPTY	none	alias->dc-touch-type; suggest=NEEDS_DRAWING ; Touch Type tool + OpenType panel header; stand-in inline Icon::Type
+tool-twirl	toolbar+flyouts+All Tools dialog: Twirl Tool	EMPTY	none	alias->dc-twirl; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+tool-type	toolbar+flyouts+All Tools dialog: Type Tool (T)	inline:Icon::Type	exact	alias->type; Type tool + Character headers; Varos 'type' is inline SVG in kit/icons.rs (no file)
+tool-type-area	toolbar+flyouts+All Tools dialog: Area Type Tool	EMPTY	none	alias->dc-type-area; suggest=NEEDS_DRAWING ; Area Type tool; stand-in inline Icon::Type
+tool-type-path	toolbar+flyouts+All Tools dialog: Type on a Path Tool, Vertical Type on a Path Tool	EMPTY	none	alias->dc-type-path; suggest=NEEDS_DRAWING ; Type on a Path tool; stand-in inline Icon::Type
+tool-type-vertical	toolbar+flyouts+All Tools dialog: Vertical Type Tool, Vertical Area Type Tool	EMPTY	none	alias->dc-type-vertical; suggest=NEEDS_DRAWING ; Vertical Type tool; stand-in inline Icon::Type
+tool-warp	toolbar+flyouts+All Tools dialog: Warp Tool (Shift+R)	EMPTY	none	alias->waves; suggest=LUCIDE_IMPORT:waves ; Warp tool
+tool-width	toolbar+flyouts+All Tools dialog: Width Tool (Shift+W)	EMPTY	none	alias->dc-width; suggest=NEEDS_DRAWING ; Width tool; Varos rail uses MoveArtwork placeholder
+tool-wrinkle	toolbar+flyouts+All Tools dialog: Wrinkle Tool	EMPTY	none	alias->dc-wrinkle; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+tool-zoom	toolbar+flyouts+All Tools dialog: Zoom Tool (Z)	zoom-in.svg	exact	alias->zoom-in; Zoom tool
+align-center-horizontal	chrome:274; P:properties:64	inline:LEGACY_AL_M	exact	align v-middle; Varos path data is inline in shell/kit/icons.rs (FILLED glyph, not a file) - extract to assets/icons/ before use
+align-center-vertical	chrome:271; P:properties:61,461	inline:LEGACY_AL_CH	exact	align h-centre; Varos path data is inline in shell/kit/icons.rs (FILLED glyph, not a file) - extract to assets/icons/ before use
+align-end-horizontal	chrome:275; P:properties:65	inline:LEGACY_AL_B	exact	align bottom; Varos path data is inline in shell/kit/icons.rs (FILLED glyph, not a file) - extract to assets/icons/ before use
+align-end-vertical	chrome:272; P:properties:62,461	inline:LEGACY_AL_R	exact	align right; Varos path data is inline in shell/kit/icons.rs (FILLED glyph, not a file) - extract to assets/icons/ before use
+align-horizontal-justify-center	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+align-horizontal-justify-end	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+align-horizontal-justify-start	panel-header: Tabs | state:126	align-horizontal-distribute-start.svg	close	Tabs panel header; Varos has no tabs panel icon
+align-start-horizontal	chrome:273; P:properties:63	inline:LEGACY_AL_T	exact	align top; Varos path data is inline in shell/kit/icons.rs (FILLED glyph, not a file) - extract to assets/icons/ before use
+align-start-vertical	chrome:270; P:properties:60,461	inline:LEGACY_AL_L	exact	align left; Varos path data is inline in shell/kit/icons.rs (FILLED glyph, not a file) - extract to assets/icons/ before use
+align-vertical-justify-center	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+align-vertical-justify-end	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+align-vertical-justify-start	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+arrow-left-right	D:recolor:407; P:stroke:261	varos/picker-swap.svg	close	recolor shuffle / swap arrowheads / row layout; or LUCIDE_IMPORT:arrow-left-right
+arrow-up-down	D:new_document:510	EMPTY	none	suggest=LUCIDE_IMPORT:arrow-up-down ; new-document artboard column layout
+blend	P:layers:1012,1014; P:transparency:326	EMPTY	none	suggest=LUCIDE_IMPORT:blend ; Blend tool + blend-mode row; Varos rail uses Link as placeholder
+brush	toolbar: Blob Brush	EMPTY	none	suggest=LUCIDE_IMPORT:brush ; Blob Brush tool; nearest in set: varos/draw-pencil.svg
+chart-column	toolbar: Column Graph, Stacked Column Graph, Bar Graph, Stacked Bar Graph (+5)	EMPTY	none	suggest=LUCIDE_IMPORT:chart-column ; graph tools; Varos has no graphs
+chevron-down	chrome:68; D:new_document:449; P:appearance:212; P:attributes:138; P:gradient:358 ...	chevron-down.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+chevron-left	chrome:382,462; D:import_pdf:244; D:print:472; P:library_panel:313	chevron-left.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+chevron-right	chrome:468; D:import_pdf:251; D:new_document:449; D:print:477; P:appearance:212 ...	chevron-right.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+chevrons-left	chrome:462; D:import_pdf:243; D:new_document:517; dock:47; toolbar:138	EMPTY	none	suggest=LUCIDE_IMPORT:chevrons-left ; dock collapse/expand; nearest in set chevron-left.svg
+chevrons-right	chrome:468; D:import_pdf:252; dock:47,249; toolbar:138	EMPTY	none	suggest=LUCIDE_IMPORT:chevrons-right ; dock collapse/expand; nearest in set chevron-right.svg
+circle	P:gradient:296	varos/draw-ellipse.svg	close	gradient/freeform 'points' mode dot
+clipboard-paste	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream - drop
+cloud	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream - drop
+combine	D:recolor:394	EMPTY	none	suggest=LUCIDE_IMPORT:combine ; recolor dialog
+copy	canvas:1816; P:css_properties:162	copy.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+dc-actions	panel-header: Actions | P:actions:115; state:128	EMPTY	none	suggest=LUCIDE_IMPORT:play ; Actions panel header
+dc-al-bottom	P:align:43	inline:LEGACY_AL_B	exact	Align panel; FILLED glyph inline in shell/kit/icons.rs (extract to a file)
+dc-al-hcenter	P:align:39	inline:LEGACY_AL_CH	exact	Align panel; FILLED glyph inline in shell/kit/icons.rs (extract to a file)
+dc-al-left	P:align:38	inline:LEGACY_AL_L	exact	Align panel; FILLED glyph inline in shell/kit/icons.rs (extract to a file)
+dc-al-right	P:align:40	inline:LEGACY_AL_R	exact	Align panel; FILLED glyph inline in shell/kit/icons.rs (extract to a file)
+dc-al-top	P:align:41	inline:LEGACY_AL_T	exact	Align panel; FILLED glyph inline in shell/kit/icons.rs (extract to a file)
+dc-al-vcenter	P:align:42	inline:LEGACY_AL_M	exact	Align panel; FILLED glyph inline in shell/kit/icons.rs (extract to a file)
+dc-align	panel-header: Align | state:118	inline:LEGACY_AL_CH	close	Align panel header
+dc-alignto-artboard	P:align:126	frame.svg	exact	Varos Icon::Frame 'Align to: Artboard'
+dc-alignto-key	P:align:125	EMPTY	none	suggest=NEEDS_DRAWING ; Align to Key Object; Varos has align-auto.svg only (varos/align-auto.svg = 'Auto')
+dc-alignto-selection	P:align:124	square-dashed.svg	exact	Varos Icon::AlignSelection
+dc-anchor	toolbar: Anchor Point | chrome:144	EMPTY	none	suggest=NEEDS_DRAWING ; convert anchor to corner (control bar); Varos has none
+dc-anchor-smooth	chrome:145	EMPTY	none	suggest=NEEDS_DRAWING ; convert anchor to smooth (control bar); Varos has none
+dc-appearance	panel-header: Appearance | state:114	EMPTY	none	suggest=LUCIDE_IMPORT:layers-2 ; Appearance panel header
+dc-arc	toolbar: Arc	varos/draw-arc.svg	exact	
+dc-arrow-down	P:artboards:123	EMPTY	none	suggest=LUCIDE_IMPORT:arrow-down ; Artboards panel move down
+dc-arrow-extend	P:stroke:51	EMPTY	none	suggest=NEEDS_DRAWING ; arrowhead 'extend beyond path end' (Stroke panel)
+dc-arrow-tip	P:stroke:52	EMPTY	none	suggest=NEEDS_DRAWING ; arrowhead 'tip at path end' (Stroke panel)
+dc-arrow-up	P:artboards:118	EMPTY	none	suggest=LUCIDE_IMPORT:arrow-up ; Artboards panel move up
+dc-artboard-options	P:artboards:95	EMPTY	none	suggest=LUCIDE_IMPORT:settings-2 ; Artboards panel options
+dc-artboards	panel-header: Artboards | P:artboards:48; state:116	frame.svg	exact	Artboards panel header
+dc-blend	toolbar: Blend	EMPTY	none	suggest=LUCIDE_IMPORT:blend ; Blend tool; Varos rail uses Link placeholder
+dc-bloat	toolbar: Bloat	EMPTY	none	suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+dc-cap-butt	P:stroke:159	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join diagram (Stroke panel); Illustrator-specific, no Lucide equivalent
+dc-cap-round	P:stroke:160	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join diagram (Stroke panel); Illustrator-specific, no Lucide equivalent
+dc-cap-square	P:stroke:161	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join diagram (Stroke panel); Illustrator-specific, no Lucide equivalent
+dc-center-hide	P:attributes:79	EMPTY	none	suggest=NEEDS_DRAWING ; Attributes panel 'show/hide centre point'; no Lucide equivalent
+dc-center-show	P:attributes:79	EMPTY	none	suggest=NEEDS_DRAWING ; Attributes panel 'show/hide centre point'; no Lucide equivalent
+dc-clear	P:appearance:850	EMPTY	none	suggest=LUCIDE_IMPORT:ban ; Appearance panel 'clear appearance'
+dc-color-guide	panel-header: Color Guide | state:106	varos/picker-harmony.svg	close	Color Guide panel header (Varos harmony family)
+dc-crystallize	toolbar: Crystallize	EMPTY	none	suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+dc-cube	P:color:203	EMPTY	none	suggest=LUCIDE_IMPORT:box ; Color panel: 'not web safe' warning
+dc-dash-align	P:stroke:222	EMPTY	none	suggest=NEEDS_DRAWING ; Stroke panel 'align dashes to corners'
+dc-dash-exact	P:stroke:219	EMPTY	none	suggest=NEEDS_DRAWING ; Stroke panel 'exact dash lengths'
+dc-dir-off	P:attributes:84	EMPTY	none	suggest=NEEDS_DRAWING ; Attributes panel 'show direction'; no Lucide equivalent
+dc-dir-on	P:attributes:84	EMPTY	none	suggest=NEEDS_DRAWING ; Attributes panel 'show direction'; no Lucide equivalent
+dc-direct	toolbar: Direct Selection	varos/draw-direct.svg	exact	Direct Selection tool
+dc-dist-bottom	P:align:49	align-vertical-distribute-end.svg	exact	
+dc-dist-hcenter	P:align:51	align-horizontal-distribute-center.svg	exact	
+dc-dist-hspace	P:align:109	align-horizontal-distribute-center.svg	close	spike used this; 'distribute SPACING' differs from centre - better LUCIDE_IMPORT:align-horizontal-space-between
+dc-dist-left	P:align:50	align-horizontal-distribute-start.svg	exact	
+dc-dist-right	P:align:52	align-horizontal-distribute-end.svg	exact	
+dc-dist-top	P:align:47	align-vertical-distribute-start.svg	exact	
+dc-dist-vcenter	P:align:48	align-vertical-distribute-center.svg	exact	
+dc-dist-vspace	P:align:106	align-vertical-distribute-center.svg	close	spike used this; better LUCIDE_IMPORT:align-vertical-space-between
+dc-draw-behind	toolbar:390	EMPTY	none	suggest=NEEDS_DRAWING ; Draw Behind (toolbar bottom); Illustrator-specific
+dc-draw-inside	toolbar:390	EMPTY	none	suggest=NEEDS_DRAWING ; Draw Inside (toolbar bottom); Illustrator-specific
+dc-draw-normal	toolbar:390	EMPTY	none	suggest=NEEDS_DRAWING ; Draw Normal (toolbar bottom); Illustrator-specific
+dc-ellipse	toolbar: Ellipse	varos/draw-ellipse.svg	exact	
+dc-fill-none	no literal use in ui-egui (catalogue only)	varos/picker-none.svg	exact	UNUSED as literal upstream (painted?) ; Varos 'none' swatch
+dc-flare	toolbar: Flare	EMPTY	none	suggest=LUCIDE_IMPORT:sun ; Flare tool; Illustrator-specific, sun is a stand-in
+dc-folder	P:color_guide:231; P:color_themes:219,286; P:swatches:221,880	folder.svg	exact	Varos Icon::Group = folder.svg (spike: same)
+dc-free-transform	toolbar: Free Transform | free_transform:32	maximize.svg	close	Varos rail uses Icon::Fit (maximize) as FreeTransform/Scale placeholder; a real glyph is NEEDS_DRAWING
+dc-fx	P:appearance:338,708,844	EMPTY	none	suggest=LUCIDE_IMPORT:wand-sparkles ; Appearance 'add effect'
+dc-gamut	P:color:205	EMPTY	none	suggest=LUCIDE_IMPORT:triangle-alert ; Color panel: out-of-gamut warning
+dc-grad-freeform	P:gradient:192; P:swatches:297	EMPTY	none	suggest=NEEDS_DRAWING ; freeform gradient type; nearest varos/picker-gradient.svg
+dc-grad-linear	P:gradient:190; P:swatches:295	varos/picker-gradient.svg	close	only one gradient glyph in Varos (picker mode)
+dc-grad-radial	P:gradient:191; P:swatches:296	EMPTY	none	suggest=NEEDS_DRAWING ; radial gradient type; nearest varos/picker-gradient.svg
+dc-grad-stroke-across	P:gradient:220	EMPTY	none	suggest=NEEDS_DRAWING ; gradient-on-stroke mode, Illustrator-specific
+dc-grad-stroke-along	P:gradient:219	EMPTY	none	suggest=NEEDS_DRAWING ; gradient-on-stroke mode, Illustrator-specific
+dc-grad-stroke-within	P:gradient:218	EMPTY	none	suggest=NEEDS_DRAWING ; gradient-on-stroke mode, Illustrator-specific
+dc-gradient	panel-header: Gradient | toolbar: Gradient | state:112	varos/picker-gradient.svg	exact	Gradient panel header
+dc-graphic-styles	panel-header: Graphic Styles | P:graphic_styles:458,471; state:115	EMPTY	none	suggest=LUCIDE_IMPORT:shapes ; Graphic Styles panel header
+dc-grid-view	D:new_document:507; P:swatches:639	layout-grid.svg	exact	Varos Icon::Grid
+dc-group-select	toolbar: Group Selection	EMPTY	none	suggest=NEEDS_DRAWING ; Group Selection tool; stand-in varos/draw-select.svg
+dc-join	toolbar: Join | chrome:152	link.svg	close	Varos Join tool uses Icon::Link
+dc-join-bevel	P:stroke:173	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join diagram (Stroke panel); Illustrator-specific, no Lucide equivalent
+dc-join-miter	P:stroke:171	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join diagram (Stroke panel); Illustrator-specific, no Lucide equivalent
+dc-join-round	P:stroke:172	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join diagram (Stroke panel); Illustrator-specific, no Lucide equivalent
+dc-knife	toolbar: Knife	varos/path-knife.svg	exact	
+dc-line	toolbar: Line Segment	varos/draw-line.svg	exact	
+dc-line-cut	toolbar: Line Cut	varos/path-knife.svg	close	Line Cut tool (not an Illustrator tool); knife is the nearest
+dc-list-view	panel-header: Document Info | P:swatches:636; state:130	list.svg	exact	Varos Icon::List; also Document Info panel header
+dc-live-bucket	toolbar: Live Paint Bucket	EMPTY	none	suggest=LUCIDE_IMPORT:paint-bucket ; Live Paint Bucket
+dc-live-select	toolbar: Live Paint Selection	EMPTY	none	suggest=NEEDS_DRAWING ; Live Paint Selection; stand-in varos/draw-select.svg
+dc-mask-none	P:transparency:140	varos/picker-none.svg	close	Transparency 'no mask'
+dc-measure	toolbar: Measure	ruler.svg	exact	spike override; Varos Ruler
+dc-mesh	toolbar: Mesh | D:envelope:259	EMPTY	none	suggest=LUCIDE_IMPORT:grid-3x3 ; Mesh tool / envelope mesh
+dc-mirror-cut	toolbar: Mirror & Cut	EMPTY	none	suggest=NEEDS_DRAWING ; Mirror & Cut tool; stand-in varos/path-knife.svg
+dc-new-fill	P:appearance:841	plus.svg	close	Appearance 'add new fill'
+dc-new-item	P:appearance:854; P:artboards:128; P:brushes:161; P:color_guide:228; P:graphic_styles:497 ...	plus.svg	exact	every panel footer 'new X'; artboards could use square-plus.svg
+dc-new-stroke	P:appearance:838	plus.svg	close	Appearance 'add new stroke'
+dc-options	panel-header: Properties | D:envelope:308; P:brushes:157; P:swatches:874; state:83	EMPTY	none	suggest=LUCIDE_IMPORT:sliders-horizontal ; Properties tab header + panel 'options'; or ellipsis.svg for the menu use
+dc-para-center	P:paragraph:17	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-center ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-justify-all	P:paragraph:22	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-justify ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-justify-center	P:paragraph:20	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-justify ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-justify-left	P:paragraph:19	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-justify ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-justify-right	P:paragraph:21	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-justify ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-left	P:paragraph:16	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-start ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-ltr	P:paragraph:82	EMPTY	none	suggest=LUCIDE_IMPORT:pilcrow-right ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-right	P:paragraph:18	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-end ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-para-rtl	P:paragraph:83	EMPTY	none	suggest=LUCIDE_IMPORT:pilcrow-left ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
+dc-path-eraser	toolbar: Path Eraser	varos/path-eraser.svg	exact	
+dc-pathfinder	panel-header: Pathfinder | state:119	varos/path-merge.svg	close	Pathfinder panel header
+dc-perspective	toolbar: Perspective Grid, Perspective Selection	EMPTY	none	suggest=NEEDS_DRAWING ; Perspective Grid tool
+dc-pf-crop	P:pathfinder:21	EMPTY	none	suggest=NEEDS_DRAWING ; Pathfinder Crop; Varos crop.svg is 'clip to artboard', different meaning
+dc-pf-divide	P:pathfinder:18	varos/path-divide.svg	exact	
+dc-pf-exclude	P:pathfinder:14	painter:ui/panels/align.rs BoolOp	exact	Exclude: Varos hand-PAINTS these 4 boolean glyphs in code (no SVG); upstream also has Lucide squares-* for the same
+dc-pf-intersect	P:pathfinder:13	painter:ui/panels/align.rs BoolOp	exact	Intersect: Varos hand-PAINTS these 4 boolean glyphs in code (no SVG); upstream also has Lucide squares-* for the same
+dc-pf-merge	P:pathfinder:20	varos/path-merge.svg	exact	
+dc-pf-minus-back	P:pathfinder:23	varos/path-minus-back.svg	exact	
+dc-pf-minus-front	P:pathfinder:12	painter:ui/panels/align.rs BoolOp	exact	Minus Front: Varos hand-PAINTS these 4 boolean glyphs in code (no SVG); upstream also has Lucide squares-* for the same
+dc-pf-outline	P:pathfinder:22	varos/path-outline.svg	exact	
+dc-pf-trim	P:pathfinder:19	varos/path-trim.svg	exact	
+dc-pf-unite	P:pathfinder:11	painter:ui/panels/align.rs BoolOp	exact	Unite: Varos hand-PAINTS these 4 boolean glyphs in code (no SVG); upstream also has Lucide squares-* for the same
+dc-place-symbol	P:symbols:150	EMPTY	none	suggest=LUCIDE_IMPORT:stamp ; Symbols panel 'place symbol instance'
+dc-polar-grid	toolbar: Polar Grid	varos/draw-polar-grid.svg	exact	
+dc-polygon	toolbar: Polygon	varos/draw-polygon.svg	exact	
+dc-pucker	toolbar: Pucker	EMPTY	none	suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+dc-puppet	toolbar: Puppet Warp	EMPTY	none	suggest=NEEDS_DRAWING ; Puppet Warp tool
+dc-rearrange	P:artboards:116	EMPTY	none	suggest=LUCIDE_IMPORT:arrow-up-down ; Artboards 'rearrange'
+dc-rect-cut	toolbar: Rectangle Cut	varos/path-knife.svg	close	Rectangle Cut tool; knife is the nearest
+dc-rect-grid	toolbar: Rectangular Grid	layout-grid.svg	exact	Varos RectGrid tool uses Icon::Grid
+dc-reference-point	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED-literal; suggest=NEEDS_DRAWING ; Transform panel 9-point reference grid; probably painted upstream; Varos hand-paints its own
+dc-remove-brush	P:brushes:154	trash-2.svg	close	Brushes 'remove brush stroke'
+dc-reshape	toolbar: Reshape	EMPTY	none	suggest=NEEDS_DRAWING ; Reshape tool
+dc-reverse	P:gradient:250	varos/picker-swap.svg	close	Gradient reverse
+dc-rotate-view	toolbar: Rotate View	EMPTY	none	suggest=NEEDS_DRAWING ; Rotate View tool; or LUCIDE_IMPORT:rotate-3d
+dc-rounded-rect	toolbar: Rounded Rectangle	varos/draw-rounded-rect.svg	exact	
+dc-rule-evenodd	P:attributes:91	EMPTY	none	suggest=NEEDS_DRAWING ; fill rule even-odd, Illustrator-specific
+dc-rule-nonzero	P:attributes:90	EMPTY	none	suggest=NEEDS_DRAWING ; fill rule non-zero, Illustrator-specific
+dc-scallop	toolbar: Scallop	EMPTY	none	suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+dc-screen-mode	toolbar:400	EMPTY	none	suggest=LUCIDE_IMPORT:monitor ; Change Screen Mode (F)
+dc-selection	toolbar: Selection	varos/draw-select.svg	exact	Selection tool
+dc-shape-builder	toolbar: Shape Builder	varos/path-merge.svg	exact	Varos ShapeBuilder -> PathMerge
+dc-shear	toolbar: Shear | P:transform:154	move.svg	close	Varos rail uses Icon::MoveArtwork as Shear placeholder; real glyph NEEDS_DRAWING
+dc-smooth	toolbar: Smooth	varos/draw-smooth.svg	exact	
+dc-stroke	panel-header: Stroke | state:111	inline:LEGACY_STROKEW	close	Stroke panel header; Varos stroke-weight glyph is inline in kit/icons.rs
+dc-stroke-center	P:stroke:192	EMPTY	none	suggest=NEEDS_DRAWING ; stroke alignment diagram (Stroke panel)
+dc-stroke-inside	P:stroke:193	EMPTY	none	suggest=NEEDS_DRAWING ; stroke alignment diagram (Stroke panel)
+dc-stroke-outside	P:stroke:194	EMPTY	none	suggest=NEEDS_DRAWING ; stroke alignment diagram (Stroke panel)
+dc-swap	widgets:578	varos/picker-swap.svg	exact	fill/stroke swap
+dc-swatch-kinds	P:swatches:860	list-filter.svg	close	Swatches 'show kind of swatches' menu
+dc-symbol-sprayer	toolbar: Symbol Sprayer, Symbol Shifter, Symbol Scruncher, Symbol Sizer (+4)	EMPTY	none	suggest=LUCIDE_IMPORT:spray-can ; Symbol tools
+dc-touch-type	panel-header: OpenType | toolbar: Touch Type | state:124	EMPTY	none	suggest=NEEDS_DRAWING ; Touch Type tool + OpenType panel header; stand-in inline Icon::Type
+dc-transform-panel	panel-header: Transform | state:117	inline:LEGACY_SCALE	close	Transform panel header
+dc-transparency	panel-header: Transparency | state:113	inline:LEGACY_OPACITY	close	Transparency panel header (varos/transparent-page.svg is the page toggle, not this)
+dc-twirl	toolbar: Twirl	EMPTY	none	suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+dc-type-area	toolbar: Area Type	EMPTY	none	suggest=NEEDS_DRAWING ; Area Type tool; stand-in inline Icon::Type
+dc-type-path	toolbar: Type on a Path, Vertical Type on a Path	EMPTY	none	suggest=NEEDS_DRAWING ; Type on a Path tool; stand-in inline Icon::Type
+dc-type-vertical	toolbar: Vertical Type, Vertical Area Type	EMPTY	none	suggest=NEEDS_DRAWING ; Vertical Type tool; stand-in inline Icon::Type
+dc-width	toolbar: Width	EMPTY	none	suggest=NEEDS_DRAWING ; Width tool; Varos rail uses MoveArtwork placeholder
+dc-width-profile	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED-literal; suggest=NEEDS_DRAWING ; width profile picker
+dc-wrinkle	toolbar: Wrinkle	EMPTY	none	suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
+dc-zoom-large	P:navigator:130	zoom-in.svg	close	Navigator zoom-in end
+dc-zoom-small	P:navigator:120	EMPTY	none	suggest=LUCIDE_IMPORT:zoom-out ; Navigator zoom-out end
+ellipsis	canvas:1894; P:properties:90,412,420; toolbar:403	ellipsis.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+eraser	toolbar: Eraser	varos/path-eraser.svg	exact	Eraser tool; Varos Eraser|PathEraser share path-eraser
+eye	panel-header: Flattener Preview | P:appearance:204; P:layers:646,649; P:separations:49,60	inline:LEGACY_L_EYE	exact	Layers visibility; Lucide eye inline in kit/icons.rs
+eye-off	P:appearance:204	inline:LEGACY_L_EYEOFF	exact	
+file-plus	P:color_themes:223; P:history:37; P:layers:383	file-plus.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+flip-horizontal-2	toolbar: Reflect | P:properties:375; P:stroke:303; P:transform:166	square-centerline-dashed-horizontal.svg	exact	Varos Icon::FlipH / Reflect tool
+flip-vertical-2	P:properties:378; P:stroke:306; P:transform:169	square-centerline-dashed-vertical.svg	exact	Varos Icon::FlipV
+folder-open	D:export_for_screens:427	folder-open.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+frame	toolbar: Artboard | P:layers:408	frame.svg	exact	Artboard tool / Layers artboard row
+grid-3x3	panel-header: Pattern Options | P:properties:269; P:swatches:301	grip.svg	close	Properties 'show grid' (Varos Icon::GridDots) ; pattern-swatch use: grid-2x2.svg
+group	D:new_swatch:83	folder.svg	exact	Varos Icon::Group = folder.svg
+hand	toolbar: Hand | canvas:427	hand.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+hexagon	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED in UI (mcp tests only) - drop
+history	panel-header: History | P:history:37; state:152	history.svg	exact	note: Varos rail currently reuses History as the Rotate-tool placeholder
+house	chrome:33	house.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+image	panel-header: Image Trace | P:image_trace:103; P:links:211	EMPTY	none	suggest=LUCIDE_IMPORT:image ; Image Trace panel header + Links rows
+info	panel-header: Info | state:152	EMPTY	none	suggest=LUCIDE_IMPORT:info ; Info panel header + misc
+lasso	toolbar: Lasso	lasso.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+layers	panel-header: Layers | dock:516,521,524	EMPTY	none	suggest=LUCIDE_IMPORT:layers ; Layers tab + Layers panel header
+layout-grid	P:properties:281	layout-grid.svg	exact	
+library	panel-header: Libraries | P:brushes:153; P:color_guide:219; P:graphic_styles:488; P:library_panel:308; P:mod:205 ...	EMPTY	none	suggest=LUCIDE_IMPORT:library ; Libraries tab + 'open library' menus
+link	panel-header: Links | D:form:488; D:place:77; D:recolor:544; D:width_point:52; free_transform:65 ...	link.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+external-link	community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:external-link ; community links (VectorCraft-specific community feature; fork may drop it)
+git-branch	community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:git-branch ; community links (VectorCraft-specific community feature; fork may drop it)
+globe	panel-header: CSS Properties | community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:globe ; CSS Properties header + community (VectorCraft-specific community feature; fork may drop it)
+message-circle	community:34; community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:message-circle ; community links (VectorCraft-specific community feature; fork may drop it)
+link-2-off	D:form:488; D:recolor:544; D:width_point:52; P:graphic_styles:493; P:links:342 ...	link.svg	close	unlinked state; Varos only has Link (dim/slash needed) ; or LUCIDE_IMPORT:link-2-off
+lock	canvas:1891; P:layers:655,657	inline:LEGACY_L_LOCK	exact	Layers lock
+lock-open	no literal use in ui-egui (catalogue only)	inline:LEGACY_L_UNLOCK	exact	UNUSED upstream; Varos has it
+map	panel-header: Navigator	EMPTY	none	suggest=LUCIDE_IMPORT:map ; Navigator panel header
+maximize-2	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+menu	P:library_panel:200; P:mod:178; shortcut_editor:662	menu.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+minus	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+monitor	P:asset_export:302	EMPTY	none	suggest=LUCIDE_IMPORT:monitor ; Asset Export: screens
+move	no literal use in ui-egui (catalogue only)	move.svg	exact	UNUSED-literal; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+move-diagonal-2	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+paint-bucket	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+paintbrush	panel-header: Brushes | toolbar: Paintbrush	EMPTY	none	suggest=LUCIDE_IMPORT:paintbrush ; Paintbrush tool + Brushes panel header; nearest in set varos/draw-pencil.svg
+palette	panel-header: Color | D:gradient_stop:106,108; P:color_guide:225; P:mod:364; P:swatches:871; state:105	varos/picker-wheel.svg	close	Color panel header / color pickers; or LUCIDE_IMPORT:palette
+pen-tool	toolbar: Pen	pen-tool.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+pen-tool-add	toolbar: Add Anchor Point	pen-line.svg	exact	Varos AddAnchor -> PenLine
+pen-tool-delete	toolbar: Delete Anchor Point	pen-off.svg	exact	Varos DeleteAnchor -> PenOff
+pencil	toolbar: Pencil | P:color_themes:280; P:links:327	varos/draw-pencil.svg	exact	Pencil tool; other uses are generic 'edit'
+pilcrow	panel-header: Paragraph, Paragraph Styles | state:121	EMPTY	none	suggest=LUCIDE_IMPORT:pilcrow ; Paragraph + Paragraph Styles headers
+pin	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+pipette	toolbar: Eyedropper | P:color_themes:193; P:gradient:416	pipette.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+plus	P:asset_export:305; P:layers:405	plus.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+printer	panel-header: Separations Preview | toolbar: Print Tiling | D:print:356,356	EMPTY	none	suggest=LUCIDE_IMPORT:printer
+redo-2	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+rotate-3d	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+rotate-ccw	toolbar: Rotate | D:recolor:422; P:gradient:240; P:properties:368; P:transform:144	inline:LEGACY_ROTATE	close	Rotate tool + angle fields; Varos glyph is rotate-CW, rail uses History placeholder
+rotate-cw	P:links:330	inline:LEGACY_ROTATE	exact	Links relink
+ruler	P:properties:266	ruler.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+save	D:new_document:298; D:perspective_grid:235; D:save_for_web:585; P:color_themes:215; P:css_properties:160	EMPTY	none	suggest=LUCIDE_IMPORT:save ; New document / presets save
+scaling	toolbar: Scale | P:gradient:256	inline:LEGACY_SCALE	exact	Scale tool + scale fields (Varos 'transform-tool rail icon: scale')
+scissors	toolbar: Scissors	varos/path-scissors.svg	exact	
+search	chrome:82,92; P:layers:411	inline:LEGACY_L_SEARCH	exact	Layers search + app bar
+settings	panel-header: Attributes | D:export_for_screens:444	EMPTY	none	suggest=LUCIDE_IMPORT:settings ; Attributes header + print/export settings
+shapes	toolbar: Shaper | D:envelope:259; P:layers:644	EMPTY	none	suggest=LUCIDE_IMPORT:shapes ; Shaper tool + live shape row
+share-2	panel-header: Asset Export	EMPTY	none	suggest=LUCIDE_IMPORT:share-2 ; Asset Export header
+slice	toolbar: Slice, Slice Selection	EMPTY	none	suggest=LUCIDE_IMPORT:slice ; Slice tool
+sparkles	D:recolor:407; P:properties:284	EMPTY	none	suggest=LUCIDE_IMPORT:sparkles ; recolor 'random', properties 'quick effects'
+spline	toolbar: Curvature	varos/draw-curvature.svg	exact	Curvature tool (also Simplify / freeform lines)
+spline-pointer	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+spray-can	panel-header: Symbols	EMPTY	none	suggest=LUCIDE_IMPORT:spray-can ; Symbols panel header
+square	toolbar: Rectangle | P:actions:97	varos/draw-rect.svg	exact	Rectangle tool (tool-rect); also generic square/cap-square
+square-dashed	canvas:1809,1813; P:properties:273	square-dashed.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+squares-exclude	P:properties:84	painter:ui/panels/align.rs BoolOp	exact	Properties quick Pathfinder; Varos hand-paints Exclude
+squares-intersect	P:properties:83	painter:ui/panels/align.rs BoolOp	exact	Intersect
+squares-subtract	P:properties:82	painter:ui/panels/align.rs BoolOp	exact	Minus Front
+squares-unite	canvas:1806; P:properties:81	painter:ui/panels/align.rs BoolOp	exact	Unite; also context menu
+squircle	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+star	toolbar: Star | D:file_info:150	varos/draw-star.svg	exact	Star tool; file_info 'favourite' use is a different meaning
+sun	panel-header: Color Themes	EMPTY	none	suggest=LUCIDE_IMPORT:sun ; Color Themes header
+swatch-book	panel-header: Swatches | D:gradient_stop:106; P:mod:364	EMPTY	none	suggest=LUCIDE_IMPORT:swatch-book ; Swatches header
+text-cursor-input	panel-header: Glyphs | state:122	EMPTY	none	suggest=LUCIDE_IMPORT:text-cursor-input ; Glyphs panel header
+tornado	toolbar: Spiral	varos/draw-spiral.svg	exact	Spiral tool
+trash-2	D:save_for_web:593; P:actions:120; P:appearance:857; P:artboards:137; P:asset_export:304 ...	trash-2.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+triangle	no literal use in ui-egui (catalogue only)	varos/draw-triangle.svg	exact	UNUSED as literal upstream
+type	panel-header: Character, Character Styles | toolbar: Type | P:brushes:162; state:123	inline:Icon::Type	exact	Type tool + Character headers; Varos 'type' is inline SVG in kit/icons.rs (no file)
+undo-2	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED upstream (in catalogue only) - drop
+ungroup	D:recolor:400	EMPTY	none	suggest=LUCIDE_IMPORT:ungroup
+wand-sparkles	panel-header: Magic Wand | toolbar: Magic Wand	EMPTY	none	suggest=LUCIDE_IMPORT:wand-sparkles ; Magic Wand tool + header; Varos rail uses SmartGuides placeholder
+waves	toolbar: Warp	EMPTY	none	suggest=LUCIDE_IMPORT:waves ; Warp tool
+x	chrome:350; D:edit_selection:129; D:export_for_screens:507; D:file_info:179; floating:334 ...	x.svg	exact	same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
+zoom-in	toolbar: Zoom | P:links:334	zoom-in.svg	exact	Zoom tool
+painter:titlebar-window-controls	titlebar.rs min/max/close (painted lines)	EMPTY	none	hand-painted; keep or use Varos native caption (mac_caption.rs); not an SVG
+painter:free-transform-perspective	free_transform.rs Glyph::Perspective polygon	EMPTY	none	hand-painted quad; keep
+painter:free-transform-distort	free_transform.rs Glyph::Distort polygon	EMPTY	none	hand-painted; keep
+painter:flyout-corner-triangle	toolbar.rs:212 tool-group corner mark	EMPTY	none	hand-painted 3.5px triangle; keep
+brand:app-icon	brand.rs app bar mark (PNG engraved dragon)	EMPTY	none	raster brand mark, NOT in icon set; replace with Varos mark (separate task)

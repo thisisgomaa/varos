@@ -119,7 +119,8 @@ pub fn paint(ui: &Ui, name: &str, rect: Rect, tint: Color32) {
         "dc-direct" => Some(Color32::WHITE),
         _ => None,
     };
-    if let Some(fill) = fill {
+    // Varos arrows carry their own geometry; the upstream underlay would leave a ghost arrow.
+    if let Some(fill) = fill.filter(|_| crate::varos::icons::source(name).is_none()) {
         egui::Image::new(source("dc-arrow-fill")).tint(fill).fit_to_exact_size(rect.size()).paint_at(ui, rect);
     }
     egui::Image::new(source(name)).tint(tint).fit_to_exact_size(rect.size()).paint_at(ui, rect);
@@ -155,13 +156,12 @@ mod tests {
             .collect()
     }
 
-    /// The Selection arrow is black and Direct Selection's white in every theme (a reported swap
-    /// in the dark themes), under an outline in the theme's colour; other icons are one layer.
+    /// Varos selection arrows paint only their own geometry in the theme colour.
     #[test]
-    fn the_selection_arrows_are_black_and_white_under_the_theme_outline() {
+    fn selection_overrides_have_no_upstream_arrow_underlay() {
         let light = Color32::from_gray(220);
-        assert_eq!(tints("dc-selection", light), [Color32::BLACK, light]);
-        assert_eq!(tints("dc-direct", light), [Color32::WHITE, light]);
+        assert_eq!(tints("dc-selection", light), [light]);
+        assert_eq!(tints("dc-direct", light), [light]);
         assert_eq!(tints("dc-group-select", light), [light]);
     }
 

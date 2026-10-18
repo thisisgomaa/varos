@@ -104,3 +104,9 @@ Copyright (c) 2026 Ahmed Gomaa and the Varos contributors.
 Original geometric cursor artwork, MIT OR Apache-2.0. Owner-supplied source:
 varos/varos/crates/varos-app/assets/cursors/v1. Licence texts are retained in
 crates/ui-egui/src/varos/assets/cursors/v1/LICENSE-MIT and LICENSE-APACHE.
+
+Varos Lane ICONS: original Varos drawing/path/picker glyphs and original inline
+alignment/type glyphs, copyright 2026 Ahmed Gomaa and the Varos contributors,
+MIT OR Apache-2.0; see crates/ui-egui/assets/varos/icons/LICENSE-MIT and LICENSE-APACHE.
+Lucide file and extracted legacy glyphs remain ISC/MIT; see icons/LICENSE.
+Per-file sources and extraction notes are recorded in ASSETS.md.
