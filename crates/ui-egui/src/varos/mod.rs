@@ -1,12 +1,12 @@
 //! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
-pub mod icons;
-pub mod theme;
-pub mod names;
 pub(crate) mod cursors;
-pub(crate) mod profile;
-pub(crate) mod shortcuts;
+pub mod icons;
+pub mod names;
 #[cfg(test)]
 mod perf_tests;
+pub(crate) mod profile;
+pub(crate) mod shortcuts;
+pub mod theme;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;

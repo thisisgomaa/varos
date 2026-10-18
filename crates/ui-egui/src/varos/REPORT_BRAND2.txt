@@ -1,0 +1,95 @@
+LANE BRAND-2 — real Varos icon + menu-free Home
+Worktree: ~/Documents/AI workspace/reference/artcraft/spikes/lane-brand2
+Branch: lane-brand2; starting HEAD: 3b410c28. No commit, push, merge, bundle install or windows opened.
+
+ICON
+Source: /Applications/Varos.app/Contents/Resources/Varos.icns, read-only.
+Checked-in ICNS is byte-identical: SHA-256 f51a1956905eb928dedbd7fe6d5c5e16d083fcf7834b7a6baf61f6e4b8214b17.
+All 15 existing icon consumer paths retained: ICNS, nine-size ICO, eight hicolor PNGs, 1024 PNG, macOS 512 PNG, three SVGs.
+SVGs embed the original PNG because no original vector source was supplied; no tracing or substitute geometry.
+The cached 128 px PNG serves title bar (18 pt), Home (44 pt) and About (44 pt), exceeding 2x the largest drawn size.
+The engraved dragon remains absent. The old V on the DMG background was replaced too.
+The original source canvas/inset is preserved; no second inset is added.
+Generator and packaging/icons.sh regenerate from the original ICNS rather than recreating the old mark.
+Attribution: Varos app icon — original work, © 2026 Ahmed Gomaa, MIT OR Apache-2.0.
+
+BUNDLE RESOURCE (EXACT)
+Contents/Resources/VectorCraft.icns
+CFBundleIconFile = VectorCraft; CFBundleIconName is absent.
+packaging/macos/package.sh already copies assets/app-icon/vectorcraft.icns to that exact resource.
+The moderator's manual bundle step must use VectorCraft.icns (capital V and C), not Varos.icns.
+No plist or package.sh consumer change was necessary.
+
+HOME MENUS
+Home has no in-window menu bar, app-bar menu buttons, workspace popup, Home button or palette button.
+The brand and title-bar window controls remain; window dragging/zoom and keyboard handlers stay on their existing paths.
+Editor menus return when a document is selected; they also disappear when the last document closes, even with automatic Home disabled.
+On macOS only the native Varos app menu remains. New/Open move into it on Home so AppKit keeps their native key equivalents.
+The app menu retains About, Settings, Language, Appearance, Services, Hide/Hide Others/Show All and Quit.
+Native File/Edit/Object/Type/Select/Effect/View/Window/Help top-level menus are omitted on Home.
+Menu-state hashing includes Home/editor visibility, so returning to the editor refreshes the native backend.
+No changes to command IDs, shortcut bindings, persistence or command implementations.
+
+VERIFICATION
+cargo build --offline -j 4 -p vectorcraft: PASS; final 50.56 s wall. Initial cold build also passed in 1033.92 s (17m 13.92s).
+cargo test --offline -j 4 -p vectorcraft-ui-egui: PASS; final 58.04 s wall, 12.45 s test runtime; 1682 passed, 0 failed, 2 ignored. Initial run also passed in 674.12 s wall including compilation (18.32 s test runtime).
+cargo fmt --all -- --check: PASS; 11.12 s wall, final Rust source.
+git diff --check: PASS; 0.05 s wall.
+Cargo build/test concurrency is capped with -j 4; CARGO_TARGET_DIR was never set.
+Tests use TMPDIR inside target/brand2/tmp. No dependencies were fetched (offline).
+The two ignored tests are existing CPU microbenchmarks: varos::perf_tests::headless_ui_breakdown and varos::profile::tests::timer_overhead.
+New Home/menu/shortcut regressions all passed. No native windows or real file pickers were used.
+A non-fatal xcrun SDK/cache warning appeared during test compilation; compilation and all active tests passed.
+The final build and test repeat cover the final source, with the Home icon beside its heading.
+Built executable: target/debug/vectorcraft. No app was launched or installed.
+Logs: target/brand2/build.log, build-final.log, test.log, test-final.log, fmt-final.log, icon-check.log.
+Icon provenance/byte identity, PNG pixels and dimensions, three SVG embedded PNGs and nine ICO representations: PASS.
+DMG SVG XML and TIFF 660x400/72 dpi + 1320x800/144 dpi: PASS.
+Info.plist syntax and packaging shell syntax: PASS.
+No GUI opened. Dock icon cache, installed bundle, AppKit menu presentation and moderator visual acceptance remain unverified.
+
+SCOPE NOTES
+varos/mod.rs has formatting-only module ordering required by cargo fmt.
+The progress docs record fork-specific behaviour, with unchanged upstream scores/estimates and native acceptance pending.
+The historical LANE BRAND report now points here. No font, engine-command, format, preference migration or cursor changes.
+Cargo's incidental removal of an unused lockfile patch was restored; Cargo.lock has no diff.
+
+FILES (+/-): 37 modified, 1 added; no deletions.
+ASSETS.md: +17/-17
+NOTICE: +1/-1
+assets/app-icon/LICENSE.txt: +6/-6
+assets/app-icon/README.md: +22/-13
+assets/app-icon/hicolor/128x128/apps/ai.storyteller.vectorcraft.png: binary 3029 -> 4514 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/16x16/apps/ai.storyteller.vectorcraft.png: binary 567 -> 551 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/24x24/apps/ai.storyteller.vectorcraft.png: binary 785 -> 809 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/256x256/apps/ai.storyteller.vectorcraft.png: binary 5463 -> 10162 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/32x32/apps/ai.storyteller.vectorcraft.png: binary 1053 -> 1047 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/48x48/apps/ai.storyteller.vectorcraft.png: binary 1419 -> 1591 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/512x512/apps/ai.storyteller.vectorcraft.png: binary 11170 -> 25635 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/64x64/apps/ai.storyteller.vectorcraft.png: binary 1745 -> 2164 bytes (+/- lines not applicable)
+assets/app-icon/hicolor/scalable/apps/ai.storyteller.vectorcraft.svg: +2/-4
+assets/app-icon/vectorcraft-1024.png: binary 23583 -> 66530 bytes (+/- lines not applicable)
+assets/app-icon/vectorcraft-macos-512.png: binary 9871 -> 25635 bytes (+/- lines not applicable)
+assets/app-icon/vectorcraft-small.svg: +2/-4
+assets/app-icon/vectorcraft.icns: binary 58420 -> 183274 bytes (+/- lines not applicable)
+assets/app-icon/vectorcraft.ico: binary 16088 -> 23001 bytes (+/- lines not applicable)
+assets/app-icon/vectorcraft.svg: +2/-4
+crates/ui-egui/src/brand.rs: +1/-1
+crates/ui-egui/src/canvas.rs: +6/-1
+crates/ui-egui/src/chrome.rs: +5/-0
+crates/ui-egui/src/menus.rs: +22/-0
+crates/ui-egui/src/native_menu.rs: +14/-0
+crates/ui-egui/src/tests_nativemenu.rs: +82/-3
+crates/ui-egui/src/titlebar.rs: +2/-0
+crates/ui-egui/src/varos/REPORT.txt: +2/-0
+crates/ui-egui/src/varos/generate_icons.py: +26/-57
+crates/ui-egui/src/varos/mod.rs: +4/-4
+docs/gaps.md: +4/-1
+docs/roadmap.md: +3/-2
+docs/target-app-parity.md: +5/-2
+docs/ui-parity.md: +4/-1
+packaging/icons.sh: +4/-55
+packaging/macos/dmg/README.md: +4/-3
+packaging/macos/dmg/background.svg: +2/-4
+packaging/macos/dmg/background.tiff: binary 16885 -> 33709 bytes (+/- lines not applicable)
+crates/ui-egui/src/varos/REPORT_BRAND2.txt: +95/-0 (new report)

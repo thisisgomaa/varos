@@ -1,4 +1,4 @@
-//! Temporary geometric Varos mark; original placeholder artwork in `assets/app-icon/`.
+//! Original Varos app icon, © 2026 Ahmed Gomaa, MIT OR Apache-2.0.
 
 pub use crate::varos::names::{APP_NAME, DATA_DIR_LOWER, DATA_DIR_NAME, PORTABLE_DATA_DIR};
 

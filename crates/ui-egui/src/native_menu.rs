@@ -328,6 +328,7 @@ pub fn mac_layout(app: &VectorcraftApp, bar: &MenuBar, lang: Lang) -> Layout {
     // Remove the source application menu after taking its items.
     bar.menus.retain(|m| m.role != MenuRole::App);
 
+    let show_document_menus = menus::document_menus_showing(app);
     let mut app = Vec::new();
     app.extend(about.map(Node::Item));
     app.push(Node::Separator);
@@ -358,6 +359,18 @@ pub fn mac_layout(app: &VectorcraftApp, bar: &MenuBar, lang: Lang) -> Layout {
     }
     // A menu the moves emptied goes away (Help stays: it has the search field).
     bar.menus.retain(|m| !m.children.is_empty() || m.role == MenuRole::Help);
+    if !show_document_menus {
+        // Keep only the platform app menu. New/Open retain native key equivalents on Home.
+        let mut entry_points = take_items(&mut bar, "file.newDialog");
+        entry_points.extend(take_items(&mut bar, "file.open"));
+        bar.menus.retain(|m| m.role == MenuRole::App);
+        if let Some(menu) = bar.menus.first_mut() {
+            let mut children: Vec<Node> = entry_points.into_iter().map(Node::Item).collect();
+            children.push(Node::Separator);
+            children.append(&mut menu.children);
+            menu.children = tidy(children);
+        }
+    }
     Layout { bar, clashes }
 }
 
@@ -602,6 +615,7 @@ fn state_hash(app: &VectorcraftApp, input: Option<u64>) -> u64 {
         (d.uid, revision, d.history.undo.len(), d.history.redo.len(), d.transparency_grid, d.print_tiling).hash(&mut h);
     }
     (app.system_paste, app.last_effect.is_some(), app.ui.recent_files.len(), app.ui.recent_files.first(), app.recent_fonts().len()).hash(&mut h);
+    menus::document_menus_showing(app).hash(&mut h);
     app.file_dialog_open().hash(&mut h);
     (crate::i18n::current().code(), menus::plugin_revision()).hash(&mut h);
     crate::shortcut_editor::GENERATION.load(std::sync::atomic::Ordering::Relaxed).hash(&mut h);

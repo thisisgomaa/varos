@@ -222,12 +222,13 @@ fn a_command_keeps_a_system_key_it_is_bound_to() {
 }
 
 /// A native menu can't turn a plain item into a check item in place: opening a document or
-/// selecting must not change the menus' structure, or every change rebuilds them.
+/// selecting keeps the editor menu structure; Home intentionally has only the app menu.
 #[test]
 fn documents_and_selections_change_state_not_structure() {
-    let empty = native_menu::structure_key(&bar(&app(false)));
+    let home = native_menu::structure_key(&bar(&app(false)));
     let mut a = app(true);
-    assert_eq!(native_menu::structure_key(&bar(&a)), empty, "a document with a selected rectangle");
+    let empty = native_menu::structure_key(&bar(&a));
+    assert_ne!(empty, home, "Home has only the app menu; the editor restores the full bar");
     a.run("select.none", json!({})).unwrap();
     a.run("text.create", json!({"x": 50, "y": 50, "text": "Hi"})).unwrap();
     assert!(!a.session.active().unwrap().selection.objects.is_empty());
@@ -664,4 +665,82 @@ fn the_menu_bar_is_inert_while_a_file_dialog_is_open() {
     assert_eq!(m.app.ui.view.rulers, !rulers.0);
     m.key_equivalent("Cmd+A");
     assert_eq!(m.selected(), 2, "⌘A selected every object");
+}
+
+/// Home has no editor or workspace menus, including when it covers an open document.
+/// Returning to a document restores both the native and in-window menus.
+#[test]
+fn home_hides_menus_and_document_selection_restores_them() {
+    for native in [false, true] {
+        let mut m = Mac::new(native);
+        let titles = |out: &egui::FullOutput| {
+            fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+                match shape {
+                    egui::Shape::Text(t) => texts.push(t.galley.text().to_string()),
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| collect(s, texts)),
+                    _ => {}
+                }
+            }
+            let mut texts = vec![];
+            out.shapes.iter().for_each(|s| collect(&s.shape, &mut texts));
+            texts
+        };
+        m.app.run("app.home", json!({})).unwrap();
+        let home = m.frame(vec![]);
+        let texts = titles(&home);
+        for (title, _) in menus::menu_tree().iter().skip(1) {
+            assert!(!texts.iter().any(|t| t == title), "Home showed {title}: {texts:?}");
+        }
+        assert!(!texts.iter().any(|t| t == &m.app.ui.workspace), "no workspace popup on Home");
+        assert_eq!(bar(&m.app).menus.iter().map(|m| m.title.as_str()).collect::<Vec<_>>(), ["Varos"]);
+        if native {
+            assert_eq!(m.fake.last().menus.len(), 1, "live backend switched to Home");
+        }
+        m.app.ui.home = None;
+        let editor = m.frame(vec![]);
+        assert!(bar(&m.app).menus.len() > 1);
+        if native {
+            assert!(m.fake.last().menus.len() > 1, "Home state invalidates the native menu cache");
+        } else {
+            assert!(titles(&editor).iter().any(|s| s == "File"), "editor restored its menu bar");
+        }
+        // Closing the last document hides menus even with the automatic Home preference off.
+        m.app.session.doc_mut().unwrap().mark_saved();
+        m.app.run("file.close", json!({})).unwrap();
+        m.app.session.prefs.show_home_screen = false;
+        let empty = titles(&m.frame(vec![]));
+        assert!(!empty.iter().any(|s| s == "File"));
+        assert_eq!(bar(&m.app).menus.len(), 1);
+    }
+}
+
+/// Native New/Open remain in the single app menu and follow the usual shortcut path on Home.
+#[test]
+fn home_keeps_new_and_open_keyboard_shortcuts() {
+    for native in [false, true] {
+        let mut m = Mac::new(native);
+        m.app.run("app.home", json!({})).unwrap();
+        m.frame(vec![]);
+        let home = bar(&m.app);
+        assert_eq!(find(&home, "file.newDialog").shortcut, Some("Cmd+N"));
+        assert_eq!(find(&home, "file.open").shortcut, Some("Cmd+O"));
+        let press = |m: &mut Mac, sc: &str| {
+            if native {
+                m.key_equivalent(sc);
+            } else {
+                let k = crate::shortcuts::parse(sc).unwrap();
+                m.frame(native_menu::key_events(k, || None));
+            }
+        };
+        press(&mut m, "Cmd+N");
+        assert_eq!(m.app.ui.dialog.as_ref().map(|d| d.kind.as_str()), Some("newDocument"));
+        m.app.ui.dialog = None;
+        m.app.services.dialogs_are_sheets = true;
+        let (shown, _) = crate::tests_picks::off_the_ui_thread(&mut m.app.services);
+        press(&mut m, "Cmd+O");
+        assert!(m.app.file_dialog_open(), "Open requested its fake picker on Home");
+        assert_eq!(shown.requests().len(), 1);
+        shown.answer(&[]);
+        m.frame(vec![]);
+    }
 }

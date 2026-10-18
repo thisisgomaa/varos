@@ -1,7 +1,7 @@
-Varos temporary geometric V app icon and all derivatives in this directory.
-Original code-generated artwork created for Varos contributors, 2026.
-Licensed under MIT OR Apache-2.0, at your option; see the repository
-LICENSE-MIT and LICENSE-APACHE. No third-party artwork or fonts.
+Varos app icon — original work, © 2026 Ahmed Gomaa, MIT OR Apache-2.0
 
-Upstream filenames are retained for build compatibility. Regenerate with
-python3 crates/ui-egui/src/varos/generate_icons.py (Pillow and iconutil).
+Licensed under MIT OR Apache-2.0, at your option; the full licence texts are
+in the repository LICENSE-MIT and LICENSE-APACHE.
+Owner-supplied source: /Applications/Varos.app/Contents/Resources/Varos.icns.
+Source project: https://github.com/thisisgomaa/varos
+All renders and embedded PNG SVG wrappers retain this attribution.

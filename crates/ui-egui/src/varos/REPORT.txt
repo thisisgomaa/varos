@@ -1,3 +1,5 @@
+HISTORICAL REPORT — icon and Home behaviour superseded by REPORT_BRAND2.txt.
+
 LANE BRAND — VAROS
 Worktree: ~/Documents/AI workspace/reference/artcraft/spikes/lane-brand
 Base: cdba0aac; branch: lane-brand. No commit. No windows opened.

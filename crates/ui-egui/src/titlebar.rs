@@ -271,6 +271,7 @@ mod tests {
     fn caption_buttons_take_the_right_end_and_nothing_overlaps_down_to_800_pt() {
         for width in [800.0, 1100.0, 1440.0] {
             let mut w = Win::new(width);
+            w.app.run("file.new", serde_json::json!({})).unwrap();
             w.frame(vec![]);
             let out = w.frame(vec![]);
             let [min, max, close] = CAPTIONS.map(|c| w.caption(c));
@@ -342,6 +343,7 @@ mod tests {
         cmds.extend(w.click(empty));
         assert!(cmds.contains(&ViewportCommand::Maximized(false)), "{cmds:?}");
         // Widgets keep their clicks: dragging from a menu title doesn't move the window.
+        w.app.run("file.new", serde_json::json!({})).unwrap();
         let file = texts(&w.frame(vec![])).into_iter().find(|(t, _)| t == "File").map(|(_, r)| r.center());
         let file = file.expect("the File menu title");
         let cmds = w.gesture(&[file, file + vec2(12.0, 4.0), file + vec2(30.0, 8.0)]);
