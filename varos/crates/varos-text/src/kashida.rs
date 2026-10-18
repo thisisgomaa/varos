@@ -1,5 +1,5 @@
 //! Joining guards ported from Ahmed's BStudio bstudio-text/kashida.rs (June
-//! 2026, MPL-2.0; covered portions also under GPL-3.0 per MPL §3.3). See NOTICE.
+//! 2026; his own work, relicensed with this crate as MIT OR Apache-2.0). See NOTICE.
 //! Width growth is a measurement, never a substitute for HarfRust's safe flag.
 use crate::composer::{place, ComposedLine};
 use cosmic_text::{AttrsList, FontSystem, ShapeLine};
