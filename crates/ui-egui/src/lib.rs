@@ -60,6 +60,7 @@ pub mod toolbar;
 pub mod touch;
 mod ui_fonts;
 pub mod unsaved;
+mod varos;
 pub mod widgets;
 pub mod workspaces;
 
@@ -1158,6 +1159,7 @@ impl VectorcraftApp {
     /// Per-frame logic before layout (control channel, shortcuts, inbox). A bug that panics costs
     /// one frame and shows an error, instead of closing the app with unsaved work.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        let _profile = varos::profile::scope("host.logic");
         let confined = self.synthetic_frame.then(|| self.automation_roots.clone()).flatten();
         if let Err(msg) = file_access::confine(confined.as_ref(), || vectorcraft_engine::guard::catch_panic(|| self.logic_frame(ctx))) {
             self.picks.recover();
@@ -1264,7 +1266,7 @@ impl VectorcraftApp {
         self.drain_inbox();
         native_menu::run(self, ctx);
         if self.fonts_ready {
-            shortcuts::handle(self, ctx);
+            varos::profile::measure("host.shortcuts", || shortcuts::handle(self, ctx));
         }
         // Native only: the web host reads dropped files asynchronously and feeds the inboxes.
         #[cfg(not(target_arch = "wasm32"))]
@@ -1413,10 +1415,13 @@ impl VectorcraftApp {
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let confined = self.synthetic_frame.then(|| self.automation_roots.clone()).flatten();
-        if let Err(msg) = file_access::confine(confined.as_ref(), || vectorcraft_engine::guard::catch_panic(|| self.ui_frame(ui))) {
+        if let Err(msg) = file_access::confine(confined.as_ref(), || {
+            vectorcraft_engine::guard::catch_panic(|| varos::profile::measure("ui.total", || self.ui_frame(ui)))
+        }) {
             self.picks.recover();
             self.status(format!("Internal error: {msg} (please report this bug)"));
         }
+        varos::profile::finish_frame();
     }
 
     fn ui_frame(&mut self, ui: &mut egui::Ui) {
@@ -1432,42 +1437,42 @@ impl VectorcraftApp {
         floating::track(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         if self.ui.screen_mode < 2 {
-            chrome::app_bar(self, ui);
+            varos::profile::measure("app_bar", || chrome::app_bar(self, ui));
             if self.ui.control_bar {
-                chrome::control_bar(self, ui);
+                varos::profile::measure("control_bar", || chrome::control_bar(self, ui));
             }
         }
         if self.ui.status_bar && self.ui.screen_mode < 3 {
-            chrome::status_bar(self, ui);
-            chrome::hint_bar(self, ui);
+            varos::profile::measure("status_bar", || chrome::status_bar(self, ui));
+            varos::profile::measure("hint_bar", || chrome::hint_bar(self, ui));
         } else {
             // Keeps the previous frame's value valid for menus drawn above, before the bars.
             widgets::set_menu_floor(&ctx, ctx.content_rect().bottom());
         }
         if self.ui.toolbar && self.ui.screen_mode < 3 {
-            toolbar::show(self, ui);
+            varos::profile::measure("toolbar", || toolbar::show(self, ui));
         }
-        panels::library_panel::tidy(self);
+        varos::profile::measure("library.tidy", || panels::library_panel::tidy(self));
         if self.ui.dock && self.ui.screen_mode < 3 {
-            dock::show(self, ui);
+            varos::profile::measure("dock", || dock::show(self, ui));
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| {
             if self.ui.screen_mode < 3 {
-                chrome::doc_tabs(self, ui);
+                varos::profile::measure("doc_tabs", || chrome::doc_tabs(self, ui));
             }
-            canvas::show(self, ui);
+            varos::profile::measure("canvas", || canvas::show(self, ui));
         });
-        dock::floating_panel(self, &ctx);
-        floating::show(self, &ctx);
-        dialogs::show(self, &ctx);
-        export_progress::show(self, &ctx);
-        palette::show(self, &ctx);
+        varos::profile::measure("dock.flyout", || dock::floating_panel(self, &ctx));
+        varos::profile::measure("floating", || floating::show(self, &ctx));
+        varos::profile::measure("dialogs", || dialogs::show(self, &ctx));
+        varos::profile::measure("export_progress", || export_progress::show(self, &ctx));
+        varos::profile::measure("palette", || palette::show(self, &ctx));
         if self.custom_titlebar {
             titlebar::resize_zones(ui);
         }
-        self.ui_fonts.frame(&ctx);
+        varos::profile::measure("ui_fonts", || self.ui_fonts.frame(&ctx));
         scrub::end_frame(self, &ctx);
-        native_menu::sync(self, &ctx);
+        varos::profile::measure("native_menu", || native_menu::sync(self, &ctx));
         self.drop_formats_after_egui_copy(&ctx);
         self.perf.frame_ms = now_ms() - t0;
         let _ = json!(null);

@@ -1,0 +1,5 @@
+$ cargo build --offline -p vectorcraft
+    Blocking waiting for file lock on build directory
+    Finished `dev` profile [optimized + debuginfo] target(s) in 39m 16s
+
+exit=0; wall=2356.335s

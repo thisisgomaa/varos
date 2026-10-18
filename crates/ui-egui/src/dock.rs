@@ -85,6 +85,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let shown = floating::shown_tab(&app.ui);
     // Main tabbed group, unless it is collapsed to icons or all its panels float.
     let group = shown.filter(|_| !app.ui.dock_collapsed).map(|active| {
+        let _profile = crate::varos::profile::scope(active.info().0);
         egui::Panel::right("dock")
             .resizable(true)
             .default_size(DOCK_WIDTH)
@@ -398,6 +399,7 @@ pub(crate) fn panel_width(id: &str) -> f32 {
 /// Panel `id`'s contents in a popped-out or floating panel `width` wide; the tabbed group's panels
 /// fill (Layers) or scroll (Properties) `tall` points.
 pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, width: f32, tall: f32) {
+    let _profile = crate::varos::profile::scope(id);
     egui::Frame::NONE.inner_margin(egui::Margin::same(10)).show(ui, |ui| {
         ui.set_width(width - 20.0);
         match DockTab::from_id(id) {

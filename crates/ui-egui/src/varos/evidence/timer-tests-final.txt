@@ -1,0 +1,14 @@
+$ rustc --edition 2024 --test crates/ui-egui/src/varos/evidence/standalone.rs -o target/perf-1/profile-tests
+
+exit=0; wall=1.397s
+$ target/perf-1/profile-tests
+
+running 3 tests
+test profile::tests::timer_overhead ... ignored, microbenchmark; run with --nocapture
+test profile::tests::absent_scope_leaves_collector_empty ... ok
+test profile::tests::nested_sections_accumulate_inclusive_costs_and_counts ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+exit=0; wall=0.528s

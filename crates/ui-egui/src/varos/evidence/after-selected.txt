@@ -1,0 +1,39 @@
+$ VAROS_PROFILE=1 VECTORCRAFT_SYNC_RENDER=1 target/perf-1/headless selected
+max_texture_side=8192; load_before=(124.365234375, 132.2548828125, 122.29931640625)
+VAROS_PROFILE 1.31s, inclusive CPU sections (not GPU/present):
+  ui.total: 646.433 ms/call, 1292.865 ms max, 1292.865 ms total / 2 calls
+  native_menu: 1248.120 ms/call, 1248.120 ms max, 1248.120 ms total / 1 calls
+  canvas: 26.981 ms/call, 26.981 ms max, 26.981 ms total / 1 calls
+  canvas.raster: 23.807 ms/call, 23.807 ms max, 23.807 ms total / 1 calls
+  host.logic: 7.683 ms/call, 15.326 ms max, 15.366 ms total / 2 calls
+  dock: 7.521 ms/call, 7.521 ms max, 7.521 ms total / 1 calls
+  properties: 5.567 ms/call, 5.567 ms max, 5.567 ms total / 1 calls
+  hint_bar: 2.827 ms/call, 2.827 ms max, 2.827 ms total / 1 calls
+  app_bar: 2.569 ms/call, 2.569 ms max, 2.569 ms total / 1 calls
+  toolbar: 2.075 ms/call, 2.075 ms max, 2.075 ms total / 1 calls
+STEADY selected; 1440x900 points, ppp=1; 1.2s warmup; fake native services
+VAROS_PROFILE 1.00s, inclusive CPU sections (not GPU/present):
+  ui.total: 3.259 ms/call, 76.002 ms max, 883.317 ms total / 271 calls
+  dock: 1.177 ms/call, 66.079 ms max, 319.100 ms total / 271 calls
+  toolbar: 0.834 ms/call, 37.608 ms max, 225.966 ms total / 271 calls
+  properties: 0.688 ms/call, 60.688 ms max, 186.315 ms total / 271 calls
+  canvas: 0.538 ms/call, 50.739 ms max, 145.696 ms total / 271 calls
+  status_bar: 0.380 ms/call, 39.299 ms max, 102.875 ms total / 271 calls
+  hint_bar: 0.146 ms/call, 34.256 ms max, 39.433 ms total / 271 calls
+  app_bar: 0.106 ms/call, 14.639 ms max, 28.738 ms total / 271 calls
+  doc_tabs: 0.059 ms/call, 11.867 ms max, 15.894 ms total / 271 calls
+  canvas.input: 0.042 ms/call, 9.397 ms max, 11.392 ms total / 271 calls
+VAROS_PROFILE 1.01s, inclusive CPU sections (not GPU/present):
+  ui.total: 3.811 ms/call, 73.912 ms max, 971.815 ms total / 255 calls
+  dock: 1.482 ms/call, 73.611 ms max, 377.793 ms total / 255 calls
+  status_bar: 1.051 ms/call, 71.356 ms max, 268.025 ms total / 255 calls
+  properties: 1.040 ms/call, 73.527 ms max, 265.292 ms total / 255 calls
+  toolbar: 0.938 ms/call, 50.806 ms max, 239.298 ms total / 255 calls
+  canvas: 0.138 ms/call, 8.738 ms max, 35.281 ms total / 255 calls
+  app_bar: 0.122 ms/call, 22.048 ms max, 31.095 ms total / 255 calls
+  host.logic: 0.113 ms/call, 27.038 ms max, 28.919 ms total / 255 calls
+  host.shortcuts: 0.108 ms/call, 27.025 ms max, 27.552 ms total / 255 calls
+  dock.flyout: 0.030 ms/call, 7.540 ms max, 7.564 ms total / 255 calls
+RESULT selected frames=570 full_mean=3.854ms p50=0.521ms p95=25.369ms status_ui_mean=3.582ms
+
+exit=0; wall=3.549s; load_after=(124.365234375, 132.2548828125, 122.29931640625)

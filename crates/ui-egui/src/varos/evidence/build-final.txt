@@ -1,0 +1,7 @@
+$ cargo build --offline -p vectorcraft
+    Blocking waiting for file lock on build directory
+   Compiling vectorcraft-ui-egui v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/ui-egui)
+   Compiling vectorcraft v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/apps/vectorcraft)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 32m 14s
+
+exit=0; wall=1934.567s
