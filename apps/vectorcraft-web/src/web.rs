@@ -139,7 +139,10 @@ async fn run(host: Host, canvas: web_sys::HtmlCanvasElement, moving: Option<Movi
                 el.remove();
             }
         }
-        (Err(e), None) => notice(&[&format!("VectorCraft failed to start: {}", js_err(e)), "A browser with WebGPU or WebGL2 is required."]),
+        (Err(e), None) => notice(&[
+            &format!("{} failed to start: {}", vectorcraft_ui_egui::brand::APP_NAME, js_err(e)),
+            "A browser with WebGPU or WebGL2 is required.",
+        ]),
         (Err(e), Some(kept)) => {
             log::error!("vectorcraft-web: couldn't restart the graphics: {}", js_err(e));
             give_up(slot.borrow_mut().take(), kept);

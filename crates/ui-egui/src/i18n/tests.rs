@@ -252,7 +252,7 @@ fn language_command_sets_the_preference() {
     // Every registered language is in the Mac App menu's Language, by its own name (the in-window
     // bar has no Language menu).
     let layout = crate::native_menu::mac_layout(&app, &crate::native_menu::from_tree(&app, &crate::menus::menu_tree()), Lang::EN);
-    let app_menu = layout.bar.menus.into_iter().find(|m| m.title == "VectorCraft").expect("App menu");
+    let app_menu = layout.bar.menus.into_iter().find(|m| m.title == "Varos").expect("App menu");
     fn items(nodes: &[crate::native_menu::Node], out: &mut Vec<String>) {
         for n in nodes {
             match n {
@@ -1934,13 +1934,13 @@ fn czech_render_site_follow_up() {
         ("All placeable files", "Všechny soubory pro umístění"),
         ("SVG Compressed", "Komprimované SVG"),
         ("PDF-compatible .ai", ".ai kompatibilní s PDF"),
-        ("VectorCraft Template", "Šablona VectorCraft"),
+        ("VectorCraft Template", "Šablona Varos"),
     ] {
         assert_eq!(tr_ctx(cs(), "file-filter", source), expected);
-        assert_eq!(tr_ctx(Lang::EN, "file-filter", source), source);
+        assert_eq!(tr_ctx(Lang::EN, "file-filter", source), crate::varos::text(source));
     }
     for source in ["SVG", "PNG", "VectorCraft", "unregistered filter"] {
-        assert_eq!(tr_ctx(cs(), "file-filter", source), source);
+        assert_eq!(tr_ctx(cs(), "file-filter", source), crate::varos::text(source));
     }
     assert_eq!(tr_ctx(cs(), "diagnostics", "render"), "vykreslení");
     assert_eq!(tr_ctx(cs(), "diagnostics", "ui"), "rozhraní");

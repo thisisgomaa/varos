@@ -1,6 +1,12 @@
-//! The VectorCraft brand mark: the app icon (the engraved dragon, `assets/app-icon/`, see its
-//! README). The PNG carries the icon's rounded corners; it is decoded once per context into a
-//! mipmapped texture, so it stays crisp from the 18 pt app-bar mark to the About box.
+//! Temporary geometric Varos mark; original placeholder artwork in `assets/app-icon/`.
+
+pub use crate::varos::names::{APP_NAME, DATA_DIR_LOWER, DATA_DIR_NAME, PORTABLE_DATA_DIR};
+
+/// The fork attribution, kept verbatim alongside upstream credits.
+pub const FORK_NOTICE: &str = "Varos is an Arabic-first fork of VectorCraft (storytold), MIT OR Apache-2.0.";
+
+/// Default exported shortcut-set filename.
+pub const SHORTCUTS_FILE: &str = "Varos Shortcuts.json";
 
 use egui::{Color32, Context, Id, Rect, TextureHandle, TextureOptions, Ui, pos2};
 

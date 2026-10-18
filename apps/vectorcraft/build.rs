@@ -4,6 +4,10 @@
 //! cross-compile from macOS or Linux still links, unless `VECTORCRAFT_REQUIRE_WINRES=1` turns it into
 //! an error (for release builds).
 
+#[path = "../../crates/ui-egui/src/varos/names.rs"]
+#[allow(dead_code)]
+mod brand;
+
 fn main() -> Result<(), String> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../assets/app-icon/vectorcraft.ico");
@@ -13,8 +17,8 @@ fn main() -> Result<(), String> {
     }
     let mut res = winresource::WindowsResource::new();
     res.set_icon("../../assets/app-icon/vectorcraft.ico")
-        .set("ProductName", "VectorCraft")
-        .set("FileDescription", "VectorCraft vector illustration editor")
+        .set("ProductName", brand::APP_NAME)
+        .set("FileDescription", &format!("{} vector illustration editor", brand::APP_NAME))
         .set("CompanyName", "Learning Machines LLC")
         .set("LegalCopyright", "Copyright (c) the VectorCraft authors. MIT OR Apache-2.0.")
         .set("OriginalFilename", "vectorcraft.exe")

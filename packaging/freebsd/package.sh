@@ -35,7 +35,7 @@ case "$(uname -m)" in
 esac
 BASENAME="vectorcraft-$VERSION-freebsd-$ARCH"
 
-echo "==> VectorCraft $VERSION for FreeBSD $ARCH"
+echo "==> Varos $VERSION for FreeBSD $ARCH"
 
 if [ "$SKIP_BUILD" = 0 ]; then
   (cd "$ROOT" && cargo build --release --locked -p vectorcraft -p vectorcraft-cli)

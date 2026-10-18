@@ -1,4 +1,4 @@
-//! `cargo xtask bundle`: build the release app and wrap it as `dist/VectorCraft.app` (macOS), with the
+//! `cargo xtask bundle`: build the release app and wrap it as `dist/Varos.app` (macOS), with the
 //! committed app icon `assets/app-icon/vectorcraft.icns` (regenerate it with `packaging/icons.sh`).
 
 use std::path::Path;
@@ -7,15 +7,15 @@ use std::process::Command;
 pub fn run(root: &Path) -> Result<(), String> {
     let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .current_dir(root)
-        .args(["build", "--release", "-p", "vectorcraft", "-p", "vectorcraft-cli"])
+        .args(["build", "--offline", "--release", "-p", "vectorcraft", "-p", "vectorcraft-cli"])
         .status()
         .map_err(|e| e.to_string())?;
     if !status.success() {
         return Err("release build failed".into());
     }
     let target = std::env::var("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| root.join("target"));
-    let app = root.join("dist/VectorCraft.app/Contents");
-    let _ = std::fs::remove_dir_all(root.join("dist/VectorCraft.app"));
+    let app = root.join("dist/Varos.app/Contents");
+    let _ = std::fs::remove_dir_all(root.join("dist/Varos.app"));
     std::fs::create_dir_all(app.join("MacOS")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(app.join("Resources")).map_err(|e| e.to_string())?;
     std::fs::copy(target.join("release/vectorcraft"), app.join("MacOS/VectorCraft")).map_err(|e| format!("copy app: {e}"))?;
@@ -23,7 +23,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     std::fs::copy(root.join("assets/app-icon/vectorcraft.icns"), app.join("Resources/VectorCraft.icns")).map_err(|e| format!("copy icon: {e}"))?;
     let sha = std::env::var("VECTORCRAFT_BUILD_SHA").unwrap_or_else(|_| "unknown".into());
     std::fs::write(app.join("Info.plist"), info_plist(env!("CARGO_PKG_VERSION"), &sha)).map_err(|e| e.to_string())?;
-    println!("built {}", root.join("dist/VectorCraft.app").display());
+    println!("built {}", root.join("dist/Varos.app").display());
     Ok(())
 }
 

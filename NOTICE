@@ -96,3 +96,5 @@ Per-file hashes and sources are recorded in ASSETS.md.
 Varos Stage 0 appearance spike: crates/ui-egui/assets/varos/icons contains Lucide icons
 under ISC/MIT (icons/LICENSE). fonts contains Inter, JetBrains Mono and IBM Plex Sans
 Arabic under SIL OFL 1.1; see the three licence texts in that directory and ASSETS.md.
+Varos is an Arabic-first fork of VectorCraft (storytold), MIT OR Apache-2.0.
+Temporary geometric V artwork: original work for Varos, MIT OR Apache-2.0.

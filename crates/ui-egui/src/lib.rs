@@ -14,11 +14,10 @@ macro_rules! tl {
 }
 
 pub mod background;
-mod brand;
+pub mod brand;
 pub mod canvas;
 pub mod chrome;
 mod clipboard_probe;
-pub mod community;
 pub mod control;
 pub mod credits;
 pub mod cursors;
@@ -806,7 +805,7 @@ impl VectorcraftApp {
         r
     }
 
-    /// Open a link in the browser (Help → Discord, website, GitHub…).
+    /// Open an attribution or reference link in the browser.
     pub fn open_url(&mut self, url: &str) {
         match self.services.open_url.as_mut() {
             Some(open) => open(url),

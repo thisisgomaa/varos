@@ -10,7 +10,7 @@
 //!   `app.quit`, so documents with unsaved changes are asked about. Language and Appearance have
 //!   no in-window menu (as in PhotoCraft) and are synthesized here; Quit is File › Exit in the
 //!   window and reads as Quit in the App menu. These leave the other menus (Edit › Preferences…,
-//!   Help › About), and Join Our Discord stays under Help only;
+//!   Help › About);
 //! - **Window** gets Minimize ⌃⌘M, Zoom and Bring All to Front, and **Help** the system's search
 //!   field;
 //! - a system key already bound to a command keeps the command's: the system item goes without.
@@ -38,7 +38,7 @@ use crate::i18n::{Lang, tr, tr_ctx};
 use crate::menus::{self, Entry};
 use crate::theme::Brightness;
 
-pub const APP_NAME: &str = "VectorCraft";
+pub use crate::brand::APP_NAME;
 /// Hide VectorCraft: an item of ours (AppKit's always takes ⌘H, which is View › Hide Edges).
 pub const HIDE: &str = "app.hide";
 /// Hide Others: an item of ours, so a command bound to ⌥⌘H keeps it.
@@ -325,7 +325,7 @@ pub fn mac_layout(app: &VectorcraftApp, bar: &MenuBar, lang: Lang) -> Layout {
     // them, else synthesized here (the in-window bar has neither).
     let language = take_submenu(&mut bar, "app.language").or_else(|| Some(language_node(app, lang)));
     let appearance = take_submenu(&mut bar, "window.brightness").or_else(|| Some(appearance_node(app, lang)));
-    // Its other items (Join Our Discord) stay where the in-window bar also has them: Help.
+    // Remove the source application menu after taking its items.
     bar.menus.retain(|m| m.role != MenuRole::App);
 
     let mut app = Vec::new();
@@ -575,7 +575,7 @@ pub fn sync(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(menu) = app.services.native_menu.as_mut() else { return };
     if !menu.logged {
         for c in &layout.clashes {
-            log::info!("menu: {} is {} on macOS and {} in VectorCraft, which keeps it", c.shortcut, c.system, c.command);
+            log::info!("menu: {} is {} on macOS and {} in {}, which keeps it", c.shortcut, c.system, c.command, APP_NAME);
         }
         menu.logged = true;
     }
