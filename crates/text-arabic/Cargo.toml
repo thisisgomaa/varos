@@ -1,0 +1,21 @@
+[package]
+name = "vectorcraft-text-arabic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kurbo.workspace = true
+varos-text = { path = "~/Documents/AI workspace/varos/varos/crates/varos-text" }
+
+[dev-dependencies]
+vectorcraft-text.workspace = true
+vectorcraft-render.workspace = true
+vectorcraft-doc.workspace = true
+vectorcraft-geom.workspace = true
+vectorcraft-color.workspace = true
+image.workspace = true

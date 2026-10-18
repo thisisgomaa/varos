@@ -25,6 +25,7 @@ vectorcraft-trace = { path = "crates/trace" }
 # Without its default `bundled-fonts`: the engine turns them on (its own default feature), so a
 # library crate never forces them on an embedder that supplies its fonts at run time.
 vectorcraft-text = { path = "crates/text", default-features = false }
+vectorcraft-text-arabic = { path = "crates/text-arabic" }
 vectorcraft-effects = { path = "crates/effects" }
 vectorcraft-three-d = { path = "crates/three-d" }
 vectorcraft-render = { path = "crates/render" }
@@ -129,3 +130,7 @@ hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63
 hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
 hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
 krilla = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
+
+# Private Arabic technical spike; local Varos forks.
+egui_tiles = { path = "~/Documents/AI workspace/varos/varos/vendor/egui_tiles" }
+cosmic-text = { path = "~/Documents/AI workspace/varos/varos/vendor/cosmic-text" }

@@ -813,7 +813,8 @@ fn show_set(app: &mut VectorcraftApp, ctx: &egui::Context, set: &[usize], action
     let tall = ((screen.bottom() - pos.y - TITLE - n * STRIP - (n - 1.0) * GAP - 60.0) / open).clamp(120.0, 560.0);
     let lead_active = lead.active;
     egui::Area::new(area).order(egui::Order::Middle).fixed_pos(pos).show(ctx, |ui| {
-        let frame = egui::Frame::popup(ui.style()).fill(t.panel).corner_radius(CornerRadius::same(4)).inner_margin(egui::Margin::ZERO);
+        let frame =
+            egui::Frame::popup(ui.style()).fill(t.panel).corner_radius(crate::varos::theme::box_radius(&t, 4)).inner_margin(egui::Margin::ZERO);
         frame.show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             let width = groups

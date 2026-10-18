@@ -3024,9 +3024,9 @@ fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
         egui::Frame::NONE
             .fill(t.panel)
             .stroke(Stroke::new(1.0, t.tool_active))
-            .corner_radius(CornerRadius::same(5))
+            .corner_radius(crate::varos::theme::box_radius(&t, 5))
             .inner_margin(egui::Margin::symmetric(8, 6))
-            .shadow(egui::epaint::Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(70) })
+            .shadow(crate::varos::theme::chrome_shadow(&t, [0, 3], 10, 70))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;

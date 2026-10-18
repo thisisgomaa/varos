@@ -10,14 +10,16 @@ pub enum Brightness {
     Dark,
     #[default]
     MediumDark,
+    Varos,
     MediumLight,
     Light,
 }
 
 impl Brightness {
-    pub const ALL: [Brightness; 4] = [Brightness::Dark, Brightness::MediumDark, Brightness::MediumLight, Brightness::Light];
+    pub const ALL: [Brightness; 5] = [Brightness::Varos, Brightness::Dark, Brightness::MediumDark, Brightness::MediumLight, Brightness::Light];
     pub fn label(self) -> &'static str {
         match self {
+            Brightness::Varos => "Varos",
             Brightness::Dark => "Dark",
             Brightness::MediumDark => "Medium Dark",
             Brightness::MediumLight => "Medium Light",
@@ -26,6 +28,7 @@ impl Brightness {
     }
     pub fn id(self) -> &'static str {
         match self {
+            Brightness::Varos => "varos",
             Brightness::Dark => "dark",
             Brightness::MediumDark => "mediumDark",
             Brightness::MediumLight => "mediumLight",
@@ -216,6 +219,7 @@ impl Tokens {
             axis_z: hex(0x378ef0),
         };
         match b {
+            Brightness::Varos => crate::varos::theme::tokens(),
             Brightness::Dark => base,
             // Charcoal, the default.
             Brightness::MediumDark => Tokens {
@@ -336,6 +340,7 @@ impl Tokens {
             ..Tokens::for_brightness(Brightness::Dark)
         };
         match b {
+            Brightness::Varos => crate::varos::theme::tokens(),
             Brightness::Dark => base,
             Brightness::MediumDark => Tokens {
                 // A shade below the panels, so the cards stand out from the window behind them.
@@ -420,6 +425,9 @@ impl Tokens {
 
     /// The tokens for `b` in `scheme`; Modern takes `accent`, Classic has its own blue.
     pub fn for_scheme(scheme: Scheme, b: Brightness, accent: Accent) -> Self {
+        if b == Brightness::Varos {
+            return crate::varos::theme::tokens();
+        }
         match scheme {
             Scheme::Modern => Self::for_brightness(b).with_accent(accent),
             Scheme::Classic => Self::classic(b),
@@ -496,6 +504,10 @@ pub fn mono(size: f32) -> FontId {
 }
 
 pub fn install_fonts(ctx: &egui::Context) {
+    ctx.set_fonts(font_definitions());
+}
+
+pub(crate) fn font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     let add = |f: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
         f.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
@@ -523,7 +535,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     mono.extend(fallback);
     fonts.families.insert(FontFamily::Name(FONT_MONO.into()), mono);
     add_craft_fonts(&mut fonts);
-    ctx.set_fonts(fonts);
+    fonts
 }
 
 /// The egui name of a craft-fonts face.
@@ -553,6 +565,10 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
 
 /// [`apply`] with an accent colour and colour scheme.
 pub fn apply_with(ctx: &egui::Context, b: Brightness, accent: Accent, scheme: Scheme) {
+    if b == Brightness::Varos {
+        crate::varos::theme::apply(ctx);
+        return;
+    }
     let t = Tokens::for_scheme(scheme, b, accent);
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
@@ -628,7 +644,8 @@ mod tests {
     /// whatever accent is chosen.
     #[test]
     fn classic_scheme_keeps_the_corners_and_its_blue() {
-        for b in Brightness::ALL {
+        // Varos is a complete appearance, independent of the Modern/Classic setting.
+        for b in Brightness::ALL.into_iter().filter(|b| *b != Brightness::Varos) {
             let (modern, classic) = (Tokens::for_brightness(b), Tokens::for_scheme(Scheme::Classic, b, Accent::Pink));
             assert_eq!(classic.radius, modern.radius);
             assert_eq!(classic.dark, modern.dark, "{b:?}");

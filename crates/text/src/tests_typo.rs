@@ -1339,3 +1339,146 @@ fn thai_words_are_words_to_the_caret() {
     assert_eq!(edit::word_at(s, s.len() - 1), end + 1..s.len());
     assert_eq!(edit::next_word("hello world", 0), 5);
 }
+
+// Stage 0 lane B: captured on a469568, before adding the Arabic hook, using
+// cargo run --offline -p vectorcraft-text --example latin_baseline.
+// Bundled Source Sans 3, isolated FontDb, 20pt, 240pt frame, JustifyAll.
+#[test]
+fn justified_latin_positions_match_pre_arabic_fixture_bit_for_bit() {
+    let db = FontDb::with_font_dirs(vec![]);
+    db.set_system_fallback(false);
+    db.add_font(include_bytes!("../../../assets/fonts/SourceSans3-Regular.ttf").to_vec());
+    let text = area(
+        "Latin text",
+        CharStyle { font_family: "Source Sans 3".into(), size: 20.0, ..Default::default() },
+        Rect::new(0.0, 0.0, 240.0, 100.0),
+        Justify::JustifyAll,
+    );
+    let actual: Vec<_> =
+        layout(&db, &text).glyphs.iter().map(|g| (g.gid, g.byte, g.len, g.origin.x.to_bits(), g.origin.y.to_bits(), g.advance.to_bits())).collect();
+    let expected = [
+        (13, 0, 1, 0, 4626322717216342016, 4621661491602013553),
+        (28, 1, 1, 4621661491602013553, 4626322717216342016, 4621706527598287258),
+        (47, 2, 1, 4626187609227520902, 4626322717216342016, 4619297101797644042),
+        (36, 3, 1, 4628090380070084936, 4626322717216342016, 4617225445969053614),
+        (41, 4, 1, 4629475236955501364, 4626322717216342016, 4622348290545187553),
+        (1, 5, 1, 4631127495068792914, 4626322717216342016, 4640058696079822028),
+        (47, 6, 1, 4641541365519645408, 4626322717216342016, 4618981849823728108),
+        (32, 7, 1, 4641769360250781039, 4626322717216342016, 4621695268599218831),
+        (51, 8, 1, 4642113463409809816, 4626322717216342016, 4620940915661634273),
+        (47, 9, 1, 4642410419510239558, 4626322717216342016, 4619297101797644042),
+    ];
+    assert_eq!(actual, expected);
+}
+
+fn arabic_spike_db_and_text(s: &str, width: f64) -> (FontDb, TextObject) {
+    let db = FontDb::with_font_dirs(vec![]);
+    db.set_system_fallback(false);
+    db.add_font(vectorcraft_text_arabic::FALLBACK_FONT.to_vec());
+    let text = area(
+        s,
+        CharStyle { font_family: vectorcraft_text_arabic::FALLBACK_FAMILY.into(), size: 48.0, ..Default::default() },
+        Rect::new(0.0, 0.0, width, 600.0),
+        Justify::JustifyAll,
+    );
+    (db, text)
+}
+
+#[test]
+fn justified_arabic_text_layout_emits_adapter_glyphs_with_real_font_and_clusters() {
+    use vectorcraft_text_arabic::{FALLBACK_FAMILY, FALLBACK_FONT};
+    let s = "بسم الله الرحمن الرحيم";
+    let (db, text) = arabic_spike_db_and_text(s, 600.0);
+    let actual = layout(&db, &text);
+    let adapter = vectorcraft_text_arabic::justify(s, FALLBACK_FONT, FALLBACK_FAMILY, 400, 48.0, 600.0).unwrap();
+    assert!(adapter.insertions >= 1);
+    assert_eq!(actual.lines.len(), 1);
+    assert_eq!(actual.glyphs.len(), adapter.glyphs.len());
+    let line = &actual.lines[0];
+    assert!((line.x1 - line.x0 - 600.0).abs() < 0.01);
+    for (g, a) in actual.glyphs.iter().zip(&adapter.glyphs) {
+        assert_eq!((g.gid, g.byte, g.len), (a.gid, a.cluster.start, a.cluster.len()));
+        assert_eq!(g.advance, a.advance);
+        assert_eq!(g.origin, Point::new(a.x, line.baseline + a.y));
+        assert!(s.get(g.byte..g.byte + g.len).is_some());
+        let face = db.face_by_id(g.font_id).unwrap();
+        assert_eq!(face.file_data(), FALLBACK_FONT);
+        let mut expected = a.outline.clone();
+        expected.apply_affine(Affine::translate((line.x0, line.baseline)));
+        assert_eq!(g.outline, expected);
+        // PDF consumes these IDs/transforms, so verify they reproduce the drawn outline.
+        let mut native_outline = (*db.outline(&face, g.gid)).clone();
+        native_outline.apply_affine(g.xf);
+        let a = native_outline.bounding_box();
+        let b = g.outline.bounding_box();
+        assert!(
+            (a.x0 - b.x0).abs() < 0.01 && (a.y0 - b.y0).abs() < 0.01 && (a.x1 - b.x1).abs() < 0.01 && (a.y1 - b.y1).abs() < 0.01,
+            "{a:?} != {b:?}"
+        );
+    }
+    assert!(!selection_quads(&actual, 0, s.len()).is_empty());
+    assert!(caret_position(&actual, 0).0.x > caret_position(&actual, s.len()).0.x);
+}
+
+#[test]
+fn justified_arabic_wrapping_keeps_native_line_source_ranges_and_trailing_blanks() {
+    let s = "بسم الله الرحمن الرحيم بسم الله الرحمن الرحيم بسم الله الرحمن الرحيم";
+    let (db, text) = arabic_spike_db_and_text(s, 600.0);
+    let actual = layout(&db, &text);
+    assert!(actual.lines.len() >= 2);
+    let mut end = 0;
+    for line in &actual.lines {
+        assert_eq!(line.start, end);
+        assert!(s.get(line.start..line.end).is_some());
+        assert!((line.x1 - line.x0 - 600.0).abs() < 0.01);
+        for g in &actual.glyphs[line.glyph_start..line.glyph_end] {
+            assert!(g.byte >= line.start && g.byte + g.len <= line.end);
+        }
+        end = line.end;
+    }
+    assert_eq!(end, s.len());
+}
+
+#[test]
+fn rejected_native_arabic_face_registers_the_actual_fallback_for_export() {
+    use vectorcraft_text_arabic::{FALLBACK_FAMILY, FALLBACK_FONT};
+    let db = FontDb::with_font_dirs(vec![]);
+    db.set_system_fallback(false);
+    db.add_font(include_bytes!("../../../assets/fonts/SourceSans3-Regular.ttf").to_vec());
+    let text = area(
+        "بسم الله الرحمن الرحيم",
+        CharStyle { font_family: "Source Sans 3".into(), size: 48.0, ..Default::default() },
+        Rect::new(0.0, 0.0, 1200.0, 300.0),
+        Justify::JustifyAll,
+    );
+    let result = layout(&db, &text);
+    let fallback = db.face(FALLBACK_FAMILY, "Regular").expect("hook registers fallback font");
+    assert_eq!(fallback.file_data(), FALLBACK_FONT);
+    assert_eq!(result.lines.len(), 1);
+    assert!(result.glyphs.iter().all(|g| g.font_id == fallback.id() && g.gid != 0));
+    assert!((result.glyphs.iter().map(|g| g.advance).sum::<f64>() - 1200.0).abs() < 0.01);
+}
+
+// Upstream typography added after stage 0 must retain its native shaping/emission.
+#[test]
+fn justified_arabic_keeps_explicit_digit_substitution() {
+    let s = "بسم 3 الرحمن الرحيم";
+    let (db, mut text) = arabic_spike_db_and_text(s, 1200.0);
+    text.runs[0].style.digits = vectorcraft_doc::Digits::Hindi;
+    let actual = layout(&db, &text);
+    let face = db.face(vectorcraft_text_arabic::FALLBACK_FAMILY, "Regular").unwrap();
+    let digit = actual.glyphs.iter().find(|g| g.byte == s.find('3').unwrap()).unwrap();
+    assert_ne!(face.glyph_for('٣'), 0);
+    assert_eq!(digit.gid, face.glyph_for('٣'));
+    assert_eq!(digit.len, 1, "keep the typed digit's source cluster");
+}
+
+#[test]
+fn justified_arabic_keeps_explicit_paragraph_glyph_scaling() {
+    let (db, mut text) = arabic_spike_db_and_text("بسم الله الرحمن الرحيم", 1200.0);
+    text.para.justification.glyph_scaling = [150.0; 3];
+    let actual = layout(&db, &text);
+    let visible: Vec<_> = actual.glyphs.iter().filter(|g| !g.outline.elements().is_empty()).collect();
+    assert!(!visible.is_empty());
+    assert!(visible.iter().all(|g| (g.scale - 1.5).abs() < 1e-9));
+}

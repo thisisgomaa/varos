@@ -103,6 +103,9 @@ pub fn tool_icon(name: &str) -> &'static str {
 }
 
 pub fn source(name: &str) -> ImageSource<'static> {
+    if let Some(source) = crate::varos::icons::source(name) {
+        return source;
+    }
     table().source(name)
 }
 
@@ -163,12 +166,13 @@ mod tests {
     }
 
     /// Characterize the pre-extraction loader against every embedded asset, including custom
-    /// icons. A shared-crate update must not silently change our stroke weight or cache keys.
+    /// icons, before the deliberate Varos overrides. A shared-crate update must not silently
+    /// change our stroke weight or cache keys.
     #[test]
     fn shared_catalog_preserves_existing_icons() {
         for (name, original) in crate::icon_data::ICONS {
             let expected = String::from_utf8_lossy(original).replace("currentColor", "white").replace("stroke-width=\"2\"", "stroke-width=\"1.6\"");
-            let ImageSource::Bytes { uri, bytes } = source(name) else { panic!("expected SVG bytes") };
+            let ImageSource::Bytes { uri, bytes } = table().source(name) else { panic!("expected SVG bytes") };
             assert_eq!(uri.as_ref(), format!("bytes://icon/{name}.svg"));
             assert_eq!(bytes.as_ref(), expected.as_bytes(), "{name}");
             assert!(exists(name));
@@ -178,8 +182,8 @@ mod tests {
 
     #[test]
     fn shared_catalog_preserves_fallback_and_tool_aliases() {
-        let ImageSource::Bytes { uri, bytes } = source("missing-icon") else { panic!("expected SVG bytes") };
-        let ImageSource::Bytes { bytes: fallback, .. } = source("square-dashed") else { panic!("expected SVG bytes") };
+        let ImageSource::Bytes { uri, bytes } = table().source("missing-icon") else { panic!("expected SVG bytes") };
+        let ImageSource::Bytes { bytes: fallback, .. } = table().source("square-dashed") else { panic!("expected SVG bytes") };
         assert_eq!(uri.as_ref(), "bytes://icon/missing-icon.svg");
         assert_eq!(bytes.as_ref(), fallback.as_ref());
         assert!(!exists("missing-icon"));

@@ -568,8 +568,9 @@ fn raise_floating(ctx: &egui::Context, key: &str) {
 pub(crate) fn flyout_frame(t: &Tokens, flash: bool) -> egui::Frame {
     egui::Frame::NONE
         .fill(t.panel)
+        .corner_radius(crate::varos::theme::box_radius(t, 0))
         .stroke(if flash { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.input_border) })
-        .shadow(egui::epaint::Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(90) })
+        .shadow(crate::varos::theme::chrome_shadow(t, [0, 3], 10, 90))
 }
 
 /// What a press on a flyout did.
