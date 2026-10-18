@@ -1,2 +1,6 @@
 [alias]
 xtask = "run --package xtask --"
+
+[net]
+# varos-text is pinned to a git revision over ssh; let the git CLI do the fetch (keys, agents).
+git-fetch-with-cli = true
