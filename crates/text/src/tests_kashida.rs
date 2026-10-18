@@ -158,7 +158,148 @@ fn carets_and_hits_skip_the_zero_length_tatweels() {
             assert_eq!(hit_byte(&l, mid), b, "line {li}: a click on the caret at {b}");
         }
     }
-    assert!(!selection_quads(&l, 0, TEXT.len()).is_empty());
+    // Selecting everything highlights every elongation too.
+    let quads = selection_quads(&l, 0, TEXT.len());
+    for t in l.glyphs.iter().filter(|g| g.gid == tat) {
+        assert!(covered(&quads, &l, t), "a tatweel at {} is left out of the selection", t.byte);
+    }
+}
+
+/// Does a selection quad span the glyph `g` across its line?
+fn covered(quads: &[[Point; 4]], l: &TextLayout, g: &PositionedGlyph) -> bool {
+    let line = &l.lines[g.line];
+    quads.iter().any(|q| {
+        let (x0, x1) = (q[0].x.min(q[1].x), q[0].x.max(q[1].x));
+        let (y0, y1) = (q[0].y.min(q[2].y), q[0].y.max(q[2].y));
+        x0 <= g.origin.x + 1e-6 && x1 >= g.origin.x + g.advance - 1e-6 && y0 <= line.baseline && y1 >= line.baseline
+    })
+}
+
+/// The glyphs of the line drawing the letter that ends at `byte`, and the letter that starts there.
+fn neighbours(l: &TextLayout, line: usize, byte: usize) -> (Vec<&PositionedGlyph>, Vec<&PositionedGlyph>) {
+    let info = &l.lines[line];
+    let glyphs = &l.glyphs[info.glyph_start..info.glyph_end];
+    let before = glyphs.iter().filter(|g| g.len > 0 && g.byte + g.len == byte && g.advance > 0.0).collect();
+    let after = glyphs.iter().filter(|g| g.len > 0 && g.byte == byte && g.advance > 0.0).collect();
+    (before, after)
+}
+
+#[test]
+fn a_tatweel_is_drawn_between_the_two_letters_it_joins() {
+    let db = db_with(NOTO.to_vec());
+    let (_, tat) = tatweel(&db);
+    let mut seen = 0;
+    for width in [300.0, 420.0, 600.0] {
+        let l = layout(&db, &area(TEXT, style(FAMILY, 48.0), width, Justify::JustifyAll));
+        for t in l.glyphs.iter().filter(|g| g.gid == tat) {
+            seen += 1;
+            let (before, after) = neighbours(&l, t.line, t.byte);
+            assert!(!before.is_empty() && !after.is_empty(), "{width}: letters around the tatweel at {}", t.byte);
+            // Right to left: the letter it extends lies to its right, the next letter to its left.
+            for g in &before {
+                assert!(g.origin.x >= t.origin.x + t.advance - 1e-6, "{width}: letter before {} sits left of its tatweel", t.byte);
+            }
+            for g in &after {
+                assert!(g.origin.x + g.advance <= t.origin.x + 1e-6, "{width}: letter at {} sits right of the tatweel", t.byte);
+            }
+        }
+    }
+    assert!(seen > 0);
+}
+
+#[test]
+fn selecting_the_letter_a_tatweel_extends_selects_the_tatweel() {
+    let db = db_with(NOTO.to_vec());
+    let (_, tat) = tatweel(&db);
+    let l = layout(&db, &area(TEXT, style(FAMILY, 48.0), 600.0, Justify::JustifyAll));
+    let tatweels: Vec<_> = l.glyphs.iter().filter(|g| g.gid == tat).collect();
+    assert!(!tatweels.is_empty());
+    for t in tatweels {
+        let (before, after) = neighbours(&l, t.line, t.byte);
+        let start = before.iter().map(|g| g.byte).min().expect("letter before");
+        let end = after.iter().map(|g| g.byte + g.len).max().expect("letter after");
+        // The letter it extends, selected up to the tatweel's byte: the tatweel is highlighted.
+        assert!(covered(&selection_quads(&l, start, t.byte), &l, t), "selection {start}..{} leaves out its tatweel", t.byte);
+        // The next letter alone: the tatweel is not.
+        let next = selection_quads(&l, t.byte, end);
+        let mid = Point::new(t.origin.x + t.advance * 0.5, l.lines[t.line].baseline);
+        assert!(!next.iter().any(|q| q[0].x.min(q[1].x) < mid.x && q[0].x.max(q[1].x) > mid.x), "selection {}..{end} takes the tatweel", t.byte);
+    }
+}
+
+#[test]
+fn a_face_without_tatweel_takes_no_kashida_and_borrows_none() {
+    use skrifa::MetadataProvider;
+    use write_fonts::tables::cmap::Cmap;
+    use write_fonts::types::Tag;
+    // Noto Sans Arabic without U+0640, renamed; the real Noto (with a tatweel) is installed too.
+    let font = skrifa::FontRef::new(NOTO).expect("font");
+    let mappings = font
+        .charmap()
+        .mappings()
+        .filter(|(c, _)| *c != 0x0640)
+        .filter_map(|(c, g)| Some((char::from_u32(c)?, write_fonts::types::GlyphId::new(g.to_u32()))));
+    let cmap = Cmap::from_mappings(mappings).expect("cmap");
+    let name = crate::test_fonts::name_table(&[(1, "Tatweelless Arabic"), (2, "Regular"), (4, "Tatweelless Arabic"), (6, "TatweellessArabic")])
+        .expect("name");
+    let mut builder = write_fonts::FontBuilder::new();
+    builder.add_table(&cmap).expect("cmap");
+    builder.add_raw(Tag::new(b"name"), name);
+    for r in font.table_directory.table_records() {
+        let tag = Tag::new(&r.tag().to_be_bytes());
+        if !builder.contains(tag) {
+            builder.add_raw(tag, font.table_data(r.tag()).expect("table").as_bytes());
+        }
+    }
+    let db = db_with(builder.build());
+    db.add_font(NOTO.to_vec());
+    let face = db.face("Tatweelless Arabic", "Regular").expect("modified face");
+    assert_eq!(face.glyph_for('\u{0640}'), 0);
+    let l = layout(&db, &area(TEXT, style("Tatweelless Arabic", 48.0), 600.0, Justify::JustifyAll));
+    assert!(l.glyphs.iter().all(|g| g.font_id == face.id() && g.gid != 0), "no glyph borrowed from another face");
+    // Its word spaces still justify the line.
+    let first = &l.lines[0];
+    assert!((first.x1 - first.x0 - 600.0).abs() < 0.01);
+}
+
+#[test]
+fn single_word_alignment_overrides_take_no_kashida() {
+    use vectorcraft_doc::SingleWordJustify;
+    let s = "العالمين";
+    let db = db_with(NOTO.to_vec());
+    let (_, tat) = tatweel(&db);
+    for (single, stretched) in [
+        (SingleWordJustify::FullJustify, true),
+        (SingleWordJustify::AlignLeft, false),
+        (SingleWordJustify::AlignCenter, false),
+        (SingleWordJustify::AlignRight, false),
+    ] {
+        let mut t = area(s, style(FAMILY, 48.0), 400.0, Justify::JustifyAll);
+        t.para.justification.single_word = single;
+        let l = layout(&db, &t);
+        assert_eq!(l.glyphs.iter().any(|g| g.gid == tat), stretched, "{single:?}");
+    }
+}
+
+#[test]
+fn arabic_letter_spacing_never_opens_gaps_between_joined_letters() {
+    let db = db_with(NOTO.to_vec());
+    let (_, tat) = tatweel(&db);
+    // In source order: line breaks may differ, each letter's advance may not.
+    let advances = |s: &str, l: &TextLayout| -> Vec<(usize, u32, u64)> {
+        let mut v: Vec<_> =
+            l.glyphs.iter().filter(|g| g.gid != tat && !s[g.byte..].starts_with(' ')).map(|g| (g.byte, g.gid, g.advance.to_bits())).collect();
+        v.sort_unstable();
+        v
+    };
+    // Desired 10 %, up to 30 %: Arabic letters take none of it, in one-word and in longer lines.
+    for (s, width) in [("العالمين", 400.0), (TEXT, 300.0), (TEXT, 600.0)] {
+        let mut t = area(s, style(FAMILY, 48.0), width, Justify::JustifyAll);
+        t.para.justification.letter_spacing = [0.0, 10.0, 30.0];
+        let natural = advances(s, &layout(&db, &area(s, style(FAMILY, 48.0), 5000.0, Justify::Right)));
+        let got = advances(s, &layout(&db, &t));
+        assert_eq!(got, natural, "{s:?} at {width}");
+    }
 }
 
 #[test]

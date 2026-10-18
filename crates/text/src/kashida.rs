@@ -52,7 +52,7 @@ pub(crate) fn justified(justify: Justify, last: bool) -> bool {
 /// Does glyph `g` belong to a joining script (Arabic and the like), whose words are never cut
 /// and never letter-spaced?
 pub(crate) fn joins(g: &SGlyph) -> bool {
-    g.inline.is_none() && arabic::joining_script(g.ch)
+    g.inline.is_none() && (arabic::joining_script(g.ch) || g.ch == arabic::TATWEEL)
 }
 
 /// The end of the word the overflowing glyph `j` is in, with the spaces after it: where a line
@@ -106,6 +106,11 @@ pub(crate) fn reshape_word(sh: &Shaper<'_>, word: Range<usize>, slots: &[usize])
         g.len = end.saturating_sub(start);
         g.run = *global.get(g.run)?;
     }
+    // A tatweel and the letter after it now share that letter's byte, so the layout's visual
+    // order treats them as one cluster and keeps their order inside it, which for a
+    // right-to-left cluster is left to right. The tatweel goes after the letter's glyphs: drawn
+    // to the letter's right, between it and the letter it extends.
+    out.sort_by_key(|g| (g.byte, g.len == 0));
     Some(out)
 }
 
@@ -115,6 +120,8 @@ struct Word {
     glyphs: Range<usize>,
     bytes: Range<usize>,
     width: f64,
+    /// The face the paragraph set it in: every re-shaped glyph must come from it too.
+    face: u32,
 }
 
 /// The same glyphs set the same way (re-shaping a word apart must reproduce the paragraph's).
@@ -199,12 +206,14 @@ pub(crate) fn stretch_line(
         let first = &glyphs[0];
         let bytes = glyphs.iter().map(|g| g.byte).min().unwrap_or(0)..glyphs.iter().map(|g| g.byte + g.len).max().unwrap_or(0);
         let ok = glyphs.iter().all(|g| g.level.is_rtl() && g.face.id() == first.face.id() && g.run == first.run && g.gid != 0)
+            // The face's own tatweel: never one borrowed from another font.
+            && first.face.glyph_for(arabic::TATWEEL) != 0
             && sh.runs.get(first.run).is_some_and(|(_, st)| plain(st))
             && sh.text.get(bytes.clone()).is_some_and(arabic::kashida_word);
         if !ok {
             continue;
         }
-        let word = Word { glyphs: a..j, bytes, width: glyphs.iter().map(|g| g.adv).sum() };
+        let word = Word { glyphs: a..j, bytes, width: glyphs.iter().map(|g| g.adv).sum(), face: first.face.id() };
         let same = reshaped(sh, &word, &[], options, first.leading).is_some_and(|(again, _)| same_setting(&again, glyphs));
         if same {
             words.push(word);
@@ -218,7 +227,7 @@ pub(crate) fn stretch_line(
     let leading: Vec<f64> = words.iter().map(|w| sg[w.glyphs.start].leading).collect();
     let line_bytes = words[0].bytes.start.min(sg[i].byte)..words.iter().map(|w| w.bytes.end).max().unwrap_or(0);
     let mut cache: HashMap<(usize, Vec<usize>), Option<Setting>> = HashMap::new();
-    let plan = arabic::plan(sh.text, line_bytes, natural, native_safe.iter().flatten().copied().collect(), width, arabic::POLICY, |slots| {
+    let Ok(plan) = arabic::plan(sh.text, line_bytes, natural, native_safe.iter().flatten().copied().collect(), width, arabic::POLICY, |slots| {
         let mut width = natural;
         let mut safe_now = HashSet::new();
         let mut missing = false;
@@ -232,14 +241,17 @@ pub(crate) fn stretch_line(
             let set = cache.entry((k, mine.clone())).or_insert_with(|| reshaped(sh, word, &mine, options, leading[k])).clone()?;
             width += set.0.iter().map(|g| g.adv).sum::<f64>() - word.width;
             safe_now.extend(safe(&set.0));
-            missing |= set.0.iter().any(|g| g.gid == 0);
+            // A missing glyph, or one from another face (a fallback), rejects the trial.
+            missing |= set.0.iter().any(|g| g.gid == 0 || g.face.id() != word.face);
             payload.push((k, set));
         }
         // Every slot lies in a word that may take one.
         let placed: usize =
             payload.iter().map(|(k, _)| slots.iter().filter(|s| words[*k].bytes.start < **s && **s < words[*k].bytes.end).count()).sum();
         (placed == slots.len()).then_some(Measured { width, safe: safe_now, missing_glyph: missing, payload })
-    });
+    }) else {
+        return 0;
+    };
     let Some(payload) = plan.payload else { return 0 };
     let mut grown = 0isize;
     // Splice from the last word back, so the earlier glyph indices stay put.

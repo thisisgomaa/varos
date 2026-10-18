@@ -1475,10 +1475,10 @@ mod wrapping_tests {
 
     #[test]
     fn greedy_wrap_keeps_an_oversized_first_cluster_and_its_source_range() {
-        let text = "بَت";
         // Varos: an Arabic word too wide for the line now overflows whole (`kashida::joins`); the
-        // cluster rule is checked on non-joining letters at the same synthetic bytes.
-        let glyphs = synthetic_glyphs(&[(0, 4, 2.0, 'b'), (0, 4, 2.0, 'b'), (4, 2, 1.0, 't')]);
+        // cluster rule is checked on non-joining letters with the same byte lengths.
+        let text = "ä\u{301}ŧ";
+        let glyphs = synthetic_glyphs(&[(0, 4, 2.0, 'ä'), (0, 4, 2.0, 'ä'), (4, 2, 1.0, 'ŧ')]);
 
         let (end, hyphenated) = break_line(text, &glyphs, 0, 3.0, &[], 0.0, None, Burasagari::None, Kinsoku::Hard);
 
@@ -1490,9 +1490,9 @@ mod wrapping_tests {
 
     #[test]
     fn greedy_wrap_keeps_an_oversized_cluster_after_a_line_start_atomic() {
-        let text = "بَتَث";
         // Varos: non-joining letters, as above.
-        let glyphs = synthetic_glyphs(&[(0, 4, 1.0, 'b'), (4, 4, 2.0, 't'), (4, 4, 2.0, 't'), (8, 2, 1.0, 's')]);
+        let text = "ä\u{301}ŧ\u{301}ş";
+        let glyphs = synthetic_glyphs(&[(0, 4, 1.0, 'ä'), (4, 4, 2.0, 'ŧ'), (4, 4, 2.0, 'ŧ'), (8, 2, 1.0, 'ş')]);
 
         let (first_end, _) = break_line(text, &glyphs, 0, 3.0, &[], 0.0, None, Burasagari::None, Kinsoku::Hard);
         assert_eq!(first_end, 1);
@@ -1847,6 +1847,9 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
                 && compressed.is_empty()
                 && wakan.is_empty()
                 && kashida::justified(para.justify, last_of_para)
+                // Single Word Justification's Align Left/Center/Right aligns a one-word line
+                // instead of justifying it: no kashida either.
+                && (sg[i..trimmed].iter().any(SGlyph::is_space) || para.justification.single_word == SingleWordJustify::FullJustify)
             {
                 let levels = bidi.as_ref().map_or(&[][..], |b| &b.levels[..]);
                 let shaper = kashida::Shaper { db: cx.db, text: cx.text, runs: &cx.runs, feats: &cx.opts.features, levels, para_start: pr.start };

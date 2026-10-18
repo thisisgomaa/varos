@@ -62,17 +62,18 @@ mod tests {
     #[test]
     fn plan_in_points_prefers_seen_and_stops_at_the_budget() {
         let text = "بسم الله الرحمن الرحيم";
-        let safe: HashSet<usize> = candidates(text, 0..text.len()).into_iter().map(|c| c.byte).collect();
+        let safe: HashSet<usize> = candidates(text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
         assert!(!safe.is_empty());
         // Each tatweel adds 3 pt; slack 20 pt; Balanced uses at most 60 % of it.
         let p = plan(text, 0..text.len(), 300.0f64, safe.clone(), 320.0, POLICY, |slots| {
             Some(Measured { width: 300.0 + 3.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: slots.len() })
-        });
+        })
+        .unwrap();
         assert_eq!(p.slots.len(), 4);
         assert_eq!(p.width, 312.0);
         assert_eq!(p.payload, Some(4));
         // The first slot is after a seen (priority 0).
-        let first = candidates(text, 0..text.len()).into_iter().find(|c| c.priority == 0).map(|c| c.byte);
+        let first = candidates(text, 0..text.len()).unwrap().into_iter().find(|c| c.priority == 0).map(|c| c.byte);
         assert!(p.slots.contains(&first.unwrap()));
         // Virtual text keeps the authored bytes apart from the tatweels.
         let w = WorkingText::new(text, &p.slots).unwrap();

@@ -445,7 +445,9 @@ pub fn selection_quads(layout: &TextLayout, a: usize, b: usize) -> Vec<[Point; 4
         return out;
     }
     if layout.glyphs.iter().any(|g| g.rtl) {
-        for g in layout.glyphs.iter().filter(|g| g.byte < b && g.byte + g.len > a) {
+        // Varos: a zero-length glyph (a kashida's tatweel, a hyphen) extends the character before
+        // its byte, so it is selected with that character.
+        for g in layout.glyphs.iter().filter(|g| (g.byte < b && g.byte + g.len > a) || (g.len == 0 && g.byte > a && g.byte <= b)) {
             let Some(l) = layout.lines.get(g.line) else { continue };
             let p = layout.logical_point(g.origin);
             let (x0, x1) = (p.x, p.x + g.advance);
