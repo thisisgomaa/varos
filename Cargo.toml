@@ -132,4 +132,3 @@ hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b
 krilla = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d" }
 
 # Private Arabic technical spike; local Varos forks.
-egui_tiles = { path = "~/Documents/AI workspace/varos/varos/vendor/egui_tiles" }
