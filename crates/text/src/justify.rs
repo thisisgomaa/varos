@@ -56,6 +56,8 @@ pub(crate) fn is_word_space(g: &SGlyph) -> bool {
 /// A glyph letter spacing follows: a visible glyph followed by another one in the same word.
 fn letter_gap(g: &SGlyph, next: Option<&SGlyph>) -> bool {
     !g.is_space() && g.inline.is_none() && next.is_some_and(|n| !n.is_space())
+        // Varos: letters of a joining script (Arabic) are never spaced apart; it breaks their joins.
+        && !(crate::kashida::joins(g) && next.is_some_and(crate::kashida::joins))
 }
 
 /// The width of a word space in `g`'s font and size: what letter spacing is a share of.

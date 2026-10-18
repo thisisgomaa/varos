@@ -6,7 +6,7 @@ use std::sync::Arc;
 use unicode_bidi::Level;
 use unicode_script::{Script, UnicodeScript};
 
-use harfrust::{Direction, Feature, ShapeOptions, Tag, UnicodeBuffer};
+use harfrust::{BufferFlags, Direction, Feature, ShapeOptions, Tag, UnicodeBuffer};
 use skrifa::MetadataProvider;
 use skrifa::instance::Size;
 use vectorcraft_doc::text::INLINE_CHAR;
@@ -62,6 +62,9 @@ pub(crate) struct SGlyph {
     /// A word of a script written without spaces (Thai, Lao, Khmer, Myanmar) ends after the
     /// glyph's cluster, so a line may break there ([`mark_word_ends`]).
     pub word_end: bool,
+    /// Right-to-left text: HarfRust marks this glyph's cluster safe to have a tatweel (U+0640)
+    /// inserted before it, for kashida justification (see `crate::kashida`).
+    pub tatweel: bool,
 }
 
 /// How `vpal` and the vertical kerning with it move an upright glyph in vertical type and change
@@ -549,6 +552,7 @@ fn inline_glyph(face: &Arc<FontFace>, st: &CharStyle, art: &InlineArt, run: usiz
         level,
         inline: Some(InlineBox { art: drawn, xf }),
         word_end: false,
+        tatweel: false,
     }
 }
 
@@ -575,6 +579,8 @@ struct Shaped {
     raw: Vec<(u32, u32, i32, i32, i32)>,
     proportional: Vec<bool>,
     vpal: Vec<Option<VAdjust>>,
+    /// Right-to-left segments: HarfRust's safe-to-insert-tatweel flag of each glyph.
+    tatweel: Vec<bool>,
 }
 
 fn is_mark(c: char) -> bool {
@@ -634,7 +640,7 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
     // Shape the segment as if all of it were in `st`, with the features `more` on top.
     let shape_in = |st: &CharStyle, more: &[Feature]| {
         let mut shaped = Shaped::default();
-        let Shaped { raw, proportional, vpal } = &mut shaped;
+        let Shaped { raw, proportional, vpal, tatweel } = &mut shaped;
         let hb_shaped = face.hb().map(|hb| {
             let shaper = face.shaper.shaper(&hb).instance(face.instance.as_ref()).build();
             // gid, cluster, x and y advance, x and y offset.
@@ -654,6 +660,10 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
                 }
                 buf.set_direction(direction);
                 buf.guess_segment_properties();
+                // Kashida justification asks where a tatweel may go (flags only: same glyphs).
+                if direction == Direction::RightToLeft {
+                    buf.set_flags(buf.flags() | BufferFlags::PRODUCE_SAFE_TO_INSERT_TATWEEL);
+                }
                 // Harfrust keeps this Unicode context for joining/positional shaping, but does not emit
                 // glyphs for it. This retains context at real style/font segmentation boundaries without
                 // shaping across those boundaries or claiming cross-style ligatures/mark attachment.
@@ -664,20 +674,24 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
                     buf.set_post_context(post);
                 }
                 let gb = shaper.shape(buf, ShapeOptions::new().features(&feats));
-                gb.glyph_infos()
+                let glyphs = gb
+                    .glyph_infos()
                     .iter()
                     .zip(gb.glyph_positions())
                     .map(|(info, pos)| (info.glyph_id, info.cluster, pos.x_advance, pos.y_advance, pos.x_offset, pos.y_offset))
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (glyphs, gb.glyph_infos().iter().map(|info| info.safe_to_insert_tatweel()).collect::<Vec<bool>>())
             };
             let along = if level.is_rtl() { Direction::RightToLeft } else { Direction::LeftToRight };
-            *raw = shape(&feats.resolve(st), along).into_iter().map(|(g, c, xa, _, xo, yo)| (g, c, xa, xo, yo)).collect();
+            let (glyphs, flags) = shape(&feats.resolve(st), along);
+            *raw = glyphs.into_iter().map(|(g, c, xa, _, xo, yo)| (g, c, xa, xo, yo)).collect();
+            *tatweel = flags;
             let raw = &*raw;
             let same_glyphs = |v: &[(u32, u32, i32, i32, i32, i32)]| v.len() == raw.len() && v.iter().zip(raw).all(|(a, b)| a.0 == b.0);
             if feats.proportional(st) {
                 // `palt` is positioning only: the same glyphs set on their full widths tell which
                 // advances it changed (kerning and the rest change both alike).
-                let full = shape(&feats.resolve_fixed_width(st), along);
+                let full = shape(&feats.resolve_fixed_width(st), along).0;
                 if same_glyphs(&full) {
                     *proportional = full.iter().zip(raw).map(|(a, b)| a.2 != b.2).collect();
                 }
@@ -688,7 +702,7 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
                 // and without either tell how it moves each and changes its advance down the column
                 // (y up, advances negative). Which advances `vpal` itself changed comes from setting
                 // them with it alone.
-                let ttb = |proportional, kerning| shape(&feats.resolve_vertical(st, proportional, kerning), Direction::TopToBottom);
+                let ttb = |proportional, kerning| shape(&feats.resolve_vertical(st, proportional, kerning), Direction::TopToBottom).0;
                 let (with, without, alone) = (ttb(true, true), ttb(false, false), ttb(true, false));
                 if same_glyphs(&with) && same_glyphs(&without) && same_glyphs(&alone) {
                     *vpal = with
@@ -727,7 +741,7 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
         }
         shaped
     };
-    let Shaped { raw, proportional, vpal } = if mixed_kerning {
+    let Shaped { raw, proportional, vpal, tatweel } = if mixed_kerning {
         // A font's kerning pair applies after a character with automatic kerning and not after one
         // with manual kerning. The segment is shaped apart where manual kerning ends, so each piece
         // is text with automatic kerning followed by text with manual kerning. A piece is shaped
@@ -808,6 +822,7 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
             level: *level,
             inline: None,
             word_end: false,
+            tatweel: tatweel.get(gi).copied().unwrap_or(false),
         });
     }
 }

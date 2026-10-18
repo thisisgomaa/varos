@@ -3,19 +3,14 @@ name = "vectorcraft-text-arabic"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Arabic kashida (tatweel) justification policy for VectorCraft text, from Varos' varos-text"
 publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-kurbo.workspace = true
-varos-text = { path = "~/Documents/AI workspace/varos/varos/crates/varos-text" }
-
-[dev-dependencies]
-vectorcraft-text.workspace = true
-vectorcraft-render.workspace = true
-vectorcraft-doc.workspace = true
-vectorcraft-geom.workspace = true
-vectorcraft-color.workspace = true
-image.workspace = true
+# Only the backend-neutral kashida policy: no second shaper, font stack or font file.
+# Path to the Varos worktree for now; to become a pinned git rev once it lands on Varos main.
+varos-text = { path = "~/Documents/AI workspace/varos-wt-kashida/varos/crates/varos-text", default-features = false }
+unicode-script = "0.5"

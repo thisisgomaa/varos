@@ -133,4 +133,3 @@ krilla = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c9
 
 # Private Arabic technical spike; local Varos forks.
 egui_tiles = { path = "~/Documents/AI workspace/varos/varos/vendor/egui_tiles" }
-cosmic-text = { path = "~/Documents/AI workspace/varos/varos/vendor/cosmic-text" }
