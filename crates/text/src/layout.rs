@@ -1740,9 +1740,19 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
         // Thai, Lao, Khmer and Myanmar break lines between words, not at spaces.
         mark_word_ends(text.get(pr.clone()).unwrap_or_default(), pr.start, &mut sg);
         // Japanese composition: consecutive punctuation shares one half-em space.
-        let compressed = if para.mojikumi == Mojikumi::LineEndHalf { compress_punctuation(&mut sg) } else { vec![] };
+        let mut compressed = if para.mojikumi == Mojikumi::LineEndHalf { compress_punctuation(&mut sg) } else { vec![] };
         // …and a quarter em between Japanese and Latin text.
-        let wakan = if para.mojikumi == Mojikumi::LineEndHalf { space_japanese_and_latin(&mut sg) } else { vec![] };
+        let mut wakan = if para.mojikumi == Mojikumi::LineEndHalf { space_japanese_and_latin(&mut sg) } else { vec![] };
+        // Varos: a paragraph Mojikumi changed nothing in (new type takes Line-end Punctuation Half
+        // Width, `new_type_para`) keeps empty lists, read below as "nothing changed" glyph for
+        // glyph. Kashida, which splices glyphs into `sg`, runs only while both are empty, so their
+        // per-glyph indices never go stale.
+        if !compressed.contains(&true) {
+            compressed.clear();
+        }
+        if wakan.iter().all(|&w| w == 0.0) {
+            wakan.clear();
+        }
         // Justification…: the glyphs at Desired word and letter spacing and glyph scaling, and how
         // far a justified line may move each one from it.
         let mut flex = apply_desired(&mut sg, &para.justification, !cx.vertical);

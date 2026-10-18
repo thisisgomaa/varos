@@ -386,3 +386,48 @@ fn arabic_single_word_lines_are_never_letter_spaced() {
     let right = l.glyphs.iter().map(|g| g.origin.x + g.advance).fold(f64::MIN, f64::max);
     assert!((right - 400.0).abs() < 0.01, "right edge {right}");
 }
+
+/// The paragraph the Type tools give new type (`new_type_para` in the engine): aligned Auto, then
+/// justified from the Paragraph panel, with Line-end Punctuation Half Width and Standard
+/// burasagari. Mojikumi changes nothing in Arabic text, so it must not turn kashida off. The
+/// character style is the default one (Source Sans 3, 12 pt): the Arabic falls back to the one
+/// Arabic face loaded, as it falls back to a system face in the app.
+#[test]
+fn type_tool_paragraphs_take_kashida() {
+    use vectorcraft_doc::{Burasagari, Mojikumi, ParaStyle};
+    const LONG: &str = "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين اهدنا الصراط المستقيم";
+    let db = db_with(NOTO.to_vec());
+    let (face, tat) = tatweel(&db);
+    let type_tool = |justify: Justify, mojikumi: Mojikumi| {
+        let mut t = area(LONG, CharStyle::default(), 120.0, Justify::Auto);
+        t.para = ParaStyle { justify: Justify::Auto, mojikumi, burasagari: Burasagari::Standard, ..Default::default() };
+        t.para.justify = justify;
+        t
+    };
+    for justify in [Justify::JustifyAll, Justify::JustifyRight] {
+        let new_type = layout(&db, &type_tool(justify, Mojikumi::LineEndHalf));
+        let tatweels = new_type.glyphs.iter().filter(|g| g.font_id == face && g.gid == tat && g.len == 0).count();
+        assert!(tatweels > 0, "{justify:?}: kashida in the Type tool's paragraph");
+        let letters = new_type.glyphs.iter().filter(|g| g.len > 0 && !LONG[g.byte..].starts_with(' '));
+        assert!(
+            letters.clone().count() > 0 && letters.into_iter().all(|g| g.font_id == face),
+            "{justify:?}: the letters in the Arabic fallback face"
+        );
+        // Exactly as a paragraph without Mojikumi sets it.
+        let plain = layout(&db, &type_tool(justify, Mojikumi::None));
+        let set = |l: &TextLayout| l.glyphs.iter().map(|g| (g.gid, g.byte, g.len, g.origin.x.to_bits(), g.line)).collect::<Vec<_>>();
+        assert_eq!(set(&new_type), set(&plain), "{justify:?}");
+        // Justified lines (not the last of Justify Right) fill the measure.
+        for line in new_type.lines.iter().take(new_type.lines.len() - 1) {
+            assert!((line.x1 - line.x0 - 120.0).abs() < 0.01, "{justify:?}: {}", line.x1 - line.x0);
+        }
+    }
+    // Where Mojikumi does change the paragraph (a quarter em between a kana and a Latin letter),
+    // its per-glyph adjustments must stay aligned with the glyphs: no kashida is spliced in.
+    let mixed = format!("{LONG} あa");
+    let mut t = type_tool(Justify::JustifyAll, Mojikumi::LineEndHalf);
+    t.runs[0].text = mixed.clone();
+    let l = layout(&db, &t);
+    assert!(l.glyphs.iter().all(|g| g.gid != tat || g.len > 0), "no kashida while Mojikumi adjusts the paragraph");
+    assert!(!l.glyphs.is_empty());
+}

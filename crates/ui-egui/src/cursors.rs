@@ -900,6 +900,10 @@ mod tests {
             assert_eq!(img, &app.canvas.cursors.get(Cursor::Arrow, 1.0).unwrap());
             // Where the OS can't show the bitmap, its system cursor.
             assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Default);
+        } else if crate::varos::cursors::SYSTEM_FALLBACK {
+            // Varos on macOS: no glyph painted. Headless, no native Varos cursor is set, so the
+            // system cursor stands in.
+            assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Default);
         } else {
             assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::None);
         }
@@ -918,6 +922,36 @@ mod tests {
         // Off the canvas, the panels' cursors.
         let off = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(Pos2::new(canvas.left() - 20.0, canvas.center().y))]);
         assert!(off.platform_output.cursor_image.is_none());
+    }
+
+    /// Varos: on macOS a state without a native Varos cursor (the Type tool's I-beam, the Line
+    /// tool's crosshair, the arrow when no Varos cursor can be set) takes its system cursor; the
+    /// pointer is never hidden for a painted glyph, which trails it.
+    #[test]
+    fn macos_states_without_a_varos_cursor_take_the_system_cursor() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        let over = app.canvas_rect.unwrap().center();
+        for (k, (tool, system)) in
+            [("selection", egui::CursorIcon::Default), ("type", egui::CursorIcon::Text), ("lineSegment", egui::CursorIcon::Crosshair)]
+                .into_iter()
+                .enumerate()
+        {
+            app.run("tool.select", json!({"tool": tool})).unwrap();
+            let out = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(over + vec2(k as f32 * 3.0, 0.0))]);
+            if OS_CURSORS {
+                continue;
+            }
+            if crate::varos::cursors::SYSTEM_FALLBACK {
+                assert_eq!(out.platform_output.cursor_icon, system, "{tool}: the system cursor, never a hidden pointer");
+            } else {
+                assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::None, "{tool}: the web paints the glyph");
+            }
+        }
     }
 
     /// On Wayland the glyph is painted and the pointer hidden over the canvas, on every build (#1645).

@@ -166,6 +166,17 @@ pub(crate) fn image(c: Cursor, tool: &str, ppp: f32) -> Option<CustomCursorImage
     })
 }
 
+/// Does this build stand system cursors in for the states without a Varos cursor, rather than
+/// painting the upstream glyph into the window? macOS does: a painted glyph trails the pointer by
+/// a frame or more, the system pointer never does (cursors are never drawn by hand there).
+pub(crate) const SYSTEM_FALLBACK: bool = cfg!(target_os = "macos");
+
+/// May the canvas paint the upstream glyph? Not on a [`SYSTEM_FALLBACK`] build, except where a
+/// Wayland window is simulated (tests): Wayland never sizes a cursor bitmap itself (#1645).
+pub(crate) fn paints_glyphs(system_fallback: bool, wayland: bool) -> bool {
+    !system_fallback || wayland
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) use mac::{begin_frame, end_frame, request};
 
@@ -278,6 +289,13 @@ mod mac {
             if let Some((_, old, _cursor)) = state.active.take() {
                 old.enableCursorRects();
                 old.resetCursorRects();
+                // egui-winit sends no cursor when its icon is unchanged (the canvas lease reports
+                // Default): have AppKit rebuild winit's view rectangle now, so the cursor winit
+                // holds (the panels' arrow, I-beam or hidden pointer) replaces ours at once
+                // instead of sticking until the pointer crosses another rectangle.
+                if let Some(view) = old.contentView() {
+                    old.invalidateCursorRectsForView(&view);
+                }
             }
             if let (Some(key), Some(window)) = (desired, window) {
                 let cursor = state.cache.iter().find(|(k, _)| *k == key).and_then(|(_, c)| c.clone());
@@ -400,6 +418,14 @@ mod tests {
         assert!(rasterize("missing.svg", 32).is_none());
         assert!(rasterize("pen.svg", 0).is_none());
         assert!(rasterize("pen.svg", 257).is_none());
+    }
+
+    #[test]
+    fn system_fallback_builds_never_paint_a_glyph() {
+        assert!(!paints_glyphs(true, false), "macOS: the system cursor stands in, never a trailing glyph");
+        assert!(paints_glyphs(true, true), "a simulated Wayland window still paints (#1645)");
+        assert!(paints_glyphs(false, false) && paints_glyphs(false, true), "other builds keep the upstream behaviour");
+        assert_eq!(SYSTEM_FALLBACK, cfg!(target_os = "macos"));
     }
 
     #[test]

@@ -589,8 +589,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                     ui.ctx().set_cursor_image(crate::varos::cursors::image(c, varos_tool, ppp).or_else(|| app.canvas.cursors.get(c, ppp)));
                     cursor_icon(c)
                 }
+                // Varos: macOS paints no glyph; a state without a Varos cursor takes its system
+                // cursor below (the I-beam, the crosshair…), which never trails the pointer.
                 Some(hp)
                     if custom
+                        && crate::varos::cursors::paints_glyphs(crate::varos::cursors::SYSTEM_FALLBACK, app.services.wayland)
                         && crate::cursors::paint_glyphs(crate::cursors::HIDES_ONLY_WHEN_KEY, ui.input(|i| i.focused))
                         && crate::cursors::paint(&painter, c, hp, 1.0 / ui_scale) =>
                 {
