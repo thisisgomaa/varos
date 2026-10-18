@@ -1424,7 +1424,9 @@ impl VectorcraftApp {
             self.picks.recover();
             self.status(format!("Internal error: {msg} (please report this bug)"));
         }
-pub mod varos;
+        varos::profile::finish_frame();
+        #[cfg(target_os = "macos")]
+        varos::cursors::end_frame(ui.ctx());
     }
 
     fn ui_frame(&mut self, ui: &mut egui::Ui) {

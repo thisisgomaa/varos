@@ -7,9 +7,6 @@ pub(crate) mod profile;
 pub(crate) mod shortcuts;
 #[cfg(test)]
 mod perf_tests;
-pub mod icons;
-pub mod theme;
-pub mod names;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;

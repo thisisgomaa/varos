@@ -4093,6 +4093,7 @@ imageTrace	Outline	Ääriviiva
 @msg	balance must be between 0 and 100	tasapainon on oltava väliltä 0–100
 @msg	batch step {_1} (`{id}`) failed: {e}	erävaihe {_1} (`{id}`) epäonnistui: {e}
 @msg	brightness must be dark|mediumDark|mediumLight|light	kirkkauden on oltava dark|mediumDark|mediumLight|light
+@msg	brightness must be varos|dark|mediumDark|mediumLight|light	kirkkauden on oltava varos|dark|mediumDark|mediumLight|light
 @msg	can't encode the document: {0}	asiakirjaa ei voi koodata: {0}
 @msg	can't parse shortcut `{c}`	pikanäppäintä `{c}` ei voi jäsentää
 @msg	can't parse shortcut `{s}` for `{k}`	pikanäppäintä `{s}` kohteelle `{k}` ei voi jäsentää

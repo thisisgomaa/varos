@@ -3677,6 +3677,7 @@ effect	Regular	ჩვეულებრივი
 @msg	balance must be between 0 and 100	balance უნდა იყოს 0-სა და 100-ს შორის
 @msg	batch step {_1} (`{id}`) failed: {e}	პაკეტის ნაბიჯი {_1} (`{id}`) ვერ შესრულდა: {e}
 @msg	brightness must be dark|mediumDark|mediumLight|light	brightness უნდა იყოს dark|mediumDark|mediumLight|light
+@msg	brightness must be varos|dark|mediumDark|mediumLight|light	brightness უნდა იყოს varos|dark|mediumDark|mediumLight|light
 @msg	can't encode the document: {0}	დოკუმენტის კოდირება ვერ ხერხდება: {0}
 @msg	can't parse shortcut `{c}`	მალსახმობის `{c}` ანალიზი ვერ ხერხდება
 @msg	can't parse shortcut `{s}` for `{k}`	მალსახმობის `{s}` ანალიზი `{k}`-სთვის ვერ ხერხდება

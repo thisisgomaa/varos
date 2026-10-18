@@ -3915,6 +3915,7 @@ imageTrace	Outline	Kontur
 @msg	balance must be between 0 and 100	balance harus di antara 0 dan 100
 @msg	batch step {_1} (`{id}`) failed: {e}	langkah batch {_1} (`{id}`) gagal: {e}
 @msg	brightness must be dark|mediumDark|mediumLight|light	brightness harus dark|mediumDark|mediumLight|light
+@msg	brightness must be varos|dark|mediumDark|mediumLight|light	brightness harus varos|dark|mediumDark|mediumLight|light
 @msg	can't encode the document: {0}	tidak dapat mengodekan dokumen: {0}
 @msg	can't parse shortcut `{c}`	tidak dapat mengurai pintasan `{c}`
 @msg	can't parse shortcut `{s}` for `{k}`	tidak dapat mengurai pintasan `{s}` untuk `{k}`

@@ -3845,6 +3845,7 @@ theme	Appearance	Εμφάνιση
 @msg	balance must be between 0 and 100	η ισορροπία πρέπει να είναι μεταξύ 0 και 100
 @msg	batch step {_1} (`{id}`) failed: {e}	απέτυχε το βήμα {_1} της μαζικής επεξεργασίας (`{id}`): {e}
 @msg	brightness must be dark|mediumDark|mediumLight|light	η φωτεινότητα πρέπει να είναι dark|mediumDark|mediumLight|light
+@msg	brightness must be varos|dark|mediumDark|mediumLight|light	η φωτεινότητα πρέπει να είναι varos|dark|mediumDark|mediumLight|light
 @msg	can't encode the document: {0}	δεν είναι δυνατή η κωδικοποίηση εγγράφου: {0}
 @msg	can't parse shortcut `{c}`	δεν είναι δυνατή η ανάλυση της συντόμευσης `{c}`
 @msg	can't parse shortcut `{s}` for `{k}`	δεν είναι δυνατή η ανάλυση της συντόμευσης `{s}` για `{k}`
