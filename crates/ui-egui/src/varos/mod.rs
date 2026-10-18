@@ -1,8 +1,15 @@
-//! Fork-specific presentation: Varos appearance, icons, names. Preserve upstream lookup keys and persisted identifiers.
+//! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
 pub mod icons;
 pub mod theme;
 pub mod names;
-pub mod perf_tests;
+pub(crate) mod cursors;
+pub(crate) mod profile;
+pub(crate) mod shortcuts;
+#[cfg(test)]
+mod perf_tests;
+pub mod icons;
+pub mod theme;
+pub mod names;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -110,6 +117,3 @@ mod tests {
         assert_eq!(label("my VectorCraft artwork.svg"), "my VectorCraft artwork.svg");
     }
 }
-pub(crate) mod cursors;
-pub(crate) mod profile;
-pub(crate) mod shortcuts;
