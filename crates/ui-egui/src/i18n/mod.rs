@@ -24,7 +24,7 @@
 //!   rows hold whole messages or templates such as `Couldn't open {name}: {e}`, and the values in
 //!   the placeholders are translated in turn (the reason after `: {e}` is often a message too).
 
-mod catalog;
+pub(crate) mod catalog;
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -504,23 +504,23 @@ pub fn t(s: &str) -> &str {
 
 /// Translate an English UI string; unknown strings come back unchanged.
 pub fn tr(lang: Lang, s: &str) -> &str {
-    lang.catalog().plain(s).unwrap_or(s)
+    crate::varos::label(lang.catalog().plain(s).unwrap_or(s))
 }
 
 /// Like [`tr`], for an English string that needs a disambiguating `context`.
 pub fn tr_ctx<'a>(lang: Lang, context: &str, s: &'a str) -> &'a str {
-    lang.catalog().contextual(context, s).unwrap_or_else(|| tr(lang, s))
+    crate::varos::label(lang.catalog().contextual(context, s).unwrap_or_else(|| tr(lang, s)))
 }
 
 /// A name the app gives something (a default swatch's), translated where the current language has
 /// a `context` row for it; any other name (one the user gave) comes back as it is.
 pub fn t_name<'a>(context: &str, name: &'a str) -> &'a str {
-    current().catalog().contextual(context, name).unwrap_or(name)
+    current().catalog().contextual(context, name).map(crate::varos::label).unwrap_or(name)
 }
 
 /// A string keyed by its command id, falling back to the translation of the English `label`.
 pub fn tr_id<'a>(lang: Lang, id: &str, label: &'a str) -> &'a str {
-    lang.catalog().id(id).unwrap_or_else(|| tr(lang, label))
+    crate::varos::label(lang.catalog().id(id).unwrap_or_else(|| tr(lang, label)))
 }
 
 /// [`tr_id`] in the current language.
@@ -541,7 +541,7 @@ pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
 pub fn trn(lang: Lang, n: u64, one: &str, other: &str) -> String {
     let idx = (lang.0.plural)(n);
     let text = lang.catalog().plural(one, other, idx).unwrap_or(if n == 1 { one } else { other });
-    fmt(text, &[("n", &n.to_string())])
+    crate::varos::text(&fmt(text, &[("n", &n.to_string())]))
 }
 
 /// An entry of a list that mixes interface labels with names (user, file or system data) as
@@ -562,11 +562,13 @@ pub fn message(lang: Lang, s: &str) -> String {
 }
 
 fn message_at(lang: Lang, s: &str, depth: usize) -> String {
-    let Some((template, caps)) = lang.catalog().message(s) else { return s.to_string() };
+    let Some((template, caps)) = lang.catalog().message(s).or_else(|| crate::varos::source_message(s)) else {
+        return crate::varos::label(s).to_string();
+    };
     let values: Vec<(&str, String)> =
         caps.into_iter().map(|(k, v)| (k, if depth > 1 { message_at(lang, v, depth - 1) } else { v.to_string() })).collect();
     let args: Vec<(&str, &str)> = values.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    fmt(template, &args)
+    fmt(crate::varos::label(template), &args)
 }
 
 /// [`message`] in the current language, remembering the last answer: the status bar asks for the

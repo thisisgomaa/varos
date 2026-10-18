@@ -13,5 +13,5 @@ for name in ("ai.storyteller.vectorcraft.yml", "ai.storyteller.vectorcraft.bundl
     manifests.append(manifest)
 for key in ("runtime", "runtime-version", "sdk", "finish-args"):
     assert manifests[0][key] == manifests[1][key], f"Flatpak manifests disagree on {key}"
-print("VectorCraft package identity ok")
+print("Varos package identity ok")
 PYEOF

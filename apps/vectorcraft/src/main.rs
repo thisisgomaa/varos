@@ -129,9 +129,12 @@ impl App {
             // eframe can't give a window a new device: the user saves and starts again.
             self.graphics_lost = self.app.graphics_lost(&why);
             self.app.status(if self.graphics_lost {
-                "The graphics device was lost: unsaved changes are kept for Data Recovery. Save your documents and restart VectorCraft"
+                format!(
+                    "The graphics device was lost: unsaved changes are kept for Data Recovery. Save your documents and restart {}",
+                    vectorcraft_ui_egui::brand::APP_NAME
+                )
             } else {
-                "The graphics device was lost: save your documents and restart VectorCraft"
+                format!("The graphics device was lost: save your documents and restart {}", vectorcraft_ui_egui::brand::APP_NAME)
             });
         }
         if self.graphics_lost && ctx.input(|i| i.viewport().close_requested()) {
@@ -198,7 +201,7 @@ fn discard_marked_text() {
 /// Where UI preferences live: ~/Library/Application Support/VectorCraft (macOS),
 /// %APPDATA%\VectorCraft (Windows), $XDG_CONFIG_HOME or ~/.config/vectorcraft (Linux).
 fn prefs_path() -> Option<std::path::PathBuf> {
-    prefs_dir::prefs_path_for("VectorCraft", "vectorcraft")
+    prefs_dir::prefs_path_for(vectorcraft_ui_egui::brand::DATA_DIR_NAME, vectorcraft_ui_egui::brand::DATA_DIR_LOWER)
 }
 
 /// The same place under the project's former name (DrawCraft): read once if there are no
@@ -556,7 +559,7 @@ fn services(parent: Parent, ui: egui::Context) -> Services {
         // owner that never answers holds a read for up to 4 s. Windows only asks which formats the
         // clipboard holds and macOS asks the pasteboard server, so they check in line.
         clipboard_probe: cfg!(target_os = "linux").then(|| Box::new(clipboard::system_clipboard) as ClipboardProbeFactory),
-        // Help → Discord / website / GitHub, the Discord button, About and Home links.
+        // External URL service (including contributor attribution links).
         open_url: Some(Box::new(|url: &str| {
             let _ = webbrowser::open(url);
         })),
@@ -641,7 +644,7 @@ fn custom_titlebar(saved: Option<&vectorcraft_ui_egui::UiState>) -> bool {
 fn native_options(custom_titlebar: bool) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("VectorCraft")
+            .with_title(vectorcraft_ui_egui::brand::APP_NAME)
             .with_inner_size(window::DEFAULT_SIZE)
             .with_min_inner_size(window::MIN_SIZE)
             .with_drag_and_drop(true)
@@ -661,7 +664,7 @@ fn native_options(custom_titlebar: bool) -> eframe::NativeOptions {
 const USAGE: &str = "\
 Usage: vectorcraft [options] [files…]
 
-Opens the VectorCraft desktop app with the given files.
+Opens the {app_name} desktop app with the given files.
 
 Options:
   --control <port>               Start the localhost JSON-lines control server on <port>
@@ -710,7 +713,8 @@ fn main() -> std::process::ExitCode {
             "--help" | "-h" => {
                 // Not `print!`, which panics when standard output is closed (`| head -0`):
                 // there is nothing left to tell then.
-                let _ = std::io::Write::write_all(&mut std::io::stdout(), USAGE.as_bytes());
+                let _ =
+                    std::io::Write::write_all(&mut std::io::stdout(), USAGE.replace("{app_name}", vectorcraft_ui_egui::brand::APP_NAME).as_bytes());
                 return std::process::ExitCode::SUCCESS;
             }
             _ => files.push(a),
@@ -745,7 +749,7 @@ fn main() -> std::process::ExitCode {
     if let Some(logger) = logger {
         match log_dir().filter(|_| prefs_enabled()) {
             Some(dir) => match logger.attach_dir(&dir) {
-                Ok(path) => log::info!("VectorCraft {}, log file {}", env!("CARGO_PKG_VERSION"), path.display()),
+                Ok(path) => log::info!("{} {}, log file {}", vectorcraft_ui_egui::brand::APP_NAME, env!("CARGO_PKG_VERSION"), path.display()),
                 // Standard error only by now (`attach_dir` gave up on the file); unlike `eprintln!`, never panics.
                 Err(e) => log::warn!("no log file: {e}"),
             },
@@ -878,7 +882,7 @@ fn main() -> std::process::ExitCode {
     // A panic that ends the window (egui-wgpu's own, #502) is caught here: never a crash.
     let outcome = vectorcraft_engine::guard::catch_panic(|| {
         eframe::run_native(
-            "VectorCraft",
+            vectorcraft_ui_egui::brand::APP_NAME,
             options,
             Box::new(move |cc| {
                 let mut session = Session::new();
@@ -987,7 +991,7 @@ fn main() -> std::process::ExitCode {
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            log::error!("VectorCraft stopped: {e}");
+            log::error!("{} stopped: {e}", vectorcraft_ui_egui::brand::APP_NAME);
             std::process::ExitCode::FAILURE
         }
     }

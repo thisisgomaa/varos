@@ -44,7 +44,7 @@ esac
 export VECTORCRAFT_MAINTAINER="${VECTORCRAFT_MAINTAINER:-VectorCraft maintainers <vectorcraft@storyteller.ai>}"
 BASENAME="vectorcraft-$VERSION-linux-$ARCH"
 
-echo "==> VectorCraft $VERSION for Linux $ARCH ($FORMATS)"
+echo "==> Varos $VERSION for Linux $ARCH ($FORMATS)"
 
 if [ "$SKIP_BUILD" = 0 ]; then
   if [ -n "${CROSS_TARGET:-}" ]; then

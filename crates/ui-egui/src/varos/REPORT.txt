@@ -1,0 +1,205 @@
+LANE BRAND — VAROS
+Worktree: ~/Documents/AI workspace/reference/artcraft/spikes/lane-brand
+Base: cdba0aac; branch: lane-brand. No commit. No windows opened.
+
+DONE
+Product display name routes through brand.rs. Its shared constants live in the additive varos/names.rs so the CLI-shared profile and Windows build script can use them without linking egui.
+Window/OS title, native macOS App/About/Hide/Quit menus, Home, About, file-picker labels, built-in preset labels, translated status/errors and desktop startup logs show Varos.
+Translation source keys and persisted preset/format identifiers stay intact. A finite immutable presentation map rebrands bundled English and translated labels after lookup; message templates are rebranded before interpolating user data. User names use the existing non-translating path.
+Community module, header button, Home/About promotion rows and Help promotion items removed. Discord engine command, URL and help.links field removed. Other upstream reference queries stay script-accessible, but are absent from palette and shortcut-editor lists. Contributor attribution links/screens remain.
+Fork notice is shown on every About/Contributors/Models tab; original licence and authorship notices retained.
+Mac bundle display/name: Varos; identifier: com.varos.app. Development/release bundle path: Varos.app. Per-user data/log folders: Application Support/Varos, APPDATA/Varos, XDG varos. Portable data: VarosData; legacy marker names still accepted.
+Original temporary V replaces all 15 icon files at their existing build-consumer paths: three SVGs, eight hicolor PNGs, 1024 PNG, macOS inset PNG, ICO and ICNS. README explicitly marks the identity as placeholder. ASSETS.md and NOTICE updated.
+Windows installer/shortcut labels, portable instructions and signature description, Linux launcher/store name, package status lines and browser startup title/loading/error text now use the fork name. Discord contact metadata removed from Windows and Linux packages; Windows promotion URLs removed.
+Required build, UI tests, format and whitespace checks all pass. Full UI suite: 1665 passed, zero failures; runtime 51.63 s.
+DMG source/raster backdrop replaced with original geometric art, no fonts; both 660x400/72 dpi and 1320x800/144 dpi verified. The old bundle/volume-specific DS_Store is no longer copied; Finder uses default layout.
+
+PARTIAL / UNVERIFIED
+Native app appearance, Dock icon cache, actual AppKit menu behaviour and file dialogs require moderator hand-testing. No GUI launched or screenshot claimed.
+Mac release bundle/DMG was not assembled, signed, notarized or installed. Plist identity and shell syntax were checked. Custom Finder icon placement is deferred.
+Windows/Linux/FreeBSD packages and the WASM target were not built; the text-only web hook uses the same public brand constant. XML structure and shell syntax checks pass.
+ONE-TIME MIGRATION NOTE
+No migration code was added. If retaining an existing profile, close both apps and manually copy ~/Library/Application Support/VectorCraft to ~/Library/Application Support/Varos once, preserving the old directory as backup and backing up any existing Varos target before copying. This includes ui.json, logs, Data Recovery, Fonts and user stores. Existing DrawCraft legacy preference handling remains unchanged. The previous portable data folder also needs a manual copy if used.
+
+LATER / INTENTIONALLY UNCHANGED
+Cargo packages/crates, vectorcraft and vectorcraft-cli binary names, .vectorcraft/.drawcraft/.vctemplate extensions, serialized format names, command IDs, environment variables, document UTIs, resource filenames, original copyrights and legacy portable marker names.
+The bundle-internal executable and icon-resource names remain VectorCraft for compatibility; public bundle name/display name are Varos. Installer GUIDs, registry keys, publisher credits and source/project identity URLs remain compatible with upstream.
+No upstream parity/roadmap scores changed, no commit, no edits to read-only Varos sources, no CARGO_TARGET_DIR override.
+
+VERIFICATION
+cargo build --offline -p vectorcraft: PASS, 2527.79 s wall (42m 07.79s, includes prebuild-lock wait); initial cache failure 0.31 s.
+cargo test --offline -p vectorcraft-ui-egui: PASS, 1665 tests, 0 failures, 0 ignored; test runtime 51.63 s; 0 doc tests. 3920.41 s wall (65m 20.41s, includes lock wait and dependency/test compilation); initial cache failure 0.13 s.
+cargo --offline fmt --all -- --check: PASS, 55.31 s on the final source (after correcting the initial formatting diff).
+git diff --check: PASS, 0.07 s.
+rustc --edition 2024 --test target/varos-brand-check/check.rs -o target/varos-brand-check/check: PASS, 2.33 s. Harness uses actual production i18n/branding code, omitting only UI-dependent upstream test module.
+/usr/bin/time -p target/varos-brand-check/check: PASS, 4 tests; 2.37 s wall. Covers every bundled brand-bearing label, display routes across all 24 languages, unchanged user names and internal identifiers.
+rustc --edition 2024 --test target/varos-brand-check/profile-check.rs --extern log=target/debug/deps/liblog-88dbb3508c892b7e.rlib -L dependency=target/debug/deps -o target/varos-brand-check/profile-tests: PASS, 1.54 s. Actual profile module loaded as a module; 2 dead-code warnings only in the standalone harness.
+TMPDIR="$PWD/target/varos-brand-check/tmp" target/varos-brand-check/profile-tests: PASS, 15 tests; 0.74 s wall.
+Icon/TIFF decoding and sizes, PNG alpha (24px corner has <=2/255 antialias alpha), 128px opaque centre, 10 ICNS and 9 ICO representations: PASS. SVG XML and asset registry checks: PASS.
+plutil -lint -- packaging/macos/Info.plist.in: PASS. Python plist checks for name/display/id and unchanged document UTI/executable: PASS. bash -n packaging/macos/package.sh packaging/icons.sh plus the touched Linux/FreeBSD/check scripts: PASS. Windows WiX and Linux AppStream XML parse: PASS; no packaged Discord contact URLs remain.
+target/debug/vectorcraft --help: PASS, 2.64 s; prints the new product name and exits before GUI initialization.
+Verification logs and standalone harnesses are in ignored target/varos-brand-check/.
+
+UPDATED NAME/REMOVAL EXPECTATIONS (existing function IDs retained)
+chrome.rs: window_title_with_no_document_is_the_app_name; window_title_follows_the_active_file; sync_window_title_sends_only_on_change; native_title_does_not_overlap_header_controls.
+i18n/tests.rs: language_command_sets_the_preference; czech_render_site_follow_up (Czech template label and English/Czech fallbacks).
+prefs_dialog.rs: graphics_processor_preference_shows_and_persists; system_title_bar_preference_shows_and_persists.
+menus.rs: the_bar_starts_at_file (asserts that the current product app menu is absent from the in-window bar).
+engine/cmd/help.rs: links now also asserts that the removed command and payload field are absent (engine unit suite not separately run).
+ tests_nativemenu.rs: vectorcraft_gets_a_mac_app_menu; every_in_window_item_is_in_the_mac_menu_bar_once (promotion absent). the_window_menu_has_the_system_items has a comment-only wording update.
+tests_picks.rs: missing_fonts_says_why_the_folder_picked_wasnt_searched.
+ tests_place.rs: a_vectorcraft_document_places_linked_and_edit_original_opens_it.
+titlebar.rs: caption_buttons_take_the_right_end_and_nothing_overlaps_down_to_800_pt (promotion absent at all widths).
+profile.rs: unset_override_keeps_platform_paths_and_legacy_migration; portable_mode_keeps_the_settings_beside_the_executable_and_skips_the_drawcraft_profile; a_run_without_preferences_never_looks_for_the_portable_folder.
+
+WHAT FOUGHT ME
+Offline cache initially lacked icu_segmenter 2.3.0. The prebuild later supplied it; required build/test retries waited on its default target lock rather than changing target directories.
+iconutil rejected an otherwise complete iconset on this managed Mac. Generator falls back to a standard PNG-backed ICNS container with all ten representations; Pillow decodes each representation and sips reads the result.
+Pillow 11/tiffutil did not preserve the second page's 144 dpi. The generator now writes a small standard TIFF 6.0 RGB/zlib file with explicit per-page resolutions; both pages decode and report correctly.
+The test build emitted xcrun file-event/cache-directory warnings; compilation continued.
+plan/STATUS.md, plan/execution-plan.md and plan/architecture.md are absent in this worktree.
+
+NEW FILES (all under crates/ui-egui/src/varos/)
+crates/ui-egui/src/varos/generate_icons.py: 115 lines
+crates/ui-egui/src/varos/mod.rs: 110 lines
+crates/ui-egui/src/varos/names.rs: 10 lines
+crates/ui-egui/src/varos/REPORT.txt: 205 lines (this report).
+
+UPSTREAM FILES TOUCHED (first changed new-side line; +added/-removed totals; binary sizes below)
+ASSETS.md:25 +17/-17
+NOTICE:95 +3/-0
+apps/vectorcraft-web/index.html:8 +3/-3
+apps/vectorcraft-web/src/web.rs:142 +4/-1
+apps/vectorcraft/build.rs:7 +6/-2
+apps/vectorcraft/src/gpu.rs:628 +1/-1
+apps/vectorcraft/src/main.rs:132 +14/-10
+apps/vectorcraft/src/prefs_dir.rs:22 +6/-3
+apps/vectorcraft/src/profile.rs:6 +14/-11
+assets/app-icon/LICENSE.txt:1 +6/-11
+assets/app-icon/README.md:1 +13/-47
+assets/app-icon/hicolor/128x128/apps/ai.storyteller.vectorcraft.png:1 binary 18450 -> 3029 bytes
+assets/app-icon/hicolor/16x16/apps/ai.storyteller.vectorcraft.png:1 binary 715 -> 567 bytes
+assets/app-icon/hicolor/24x24/apps/ai.storyteller.vectorcraft.png:1 binary 1279 -> 785 bytes
+assets/app-icon/hicolor/256x256/apps/ai.storyteller.vectorcraft.png:1 binary 56885 -> 5463 bytes
+assets/app-icon/hicolor/32x32/apps/ai.storyteller.vectorcraft.png:1 binary 1985 -> 1053 bytes
+assets/app-icon/hicolor/48x48/apps/ai.storyteller.vectorcraft.png:1 binary 3679 -> 1419 bytes
+assets/app-icon/hicolor/512x512/apps/ai.storyteller.vectorcraft.png:1 binary 151702 -> 11170 bytes
+assets/app-icon/hicolor/64x64/apps/ai.storyteller.vectorcraft.png:1 binary 5771 -> 1745 bytes
+assets/app-icon/hicolor/scalable/apps/ai.storyteller.vectorcraft.svg:1 +5/-1
+assets/app-icon/vectorcraft-1024.png:1 binary 356294 -> 23583 bytes
+assets/app-icon/vectorcraft-macos-512.png:1 binary 116070 -> 9871 bytes
+assets/app-icon/vectorcraft-small.svg:1 +5/-1
+assets/app-icon/vectorcraft.icns:1 binary 707932 -> 58420 bytes
+assets/app-icon/vectorcraft.ico:1 binary 92602 -> 16088 bytes
+assets/app-icon/vectorcraft.svg:1 +5/-1
+crates/engine/src/cmd/help.rs:1 +5/-7
+crates/ui-egui/src/brand.rs:1 +9/-3
+crates/ui-egui/src/canvas.rs:2786 +0/-4
+crates/ui-egui/src/chrome.rs:22 +13/-18
+crates/ui-egui/src/community.rs:1 (deleted) +0/-108
+crates/ui-egui/src/dialogs/about.rs:33 +5/-6
+crates/ui-egui/src/dialogs/save_for_web.rs:202 +1/-1
+crates/ui-egui/src/i18n/mod.rs:27 +10/-8
+crates/ui-egui/src/i18n/tests.rs:255 +4/-4
+crates/ui-egui/src/lib.rs:17 +3/-3
+crates/ui-egui/src/menus.rs:2340 +5/-18
+crates/ui-egui/src/native_menu.rs:13 +4/-4
+crates/ui-egui/src/palette.rs:14 +1/-1
+crates/ui-egui/src/prefs_dialog.rs:582 +2/-2
+crates/ui-egui/src/shortcut_editor.rs:268 +3/-3
+crates/ui-egui/src/tests_nativemenu.rs:72 +8/-8
+crates/ui-egui/src/tests_picks.rs:955 +1/-1
+crates/ui-egui/src/tests_place.rs:634 +1/-1
+crates/ui-egui/src/titlebar.rs:288 +2/-2
+packaging/check-app-specific.sh:16 +1/-1
+packaging/freebsd/package.sh:38 +1/-1
+packaging/icons.sh:44 +1/-1
+packaging/linux/ai.storyteller.vectorcraft.desktop:3 +1/-1
+packaging/linux/ai.storyteller.vectorcraft.metainfo.xml.in:8 +2/-3
+packaging/linux/flatpak-bundle.sh:46 +1/-1
+packaging/linux/package.sh:47 +1/-1
+packaging/macos/Info.plist.in:10 +6/-6
+packaging/macos/dmg/README.md:1 +8/-35
+packaging/macos/dmg/background.svg:2 +7/-18
+packaging/macos/dmg/background.tiff:1 binary 994768 -> 16885 bytes
+packaging/macos/package.sh:4 +9/-9
+packaging/windows/package.ps1:57 +1/-1
+packaging/windows/portable.txt:1 +10/-10
+packaging/windows/sign.ps1:58 +1/-1
+packaging/windows/vectorcraft.wxs:20 +10/-13
+xtask/src/bundle.rs:1 +5/-5
+
+REMAINING SOURCE NAME OCCURRENCES
+grep -rn "VectorCraft" crates/ui-egui/src apps/vectorcraft/src | wc -l
+Before: 1155. After: 1121 (includes this report).
+The large remainder is deliberate: 23 unchanged translation catalogs preserve upstream lookup keys/translations and unused former community labels. Presentation replaces the product name after lookup; no active community button/menu uses those rows.
+Other remaining occurrences are source lookup keys (menus, dialogs, presets, file filters, restart/recovery messages), internal/persisted identifiers and compatibility marker names, tests of those underlying identifiers, comments/docs, the required fork/original-credit lines, the replacement helper's match strings/tests, and this report. No engraved mark remains in any consumed icon or DMG image.
+Raw spelling in source is not a count of user-visible legacy branding. A UI frame/manual moderator pass remains the final presentation check.
+
+REMAINING FILE COUNTS (same grep; first matching line, match-line count, reason)
+apps/vectorcraft/src/logging.rs:10 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/mac_fonts.rs:10 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/mac_menu.rs:2 3 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/mac_save_format.rs:187 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/main.rs:1 9 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/open_documents.rs:2 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/portal_save.rs:329 4 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/prefs_dir.rs:1 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/printing.rs:1 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/profile.rs:8 11 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+apps/vectorcraft/src/system_fonts.rs:9 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/brand.rs:6 1 lines — the required fork attribution names the upstream project
+crates/ui-egui/src/canvas.rs:2759 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/about.rs:1 3 lines — About lookup key and original licence/icon attribution
+crates/ui-egui/src/dialogs/confirm.rs:58 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/export_for_screens.rs:70 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/import_pdf.rs:117 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/missing_fonts.rs:6 4 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/place.rs:6 3 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/recovery.rs:14 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/save_options.rs:8 4 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/script_check.rs:197 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/shortcut_import.rs:7 8 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/tests_import_pdf.rs:169 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/dialogs/warp_effect.rs:19 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/i18n/bg.tsv:5 48 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/cs.tsv:4 47 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/da.tsv:4 48 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/de.tsv:4 39 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/el.tsv:1 48 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/es.tsv:4 44 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/fi.tsv:5 47 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/fr.tsv:4 47 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/hu.tsv:5 47 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/id.tsv:4 48 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/it.tsv:4 39 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/ja.tsv:5 39 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/ka.tsv:4 44 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/ko.tsv:4 39 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/nl.tsv:4 48 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/pl.tsv:4 40 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/pt-br.tsv:17 44 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/ru.tsv:4 39 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/sv.tsv:8 47 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/tests.rs:873 4 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/i18n/uk.tsv:4 39 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/vi.tsv:5 39 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/zh-hans.tsv:51 47 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/i18n/zh-hant.tsv:15 21 lines — retained catalog keys/values and unused promotion translations; rebranded when displayed
+crates/ui-egui/src/icon_data.rs:1 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/io.rs:508 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/lib.rs:1 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/menus.rs:180 11 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/native_menu.rs:7 10 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/panels/history.rs:29 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/panels/links.rs:222 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/panels/pathfinder.rs:1 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/place.rs:171 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/prefs_dialog.rs:274 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/recovery.rs:62 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/shortcut_editor.rs:20 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/tests_labels.rs:1 4 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/tests_nativeoptions.rs:1 1 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/tests_saveext.rs:164 2 lines — lookup/persisted keys, compatibility fixtures or source comments; application display goes through the brand layer
+crates/ui-egui/src/varos/REPORT.txt:22 3 lines — audit text and migration/compatibility notes
+crates/ui-egui/src/varos/mod.rs:16 15 lines — matching logic and tests preserving user data/source identifiers

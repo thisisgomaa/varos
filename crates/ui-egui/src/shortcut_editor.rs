@@ -265,7 +265,7 @@ pub fn entries() -> &'static [Entry] {
             } else {
                 true
             };
-            if !listed || !seen.insert(c.id) {
+            if !listed || crate::varos::is_project_link(c.id) || !seen.insert(c.id) {
                 continue;
             }
             let group = if c.menu.is_empty() { id_group(c.id) } else { c.menu.join(" › ") };
@@ -476,7 +476,7 @@ pub fn run_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Resu
         "shortcuts.export" => {
             let v = export_json(&app.ui.shortcut_set, &app.ui.shortcut_overrides);
             let bytes = serde_json::to_vec_pretty(&v).unwrap_or_default();
-            let pick = crate::FilePick { filters: vec![("Shortcut sets", &["json"])], ..crate::FilePick::named("VectorCraft Shortcuts.json") };
+            let pick = crate::FilePick { filters: vec![("Shortcut sets", &["json"])], ..crate::FilePick::named(crate::brand::SHORTCUTS_FILE) };
             let path = s("path").or_else(|| crate::picks::save(app, &pick));
             match path {
                 Some(path) => match app.services.write.as_mut() {
@@ -486,7 +486,7 @@ pub fn run_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Resu
                 // Its save dialog is open: the file is written when it answers.
                 None if app.file_dialog_open() => Err("cancelled".into()),
                 None => match app.services.download.as_mut() {
-                    Some(dl) => dl("VectorCraft Shortcuts.json", &bytes).map(|()| Value::Null),
+                    Some(dl) => dl(crate::brand::SHORTCUTS_FILE, &bytes).map(|()| Value::Null),
                     None => Ok(v),
                 },
             }
