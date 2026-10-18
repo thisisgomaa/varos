@@ -11,6 +11,6 @@ workspace = true
 
 [dependencies]
 # Only the backend-neutral kashida policy: no second shaper, font stack or font file.
-# Path to the Varos worktree for now; to become a pinned git rev once it lands on Varos main.
+# Pinned to a Varos main revision over git (see docs/varos/FORK.md).
 varos-text = { git = "ssh://git@github.com/thisisgomaa/varos.git", rev = "5936eaf", default-features = false }
 unicode-script = "0.5"

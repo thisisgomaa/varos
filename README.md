@@ -1,3 +1,28 @@
+## Varos (this fork)
+
+Varos is an Arabic-first fork of [VectorCraft](https://github.com/storytold/vectorcraft) by the
+ArtCraft team (storytold), licensed MIT OR Apache-2.0. **Not published yet.** Everything below the
+line is upstream VectorCraft's own README, unchanged.
+
+What is ours (everything else is upstream):
+
+- **Name and identity:** the product shows as Varos, with the original Varos app icon; Discord and
+  community promotion are removed. Crate, binary and file-extension names stay upstream's.
+- **Look:** Varos warm-dark tokens, fonts, 3 px / 8 px corners, no shadows
+  (`crates/ui-egui/src/varos/theme.rs`).
+- **Icons and cursors:** 117 Varos icon overrides and the Varos v1.1 cursor set (native NSCursor on
+  macOS) under `crates/ui-egui/src/varos/`.
+- **Arabic:** kashida (tatweel) justification for justified right-to-left Arabic area text
+  (`crates/text/src/kashida.rs`, policy from Varos' `varos-text` via `crates/text-arabic/`).
+- **Shell and diagnostics:** a Home screen without editor menus, and an opt-in profiler
+  (`VAROS_PROFILE=1`).
+
+Fork rules, licences and attribution: [docs/varos/FORK.md](docs/varos/FORK.md). Current state:
+[docs/varos/STATE.md](docs/varos/STATE.md). Original authorship and licence notices are kept in
+`NOTICE`, `ASSETS.md`, `LICENSE-MIT` and `LICENSE-APACHE`.
+
+---
+
 <p align="center">
   <a href="https://getartcraft.com/">
     <picture>
