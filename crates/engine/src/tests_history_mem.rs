@@ -183,6 +183,7 @@ fn redo_during_an_interaction_keeps_the_history_and_the_document_in_step() {
 /// On macOS the history keeps a thirty-second of the memory, from 64 MiB to 512 MiB, and 512 MiB
 /// when the memory is unknown.
 #[test]
+#[cfg(target_pointer_width = "64")] // the GiB literals overflow usize on 32-bit targets (review finding)
 fn mac_history_budget_is_a_thirty_second_of_memory_clamped() {
     const MIB: usize = 1 << 20;
     const GIB: usize = 1 << 30;
