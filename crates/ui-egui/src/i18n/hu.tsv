@@ -4415,7 +4415,6 @@ imageTrace	Outline	Körvonal
 @msg	Blend colors: select at least three objects with filled colours	Színek összemosása: jelölj ki legalább három kitöltött objektumot
 @msg	BMP files are RGB or grayscale: colorModel rgb or gray	a BMP-fájlok RGB-k vagy szürkeárnyalatosak: colorModel rgb vagy gray
 @msg	brightness must be dark|mediumDark|mediumLight|light	a brightness értéke dark|mediumDark|mediumLight|light lehet
-@msg	brightness must be varos|dark|mediumDark|mediumLight|light	a brightness értéke varos|dark|mediumDark|mediumLight|light lehet
 @msg	can't encode the document: {0}	a dokumentum nem kódolható: {0}
 @msg	can't parse shortcut `{c}`	a billentyűparancs nem értelmezhető: `{c}`
 @msg	can't parse shortcut `{s}` for `{k}`	a billentyűparancs nem értelmezhető: `{s}` (ehhez: `{k}`)

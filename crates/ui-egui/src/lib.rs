@@ -508,6 +508,8 @@ const FONT_INSTALL_POLL: f64 = 2.0;
 
 impl VectorcraftApp {
     pub fn new(mut session: Session, services: Services) -> Self {
+        // Varos: default the fresh UI before the host restores any saved appearance.
+        varos::theme::default_brightness(&mut session);
         // The font menus and the first file opened need the installed fonts: catalog them now.
         vectorcraft_text::FontDb::global().scan_in_background();
         if let Some(store) = &services.recovery_store {
@@ -516,7 +518,7 @@ impl VectorcraftApp {
         let views = session.documents().iter().map(View::of).collect();
         Self {
             session,
-            ui: UiState::default(),
+            ui: UiState { brightness: theme::Brightness::Dark, ..Default::default() }, // Varos: fresh UI default.
             views,
             services,
             canvas: CanvasCache {
@@ -1175,8 +1177,8 @@ impl VectorcraftApp {
         }
         self.adopt_context(ctx);
         if !self.styled {
-            self.ui.brightness = theme::Brightness::Varos;
-            self.session.prefs.ui_brightness = "varos".into();
+            // Varos: keep the restored appearance, at every brightness.
+            self.ui.brightness = theme::Brightness::parse(&self.session.prefs.ui_brightness).unwrap_or(theme::Brightness::Dark);
             theme::install_fonts(ctx);
             theme::apply(ctx, self.ui.brightness);
             egui_extras::install_image_loaders(ctx);
@@ -1441,34 +1443,38 @@ impl VectorcraftApp {
         font_menu::end_stale_preview(self, &ctx);
         floating::track(self, &ctx);
         let t = theme::Tokens::get(&ctx);
-        if self.ui.screen_mode < 2 {
+        let on_home = varos::home::is_home(self); // Varos: Home shows only title bar + welcome content.
+        if on_home || self.ui.screen_mode < 2 {
             varos::profile::measure("app_bar", || chrome::app_bar(self, ui));
-            if self.ui.control_bar {
+            if !on_home && self.ui.control_bar {
                 varos::profile::measure("control_bar", || chrome::control_bar(self, ui));
             }
         }
-        if self.ui.status_bar && self.ui.screen_mode < 3 {
+        if !on_home && self.ui.status_bar && self.ui.screen_mode < 3 {
             varos::profile::measure("status_bar", || chrome::status_bar(self, ui));
             varos::profile::measure("hint_bar", || chrome::hint_bar(self, ui));
         } else {
             // Keeps the previous frame's value valid for menus drawn above, before the bars.
             widgets::set_menu_floor(&ctx, ctx.content_rect().bottom());
         }
-        if self.ui.toolbar && self.ui.screen_mode < 3 {
+        if !on_home && self.ui.toolbar && self.ui.screen_mode < 3 {
             varos::profile::measure("toolbar", || toolbar::show(self, ui));
         }
         varos::profile::measure("library.tidy", || panels::library_panel::tidy(self));
-        if self.ui.dock && self.ui.screen_mode < 3 {
+        if !on_home && self.ui.dock && self.ui.screen_mode < 3 {
             varos::profile::measure("dock", || dock::show(self, ui));
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| {
-            if self.ui.screen_mode < 3 {
+            if !on_home && self.ui.screen_mode < 3 {
                 varos::profile::measure("doc_tabs", || chrome::doc_tabs(self, ui));
             }
             varos::profile::measure("canvas", || canvas::show(self, ui));
         });
-        varos::profile::measure("dock.flyout", || dock::floating_panel(self, &ctx));
-        varos::profile::measure("floating", || floating::show(self, &ctx));
+        // Varos: popped-out and floating editor panels also belong to the document.
+        if !on_home {
+            varos::profile::measure("dock.flyout", || dock::floating_panel(self, &ctx));
+            varos::profile::measure("floating", || floating::show(self, &ctx));
+        }
         varos::profile::measure("dialogs", || dialogs::show(self, &ctx));
         varos::profile::measure("export_progress", || export_progress::show(self, &ctx));
         varos::profile::measure("palette", || palette::show(self, &ctx));

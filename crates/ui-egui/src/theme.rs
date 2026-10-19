@@ -7,19 +7,18 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Brightness {
+    #[serde(alias = "Varos", alias = "VarosWarm", alias = "varos", alias = "varosWarm")] // Varos: old saved UI states.
     Dark,
     #[default]
     MediumDark,
-    Varos,
     MediumLight,
     Light,
 }
 
 impl Brightness {
-    pub const ALL: [Brightness; 5] = [Brightness::Varos, Brightness::Dark, Brightness::MediumDark, Brightness::MediumLight, Brightness::Light];
+    pub const ALL: [Brightness; 4] = [Brightness::Dark, Brightness::MediumDark, Brightness::MediumLight, Brightness::Light];
     pub fn label(self) -> &'static str {
         match self {
-            Brightness::Varos => "Varos",
             Brightness::Dark => "Dark",
             Brightness::MediumDark => "Medium Dark",
             Brightness::MediumLight => "Medium Light",
@@ -28,7 +27,6 @@ impl Brightness {
     }
     pub fn id(self) -> &'static str {
         match self {
-            Brightness::Varos => "varos",
             Brightness::Dark => "dark",
             Brightness::MediumDark => "mediumDark",
             Brightness::MediumLight => "mediumLight",
@@ -40,12 +38,12 @@ impl Brightness {
     }
 }
 
-/// User Interface › Accent Color: the one colour for what is on, chosen or focused. Coral, the
-/// default, is the app icon's.
+/// User Interface › Accent Color: the one colour for what is on, chosen or focused.
+/// Varos uses azure Blue by default; the other accent choices remain available.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Accent {
-    #[default]
     Coral,
+    #[default] // Varos: azure is the base accent; Coral remains a real choice.
     Blue,
     Violet,
     Green,
@@ -74,8 +72,8 @@ impl Accent {
         match (self, dark) {
             (Accent::Coral, true) => (0xf06a52, 0xe8573f),
             (Accent::Coral, false) => (0xd9472f, 0xd14a33),
-            (Accent::Blue, true) => (0x5b96ff, 0x2f74f0),
-            (Accent::Blue, false) => (0x2563eb, 0x1f5ad6),
+            (Accent::Blue, true) => (0x0c8ce9, 0x0875c4),  // Varos: selection/focus azure.
+            (Accent::Blue, false) => (0x0c8ce9, 0x0875c4), // Varos: same accent at all brightnesses.
             (Accent::Violet, true) => (0xa98bff, 0x7c55f0),
             (Accent::Violet, false) => (0x7146dc, 0x6a3fd4),
             (Accent::Green, true) => (0x3fcf8e, 0x1f9d63),
@@ -218,8 +216,7 @@ impl Tokens {
             axis_y: hex(0x45af63),
             axis_z: hex(0x378ef0),
         };
-        match b {
-            Brightness::Varos => crate::varos::theme::tokens(),
+        let tokens = match b {
             Brightness::Dark => base,
             // Charcoal, the default.
             Brightness::MediumDark => Tokens {
@@ -304,7 +301,8 @@ impl Tokens {
                 button_border: hex(0xa4abb8),
                 ..base
             },
-        }
+        };
+        crate::varos::theme::tokens_for(b, tokens, true) // Varos: palettes live in one fork-owned module.
     }
 
     /// The Classic colour scheme at brightness `b`: neutral greys with a blue accent, a dark
@@ -340,7 +338,6 @@ impl Tokens {
             ..Tokens::for_brightness(Brightness::Dark)
         };
         match b {
-            Brightness::Varos => crate::varos::theme::tokens(),
             Brightness::Dark => base,
             Brightness::MediumDark => Tokens {
                 // A shade below the panels, so the cards stand out from the window behind them.
@@ -425,13 +422,15 @@ impl Tokens {
 
     /// The tokens for `b` in `scheme`; Modern takes `accent`, Classic has its own blue.
     pub fn for_scheme(scheme: Scheme, b: Brightness, accent: Accent) -> Self {
-        if b == Brightness::Varos {
-            return crate::varos::theme::tokens();
-        }
-        match scheme {
-            Scheme::Modern => Self::for_brightness(b).with_accent(accent),
-            Scheme::Classic => Self::classic(b),
-        }
+        // Varos: our four palettes retain the upstream scheme/accent choices.
+        crate::varos::theme::tokens_for(
+            b,
+            match scheme {
+                Scheme::Modern => Self::for_brightness(b).with_accent(accent),
+                Scheme::Classic => Self::classic(b),
+            },
+            scheme == Scheme::Modern && accent == Accent::default(),
+        )
     }
 
     /// These tokens with `accent`: the accent, buttons filled with it, the active item in flyouts and
@@ -535,6 +534,7 @@ pub(crate) fn font_definitions() -> FontDefinitions {
     mono.extend(fallback);
     fonts.families.insert(FontFamily::Name(FONT_MONO.into()), mono);
     add_craft_fonts(&mut fonts);
+    crate::varos::theme::register_fonts(&mut fonts); // Varos: every reset keeps all typography roles bound.
     fonts
 }
 
@@ -565,10 +565,6 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
 
 /// [`apply`] with an accent colour and colour scheme.
 pub fn apply_with(ctx: &egui::Context, b: Brightness, accent: Accent, scheme: Scheme) {
-    if b == Brightness::Varos {
-        crate::varos::theme::apply(ctx);
-        return;
-    }
     let t = Tokens::for_scheme(scheme, b, accent);
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
@@ -612,6 +608,7 @@ pub fn apply_with(ctx: &egui::Context, b: Brightness, accent: Accent, scheme: Sc
         .into();
         s.animation_time = 0.08;
     });
+    crate::varos::theme::apply(ctx, b); // Varos: fonts, flat geometry and widget visuals at every brightness.
 }
 
 #[cfg(test)]
@@ -644,8 +641,7 @@ mod tests {
     /// whatever accent is chosen.
     #[test]
     fn classic_scheme_keeps_the_corners_and_its_blue() {
-        // Varos is a complete appearance, independent of the Modern/Classic setting.
-        for b in Brightness::ALL.into_iter().filter(|b| *b != Brightness::Varos) {
+        for b in Brightness::ALL {
             let (modern, classic) = (Tokens::for_brightness(b), Tokens::for_scheme(Scheme::Classic, b, Accent::Pink));
             assert_eq!(classic.radius, modern.radius);
             assert_eq!(classic.dark, modern.dark, "{b:?}");

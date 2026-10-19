@@ -426,7 +426,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.painter().rect_filled(strip, 0.0, t.tab_strip);
     ui.painter().line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, t.border));
     // On the Home screen no tab is the current one.
-    let active = app.session.active_index().filter(|_| app.ui.home.is_none());
+    let active = app.session.active_index().filter(|_| !crate::varos::home::is_home(app)); // Varos: shared Home gate, including stale keys.
     let tabs: Vec<(String, std::sync::Arc<egui::Galley>)> = app
         .session
         .documents()
