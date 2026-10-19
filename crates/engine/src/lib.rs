@@ -869,6 +869,9 @@ pub struct Prefs {
     /// Scale Strokes & Effects.
     pub scale_strokes: bool,
     pub zoom_with_mouse_wheel: bool,
+    /// Varos: General › Smooth Zoom. Off (the default), a wheel or pinch zoom lands in the frame its
+    /// input comes; on, mouse-wheel zoom glides in over a few frames.
+    pub smooth_zoom: bool,
     /// A horizontal drag on a numeric field or its label steps its value (#400).
     pub scrub_numeric_fields: bool,
     /// A two-finger rotation on a Mac trackpad turns the view about the pointer once it reaches 5°.
@@ -1128,6 +1131,7 @@ impl Default for Prefs {
             scale_corners: false,
             scale_strokes: false,
             zoom_with_mouse_wheel: false,
+            smooth_zoom: false, // Varos
             scrub_numeric_fields: true,
             trackpad_rotate_view: true,
             paste_offset: 10.0,

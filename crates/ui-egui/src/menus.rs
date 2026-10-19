@@ -1427,7 +1427,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
                 // A collapsed dock pops the panel out of its icon, like the icon panels.
                 (Some(p), Some(tab)) if app.ui.dock_collapsed => {
                     app.ui.dock_tab = tab;
-                    app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(p) { None } else { Some(p.to_string()) };
+                    crate::varos::panel_stack::toggle(app, p); // Varos: keep-open toggles this panel only
                     app.ui.dock = true;
                     Ok(json!({"open": app.ui.open_panel}))
                 }
@@ -1438,7 +1438,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
                 // A library panel isn't in the icon column: it floats.
                 (Some(p), None) if crate::panels::library_panel::parse(p).is_some() => crate::panels::library_panel::float(app, p),
                 (Some(p), None) => {
-                    app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(p) { None } else { Some(p.to_string()) };
+                    crate::varos::panel_stack::toggle(app, p); // Varos: keep-open toggles this panel only
                     app.ui.dock = true;
                     Ok(json!({"open": app.ui.open_panel}))
                 }
@@ -1793,7 +1793,7 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
                 }),
                 _ if canonical.is_some_and(|id| crate::floating::group_of(&app.ui, id).is_some()) => true,
                 Some(tab) if !app.ui.dock_collapsed => crate::floating::shown_tab(&app.ui) == Some(tab),
-                _ => canonical.is_some_and(|id| app.ui.open_panel.as_deref() == Some(id)),
+                _ => canonical.is_some_and(|id| crate::varos::panel_stack::is_open(app, id)), // Varos
             }
         }
         "window.collapseDock" => app.ui.dock_collapsed,

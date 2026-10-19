@@ -39,6 +39,8 @@ pub mod symbolism;
 pub mod text;
 pub mod touchtype;
 pub mod typewidget;
+// Varos: area type's outer corner handles scale it whole.
+pub mod varos_text_scale;
 pub mod xform;
 
 use serde::{Deserialize, Serialize};

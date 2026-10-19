@@ -58,6 +58,9 @@ enum State {
         bx: OrientedBox,
         /// Area type is selected: its frame resizes (`typeAreas`), its type keeps its size.
         areas: bool,
+        /// Varos: an outer handle of area type ([`crate::varos_text_scale`]) is dragged, this far
+        /// from its corner (box frame): the selection scales whole, in proportion.
+        outer: Option<Vec2>,
     },
     Rotating {
         center: Point,
@@ -530,6 +533,16 @@ impl Tool for SelectionTool {
                     self.state = State::Idle;
                     return vec![];
                 }
+                // Varos: area type's outer corner handles scale it whole (frame, type size and
+                // leading, in proportion), before the frame's handles.
+                if cx.show_bbox
+                    && let Some(bx) = selection_box(cx)
+                    && let Some((handle, outer)) = crate::varos_text_scale::hit(cx, &bx, p)
+                {
+                    self.targets = Some(PointSnap::new(cx, || Targets::collect(cx.doc, &cx.selection.objects, None)));
+                    self.state = State::Scaling { handle, bx, areas: false, outer: Some(outer) };
+                    return vec![Action::Begin("Scale".into())];
+                }
                 if cx.show_bbox
                     && let Some(bx) = selection_box(cx)
                 {
@@ -543,7 +556,7 @@ impl Tool for SelectionTool {
                             // grid, else with Smart Guides to the other objects, else with Snap to
                             // Point to their anchors; the ruler guides with Snap to Point.
                             self.targets = Some(PointSnap::new(cx, || Targets::collect(cx.doc, &cx.selection.objects, None)));
-                            self.state = State::Scaling { handle, bx, areas };
+                            self.state = State::Scaling { handle, bx, areas, outer: None }; // Varos: outer
                             return vec![Action::Begin(label.into())];
                         }
                         Some(BoxHit::Rotate) => {
@@ -614,12 +627,14 @@ impl Tool for SelectionTool {
                 out.push(Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(Affine::translate(d)), "copy": m.alt })));
                 out
             }
-            (PointerKind::Drag, State::Scaling { handle, bx, areas }) => {
+            (PointerKind::Drag, State::Scaling { handle, bx, areas, outer }) => {
+                // Varos: an outer handle drags its corner, always in proportion.
+                let (at, shift) = (bx.to_local(p) - outer.unwrap_or(Vec2::ZERO), m.shift || outer.is_some());
                 // Scale in the box's own frame: along the objects' axes when it is rotated.
-                let mut a = scale_for_drag(bx.rect, handle, bx.to_local(p), m.shift, m.alt);
+                let mut a = scale_for_drag(bx.rect, handle, at, shift, m.alt);
                 self.guides.clear();
                 if let Some(t) = &self.targets {
-                    (a, self.guides) = t.snap_scale(cx, &bx, handle, a, m.shift, m.alt);
+                    (a, self.guides) = t.snap_scale(cx, &bx, handle, a, shift, m.alt);
                 }
                 let nr = a.transform_rect_bbox(bx.rect);
                 self.measure = cx.transform_tools_guides.then(|| (p, cx.size_label(nr.width(), nr.height())));
@@ -770,6 +785,13 @@ impl Tool for SelectionTool {
         }
         if typewidget::over_widget(cx, p) {
             return Cursor::TypeWidget;
+        }
+        // Varos: over an outer handle of area type, the scale cursor of its corner.
+        if cx.show_bbox
+            && let Some(bx) = selection_box(cx)
+            && let Some((h, _)) = crate::varos_text_scale::hit(cx, &bx, p)
+        {
+            return handle_cursor(h, bx.angle - cx.view_angle());
         }
         if cx.show_bbox
             && let Some(bx) = selection_box(cx)

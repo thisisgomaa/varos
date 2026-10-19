@@ -315,7 +315,7 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         icons.insert(panel.to_string());
     }
     if operation == "activate" && icon_panel && !layout.contains(&panel.to_string()) {
-        app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(panel) { None } else { Some(panel.into()) };
+        crate::varos::panel_stack::toggle(app, panel); // Varos: keep-open toggles this panel only
         return Ok(json!({"panel": panel, "open": app.ui.open_panel}));
     }
     if operation == "dock" && params.get("anchor").or_else(|| params.get("onto")).is_none() {
@@ -358,6 +358,7 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         }
         app.ui.docking_hidden = hidden;
         sync_legacy(app);
+        crate::varos::panel_stack::layout_changed(app, &members); // Varos: the others stay open
         app.ui.open_panel = open;
         return Ok(json!({"panel": panel, "floating": false, "layout": app.ui.docking}));
     }
@@ -489,6 +490,7 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         }
     }
     sync_legacy(app);
+    crate::varos::panel_stack::layout_changed(app, &members); // Varos: the others stay open
     app.ui.open_panel = None;
     app.ui.dock = true;
     if matches!(operation, "activate" | "move" | "dock") {
@@ -659,12 +661,12 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> bool {
                         ui,
                         info.map_or("library", |(_, _, icon)| icon),
                         &label,
-                        app.ui.open_panel.as_ref() == Some(panel),
+                        crate::varos::panel_stack::is_open(app, panel), // Varos
                         30.0,
                     )
                     .clicked()
                 {
-                    app.ui.open_panel = if app.ui.open_panel.as_ref() == Some(panel) { None } else { Some(panel.clone()) };
+                    crate::varos::panel_stack::toggle(app, panel); // Varos
                 }
             }
         }
@@ -817,9 +819,10 @@ fn icon_rail(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                         }
                         let (_, rect) = ui.allocate_space(egui::vec2(30.0, 30.0));
                         let response = ui.interact(rect, ui.id().with(("panel-icon", id)), egui::Sense::click_and_drag());
-                        let response = crate::widgets::paint_icon_button(ui, response, icon, tl!(label), app.ui.open_panel.as_deref() == Some(id));
+                        let lit = crate::varos::panel_stack::is_open(app, id); // Varos
+                        let response = crate::widgets::paint_icon_button(ui, response, icon, tl!(label), lit);
                         if response.clicked() {
-                            app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(id) { None } else { Some(id.into()) };
+                            crate::varos::panel_stack::toggle(app, id); // Varos
                         }
                         legacy_tab(app, ui, id, &response);
                     }
