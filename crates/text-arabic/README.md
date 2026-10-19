@@ -6,22 +6,46 @@ using VectorCraft's own HarfRust shaper and the paragraph's own face.
 
 ## Which fonts take kashida
 
-A tatweel goes only where HarfRust marks a join *safe to insert tatweel*. HarfRust's Arabic
-OpenType shaper sets that mark. Fonts that HarfRust shapes with AAT `morx` tables go through its
-simple shaper instead, which never sets the mark, so those fonts get no kashida. Lines in those
-fonts are still justified, with word spacing only.
+HarfRust shapes a font with its AAT `morx` (or `mort`) tables whenever the font has them, for
+horizontal text, and then ignores the font's `GSUB` (as HarfBuzz does). That decides the path:
 
-Checked on macOS (2026-10-19, 12 pt, a 120 pt justified frame):
-
-- Kashida works with these OpenType (GSUB) Arabic fonts: SF Arabic, Noto Naskh Arabic, Noto Sans
-  Arabic, Arial (the system fallback under the default Source Sans 3), Tahoma, Times New Roman.
-- No kashida with these AAT (`morx`) fonts: Geeza Pro, Al Nile, Baghdad, Damascus, KufiStandardGK.
+- **OpenType Arabic fonts (no `morx`).** A tatweel goes only where HarfRust marks a join *safe to
+  insert tatweel* (its Arabic shaper sets the mark). Checked on macOS: SF Arabic, Noto Naskh
+  Arabic, Noto Sans Arabic, Arial, Tahoma, Times New Roman.
+- **`morx` fonts.** HarfRust's `morx` shaping never sets the mark, so the joining rules of
+  `varos-text` propose the boundaries (between two joining letters, never inside لا, never next
+  to harakat, never after a letter that doesn't join to the left), and every trial re-shape is
+  verified in the same face before it is kept (`crates/text/src/kashida.rs`, `morx_trial_ok`):
+  one more glyph per tatweel and each tatweel its own glyph; every authored glyph unchanged (glyph
+  id, cluster, offsets: the joining forms and the marks survive); no `.notdef`; the word grows by
+  the tatweels' advances within a font unit each. A `morx` font whose letters don't join takes
+  none. Checked on macOS 2026-10-19 (Force 100, 24 pt, 300 pt Justify All, Al-Fatiha): Geeza Pro,
+  Al Nile, Baghdad, Damascus, KufiStandardGK, DecoType Naskh, Farah, Diwan Kufi, Al Bayan and
+  Nadeem all take kashida; with full harakat Geeza Pro takes none (cause not investigated), the
+  others still take some.
+- **Damascus has both `GSUB` (with the `arab` script) and `morx`.** HarfRust uses its `morx`, so
+  it is on the `morx` path (before this, it took no kashida at all).
+- Fonts with `morx` and no `GSUB` Arabic on that Mac (the font-menu lane's survey of 781 Arabic
+  families): Al Bayan, Al Nile, Al Tarikh, Baghdad, Beirut, DecoType Naskh, Diwan Kufi, Diwan
+  Thuluth, Farah, Farisi, Geeza Pro, KufiStandardGK, Mishafi, Mishafi Gold, Muna, Nadeem, Sana,
+  Waseem.
+- Known, outside this code: HarfRust's mark attachment in Al Nile and Farah puts the kasra of the
+  Allah ligature (اللَّهِ) about 1.5 em off, with or without kashida; kashida never moves a mark
+  (tested).
 
 The face must also have its own U+0640 glyph. A tatweel is never borrowed from another font.
 
-## Later: kashida controls
+## Kashida controls
 
-The strength is the fixed `POLICY` (Balanced) in `src/lib.rs`. On/off buttons and a strength
-slider would become a `ParaStyle` attribute (`crates/doc/src/text.rs`) read in place of `POLICY`
-by `stretch_line`, and would be set from the Paragraph panel
-(`crates/ui-egui/src/panels/paragraph.rs`, next to the justification buttons).
+Each paragraph has a kashida setting (`ParaStyle::kashida` in `crates/doc/src/text.rs`): **Off**,
+**Auto** (default) or **Force**, and a **strength** from 0 to 100 (default 50). The Paragraph panel
+shows them for right-to-left paragraphs; `text.setFormat` takes `kashida` and `kashidaStrength`.
+Documents saved before the setting load as Auto at 50, which is the old fixed Balanced policy, and
+a paragraph at the default saves nothing new.
+
+`policy(strength, force)` in `src/lib.rs` maps the setting onto `varos-text`'s policies: 0 is
+Minimal (1 tatweel per word, a quarter of the slack), 50 Balanced (2, 60 %), 100 Display (4, all
+of it), interpolated in between. Force adds one tatweel per word (at most 5) and 0.4 of the slack
+(at most all of it), and also stretches the last line of a paragraph justified with its last line
+aligned (with kashida only: its spaces aren't spread). `plan_with` is `varos-text`'s `plan` with a
+numeric policy (identical at Balanced, tested).

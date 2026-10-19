@@ -1,7 +1,9 @@
 //! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
 pub(crate) mod cursors;
 pub(crate) mod home;
+// Varos: the Paragraph panel's kashida controls.
 pub mod icons;
+pub(crate) mod kashida_ui;
 pub mod names;
 #[cfg(test)]
 mod perf_tests;

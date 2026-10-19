@@ -1,0 +1,115 @@
+Lane: lane-kashida-ui (Opus 5.5), 2026-10-19, base 02c90807. Not committed (the moderator lands it).
+Status: provisional (awaits owner hand test).
+
+WHAT THE USER SEES
+- Paragraph panel, under the alignment buttons, for a paragraph that runs right to left (Arabic,
+  Hebrew, or Right-to-Left direction): "Kashida  [Off | Auto | Force]" and "Strength" with a
+  0-100 slider. Hidden for left-to-right paragraphs, where kashida does nothing.
+  Azure fills only the active segment and the slider's track; 3 px outer corners; 1 px border;
+  no shadow. The slider is greyed while Kashida is Off. The labels are provisional English.
+- Auto is the default, at strength 50, which is exactly the old fixed behaviour. Off: word
+  spacing only. Force: deeper (more tatweels per word and more of each line's slack), and the
+  last line of a "justify, last line aligned" paragraph takes kashida too. That line keeps its
+  spaces natural, so it stays short of the measure.
+- A click on a segment is one undo step. A slider drag previews live and is one undo step on
+  release. Paragraph panel > Reset Panel sets it back to Auto 50. Paragraph styles capture it.
+- Fonts that HarfRust shapes with morx now take kashida automatically: Geeza Pro, Al Nile,
+  Baghdad, Damascus, KufiStandardGK, DecoType Naskh, Farah, Diwan Kufi, Al Bayan, Nadeem. All 10
+  were measured on this Mac. Before this, none of them took kashida.
+
+STRENGTH MAPPING (crates/text-arabic/src/lib.rs, policy())
+  strength 0..=24   1 per word, share of slack 0.25 + 0.35*s/50
+  strength 25..=50  2 per word, same formula (0.60 at 50 = Balanced)
+  strength 51..=75  3 per word, 0.60 + 0.40*(s-50)/50
+  strength 76..=100 4 per word, same (1.00 at 100 = Display)
+  0 = varos-text Minimal, 50 = Balanced, 100 = Display.
+  Force adds 1 per word (max 5) and +0.40 share (max 1.0).
+  plan_with() is varos-text's plan() with a numeric policy. A test shows it equals plan() slot
+  for slot at Balanced and Minimal.
+  varos-text itself is pinned and unchanged.
+
+MORX PATH (crates/text/src/kashida.rs)
+- HarfRust applies morx/mort for horizontal text whenever the font has it, and ignores GSUB. Its
+  morx shaping never sets the safe-to-insert-tatweel flag. morx_shaped(face) means the face has
+  morx/mort and its letters join (ببب is not 3 x isolated ب). A morx face whose letters don't
+  join takes no kashida.
+- Candidate slots come from varos-text's candidates(): joining_allows between two joining
+  letters; never inside لا (lam then alef is not allowed); never next to harakat; never after a
+  right-joining letter.
+- Each trial re-shape (same face, same HarfRust) is kept only if:
+  (a) the glyph count grows by exactly one per tatweel, each tatweel is its own zero-length U+0640
+      glyph, and the tatweels sit at the requested slots;
+  (b) every authored glyph is unchanged (gid, cluster byte and length, dx and dy), so the
+      neighbours' joining forms and all marks survive;
+  (c) no .notdef;
+  (d) the word grew by the tatweels' advances, within 1 font unit each.
+  A failed check rejects the trial and the plan moves to the next slot.
+- Damascus has GSUB (arab) and morx. HarfRust uses morx, so it is on this path.
+  NOTE for the font-menu lane: its "AAT" marker uses morx && no GSUB arab, so it does not mark
+  Damascus. To match HarfRust it should be "has morx/mort".
+
+TESTS
+- vectorcraft-doc: text::tests::kashida_settings_default_for_old_documents_and_round_trip
+- vectorcraft-text-arabic: strength_maps_onto_the_fixed_policies,
+  the_numeric_plan_at_balanced_is_varos_texts_plan
+- vectorcraft-text kashida::tests (crates/text/src/tests_kashida_policy.rs):
+  strength_pins_the_elongation_of_each_line pins the Type tool paragraph, Justify All, 120 pt,
+  tatweel pt x100 per line:
+    0:   [324, 324, 0, 324, 324, 324]
+    50:  [648, 972, 648, 1296, 972, 648]   (same as the default)
+    100: [1296, 1620, 972, 1944, 1944, 1296]
+  force_stretches_the_last_line_with_kashida_only, latin_is_untouched_by_the_kashida_setting,
+  a_morx_face_whose_letters_dont_join_takes_no_kashida,
+  the_morx_path_takes_verified_kashida_by_the_joining_rules, morx_trials_are_verified,
+  installed_morx_fonts_take_kashida_and_keep_their_marks (guarded per font).
+  The 14 existing tests_kashida tests pass unchanged.
+- vectorcraft-ui-egui varos::kashida_ui::tests:
+  force_and_a_strength_drag_change_the_paragraph_and_undo_restores_them,
+  the_paragraph_panel_shows_kashida_for_right_to_left_paragraphs,
+  set_format_takes_the_kashida_settings
+
+SYNTHETIC MORX FACE
+write-fonts writes no AAT tables, and adding an empty morx to Noto makes HarfRust stop joining.
+So the positive morx path is tested two ways:
+- on Noto forced onto the path by a test-only override (FORCED_MORX), with HarfRust's flags
+  ignored: same result as with its flags, [1296, 648, 0, 0];
+- on the installed morx fonts, guarded.
+The empty-morx Noto is the negative test: it doesn't join, so it gets no kashida.
+
+INSTALLED FONTS (Force 100, 24 pt, 300 pt Justify All; Fatiha plain / fully vocalized)
+  Geeza Pro 42 / 0 tatweels; Al Nile 19 / 19; Baghdad 23 / 20; KufiStandardGK 23 / 7;
+  DecoType Naskh 95 / 30; Farah 85 / 25; Damascus 7 / 14; Diwan Kufi 69 / 25; Al Bayan 37 / 30;
+  Nadeem 13 / 20.
+  Every glyph is from its own face; no .notdef.
+  Mark x and y offsets from the pen are identical with kashida Off and Force for every authored
+  glyph. That includes Al Nile and Farah, whose Allah-ligature kasra misplacement (HarfRust) is
+  not made worse.
+  Geeza Pro takes none with full harakat; the cause was not investigated.
+
+GATES (all --offline -j 4)
+  cargo test -p vectorcraft-text -p vectorcraft-text-arabic -p vectorcraft-doc -p vectorcraft-ui-egui
+    -- --test-threads=4: doc 238, text 307 (+1 ignored), text-arabic 4, ui 1690 (+2 ignored),
+    all pass (3m57s)
+  cargo test -p vectorcraft-engine -- --test-threads=4: 2562 lib + all integration targets pass
+    (run because the lane hooks text.setFormat and paragraph styles)
+  clippy -D warnings, --lib and --all-targets, on text, text-arabic, doc, ui-egui, engine: clean
+  cargo check -p vectorcraft-text --target wasm32-unknown-unknown: ok
+  cargo fmt --all -- --check: clean; git diff --check: clean
+  cargo build -p vectorcraft: ok (4m45s)
+
+OUTSIDE THE BRIEF'S FILE LIST (needed for the command path)
+  crates/engine/src/cmd/panelcmds.rs: text.setFormat takes kashida / kashidaStrength (+ params doc)
+  crates/engine/src/cmd/textstyles.rs: paragraph styles capture kashida. Without it, upstream
+    test para_style_redefined_to_the_defaults_updates_its_paragraphs failed.
+  crates/ui-egui/src/varos/mod.rs: module line
+  New test files declared from their modules: crates/text/src/tests_kashida_policy.rs,
+    crates/ui-egui/src/varos/tests_kashida_ui.rs
+
+LEFT OUT / RISKS
+- The control labels are untranslated English.
+- No mixed-value state: the controls show the first paragraph's setting.
+- Force's last-line stretch is kashida-only and within the budget, so a short last line can
+  still look short. The owner should judge Force visually.
+- Geeza Pro with harakat takes no kashida (not investigated).
+- Owner hand test needed: Paragraph panel with Arabic justified text, Off / Auto / Force,
+  slider 0 / 50 / 100, Geeza Pro and Al Nile.

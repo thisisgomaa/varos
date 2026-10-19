@@ -1850,20 +1850,26 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             // Varos: a justified right-to-left line first grows with kashida (tatweels) in its
             // Arabic words, re-shaped in the paragraph's own face; its word spaces take the rest.
             // The re-shaped words are spliced into the paragraph's glyphs: later indices move.
+            // The paragraph's kashida setting: Off takes none; Force also stretches the last line of
+            // a paragraph justified with its last line aligned (with kashida only: its spaces stay).
+            let force = para.kashida.mode == vectorcraft_doc::text::KashidaMode::Force;
+            let force_last = force && last_of_para && matches!(para.justify, Justify::JustifyLeft | Justify::JustifyCenter | Justify::JustifyRight);
             if rtl
                 && !cx.vertical
                 && !hyph
                 && regions.is_some()
                 && compressed.is_empty()
                 && wakan.is_empty()
-                && kashida::justified(para.justify, last_of_para)
+                && para.kashida.mode != vectorcraft_doc::text::KashidaMode::Off
+                && (kashida::justified(para.justify, last_of_para) || force_last)
                 // Single Word Justification's Align Left/Center/Right aligns a one-word line
                 // instead of justifying it: no kashida either.
-                && (sg[i..trimmed].iter().any(SGlyph::is_space) || para.justification.single_word == SingleWordJustify::FullJustify)
+                && (sg[i..trimmed].iter().any(SGlyph::is_space) || para.justification.single_word == SingleWordJustify::FullJustify || force_last)
             {
                 let levels = bidi.as_ref().map_or(&[][..], |b| &b.levels[..]);
                 let shaper = kashida::Shaper { db: cx.db, text: cx.text, runs: &cx.runs, feats: &cx.opts.features, levels, para_start: pr.start };
-                let grown = kashida::stretch_line(&shaper, &mut sg, &mut flex, &para.justification, i, trimmed, end, width);
+                let policy = vectorcraft_text_arabic::policy(para.kashida.strength(), force);
+                let grown = kashida::stretch_line(&shaper, &mut sg, &mut flex, &para.justification, policy, i, trimmed, end, width);
                 if grown != 0 {
                     end = end.saturating_add_signed(grown);
                     trimmed = trimmed.saturating_add_signed(grown);

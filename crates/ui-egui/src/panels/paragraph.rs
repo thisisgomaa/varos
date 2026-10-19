@@ -207,6 +207,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         }
     });
+    // Varos: kashida controls, for paragraphs that run right to left (the ones kashida stretches).
+    if rtl {
+        crate::varos::kashida_ui::controls(app, ui, &para);
+    }
     ui.add_space(4.0);
     let fw = ((ui.available_width() - 66.0) / 2.0).clamp(60.0, 100.0);
     // Indents and paragraph spacing are distances (General); type sizes follow Units ▸ Type.
@@ -359,7 +363,9 @@ fn reset_panel(app: &mut VectorcraftApp) {
             "wordSpacing": j.word_spacing, "letterSpacing": j.letter_spacing, "glyphScaling": j.glyph_scaling,
             "autoLeading": j.auto_leading, "singleWordJustification": "fullJustify",
             "direction": "auto", "leadingModel": "romanBaseline", "burasagari": "standard", "kinsoku": "hard", "composer": "everyLine",
-            "romanHangingPunctuation": false
+            "romanHangingPunctuation": false,
+            // Varos: kashida back to Auto at 50.
+            "kashida": "auto", "kashidaStrength": 50
         }),
     );
 }
