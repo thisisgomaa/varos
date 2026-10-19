@@ -5170,3 +5170,17 @@ theme	Appearance	Външен вид
 	Minimum must not exceed Desired, nor Desired Maximum.	Минималната стойност не може да надвишава желаната, нито желаната – максималната.
 	Justification	Подравняване
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	променливите и наборите от данни на файла не бяха прочетени (променливи: {variables}, набори от данни: {data_sets}): панелът „Променливи“ не ги показва
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Арабски шрифтове
+	Arabic Samples	Арабски мостри
+	Show an Arabic line in each Arabic font	Показване на арабски ред във всеки арабски шрифт
+	Only fonts whose Arabic letters join	Само шрифтове, в които арабските букви се свързват
+	All Arabic	Всички арабски
+	Naskh	Насх
+	Kufi	Куфи
+	Ruq’ah	Рукаа
+	Diwani	Дивани
+	Thuluth	Сулюс
+	Modern Sans	Модерен гротеск
+	Guessed from the font's name; fonts it can't place are under All Arabic	Определено по името на шрифта; шрифтовете без група са в „Всички арабски“
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Оформяне AAT: този шрифт се набира със собствените си таблици morx, а не с правилата OpenType за арабски

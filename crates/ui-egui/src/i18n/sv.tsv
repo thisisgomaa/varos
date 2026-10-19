@@ -5161,3 +5161,17 @@ theme	Appearance	Utseende
 	Minimum must not exceed Desired, nor Desired Maximum.	Minimum får inte överstiga Önskat, och Önskat inte Maximum.
 	Justification	Justering
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	filens variabler och datauppsättningar lästes inte (variabler: {variables}, datauppsättningar: {data_sets}): panelen Variabler visar dem inte
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Arabiska teckensnitt
+	Arabic Samples	Arabiska prov
+	Show an Arabic line in each Arabic font	Visa en arabisk rad i varje arabiskt teckensnitt
+	Only fonts whose Arabic letters join	Bara teckensnitt vars arabiska bokstäver binds samman
+	All Arabic	All arabiska
+	Naskh	Naskh
+	Kufi	Kufi
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Modern sans
+	Guessed from the font's name; fonts it can't place are under All Arabic	Gissat utifrån teckensnittets namn; teckensnitt utan grupp finns under All arabiska
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-formning: teckensnittet sätts med sina egna morx-tabeller, inte med OpenType-regler för arabiska

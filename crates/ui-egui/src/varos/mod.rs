@@ -1,4 +1,6 @@
 //! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
+// Varos: the font menu's Arabic filter, samples and markers.
+pub(crate) mod arabic_fonts;
 pub(crate) mod cursors;
 pub(crate) mod home;
 // Varos: the Paragraph panel's kashida controls.

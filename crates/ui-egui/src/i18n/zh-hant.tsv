@@ -4094,3 +4094,17 @@ lighting	Light	光源
 	Minimum must not exceed Desired, nor Desired Maximum.	最小值不可超過所需值，所需值不可超過最大值。
 	Minimum	最小值
 	Justification	對齊設定
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	阿拉伯文字體
+	Arabic Samples	阿拉伯文範例
+	Show an Arabic line in each Arabic font	在每個阿拉伯文字體中顯示一行阿拉伯文
+	Only fonts whose Arabic letters join	僅顯示阿拉伯字母相連的字體
+	All Arabic	全部阿拉伯文
+	Naskh	納斯赫體
+	Kufi	庫法體
+	Ruq’ah	魯格阿體
+	Diwani	迪瓦尼體
+	Thuluth	蘇魯斯體
+	Modern Sans	現代無襯線
+	Guessed from the font's name; fonts it can't place are under All Arabic	依字體名稱推測；無法歸類的字體位於「全部阿拉伯文」
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT 塑形：此字體使用自身的 morx 表排版，而非 OpenType 阿拉伯文規則
