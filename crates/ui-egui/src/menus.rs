@@ -374,7 +374,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "",
         "{collapsed?: bool} collapse the dock's Properties | Layers | Libraries group to icons (true), expand it (false) or toggle (omitted), as the double arrow at the top of the dock does; returns the new state",
     ),
-    ("window.brightness", "UI Brightness", "", "{brightness: varos|dark|mediumDark|mediumLight|light}"),
+    ("window.brightness", "UI Brightness", "", "{brightness: dark|mediumDark|mediumLight|light}"),
     ("window.workspace", "Workspace", "", "{name} switch workspace (Essentials, Essentials Classic, Painting, …)"),
     ("window.workspace.reset", "Reset Essentials", "", "{} reset the current workspace"),
     ("window.workspace.new", "New Workspace…", "", "{name?} save the current layout"),
@@ -1452,7 +1452,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
                 app.canvas.key = None;
                 Ok(json!(b.id()))
             }
-            None => Err("brightness must be varos|dark|mediumDark|mediumLight|light".into()),
+            None => Err("brightness must be dark|mediumDark|mediumLight|light".into()),
         },
         "window.newWindow" => Err("multiple windows land with M11.5".into()),
         "tool.select" => match s("tool") {
@@ -3308,10 +3308,9 @@ pub(crate) fn home_key(app: &VectorcraftApp) -> (Option<u64>, usize) {
 }
 
 /// Whether the Home screen is up: chosen with the Home button (`app.home`), or no document is open
-/// and Preferences › General › Show The Home Screen When No Documents Are Open is on (#394). Off,
-/// an app with no document shows an empty window, and the Home button still opens the screen.
+/// Varos: the no-document state always shows welcome, including older saved preferences.
 pub(crate) fn home_showing(app: &VectorcraftApp) -> bool {
-    app.ui.home.is_some() || (app.session.active().is_none() && app.session.prefs.show_home_screen)
+    crate::varos::home::is_home(app) // Varos: one Home gate for canvas, menus and chrome.
 }
 
 /// Editor menus belong to an active document, never to Home (even over open tabs).

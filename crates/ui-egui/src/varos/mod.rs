@@ -1,5 +1,6 @@
 //! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
 pub(crate) mod cursors;
+pub(crate) mod home;
 pub mod icons;
 pub mod names;
 #[cfg(test)]

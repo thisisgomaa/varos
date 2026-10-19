@@ -4310,7 +4310,6 @@ swatch	Bright Violet	ビビッドバイオレット
 @msg	`mode` must be grayscale, rgb, hsb, cmyk or websafe	`mode` には grayscale、rgb、hsb、cmyk、websafe のいずれかを指定してください
 @msg	`{key}` must be true or false	`{key}` には true または false を指定してください
 @msg	brightness must be dark|mediumDark|mediumLight|light	brightness には dark|mediumDark|mediumLight|light のいずれかを指定してください
-@msg	brightness must be varos|dark|mediumDark|mediumLight|light	brightness には varos|dark|mediumDark|mediumLight|light のいずれかを指定してください
 @msg	index must be a number or first, previous, next or last	index には数値、または first、previous、next、last のいずれかを指定してください
 @msg	index must be a number or first, previous, next or last, not `{other}`	index には数値、または first、previous、next、last のいずれかを指定してください (`{other}` は指定できません)
 @msg	index must be ≥ 0	index には 0 以上の数値を指定してください

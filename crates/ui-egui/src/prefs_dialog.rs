@@ -61,6 +61,9 @@ pub fn restore(app: &mut VectorcraftApp) {
         // Older preference files: keep the saved brightness.
         p.ui_brightness = app.ui.brightness.id().into();
     }
+    if matches!(p.ui_brightness.as_str(), "varos" | "varosWarm") {
+        p.ui_brightness = "dark".into();
+    } // Varos: migrate retired brightness ids.
     // Older preference files kept the interface language with the UI state; English was the
     // default there, so only another language is carried over (onto an unset preference).
     if let Some(code) = app.ui.legacy_language.take()
@@ -527,11 +530,12 @@ mod tests {
     #[test]
     fn dialog_ok_with_invalid_value_keeps_dialog_and_prefs() {
         let mut a = app();
+        let before = a.session.prefs.clone(); // Varos: compare against the UI's actual default appearance.
         open(&mut a, None);
         a.ui.dialog.as_mut().unwrap().fields.insert("anchorSize".into(), json!(42));
         assert!(confirm(&mut a).is_err());
         assert!(a.ui.dialog.is_some());
-        assert_eq!(a.session.prefs, Prefs::default());
+        assert_eq!(a.session.prefs, before);
     }
 
     #[test]

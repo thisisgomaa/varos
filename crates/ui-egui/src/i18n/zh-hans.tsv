@@ -4051,7 +4051,6 @@ imageTrace	Outline	轮廓
 @msg	`mode` must be grayscale, rgb, hsb, cmyk or websafe	`mode` 必须是 grayscale、rgb、hsb、cmyk 或 websafe
 @msg	`{key}` must be true or false	`{key}` 必须是 true 或 false
 @msg	brightness must be dark|mediumDark|mediumLight|light	brightness 必须是 dark|mediumDark|mediumLight|light
-@msg	brightness must be varos|dark|mediumDark|mediumLight|light	brightness 必须是 varos|dark|mediumDark|mediumLight|light
 @msg	index must be a number or first, previous, next or last	index 必须是数字，或 first、previous、next 或 last
 @msg	index must be a number or first, previous, next or last, not `{other}`	index 必须是数字，或 first、previous、next 或 last，而不是 `{other}`
 @msg	lang must be one of {_1}	lang 必须是 {_1} 之一

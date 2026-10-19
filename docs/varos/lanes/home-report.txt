@@ -1,0 +1,140 @@
+Lane HOME round 2 — implementation report
+Date: 2026-10-19
+Worktree: ~/Documents/AI workspace/lanes/lane-home
+Branch: lane-home. Continued round-1 edits; no commit, merge, push, install or assets added.
+
+HOME
+Hidden: tool rail/flyouts, right dock/icon column/tabs, No Document/control bar,
+status/hint bars, document tabs, popped-out/floating editor panels and in-window menus.
+Kept: title bar/mark/window controls, welcome/New/Open/presets/recent files, shortcuts and dialogs.
+Editor chrome returns with New/Open using the saved workspace visibility settings.
+Single predicate: crates/ui-egui/src/varos/home.rs::is_home (delegated by menus::home_showing).
+No active document always means Home, including an old showHomeScreen=false preference.
+Stale Home keys cannot hide chrome on the first frame after New/Open.
+Tests:
+- varos::home::tests::home_chrome_returns_on_the_first_frame_after_new_and_close
+- varos::home::tests::home_keeps_cmd_n_and_cmd_o_shortcuts
+- tests_home::home_shows_over_open_documents_until_a_document_is_chosen
+- tests_home::home_screen_without_documents_always_shows_clean_welcome
+
+THEME
+Exactly four built-ins; Brightness::Varos and round-1 VarosWarm removed.
+Palettes: crates/ui-egui/src/varos/theme.rs. Small upstream token construction hooks
+apply them to all four levels and both schemes. Existing Classic blue policy remains.
+Inter/Inter Medium/Semibold, Arabic fallback and Mono apply to all four levels.
+Controls/boxes: 3/8 px. All window/popup/custom chrome shadows: none, independent of accent.
+
+Token          Dark       Medium Dark Medium Light Light
+-------------  ---------- ----------- ------------ ----------
+BG             #121418    #1c2027     #d9dde3      #eef0f4
+PANEL          #1a1d23    #242931     #e6e9ee      #f7f8fa
+SURFACE        #22262e    #2c323b     #f1f3f6      #ffffff
+HOVER          #2a2f38    #353c46     #e0e4ea      #e8ebf0
+LINE           #30363f    #3b424d     #c3c9d2      #d2d7df
+ROW_HOVER      #252a32    #303640     #dce1e8      #e6eaf0
+INPUT_WELL     #0f1115    #171b21     #ffffff      #ffffff
+TEXT           #eceef2    #eef0f3     #16191e      #111418
+MUTED          #a2a8b3    #aab0ba     #5a616c      #5f6672
+DISABLED       #6f7580    #7b828e     #8b929d      #969da8
+SEAM           #0b0c0f    #12151a     #b5bdc8      #c4cbd5
+BUTTON_BORDER  #424a56    #4c5563     #a1aab7      #aab3c0
+ACCENT         #0c8ce9    #0c8ce9     #0c8ce9      #0c8ce9
+
+Accent is for selection/focus/active controls; neutral surfaces and links stay neutral.
+Blue is the fresh preference/default accent; its swatch and selected color match azure.
+Other explicit accents (including Coral) and saved accent choices remain available.
+Stronger Blue for white-letter buttons: #0875c4 (additional semantic value).
+No supplied neutral palette values were tuned. Secondary text contrast is tested on
+panel/pasteboard/input, primary on all chrome surfaces and selected rows (>=4.5:1).
+Disabled controls remain exempt. Slider rails keep upstream's minimum visibility delta.
+
+Migration (prefs_dialog::restore, after loading Prefs):
+if matches!(p.ui_brightness.as_str(), "varos" | "varosWarm") { p.ui_brightness = "dark".into(); }
+Serde aliases also accept old UI brightness enum values Varos/VarosWarm and lowercase ids.
+No error/message. Saved four-level choices remain intact.
+Dropdown fix: upstream choice_row already resolves id -> label; retired ids caused raw fallback.
+Loader migration and restoring the engine's original four-entry Choice table remove that mismatch.
+Headless rendering checks selected labels Dark/Medium Dark/Medium Light/Light plus save/restore.
+Removed obsolete varos brightness @msg rows from all 23 catalogs; four-level messages retained.
+
+Theme tests:
+- varos::theme::tests::four_palettes_keep_contrast_fonts_and_shadowless_geometry
+- varos::theme::tests::retired_brightness_preferences_migrate_silently
+- varos::theme::tests::brightness_dropdown_shows_four_labels_and_roundtrips
+Upstream slider rail and Classic scheme tests include all four levels again.
+
+REVIEW
+Independent read-only home_review agent: two findings fixed, re-reviewed with no blockers:
+no-document false preference edge and Coral swatch mismatch. Owner acceptance remains pending.
+
+GATES (final source)
+PASS cargo build --offline -j 4 -p vectorcraft: exit 0, 111.25 s wall (includes build lock wait).
+PASS cargo test --offline -j 4 -p vectorcraft-ui-egui: exit 0, 102.94 s wall;
+1687 passed, 0 failed, 2 ignored; test execution 14.09 s; doc tests 0.
+PASS cargo fmt --all -- --check: exit 0, 5.95 s wall.
+PASS git diff --check: exit 0, 0.15 s wall.
+Logs: target/home-round2/{build,test,fmt,diff-check}.log.
+Cargo always --offline -j 4; no CARGO_TARGET_DIR; no dependency download.
+Earlier verification failures: missing ui-medium (195.27 s, 1 failing test), then
+800 pt Artboard checkbox overflow (187.07 s, 1 failing test). Both fixed as below.
+No unrelated upstream panels/tests changed to bypass these failures.
+
+NATIVE VISUAL CHECK
+Attempted this worktree's target/debug/vectorcraft with VECTORCRAFT_NO_PREFS=1,
+control port 17979 and automation roots confined to this lane. The sandbox denied
+the localhost connection (PermissionError: Operation not permitted); native log
+also shows macOS XPC connection errors. No screenshot or visual pass is claimed.
+The launched process was stopped. Headless layout/font/contrast checks passed.
+Owner real-window acceptance remains unverified; no STATE/BACKLOG done claim.
+
+OWNER HAND TEST
+1. No document: welcome + title bar only, including when older preferences disabled Home.
+2. Cmd+N and Cmd+O work. Create/open a file: full saved editor chrome returns.
+3. Home over an open document hides chrome; New exits Home; close last document returns Home.
+4. Preferences Brightness lists precisely Dark, Medium Dark, Medium Light, Light;
+   selected label is human-readable. Switch all four, inspect contrast, Inter and no shadows.
+5. Restart each saved choice; check Coral and other explicit accents still apply.
+
+
+Font integration validation found/fixed two regressions:
+1. Reinitializing upstream fonts after appearance setup dropped ui-medium. The common
+   font_definitions hook now always registers Varos roles; no recursion or duplicate registration.
+2. Full-size Varos Inter made the 800 pt Artboard control bar lose its second checkbox.
+   Inter now uses upstream's existing 0.92 optical scale (all three weights), preserving
+   Inter faces and control font sizes without modifying upstream panel layout/tests.
+   Arabic and Mono remain unscaled. This is a typography-metrics adjustment, not a palette tuning.
+
+FILES + / - relative to HEAD (includes retained round-1 changes)
+crates/engine/src/lib.rs: +1/-1
+crates/ui-egui/src/chrome.rs: +1/-1
+crates/ui-egui/src/i18n/bg.tsv: +0/-1
+crates/ui-egui/src/i18n/cs.tsv: +0/-1
+crates/ui-egui/src/i18n/da.tsv: +0/-1
+crates/ui-egui/src/i18n/de.tsv: +0/-1
+crates/ui-egui/src/i18n/el.tsv: +0/-1
+crates/ui-egui/src/i18n/es.tsv: +0/-1
+crates/ui-egui/src/i18n/fi.tsv: +0/-1
+crates/ui-egui/src/i18n/fr.tsv: +0/-1
+crates/ui-egui/src/i18n/hu.tsv: +0/-1
+crates/ui-egui/src/i18n/id.tsv: +0/-1
+crates/ui-egui/src/i18n/it.tsv: +0/-1
+crates/ui-egui/src/i18n/ja.tsv: +0/-1
+crates/ui-egui/src/i18n/ka.tsv: +0/-1
+crates/ui-egui/src/i18n/ko.tsv: +0/-1
+crates/ui-egui/src/i18n/nl.tsv: +0/-1
+crates/ui-egui/src/i18n/pl.tsv: +0/-1
+crates/ui-egui/src/i18n/pt-br.tsv: +0/-1
+crates/ui-egui/src/i18n/ru.tsv: +0/-1
+crates/ui-egui/src/i18n/sv.tsv: +0/-1
+crates/ui-egui/src/i18n/uk.tsv: +0/-1
+crates/ui-egui/src/i18n/vi.tsv: +0/-1
+crates/ui-egui/src/i18n/zh-hans.tsv: +0/-1
+crates/ui-egui/src/lib.rs: +17/-11
+crates/ui-egui/src/menus.rs: +4/-5
+crates/ui-egui/src/prefs_dialog.rs: +5/-1
+crates/ui-egui/src/tests_home.rs: +10/-6
+crates/ui-egui/src/theme.rs: +22/-26
+crates/ui-egui/src/varos/mod.rs: +1/-0
+crates/ui-egui/src/varos/theme.rs: +228/-133
+crates/ui-egui/src/varos/home.rs: +99/-0 (new)
+docs/varos/lanes/home-report.txt: new report, replaced round-1 report on disk.

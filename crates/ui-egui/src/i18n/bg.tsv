@@ -3788,7 +3788,6 @@ axis	Both	И двете
 @msg	balance must be between 0 and 100	балансът трябва да бъде между 0 и 100
 @msg	batch step {_1} (`{id}`) failed: {e}	стъпка от пакет {_1} (`{id}`) неуспешна: {e}
 @msg	brightness must be dark|mediumDark|mediumLight|light	яркостта трябва да бъде dark|mediumDark|mediumLight|light
-@msg	brightness must be varos|dark|mediumDark|mediumLight|light	яркостта трябва да бъде varos|dark|mediumDark|mediumLight|light
 @msg	can't encode the document: {0}	документът не може да бъде кодиран: {0}
 @msg	can't parse shortcut `{c}`	клавишният бърз път `{c}` не може да бъде разпознат
 @msg	can't parse shortcut `{s}` for `{k}`	клавишният бърз път `{s}` за `{k}` не може да бъде разпознат

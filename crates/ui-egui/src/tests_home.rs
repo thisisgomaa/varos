@@ -24,9 +24,12 @@ fn shows_document(app: &mut VectorcraftApp) -> bool {
 #[test]
 fn home_shows_over_open_documents_until_a_document_is_chosen() {
     let mut app = app_with_doc();
+    app.ui.control_bar = true; // Varos: exercise every optional editor bar.
     assert!(shows_document(&mut app));
+    crate::varos::home::tests::assert_chrome(&mut app, true); // Varos: full window chrome.
     app.run("app.home", json!({})).unwrap();
     assert!(!shows_document(&mut app), "Home replaces the canvas");
+    crate::varos::home::tests::assert_chrome(&mut app, false); // Varos: welcome only.
     assert_eq!(app.session.documents().len(), 1, "the document stays open");
     assert!(app.ui.dialog.is_none(), "Home is not the New Document dialog");
     // Choosing the document's tab returns to it.
@@ -37,6 +40,7 @@ fn home_shows_over_open_documents_until_a_document_is_chosen() {
     app.run("file.new", json!({})).unwrap();
     assert!(shows_document(&mut app));
     assert!(app.ui.home.is_none());
+    crate::varos::home::tests::assert_chrome(&mut app, true); // Varos: restored after New.
 }
 
 /// Draw one canvas frame; whether it drew any text (the Home screen's labels; an empty window
@@ -58,18 +62,18 @@ fn draws_text(app: &mut VectorcraftApp) -> bool {
     out.shapes.iter().any(|c| has_text(&c.shape))
 }
 
-/// General › Show The Home Screen When No Documents Are Open (#394): off, an app with no document
-/// shows an empty window instead of the Home screen, and the Home button still opens it.
+/// Varos: no-document welcome stays clean even when an older saved preference disabled it.
 #[test]
-fn home_screen_without_documents_follows_its_preference() {
+fn home_screen_without_documents_always_shows_clean_welcome() {
     let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
     assert!(app.session.active().is_none());
     assert!(draws_text(&mut app), "Home with no document open (the default)");
     assert!(crate::menus::home_showing(&app));
     app.session.execute("prefs.set", &json!({"key": "showHomeScreen", "value": false})).unwrap();
-    assert!(!draws_text(&mut app), "off: an empty window");
+    assert!(draws_text(&mut app), "Varos: saved false still shows welcome");
+    crate::varos::home::tests::assert_chrome(&mut app, false);
     assert!(!shows_document(&mut app));
-    assert!(!crate::menus::home_showing(&app), "the Home button isn't lit");
+    assert!(crate::menus::home_showing(&app), "Varos: no document is always Home");
     app.run("app.home", json!({})).unwrap();
     assert!(draws_text(&mut app), "the Home button still shows the Home screen");
     app.run("file.new", json!({})).unwrap();
@@ -77,7 +81,7 @@ fn home_screen_without_documents_follows_its_preference() {
     assert!(app.ui.home.is_none());
     app.run("file.close", json!({})).unwrap();
     assert!(app.session.active().is_none());
-    assert!(!draws_text(&mut app), "closing the last document leaves the window empty");
+    assert!(draws_text(&mut app), "Varos: closing the last document returns Home");
     app.session.execute("prefs.set", &json!({"key": "showHomeScreen", "value": true})).unwrap();
     assert!(draws_text(&mut app), "on again: Home");
 }
