@@ -179,6 +179,8 @@ pub fn para_attrs(v: &ParaStyle) -> Map<String, Value> {
         ("burasagari", json!(v.burasagari)),
         ("kinsoku", json!(v.kinsoku)),
         ("roman_hanging", json!(v.roman_hanging)),
+        // Varos: paragraph styles carry the kashida setting too.
+        ("kashida", json!(v.kashida)),
     ] {
         m.insert(k.into(), x);
     }

@@ -645,6 +645,8 @@ pub struct ParaStyle {
     /// commas starting or ending a line hang outside the margin, and asterisks, tildes, ellipses,
     /// dashes, colons and semicolons hang by half. East Asian punctuation hangs by burasagari.
     pub roman_hanging: bool,
+    /// Varos: kashida (tatweel) justification of right-to-left Arabic lines (Paragraph panel).
+    pub kashida: KashidaOptions,
 }
 
 impl ParaStyle {
@@ -706,6 +708,10 @@ struct ParaStyleFile {
     kinsoku: Kinsoku,
     #[serde(default, skip_serializing_if = "crate::skip::is_default")]
     roman_hanging: bool,
+    // Varos: saved only when it differs from Auto at 50, so documents without kashida settings
+    // stay byte-identical and older files load with the default.
+    #[serde(default, skip_serializing_if = "crate::skip::is_default")]
+    kashida: KashidaOptions,
 }
 
 impl From<ParaStyle> for ParaStyleFile {
@@ -734,6 +740,7 @@ impl From<ParaStyle> for ParaStyleFile {
             burasagari,
             kinsoku,
             roman_hanging,
+            kashida,
             ..
         } = p;
         Self {
@@ -756,6 +763,7 @@ impl From<ParaStyle> for ParaStyleFile {
             burasagari,
             kinsoku,
             roman_hanging,
+            kashida,
         }
     }
 }
@@ -782,6 +790,7 @@ impl From<ParaStyleFile> for ParaStyle {
             burasagari,
             kinsoku,
             roman_hanging,
+            kashida,
             ..
         } = f;
         Self {
@@ -803,7 +812,48 @@ impl From<ParaStyleFile> for ParaStyle {
             burasagari,
             kinsoku,
             roman_hanging,
+            kashida,
         }
+    }
+}
+
+/// Varos: when a justified right-to-left paragraph takes kashida (tatweels in its Arabic words).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KashidaMode {
+    /// No kashida: word spacing alone justifies the lines.
+    Off,
+    /// Justified lines take kashida within the strength's budget, before word spacing.
+    #[default]
+    Auto,
+    /// Deeper: a larger share of each line's slack and more tatweels per word, and the last line
+    /// of a paragraph justified with its last line aligned takes kashida too (its spaces don't).
+    Force,
+}
+
+/// Varos: a paragraph's kashida settings ([`ParaStyle::kashida`]). Auto at strength 50 is the
+/// policy every paragraph had before the setting existed (`varos-text`'s Balanced).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KashidaOptions {
+    pub mode: KashidaMode,
+    /// 0 (lightest) to 100 (strongest); 50 is Balanced. Values above 100 read as 100.
+    pub strength: u8,
+}
+
+impl KashidaOptions {
+    /// The strongest strength.
+    pub const MAX_STRENGTH: u8 = 100;
+
+    /// The strength, at most [`Self::MAX_STRENGTH`].
+    pub fn strength(&self) -> u8 {
+        self.strength.min(Self::MAX_STRENGTH)
+    }
+}
+
+impl Default for KashidaOptions {
+    fn default() -> Self {
+        Self { mode: KashidaMode::Auto, strength: 50 }
     }
 }
 
@@ -1874,5 +1924,38 @@ mod tests {
         assert_eq!(serde_json::from_str::<ParaStyle>(&json).unwrap(), p);
         // Files from before the flag keep their alignment.
         assert_eq!(serde_json::from_str::<ParaStyle>(r#"{"justify":"Center"}"#).unwrap().justify, Justify::Center);
+    }
+
+    /// Varos: kashida settings load as Auto at 50 from documents saved before them, are saved only
+    /// when changed, and round-trip.
+    #[test]
+    fn kashida_settings_default_for_old_documents_and_round_trip() {
+        let old = r#"{"justify":"JustifyAll","left_indent":4.0}"#;
+        let p: ParaStyle = serde_json::from_str(old).unwrap();
+        assert_eq!(p.kashida, KashidaOptions { mode: KashidaMode::Auto, strength: 50 });
+        assert_eq!(p.kashida, KashidaOptions::default());
+        assert_eq!(ParaStyle::default().kashida, KashidaOptions::default());
+        // The default isn't written: a document that never touched kashida saves as before.
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(!json.contains("kashida"), "{json}");
+        for kashida in [
+            KashidaOptions { mode: KashidaMode::Off, strength: 50 },
+            KashidaOptions { mode: KashidaMode::Force, strength: 100 },
+            KashidaOptions { mode: KashidaMode::Auto, strength: 0 },
+        ] {
+            let p = ParaStyle { justify: Justify::JustifyRight, kashida, ..Default::default() };
+            let json = serde_json::to_string(&p).unwrap();
+            assert!(json.contains("kashida"), "{json}");
+            assert_eq!(serde_json::from_str::<ParaStyle>(&json).unwrap(), p, "{json}");
+        }
+        let forced: ParaStyle = serde_json::from_str(r#"{"justify":"Right","kashida":{"mode":"force"}}"#).unwrap();
+        assert_eq!(forced.kashida, KashidaOptions { mode: KashidaMode::Force, strength: 50 }, "a missing strength is 50");
+        let over: ParaStyle = serde_json::from_str(r#"{"justify":"Right","kashida":{"strength":250}}"#).unwrap();
+        assert_eq!(over.kashida.strength(), 100);
+        // Whole text objects too.
+        let mut t = TextObject::point(Point::ZERO, "بسم الله", CharStyle::default());
+        t.para.kashida = KashidaOptions { mode: KashidaMode::Force, strength: 80 };
+        let json = serde_json::to_string(&t).unwrap();
+        assert_eq!(serde_json::from_str::<TextObject>(&json).unwrap(), t);
     }
 }

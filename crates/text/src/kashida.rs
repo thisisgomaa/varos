@@ -8,7 +8,18 @@
 //! stretched line is set in exactly the face that measured it. No other font is ever used.
 //!
 //! A word is re-shaped as a whole with U+0640 inserted at the chosen boundaries and spliced
-//! back into the paragraph's glyphs. A virtual tatweel glyph has zero source length at the
+//! back into the paragraph's glyphs.
+//!
+//! How much a line takes is the paragraph's kashida setting ([`vectorcraft_doc::text::KashidaOptions`],
+//! mapped to a numeric policy by [`arabic::policy`]).
+//!
+//! Where a tatweel may go is HarfRust's answer (its safe-to-insert-tatweel flag) for OpenType
+//! Arabic fonts. Fonts it shapes with `morx` tables never get that flag ([`morx_shaped`]: Geeza
+//! Pro, Al Nile, Baghdad, Damascus, KufiStandardGK, DecoType Naskh...); for them the joining rules
+//! propose the boundaries (`varos-text`'s candidates: between two joining letters, never inside
+//! لا, never next to harakat, never after a letter that doesn't join to the left) and every trial
+//! re-shape is verified against the word as the paragraph set it ([`morx_trial_ok`]) before it
+//! can be kept. A virtual tatweel glyph has zero source length at the
 //! boundary byte it fills: the caret, selection and exported text see only the authored
 //! characters (as with the hyphen of a hyphenated line).
 
@@ -17,7 +28,7 @@ use std::ops::Range;
 
 use unicode_bidi::Level;
 use vectorcraft_doc::{CharPosition, CharStyle, InlineArt, JustificationOptions, Justify};
-use vectorcraft_text_arabic::{self as arabic, Measured, WorkingText};
+use vectorcraft_text_arabic::{self as arabic, Measured, Policy, WorkingText};
 
 use crate::features::OtFeatures;
 use crate::fontdb::FontDb;
@@ -122,6 +133,94 @@ struct Word {
     width: f64,
     /// The face the paragraph set it in: every re-shaped glyph must come from it too.
     face: u32,
+    /// HarfRust shapes the face with `morx` ([`morx_shaped`]): its slots come from the joining
+    /// rules and each trial is verified ([`morx_trial_ok`]).
+    morx: bool,
+}
+
+/// Does HarfRust shape `face` with its `morx` (or older `mort`) tables, joining its letters?
+/// HarfRust uses them for horizontal text whenever the font has them, ignoring any `GSUB` (as
+/// HarfBuzz does: Damascus has both and is shaped with `morx`), and its `morx` shaping never marks
+/// a join safe for a tatweel: the joining rules propose the slots instead. A face whose letters
+/// don't join takes no kashida (a tatweel would hang between isolated letters). Cached per face.
+pub(crate) fn morx_shaped(face: &crate::fontdb::FontFace) -> bool {
+    use skrifa::raw::types::Tag;
+    #[cfg(test)]
+    if tests::FORCED_MORX.with(|f| f.borrow().contains(&face.id())) {
+        return true;
+    }
+    static CACHE: std::sync::Mutex<Option<HashMap<u32, bool>>> = std::sync::Mutex::new(None);
+    if let Some(v) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&face.id()).copied()) {
+        return v;
+    }
+    let v =
+        face.skrifa().is_some_and(|f| f.table_data(Tag::new(b"morx")).is_some() || f.table_data(Tag::new(b"mort")).is_some()) && joins_letters(face);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let map = cache.get_or_insert_with(HashMap::new);
+    if map.len() > 4096 {
+        map.clear();
+    }
+    map.insert(face.id(), v);
+    v
+}
+
+/// Does shaping join `face`'s letters: ببب isn't three isolated behs side by side?
+fn joins_letters(face: &crate::fontdb::FontFace) -> bool {
+    use harfrust::{Direction, ShapeOptions, UnicodeBuffer};
+    let Some(hb) = face.hb() else { return false };
+    let shaper = face.shaper.shaper(&hb).instance(face.instance.as_ref()).build();
+    let gids = |text: &str| {
+        let mut buf = UnicodeBuffer::new();
+        buf.push_str(text);
+        buf.set_direction(Direction::RightToLeft);
+        buf.guess_segment_properties();
+        shaper.shape(buf, ShapeOptions::new()).glyph_infos().iter().map(|g| g.glyph_id).collect::<Vec<u32>>()
+    };
+    let (one, three) = (gids("ب"), gids("ببب"));
+    !one.is_empty() && !one.contains(&0) && !three.contains(&0) && three != one.repeat(3)
+}
+
+/// A trial re-shape `trial` of a word in a face shaped with `morx`, with tatweels at `slots`, against
+/// the word as the paragraph set it (`original`). Kept only when:
+/// (a) it has exactly one more glyph per tatweel, and each tatweel is a glyph of its own (zero
+///     source length, U+0640);
+/// (b) every authored glyph is unchanged: same glyph id (the letters beside each tatweel kept
+///     their joining forms), same cluster and the same offsets (marks stay where they were);
+/// (c) no glyph is `.notdef`;
+/// (d) every authored glyph keeps its advance (within a font unit), and the word grew by the
+///     tatweels' advances, within a font unit each.
+pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usize]) -> bool {
+    let k = slots.len();
+    if trial.len() != original.len() + k || trial.iter().any(|g| g.gid == 0) {
+        return false;
+    }
+    let tatweels: Vec<&SGlyph> = trial.iter().filter(|g| g.len == 0).collect();
+    if tatweels.len() != k || tatweels.iter().any(|g| g.ch != arabic::TATWEEL || g.adv <= 0.0) {
+        return false;
+    }
+    let mut at: Vec<usize> = tatweels.iter().map(|g| g.byte).collect();
+    at.sort_unstable();
+    if at != slots {
+        return false;
+    }
+    let authored = trial.iter().filter(|g| g.len > 0);
+    // One font unit, in points.
+    let unit_of = |g: &SGlyph| g.sx.abs() + EPS;
+    // Each authored glyph on its own, advance included: a gain in one letter and a loss in
+    // another must not cancel out in the word's total.
+    let same = authored.clone().count() == original.len()
+        && authored.zip(original).all(|(a, b)| {
+            a.gid == b.gid
+                && a.byte == b.byte
+                && a.len == b.len
+                && (a.dx - b.dx).abs() < EPS
+                && (a.dy - b.dy).abs() < EPS
+                && (a.adv - b.adv).abs() <= unit_of(b)
+        });
+    let grown: f64 = trial.iter().map(|g| g.adv).sum::<f64>() - original.iter().map(|g| g.adv).sum::<f64>();
+    let added: f64 = tatweels.iter().map(|g| g.adv).sum();
+    let unit: f64 = tatweels.iter().map(|g| g.sx.abs()).sum();
+    same && (grown - added).abs() <= unit + EPS
 }
 
 /// The same glyphs set the same way (re-shaping a word apart must reproduce the paragraph's).
@@ -166,12 +265,14 @@ fn plain(st: &CharStyle) -> bool {
 /// many glyphs the line gained (0: nothing changed). Lines it can't set alike (tabs, inline
 /// graphics, a word cut at the line's start or end) and words it can't (other scripts, digits,
 /// several runs or faces, tracking, kerning, scaling, caps, super/subscript) keep their glyphs.
+/// `policy` is how much of the slack the tatweels may fill and how many a word takes.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stretch_line(
     sh: &Shaper<'_>,
     sg: &mut Vec<SGlyph>,
     flex: &mut Vec<Flex>,
     options: &JustificationOptions,
+    policy: Policy,
     i: usize,
     trimmed: usize,
     end: usize,
@@ -213,7 +314,7 @@ pub(crate) fn stretch_line(
         if !ok {
             continue;
         }
-        let word = Word { glyphs: a..j, bytes, width: glyphs.iter().map(|g| g.adv).sum(), face: first.face.id() };
+        let word = Word { glyphs: a..j, bytes, width: glyphs.iter().map(|g| g.adv).sum(), face: first.face.id(), morx: morx_shaped(&first.face) };
         let same = reshaped(sh, &word, &[], options, first.leading).is_some_and(|(again, _)| same_setting(&again, glyphs));
         if same {
             words.push(word);
@@ -223,11 +324,14 @@ pub(crate) fn stretch_line(
         return 0;
     }
     let safe = |glyphs: &[SGlyph]| glyphs.iter().filter(|g| g.tatweel && g.len > 0).map(|g| g.byte).collect::<Vec<_>>();
-    let native_safe: Vec<Vec<usize>> = words.iter().map(|w| safe(&sg[w.glyphs.clone()])).collect();
+    // A morx-only face's boundaries: the joining rules', each trial verified below.
+    let joining = |w: &Word| arabic::candidates(sh.text, w.bytes.clone()).map(|c| c.into_iter().map(|c| c.byte).collect()).unwrap_or_default();
+    let native_safe: Vec<Vec<usize>> = words.iter().map(|w| if w.morx { joining(w) } else { safe(&sg[w.glyphs.clone()]) }).collect();
+    let originals: Vec<Vec<SGlyph>> = words.iter().map(|w| if w.morx { sg[w.glyphs.clone()].to_vec() } else { vec![] }).collect();
     let leading: Vec<f64> = words.iter().map(|w| sg[w.glyphs.start].leading).collect();
     let line_bytes = words[0].bytes.start.min(sg[i].byte)..words.iter().map(|w| w.bytes.end).max().unwrap_or(0);
     let mut cache: HashMap<(usize, Vec<usize>), Option<Setting>> = HashMap::new();
-    let Ok(plan) = arabic::plan(sh.text, line_bytes, natural, native_safe.iter().flatten().copied().collect(), width, arabic::POLICY, |slots| {
+    let Ok(plan) = arabic::plan_with(sh.text, line_bytes, natural, native_safe.iter().flatten().copied().collect(), width, policy, |slots| {
         let mut width = natural;
         let mut safe_now = HashSet::new();
         let mut missing = false;
@@ -239,8 +343,15 @@ pub(crate) fn stretch_line(
                 continue;
             }
             let set = cache.entry((k, mine.clone())).or_insert_with(|| reshaped(sh, word, &mine, options, leading[k])).clone()?;
+            if word.morx && !morx_trial_ok(&originals[k], &set.0, &mine) {
+                return None;
+            }
             width += set.0.iter().map(|g| g.adv).sum::<f64>() - word.width;
-            safe_now.extend(safe(&set.0));
+            if word.morx {
+                safe_now.extend(native_safe[k].iter().copied());
+            } else {
+                safe_now.extend(safe(&set.0));
+            }
             // A missing glyph, or one from another face (a fallback), rejects the trial.
             missing |= set.0.iter().any(|g| g.gid == 0 || g.face.id() != word.face);
             payload.push((k, set));
@@ -263,3 +374,7 @@ pub(crate) fn stretch_line(
     }
     grown
 }
+
+#[cfg(test)]
+#[path = "tests_kashida_policy.rs"]
+mod tests;

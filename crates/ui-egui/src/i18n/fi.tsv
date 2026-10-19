@@ -5183,3 +5183,11 @@ mark-style	Japanese	Japanilainen
 	Modern Sans	Moderni sans
 	Guessed from the font's name; fonts it can't place are under All Arabic	Arvattu fontin nimestä; luokittelemattomat fontit ovat kohdassa Kaikki arabialaiset
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-muotoilu: fontti ladotaan sen omilla morx-taulukoilla, ei arabian OpenType-säännöillä
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Kashida
+	No kashida: word spacing alone justifies the lines	Ei kashidaa: vain sanaväli tasaa rivit
+	Justified lines take tatweels in their Arabic words before word spacing	Tasatut rivit saavat tatweeleja arabiankielisiin sanoihinsa ennen sanaväliä
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Syvempi: enemmän tatweeleja sanaa kohden ja suurempi osa kunkin rivin väljyydestä; myös tasatun kappaleen viimeinen rivi, kun viimeinen rivi on tasattu reunaan, saa kashidan
+	Tatweels in the Arabic words of justified right-to-left lines	Tatweelit oikealta vasemmalle kulkevien tasattujen rivien arabiankielisissä sanoissa
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Kuinka suuren osan rivin väljyydestä kashida täyttää ja kuinka monta tatweelia sana saa (50: tasapainoinen)
+	Mixed: the selected paragraphs differ	Sekalainen: valitut kappaleet eroavat toisistaan

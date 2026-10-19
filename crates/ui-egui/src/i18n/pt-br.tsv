@@ -5136,3 +5136,11 @@ mark-style	Japanese	Japonesas
 	Modern Sans	Sans moderna
 	Guessed from the font's name; fonts it can't place are under All Arabic	Deduzido do nome da fonte; fontes não classificadas ficam em Todo o árabe
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Modelagem AAT: esta fonte é composta com suas próprias tabelas morx, não com as regras OpenType do árabe
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Kashida
+	No kashida: word spacing alone justifies the lines	Sem kashida: só o espaçamento entre palavras justifica as linhas
+	Justified lines take tatweels in their Arabic words before word spacing	Linhas justificadas recebem tatwils nas palavras árabes antes do espaçamento entre palavras
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Mais intenso: mais tatwils por palavra e mais do espaço livre de cada linha; a última linha de um parágrafo justificado com a última linha alinhada também recebe kashida
+	Tatweels in the Arabic words of justified right-to-left lines	Tatwils nas palavras árabes das linhas justificadas da direita para a esquerda
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Quanto do espaço livre de uma linha a kashida preenche e quantos tatwils uma palavra recebe (50: equilibrado)
+	Mixed: the selected paragraphs differ	Misto: os parágrafos selecionados são diferentes

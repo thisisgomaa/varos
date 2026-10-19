@@ -5184,3 +5184,11 @@ theme	Appearance	Външен вид
 	Modern Sans	Модерен гротеск
 	Guessed from the font's name; fonts it can't place are under All Arabic	Определено по името на шрифта; шрифтовете без група са в „Всички арабски“
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Оформяне AAT: този шрифт се набира със собствените си таблици morx, а не с правилата OpenType за арабски
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Кашида
+	No kashida: word spacing alone justifies the lines	Без кашида: редовете се двустранно подравняват само с разстоянието между думите
+	Justified lines take tatweels in their Arabic words before word spacing	Двустранно подравнените редове получават татвили в арабските думи преди разстоянието между думите
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	По-силно: повече татвили на дума и по-голяма част от свободното място на реда; последният ред на двустранно подравнен абзац с подравнен последен ред също получава кашида
+	Tatweels in the Arabic words of justified right-to-left lines	Татвили в арабските думи на двустранно подравнените редове отдясно наляво
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Каква част от свободното място на реда запълва кашидата и колко татвила получава една дума (50: балансирано)
+	Mixed: the selected paragraphs differ	Смесено: избраните абзаци се различават

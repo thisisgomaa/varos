@@ -5219,3 +5219,11 @@ mark-style	Japanese	Japonské
 	Modern Sans	Moderní bezpatkové
 	Guessed from the font's name; fonts it can't place are under All Arabic	Odhadnuto z názvu písma; nezařazená písma jsou v Celá arabština
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Tvarování AAT: toto písmo se sází vlastními tabulkami morx, ne pravidly OpenType pro arabštinu
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Kašída
+	No kashida: word spacing alone justifies the lines	Bez kašídy: řádky zarovnává jen mezera mezi slovy
+	Justified lines take tatweels in their Arabic words before word spacing	Zarovnané řádky dostanou v arabských slovech tatvíly dříve než mezery mezi slovy
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Hlubší: více tatvílů na slovo a větší část volného místa řádku; kašídu dostane i poslední řádek odstavce do bloku se zarovnaným posledním řádkem
+	Tatweels in the Arabic words of justified right-to-left lines	Tatvíly v arabských slovech zarovnaných řádků zprava doleva
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Kolik volného místa řádku kašída vyplní a kolik tatvílů slovo dostane (50: vyvážené)
+	Mixed: the selected paragraphs differ	Smíšené: vybrané odstavce se liší
