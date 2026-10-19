@@ -38,14 +38,43 @@ The face must also have its own U+0640 glyph. A tatweel is never borrowed from a
 ## Kashida controls
 
 Each paragraph has a kashida setting (`ParaStyle::kashida` in `crates/doc/src/text.rs`): **Off**,
-**Auto** (default) or **Force**, and a **strength** from 0 to 100 (default 50). The Paragraph panel
-shows them for right-to-left paragraphs; `text.setFormat` takes `kashida` and `kashidaStrength`.
-Documents saved before the setting load as Auto at 50, which is the old fixed Balanced policy, and
-a paragraph at the default saves nothing new.
+**Auto** (default) or **Force**, and a **strength** from 0 up (default 50). The Paragraph panel
+shows them for right-to-left paragraphs: its slider spans 0–100 and its number field takes any
+value from 0 up; `text.setFormat` takes `kashida` and `kashidaStrength`. Documents saved before the
+setting load as Auto at 50, which is the old fixed Balanced policy, and a paragraph at the default
+saves nothing new. The strength is stored as a whole number (`u32`): files with a strength of 100
+or less read and write exactly as before.
 
-`policy(strength, force)` in `src/lib.rs` maps the setting onto `varos-text`'s policies: 0 is
-Minimal (1 tatweel per word, a quarter of the slack), 50 Balanced (2, 60 %), 100 Display (4, all
-of it), interpolated in between. Force adds one tatweel per word (at most 5) and 0.4 of the slack
-(at most all of it), and also stretches the last line of a paragraph justified with its last line
-aligned (with kashida only: its spaces aren't spread). `plan_with` is `varos-text`'s `plan` with a
-numeric policy (identical at Balanced, tested).
+| Mode | Justified line (Justify / Justify All) | Last line of a Justify Left/Center/Right paragraph | Line that isn't justified (Left, Right, Center, Auto; point type) |
+|---|---|---|---|
+| Off | none | none | none |
+| Auto | `policy(strength, false)`: a share of the slack | none | none |
+| Force | `policy(strength, true)`: a deeper share | `policy(strength, true)`, kashida only (its spaces stay) | elongated by **strength %** of its natural width |
+
+**Justified lines** (owner decision 2026-10-17, unchanged): `policy(strength, force)` in `src/lib.rs`
+maps 0..100 onto `varos-text`'s policies: 0 is Minimal (1 tatweel per word, a quarter of the
+slack), 50 Balanced (2, 60 %), 100 Display (4, all of it), interpolated in between; above 100
+reads as 100. Force adds one tatweel per word (at most 5) and 0.4 of the slack (at most all of it).
+
+**Lines that aren't justified** (owner decision 2026-10-19: «الرقم يكون لا نهائي، ويكون شغال في أي
+مود»): Force elongates the line by `strength` percent of its natural width (30 → about 30 % wider,
+within one tatweel), never past the box's width (a line that already overflows doesn't grow; point
+type has no box); `growth_policy()` allows up to 8 tatweels a word. The line keeps its alignment:
+a right-aligned line stays on its right edge, a centred one stays centred. Auto does nothing there.
+
+**Where the tatweels go** (both kinds of line, owner decision 2026-10-19): `plan_with` spreads them
+across the words of the line, one more per word a round, the words in reading order (right to
+left), each word's boundaries best first, so Force no longer spends the whole slack on the first words (it replaced `varos-text`'s
+`plan`, which walks the boundaries in priority order across the whole line). Never in the name of
+God: `sacred_from` keeps every tatweel out of الله, لله and اللهم with any proclitic (والله، بالله،
+فلله، تالله…), out of the sacred ligatures U+FDF0..U+FDFD (ﷲ, ﷺ…), and out of a longer word's
+trailing الله (عبدالله). The joining rules already keep them out of لا and away from harakat.
+
+Which join a word takes first (`kashida_candidates`, owner decision 2026-10-19, after the renders
+showed الـرحمن): the join before the word's **final letter** (الرحمـن، العالميـن، الحمـد، بسـم), then
+mid-stem joins after a seen/sheen, a sad/dad, a kaf or a letter of the beh family, then any other
+the joining rules allow. Never right after the **definite article** (between the lam of ال, وال،
+بال، فال، كال، لل and the stem's first letter), and none in a word whose **stem is two letters or
+fewer** (رب، بالحق). A face can still refuse a join: Geeza Pro's final ين fails the `morx` trial,
+so العالمين takes its next join there (العـالمين).
+A line costs at most 256 trial re-shapes (`plan_with`'s cap).

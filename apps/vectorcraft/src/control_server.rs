@@ -137,6 +137,11 @@ fn spawn_link(
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new().name("vectorcraft-control".into()).spawn(move || {
         serve_socket(stream, &link, timeouts, |method, params| {
+            if varos_control::host_only(&method) {
+                // Varos: only the host says an agent left.
+                let _ = link.admit();
+                return Some(json!({"ok": false, "error": format!("`{method}` is sent by the app itself; nothing was run")}));
+            }
             let actor = match link.admit() {
                 Ok(actor) => actor,
                 Err(refused) => return Some(refused),
@@ -148,6 +153,11 @@ fn spawn_link(
             ctx.request_repaint();
             Some(rrx.recv_timeout(REPLY_WAIT).unwrap_or_else(|_| timed_out(&ticket)))
         });
+        // Varos: the agents it carried have left (their label numbers are free again).
+        for req in link.departures() {
+            let _ = tx.send(req);
+        }
+        ctx.request_repaint();
     })
 }
 

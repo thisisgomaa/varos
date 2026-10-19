@@ -13,7 +13,7 @@
 //! - a virtual tatweel glyph has zero source length, at the boundary byte it fills, so
 //!   carets, selection and exported text see only the authored characters.
 use unicode_script::{Script, UnicodeScript};
-pub use varos_text::kashida::{Candidate, Kashida, Measured, Plan, Width, WorkingText, candidates, joining_allows, plan};
+pub use varos_text::kashida::{Candidate, Kashida, Measured, Plan, Width, WorkingText, candidates, is_harakat, joining_allows, plan};
 
 /// `varos-text`'s Balanced policy: what every justified right-to-left Arabic paragraph took
 /// before the paragraph setting existed, and still takes at Auto, strength 50 ([`policy`]).
@@ -35,8 +35,29 @@ impl Policy {
     pub const BALANCED: Policy = Policy { per_word: 2, fraction: 0.6 };
     /// `varos-text`'s `Kashida::Display`: four per word, all the slack.
     pub const DISPLAY: Policy = Policy { per_word: 4, fraction: 1.0 };
-    /// The most tatweels a word takes under any policy ([`policy`] with Force at 100).
+    /// The most tatweels a word takes on a justified line ([`policy`] with Force at 100).
     pub const MAX_PER_WORD: usize = 5;
+    /// The most tatweels a word takes when kashida elongates a line that isn't justified
+    /// ([`growth_policy`]), and under any policy [`plan_with`] is given.
+    pub const MAX_GROW_PER_WORD: usize = 8;
+}
+
+/// The policy that elongates a line that isn't justified (Force in Left, Right or Center
+/// alignment): up to [`Policy::MAX_GROW_PER_WORD`] tatweels a word, as many as reach the line's
+/// target width ([`growth_target`]).
+pub const fn growth_policy() -> Policy {
+    Policy { per_word: Policy::MAX_GROW_PER_WORD, fraction: 1.0 }
+}
+
+/// The width a line that isn't justified grows to under Force at `strength`: its natural width
+/// grown by `strength` percent (any value from 0 up), and never past `room` (the box's width;
+/// `None` for point type, which has no box). A line already wider than its room doesn't grow.
+pub fn growth_target(natural: f64, strength: u32, room: Option<f64>) -> f64 {
+    let grown = natural * (1.0 + f64::from(strength) / 100.0);
+    match room {
+        Some(room) if room.is_finite() => grown.min(room.max(natural)),
+        _ => grown,
+    }
 }
 
 /// The policy of a paragraph's kashida strength (0..=100; more reads as 100), `force`d or not.
@@ -64,15 +85,24 @@ pub fn policy(strength: u8, force: bool) -> Policy {
     if force { Policy { per_word: (base.per_word + 1).min(Policy::MAX_PER_WORD), fraction: (base.fraction + 0.4).min(1.0) } } else { base }
 }
 
-/// [`plan`] with a numeric [`Policy`]: the same choice, order and checks as `varos-text`'s
-/// (whose policies are fixed), so [`Policy::BALANCED`] plans exactly what `Kashida::Balanced`
-/// does.
+/// [`plan`] with a numeric [`Policy`], spreading the tatweels across the line (owner decision
+/// 2026-10-19), and never in the name of God ([`sacred_from`]).
 ///
-/// Two deliberate differences from the pinned `varos-text` `plan`, which caps every policy at 64
-/// re-shapes: `per_word` is bounded to [`Policy::MAX_PER_WORD`] (5), and the re-shape cap is 32 per
-/// allowed tatweel per word, at least 64: 64 for Minimal and Balanced (as `plan`), 96, 128 and 160
-/// for 3, 4 and 5 per word, so the deeper policies aren't starved of trials on long lines. A line
-/// never costs more than 160 re-shapes.
+/// `varos-text`'s `plan` walks every boundary in priority order once per round, so a deep policy
+/// spends the whole slack on the first words of the line. Here each round gives every word of the
+/// line at most one more tatweel, word after word in reading order (right to left), each word's
+/// boundaries tried in `varos-text`'s priority order (after a seen, then a sad, then the rest) until
+/// one is kept; rounds go on until a word holds `per_word` or the budget is spent. The checks on a
+/// trial are `plan`'s: it must widen the line, stay within the budget and the target, keep every
+/// glyph, and the safe boundaries are read again after each one kept.
+///
+/// No word spends more than its share of the cap (the cap over the line's words, at least 8), so a
+/// word whose joins the face keeps refusing can't starve the words after it.
+///
+/// `per_word` is bounded to [`Policy::MAX_GROW_PER_WORD`] (8), and the re-shape cap is 32 per
+/// allowed tatweel per word, at least 64: 64 for Minimal and Balanced (as `plan`), 96 to 160 for 3
+/// to 5 per word (justified lines), 256 for the elongation of a line that isn't justified. A line
+/// never costs more than 256 re-shapes.
 ///
 /// `plan` is generic over the width type (the COSMIC path measures in f32); hosts here measure in
 /// f64 and this takes f64 only. Its comparisons use the same 0.001 epsilon; only widths within
@@ -86,53 +116,208 @@ pub fn plan_with<T>(
     policy: Policy,
     mut reshape: impl FnMut(&[usize]) -> Option<Measured<f64, T>>,
 ) -> Result<Plan<f64, T>, &'static str> {
-    use std::collections::HashMap;
-    let all = candidates(text, range)?;
+    use std::collections::BTreeMap;
+    let all = kashida_candidates(text, range)?;
     let mut width = natural;
-    let per_word = policy.per_word.min(Policy::MAX_PER_WORD);
+    let per_word = policy.per_word.min(Policy::MAX_GROW_PER_WORD);
     let fraction = if policy.fraction.is_finite() { policy.fraction.clamp(0.0, 1.0) } else { 0.0 };
     let budget = (target - natural).max(0.0) * fraction;
     let epsilon = 0.001;
     let mut safe = if per_word > 0 { safe } else { Default::default() };
-    let mut slots: Vec<Candidate> = if per_word > 0 { all.into_iter().filter(|c| safe.contains(&c.byte)).collect() } else { vec![] };
-    slots.sort_unstable_by_key(|c| (c.priority, c.byte));
-    // At most 32 × 5 = 160 (see above).
+    // Each word's boundaries (by the byte it starts at: reading order), best first.
+    let mut words: BTreeMap<usize, Vec<Candidate>> = BTreeMap::new();
+    if per_word > 0 {
+        for c in all.into_iter().filter(|c| safe.contains(&c.byte)) {
+            words.entry(c.word).or_default().push(c);
+        }
+    }
+    for slots in words.values_mut() {
+        slots.sort_unstable_by_key(|c| (c.priority, c.byte));
+    }
+    // At most 32 × 8 = 256 (see above).
     let cap = 32 * per_word.max(2);
-    let mut word_counts = HashMap::<usize, usize>::new();
+    // No word may spend more than its share of the re-shapes (at least 8): one whose joins the
+    // face keeps refusing can't starve the words after it.
+    let share = (cap / words.len().max(1)).max(8);
+    let mut tried: BTreeMap<usize, usize> = BTreeMap::new();
     let mut inserted: Vec<usize> = Vec::new();
     let mut payload = None;
     let mut attempts = 0;
-    for _ in 0..per_word {
-        for c in &slots {
-            if attempts >= cap {
-                break;
+    'rounds: for _ in 0..per_word {
+        let mut kept_any = false;
+        for (word, slots) in &words {
+            for c in slots {
+                if attempts >= cap {
+                    break 'rounds;
+                }
+                if !safe.contains(&c.byte) {
+                    continue;
+                }
+                let spent = tried.entry(*word).or_default();
+                if *spent >= share {
+                    break;
+                }
+                *spent += 1;
+                let mut trial = inserted.clone();
+                trial.push(c.byte);
+                trial.sort_unstable();
+                attempts += 1;
+                let Some(measured) = reshape(&trial) else { continue };
+                if measured.width > width + epsilon
+                    && measured.width <= natural + budget + epsilon
+                    && measured.width <= target + epsilon
+                    && !measured.missing_glyph
+                {
+                    width = measured.width;
+                    safe = measured.safe;
+                    payload = Some(measured.payload);
+                    inserted = trial;
+                    kept_any = true;
+                    // One a word a round: the next word's turn.
+                    break;
+                }
             }
-            if word_counts.get(&c.word).copied().unwrap_or(0) >= per_word {
-                continue;
-            }
-            if !safe.contains(&c.byte) {
-                continue;
-            }
-            let mut trial = inserted.clone();
-            trial.push(c.byte);
-            trial.sort_unstable();
-            attempts += 1;
-            let Some(measured) = reshape(&trial) else { continue };
-            if measured.width > width + epsilon
-                && measured.width <= natural + budget + epsilon
-                && measured.width <= target + epsilon
-                && !measured.missing_glyph
-            {
-                width = measured.width;
-                safe = measured.safe;
-                payload = Some(measured.payload);
-                *word_counts.entry(c.word).or_default() += 1;
-                inserted = trial;
-            }
+        }
+        if !kept_any {
+            break;
         }
     }
     Ok(Plan { slots: inserted, width, payload })
 }
+
+/// The boundaries of `text[range]` where kashida may go, ranked for Arabic typography (owner
+/// decision 2026-10-19). `varos-text`'s [`candidates`] give the joins the joining rules allow
+/// (between two joining letters, never inside لا, never next to harakat); of those:
+///
+/// - none in the name of God ([`sacred_from`]);
+/// - none right after the definite article: between the lam of ال (also وال، بال، فال، كال، لل)
+///   and the first letter of the stem (never الـرحمن);
+/// - none in a word whose stem is two letters or fewer (رب، بالحق);
+/// - ranked ([`Candidate::priority`], lower first): 0 the join before the word's final letter
+///   (الرحمـن، العالميـن، الحمـد، بسـم), then mid-stem joins after a seen or sheen (1), a sad or
+///   dad (2), a kaf or a letter of the beh family (3), then any other the rules allow (4).
+pub fn kashida_candidates(text: &str, range: std::ops::Range<usize>) -> Result<Vec<Candidate>, &'static str> {
+    let all = candidates(text, range.clone())?;
+    let mut words: std::collections::HashMap<usize, WordShape> = std::collections::HashMap::new();
+    Ok(all
+        .into_iter()
+        .filter_map(|c| {
+            let w = words.entry(c.word).or_insert_with(|| {
+                let rest = &text[c.word..range.end.max(c.word)];
+                let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+                WordShape::of(&rest[..end], c.word)
+            });
+            if w.stem_letters <= 2 || w.sacred.is_some_and(|from| c.byte > from) || w.stem_start.is_some_and(|stem| c.byte == stem) {
+                return None;
+            }
+            let prev = text[..c.byte].chars().next_back().unwrap_or(' ');
+            let priority = if Some(c.byte) == w.last_letter {
+                0
+            } else {
+                match prev {
+                    'س' | 'ش' => 1,
+                    'ص' | 'ض' => 2,
+                    'ك' | 'ب' | 'ت' | 'ث' | 'ن' | 'ي' | 'ئ' => 3,
+                    _ => 4,
+                }
+            };
+            Some(Candidate { priority, ..c })
+        })
+        .collect())
+}
+
+/// What [`kashida_candidates`] reads of a word (byte offsets into the text).
+struct WordShape {
+    /// Where the name of God begins ([`sacred_from`]).
+    sacred: Option<usize>,
+    /// The first letter of the stem after a definite article.
+    stem_start: Option<usize>,
+    /// The letters of the stem (the word without its article).
+    stem_letters: usize,
+    /// The word's final letter.
+    last_letter: Option<usize>,
+}
+
+impl WordShape {
+    fn of(word: &str, at: usize) -> Self {
+        let letters = arabic_letters(word);
+        let chars: Vec<char> = letters.iter().map(|l| l.1).collect();
+        let article = article_len(&chars);
+        Self {
+            sacred: sacred_from(word).map(|off| at + off),
+            stem_start: article.and_then(|n| letters.get(n)).map(|l| at + l.0),
+            stem_letters: chars.len() - article.unwrap_or(0),
+            last_letter: letters.last().map(|l| at + l.0),
+        }
+    }
+}
+
+/// The Arabic letters of `word` with their byte offsets: harakat, tatweels and punctuation read
+/// through, alef wasla (ٱ) read as an alef.
+fn arabic_letters(word: &str) -> Vec<(usize, char)> {
+    word.char_indices()
+        .filter(|&(_, c)| c != TATWEEL && !is_harakat(c) && c.script() == Script::Arabic && c.is_alphabetic())
+        .map(|(i, c)| (i, if c == '\u{0671}' { 'ا' } else { c }))
+        .collect()
+}
+
+/// How many letters a definite article takes at the start of `letters` (its proclitics
+/// included): ال، وال، فال، بال، كال، وبال، فبال، وكال، لل، ولل، فلل. `None`: no article.
+fn article_len(letters: &[char]) -> Option<usize> {
+    let mut i = 0;
+    if matches!(letters.first(), Some('و' | 'ف')) && letters.len() > 3 {
+        i = 1;
+    }
+    let rest = &letters[i..];
+    if rest.starts_with(&['ل', 'ل']) {
+        return Some(i + 2);
+    }
+    let j = if matches!(rest.first(), Some('ب' | 'ك')) && rest.get(1..3) == Some(&['ا', 'ل'][..]) { i + 1 } else { i };
+    letters[j..].starts_with(&['ا', 'ل']).then_some(j + 2)
+}
+
+/// Where the name of God begins in `word` (a byte offset into it), which no tatweel may enter:
+/// `Some(0)` for a word that is the name in one of its forms ([`NAME_FORMS`]: الله، لله، اللهم،
+/// والله، بالله، تالله، فالله، ولله، فلله…) or holds a sacred ligature (ﷲ U+FDF2 and the others of
+/// U+FDF0..U+FDFD); the offset of the name for a longer word that ends in الله (عبدالله).
+/// `None`: kashida may go anywhere the joining rules allow. Harakat, tatweels and punctuation are
+/// read through, and alef wasla (ٱ) is an alef.
+pub fn sacred_from(word: &str) -> Option<usize> {
+    if word.chars().any(|c| matches!(c, '\u{FDF0}'..='\u{FDFD}')) {
+        return Some(0);
+    }
+    let letters = arabic_letters(word);
+    let chars: Vec<char> = letters.iter().map(|l| l.1).collect();
+    let skeleton: String = chars.iter().collect();
+    if NAME_FORMS.contains(&skeleton.as_str()) {
+        return Some(0);
+    }
+    // A longer word ending in the name itself (عبدالله): from its alef. A word that merely ends in
+    // لله (علله، كلله) is not the name.
+    let n = chars.len();
+    (n > 4 && chars.ends_with(&['ا', 'ل', 'ل', 'ه'])).then(|| letters[n - 4].0)
+}
+
+/// The name of God as a whole word, with the proclitics it takes (letters only: harakat read
+/// through, alef wasla as alef): [`sacred_from`] protects the whole word.
+const NAME_FORMS: &[&str] = &[
+    "الله",
+    "والله",
+    "بالله",
+    "تالله",
+    "فالله",
+    "وبالله",
+    "فبالله",
+    "أبالله",
+    "أفبالله",
+    "لله",
+    "ولله",
+    "فلله",
+    "أفلله",
+    "اللهم",
+    "واللهم",
+    "فاللهم",
+];
 
 /// The virtual elongation character.
 pub const TATWEEL: char = '\u{0640}';
@@ -194,42 +379,183 @@ mod tests {
         assert_eq!(policy(100, true), Policy { per_word: 5, fraction: 1.0 });
     }
 
-    /// At Balanced, the numeric plan is `varos-text`'s plan, slot for slot.
+    /// The word each slot of `slots` is in (the byte it starts at).
+    fn words_of(text: &str, slots: &[usize]) -> Vec<usize> {
+        let all = candidates(text, 0..text.len()).unwrap();
+        slots.iter().map(|s| all.iter().find(|c| c.byte == *s).unwrap().word).collect()
+    }
+
+    /// The numeric plan spreads the tatweels across the words, one a word a round, the words in
+    /// reading order, and never in the name of God (it replaced `varos-text`'s plan, which walks
+    /// the boundaries in priority order and filled the first words first: 2026-10-19).
     #[test]
-    fn the_numeric_plan_at_balanced_is_varos_texts_plan() {
+    fn the_numeric_plan_spreads_across_words_and_spares_the_name() {
         let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين";
         let safe: HashSet<usize> = candidates(text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
-        // Large slacks reach the second round, where a slot may take a second (stacked) tatweel.
-        for (slack, each) in [(20.0, 3.0), (60.0, 2.5), (5.0, 4.0), (200.0, 1.0), (2000.0, 1.0)] {
-            let measure = |slots: &[usize]| {
-                Some(Measured { width: 300.0 + each * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: slots.len() })
-            };
-            let a = plan(text, 0..text.len(), 300.0f64, safe.clone(), 300.0 + slack, Kashida::Balanced, measure).unwrap();
-            let b = plan_with(text, 0..text.len(), 300.0, safe.clone(), 300.0 + slack, Policy::BALANCED, measure).unwrap();
-            assert_eq!((a.slots, a.width, a.payload), (b.slots, b.width, b.payload), "slack {slack}");
-            let m = plan(text, 0..text.len(), 300.0f64, safe.clone(), 300.0 + slack, Kashida::Minimal, measure).unwrap();
-            let n = plan_with(text, 0..text.len(), 300.0, safe.clone(), 300.0 + slack, Policy::MINIMAL, measure).unwrap();
-            assert_eq!(m.slots, n.slots, "Minimal, slack {slack}");
-        }
-        // Deeper policies take more of a large slack.
         let measure =
-            |slots: &[usize]| Some(Measured { width: 300.0 + 2.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () });
-        let counts: Vec<usize> = [policy(0, false), policy(50, false), policy(100, false), policy(100, true)]
+            |slots: &[usize]| Some(Measured { width: 300.0 + 3.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () });
+        let word_starts: Vec<usize> = std::iter::once(0).chain(text.match_indices(' ').map(|(i, _)| i + 1)).collect();
+        let name = [word_starts[1], word_starts[5]];
+        for (slack, p) in [(20.0, Policy::BALANCED), (60.0, policy(100, true)), (1000.0, policy(100, true)), (1000.0, growth_policy())] {
+            let plan = plan_with(text, 0..text.len(), 300.0, safe.clone(), 300.0 + slack, p, measure).unwrap();
+            let words = words_of(text, &plan.slots);
+            assert!(words.iter().all(|w| !name.contains(w)), "slack {slack}: no tatweel in الله/لله: {words:?}");
+            let mut per = std::collections::BTreeMap::<usize, usize>::new();
+            for w in &words {
+                *per.entry(*w).or_default() += 1;
+            }
+            // Balanced: no word has two while another word that may take one has none.
+            let (most, least) = (per.values().max().copied().unwrap_or(0), per.values().min().copied().unwrap_or(0));
+            assert!(most <= least + 1 || per.len() == 6, "slack {slack}: {per:?}");
+            assert!(per.values().all(|n| *n <= p.per_word), "{per:?}");
+            if slack >= 60.0 {
+                assert!(per.len() >= 4, "slack {slack}: spread over {} words: {per:?}", per.len());
+            }
+        }
+        // A small slack goes to the first words in reading order (right to left), one each.
+        let plan = plan_with(text, 0..text.len(), 300.0, safe.clone(), 309.0, Policy::DISPLAY, measure).unwrap();
+        assert_eq!(words_of(text, &plan.slots), vec![word_starts[0], word_starts[2], word_starts[3]]);
+        // Within a word the classical order holds: the seen of بسم first.
+        assert_eq!(plan.slots[0], text.find("م").unwrap());
+        // Deeper policies take more of a large slack.
+        let counts: Vec<usize> = [policy(0, false), policy(50, false), policy(100, false), policy(100, true), growth_policy()]
             .into_iter()
             .map(|p| plan_with(text, 0..text.len(), 300.0, safe.clone(), 400.0, p, measure).unwrap().slots.len())
             .collect();
         assert!(counts.windows(2).all(|w| w[0] <= w[1]) && counts[0] < counts[3], "{counts:?}");
     }
 
+    /// The name of God and the sacred ligatures take no tatweel, with or without proclitics,
+    /// harakat or punctuation; a longer word keeps kashida before the name only.
+    #[test]
+    fn the_name_of_god_takes_no_kashida() {
+        for w in ["الله", "لله", "اللهم", "والله", "بالله", "فلله", "تالله", "ولله", "اللَّهِ", "لِلَّهِ", "ٱللَّهِ", "الله،", "(الله)", "ﷲ", "ﷺ", "أبالله"]
+        {
+            assert_eq!(sacred_from(w), Some(0), "{w}");
+        }
+        for w in ["الرحمن", "بسم", "اللهو", "الحمد", "العالمين", "لهم", "إله", "الهم", "باللهو", "كلله", "علله"]
+        {
+            assert_eq!(sacred_from(w), None, "{w}");
+        }
+        let w = "عبدالله";
+        assert_eq!(sacred_from(w), Some(w.find('ا').unwrap()));
+        let all = |t: &str| candidates(t, 0..t.len()).unwrap();
+        let kept = |t: &str| kashida_candidates(t, 0..t.len()).unwrap();
+        assert!(!all("الله").is_empty() && kept("الله").is_empty(), "the joining rules alone allow ل‍ل and ل‍ه");
+        assert!(kept("بسم الله").iter().all(|c| c.byte < 7), "{:?}", kept("بسم الله"));
+        assert!(kept(w).iter().all(|c| c.byte <= w.find('ا').unwrap()) && !kept(w).is_empty());
+        // Lam-alef and a letter before its harakat never take one (the joining rules).
+        let t = "سلام بَسَمَ";
+        let lam_alef = t.find("ا").unwrap();
+        assert!(kept(t).iter().all(|c| c.byte != lam_alef));
+        assert!(kept(t).iter().all(|c| !is_harakat(t[c.byte..].chars().next().unwrap())));
+        assert!(kept(t).iter().all(|c| !is_harakat(t[..c.byte].chars().next_back().unwrap())));
+    }
+
+    /// No tatweel right after the definite article's lam, none in a stem of two letters, and the
+    /// join before a word's final letter is each word's first choice when the rules allow one
+    /// there (owner decision 2026-10-19: الرحمـن، not الـرحمن).
+    #[test]
+    fn the_article_short_stems_and_the_final_letter() {
+        let kept = |t: &str| kashida_candidates(t, 0..t.len()).unwrap();
+        // The stem's first letter after each article form takes none.
+        for (word, stem) in [
+            ("الرحمن", "ر"),
+            ("الحمد", "ح"),
+            ("العالمين", "ع"),
+            ("والحمد", "ح"),
+            ("بالعالمين", "ع"),
+            ("فالكتاب", "ك"),
+            ("كالبحر", "ب"),
+            ("للناس", "ن"),
+            ("وللناس", "ن"),
+            ("ٱلرَّحْمَٰنِ", "ر"),
+        ] {
+            let at = word.find(stem).unwrap();
+            let c = kept(word);
+            assert!(c.iter().all(|c| c.byte != at), "{word}: a tatweel after the article: {c:?}");
+            // (A fully vocalized word takes none: no tatweel goes next to harakat.)
+            assert!(!c.is_empty() || word.chars().any(is_harakat), "{word}: the stem still takes kashida");
+        }
+        // Stems of two letters take none.
+        for word in ["رب", "من", "بالحق", "الحق", "في"] {
+            assert!(kept(word).is_empty(), "{word}: {:?}", kept(word));
+        }
+        // Each word's best join: before its final letter.
+        for (word, last) in [("الرحمن", 'ن'), ("العالمين", 'ن'), ("الحمد", 'د'), ("بسم", 'م'), ("الرحيم", 'م')] {
+            let mut c = kept(word);
+            c.sort_unstable_by_key(|c| (c.priority, c.byte));
+            assert_eq!(c[0].byte, word.rfind(last).unwrap(), "{word}: {c:?}");
+            assert_eq!(c[0].priority, 0);
+        }
+        // Then seen, sad, kaf/beh, the rest.
+        let p = |t: &str, at: &str| kept(t).into_iter().find(|c| c.byte == t.find(at).unwrap()).map(|c| c.priority);
+        assert_eq!(p("مستقيم", "ت"), Some(1), "after a seen");
+        assert_eq!(p("نصبوا", "ب"), Some(2), "after a sad");
+        assert_eq!(p("مكتوب", "ت"), Some(3), "after a kaf");
+        assert_eq!(p("محمود", "م"), None, "the first letter starts no join");
+        // A line: with one tatweel a word, every word takes it before its final letter.
+        let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين";
+        let safe: HashSet<usize> = candidates(text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
+        let measure =
+            |slots: &[usize]| Some(Measured { width: 300.0 + 3.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () });
+        let plan = plan_with(text, 0..text.len(), 300.0, safe.clone(), 1000.0, Policy::MINIMAL, measure).unwrap();
+        let finals: Vec<usize> = ["بسم", "الرحمن", "الرحيم", "الحمد", "العالمين"]
+            .iter()
+            .map(|w| {
+                let start = text.find(w).unwrap();
+                let last = w.chars().next_back().unwrap();
+                start + w.rfind(last).unwrap()
+            })
+            .collect();
+        assert_eq!(plan.slots, finals);
+    }
+
+    /// A word whose every join the face refuses spends at most its share of the re-shapes: the
+    /// words after it still take theirs.
+    #[test]
+    fn a_refused_word_cannot_starve_the_others() {
+        let long = "سم".repeat(150);
+        let text = format!("{long} الرحمن الرحيم");
+        let safe: HashSet<usize> = candidates(&text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
+        let mut calls = 0;
+        let mut on_long = 0;
+        let p = plan_with(&text, 0..text.len(), 300.0, safe.clone(), 1000.0, growth_policy(), |slots: &[usize]| {
+            calls += 1;
+            if slots.iter().any(|s| *s < long.len()) {
+                on_long += 1;
+                return None;
+            }
+            Some(Measured { width: 300.0 + 3.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () })
+        })
+        .unwrap();
+        let share = 256 / 3;
+        assert!(on_long <= share, "{on_long} re-shapes on the refused word");
+        assert!(calls <= 256);
+        let words = words_of(&text, &p.slots);
+        assert!(words.contains(&(long.len() + 1)) && words.contains(&text.rfind(' ').map(|i| i + 1).unwrap()), "{words:?}");
+    }
+
+    /// A line that isn't justified grows by its strength in percent, within its box.
+    #[test]
+    fn growth_targets() {
+        assert_eq!(growth_target(200.0, 30, Some(1000.0)), 260.0);
+        assert_eq!(growth_target(200.0, 30, None), 260.0);
+        assert_eq!(growth_target(200.0, 300, None), 800.0);
+        assert_eq!(growth_target(200.0, 300, Some(500.0)), 500.0, "clamped to the box");
+        assert_eq!(growth_target(600.0, 30, Some(500.0)), 600.0, "an overflowing line doesn't grow");
+        assert_eq!(growth_target(200.0, 0, Some(500.0)), 200.0);
+    }
+
     /// The re-shape cap: 64 up to two per word, 32 per allowed tatweel above, and a policy asking
-    /// for more than five per word is held to five (160 re-shapes at most), even when every trial
+    /// for more than eight per word is held to eight (256 re-shapes at most), even when every trial
     /// is rejected.
     #[test]
     fn re_shapes_are_capped_and_per_word_is_bounded() {
-        let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين ".repeat(20);
+        let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين ".repeat(30);
         let safe: HashSet<usize> = candidates(&text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
         assert!(safe.len() > 200);
-        for (per_word, cap) in [(1, 64), (2, 64), (3, 96), (4, 128), (5, 160), (99, 160)] {
+        for (per_word, cap) in [(1, 64), (2, 64), (3, 96), (4, 128), (5, 160), (8, 256), (99, 256)] {
             let mut calls = 0;
             let p = plan_with(
                 &text,
@@ -247,21 +573,21 @@ mod tests {
             assert!(p.slots.is_empty());
             assert_eq!(calls, cap, "{per_word} per word");
         }
-        // Accepted trials: never more than five per word.
+        // Accepted trials: never more than eight per word.
         let mut calls = 0;
         let p = plan_with(&text, 0..text.len(), 100.0, safe.clone(), 1e9, Policy { per_word: 99, fraction: 1.0 }, |slots: &[usize]| {
             calls += 1;
             Some(Measured { width: 100.0 + slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () })
         })
         .unwrap();
-        assert!(calls <= 160 && !p.slots.is_empty());
+        assert!(calls <= 256 && !p.slots.is_empty());
         let mut per: std::collections::HashMap<usize, usize> = Default::default();
         let words = candidates(&text, 0..text.len()).unwrap();
         for s in &p.slots {
             let w = words.iter().find(|c| c.byte == *s).map(|c| c.word).unwrap();
             *per.entry(w).or_default() += 1;
         }
-        assert!(per.values().all(|n| *n <= Policy::MAX_PER_WORD), "{per:?}");
+        assert!(per.values().all(|n| *n <= Policy::MAX_GROW_PER_WORD), "{per:?}");
     }
 
     #[test]

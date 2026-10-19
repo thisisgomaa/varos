@@ -56,7 +56,7 @@ fn elongation(l: &TextLayout, (face, tat): (u32, u32)) -> Vec<i64> {
         .collect()
 }
 
-fn opts(mode: KashidaMode, strength: u8) -> KashidaOptions {
+fn opts(mode: KashidaMode, strength: u32) -> KashidaOptions {
     KashidaOptions { mode, strength }
 }
 
@@ -105,9 +105,155 @@ fn force_stretches_the_last_line_with_kashida_only() {
         let last = force.lines.last().unwrap();
         assert!(last.x1 - last.x0 < 120.0 - 1.0, "{justify:?}: the last line isn't justified");
     }
-    // Justify All already stretches it under Auto; Left/Right aligned paragraphs never.
-    let right = type_tool(&db, Justify::Right, opts(KashidaMode::Force, 100));
+    // Justify All already stretches it under Auto; Left/Right aligned paragraphs only under Force
+    // (an elongation: `force_elongates_lines_that_are_not_justified`).
+    let right = type_tool(&db, Justify::Right, opts(KashidaMode::Auto, 100));
     assert!(elongation(&right, tat).iter().all(|w| *w == 0));
+}
+
+/// The Basmala of the live agent test (2026-10-19): one line, 36 pt in a 600 pt box.
+const BASMALA: &str = "بسم الله الرحمن الرحيم الحمد لله رب العالمين";
+
+/// The words (by index) holding a tatweel, and how many each holds.
+fn tatweel_words(l: &TextLayout, text: &str, (face, tat): (u32, u32)) -> std::collections::BTreeMap<usize, usize> {
+    let mut per = std::collections::BTreeMap::new();
+    for g in l.glyphs.iter().filter(|g| g.font_id == face && g.gid == tat && g.len == 0) {
+        *per.entry(text[..g.byte].matches(' ').count()).or_default() += 1;
+    }
+    per
+}
+
+/// Force spreads the tatweels across the line's words and never puts one in الله or لله (words 1
+/// and 5), in a single-line Justify All paragraph (the only line, justified like any other); on
+/// the OpenType path (HarfRust's safe flags) and on the morx path (the joining rules, each trial
+/// verified).
+fn assert_spread(l: &TextLayout, text: &str, tat: (u32, u32), what: &str, finals: bool) {
+    assert_eq!(l.lines.len(), 1, "{what}: one line");
+    let per = tatweel_words(l, text, tat);
+    eprintln!("{what}: tatweels per word {per:?}");
+    assert!(!per.contains_key(&1) && !per.contains_key(&5), "{what}: a tatweel in the name of God: {per:?}");
+    assert!(per.len() >= 4, "{what}: tatweels in {} words only: {per:?}", per.len());
+    let (most, least) = (per.values().max().copied().unwrap_or(0), per.values().min().copied().unwrap_or(0));
+    assert!(most <= least + 1, "{what}: one word took the elongation: {per:?}");
+    // Never right after the article's lam (الـرحمن): the stem's first letter takes none.
+    let after_article: Vec<usize> = text
+        .split(' ')
+        .scan(0, |at, w| {
+            let start = *at;
+            *at += w.len() + 1;
+            Some(w.strip_prefix("ال").filter(|_| w.chars().count() > 4).map(|_| start + "ال".len()))
+        })
+        .flatten()
+        .collect();
+    assert!(!after_article.is_empty());
+    let tatweels: Vec<usize> = l.glyphs.iter().filter(|g| g.font_id == tat.0 && g.gid == tat.1 && g.len == 0).map(|g| g.byte).collect();
+    assert!(tatweels.iter().all(|b| !after_article.contains(b)), "{what}: a tatweel after the article: {tatweels:?} {after_article:?}");
+    // Each word's first tatweel goes before its final letter (all the Basmala's do), where the
+    // face takes one there: a morx face's trial there can fail (Geeza Pro's ين), and the word
+    // then takes its next join.
+    for (k, w) in text.split(' ').enumerate().filter(|(k, _)| finals && per.contains_key(k)) {
+        let start: usize = text.split(' ').take(k).map(|w| w.len() + 1).sum();
+        let last = start + w.rfind(w.chars().next_back().unwrap()).unwrap();
+        assert!(tatweels.contains(&last), "{what}: word {k} {w} not elongated before its final letter: {tatweels:?}");
+    }
+}
+
+#[test]
+fn force_spreads_kashida_across_words_and_spares_the_name_of_god() {
+    let db = db_with(&[NOTO]);
+    let tat = tatweel(&db, FAMILY);
+    // Noto Sans Arabic is wider than Noto Naskh: 30 pt keeps the Basmala on one 600 pt line.
+    let st = CharStyle { font_family: FAMILY.into(), size: 30.0, ..Default::default() };
+    let l = layout(&db, &area(BASMALA, st.clone(), 600.0, Justify::JustifyAll, opts(KashidaMode::Force, 100)));
+    assert_spread(&l, BASMALA, tat, "Noto Sans Arabic", true);
+    // The only line is justified like any other: its measure filled.
+    assert!((l.lines[0].x1 - l.lines[0].x0 - 600.0).abs() < 0.01, "{:?}", (l.lines[0].x0, l.lines[0].x1));
+    // The morx path on the same face.
+    let face = db.face(FAMILY, "Regular").unwrap().id();
+    FORCED_MORX.with(|f| f.borrow_mut().push(face));
+    let l = layout(&db, &area(BASMALA, st, 600.0, Justify::JustifyAll, opts(KashidaMode::Force, 100)));
+    FORCED_MORX.with(|f| f.borrow_mut().clear());
+    assert_spread(&l, BASMALA, tat, "Noto Sans Arabic, morx path", true);
+}
+
+/// The fonts of the live agent test, when installed: Noto Naskh Arabic (OpenType) and Geeza Pro
+/// (morx), Force 100, 36 pt, 600 pt Justify All.
+#[test]
+fn installed_fonts_spread_kashida_and_spare_the_name_of_god() {
+    let db = FontDb::with_font_dirs(crate::system_font_dirs());
+    for family in ["Noto Naskh Arabic", "Geeza Pro"] {
+        if !db.has_family(family) {
+            eprintln!("{family}: not installed, skipped");
+            continue;
+        }
+        let face = db.face(family, "Regular").unwrap();
+        let tat = (face.id(), face.glyph_for('\u{0640}'));
+        let st = CharStyle { font_family: family.into(), size: 36.0, ..Default::default() };
+        let l = layout(&db, &area(BASMALA, st, 600.0, Justify::JustifyAll, opts(KashidaMode::Force, 100)));
+        // Geeza Pro's final ين refuses a tatweel (its morx trial changes the letters' forms).
+        assert_spread(&l, BASMALA, tat, family, family != "Geeza Pro");
+    }
+}
+
+/// The ink's horizontal extent of line 0 (its glyph outlines).
+fn ink(l: &TextLayout) -> (f64, f64) {
+    let b = l.glyphs.iter().filter(|g| g.line == 0 && !g.outline.is_empty()).map(|g| g.outline.bounding_box()).reduce(|a, b| a.union(b)).unwrap();
+    (b.x0, b.x1)
+}
+
+/// Force in Left, Right or Center alignment elongates a line by its strength in percent of its
+/// natural width (within one tatweel), keeps its alignment, never grows past the box, spares the
+/// name of God, and also works in point type. Auto there does nothing (owner 2026-10-19).
+#[test]
+fn force_elongates_lines_that_are_not_justified() {
+    let db = db_with(&[NOTO]);
+    let tat = tatweel(&db, FAMILY);
+    let face = db.face(FAMILY, "Regular").unwrap();
+    let one = face.advance(tat.1) * 36.0 / face.upem;
+    let st = CharStyle { font_family: FAMILY.into(), size: 36.0, ..Default::default() };
+    let wide = 2000.0;
+    for justify in [Justify::Right, Justify::Center, Justify::Left, Justify::Auto] {
+        let off = layout(&db, &area(BASMALA, st.clone(), wide, justify, opts(KashidaMode::Off, 30)));
+        let auto = layout(&db, &area(BASMALA, st.clone(), wide, justify, opts(KashidaMode::Auto, 30)));
+        let on = layout(&db, &area(BASMALA, st.clone(), wide, justify, opts(KashidaMode::Force, 30)));
+        assert_eq!(elongation(&auto, tat), vec![0], "{justify:?}: Auto takes none on a line that isn't justified");
+        let (w0, w1) = (off.lines[0].x1 - off.lines[0].x0, on.lines[0].x1 - on.lines[0].x0);
+        let target = w0 * 1.3;
+        assert!(w1 <= target + 0.01 && w1 > target - one.max(1.0) * 2.0, "{justify:?}: {w0} → {w1}, target {target}, one tatweel {one}");
+        assert_spread(&on, BASMALA, tat, &format!("{justify:?} Force 30"), true);
+        let ((a0, a1), (b0, b1)) = (ink(&off), ink(&on));
+        match justify {
+            Justify::Right | Justify::Auto => assert!((a1 - b1).abs() < 0.5, "{justify:?}: right edge {a1} → {b1}"),
+            Justify::Left => assert!((a0 - b0).abs() < 0.5, "{justify:?}: left edge {a0} → {b0}"),
+            _ => assert!(((a0 + a1) / 2.0 - (b0 + b1) / 2.0).abs() < 0.5, "{justify:?}: centre {a0}..{a1} → {b0}..{b1}"),
+        }
+    }
+    // Within the box: 300 % of the line is clamped to its 700 pt measure.
+    let off = layout(&db, &area(BASMALA, st.clone(), 700.0, Justify::Right, opts(KashidaMode::Off, 300)));
+    let on = layout(&db, &area(BASMALA, st.clone(), 700.0, Justify::Right, opts(KashidaMode::Force, 300)));
+    let w1 = on.lines[0].x1 - on.lines[0].x0;
+    assert!(w1 <= 700.0 + 0.01 && w1 > off.lines[0].x1 - off.lines[0].x0, "{w1}");
+    // Point type has no box: it grows by the strength.
+    let mut point = TextObject::point(Point::ZERO, BASMALA, st.clone());
+    point.para = ParaStyle { justify: Justify::Right, kashida: opts(KashidaMode::Force, 50), ..Default::default() };
+    let grown = layout(&db, &point);
+    point.para.kashida = opts(KashidaMode::Off, 50);
+    let plain = layout(&db, &point);
+    let (w0, w1) = (plain.lines[0].x1 - plain.lines[0].x0, grown.lines[0].x1 - grown.lines[0].x0);
+    assert!(w1 <= w0 * 1.5 + 0.01 && w1 > w0 * 1.5 - 2.0 * one.max(1.0), "point type: {w0} → {w1}");
+    // Point type justified with its last line aligned isn't justified at all: Force elongates it.
+    for justify in [Justify::JustifyLeft, Justify::JustifyCenter, Justify::JustifyRight, Justify::JustifyAll] {
+        let mut point = TextObject::point(Point::ZERO, BASMALA, st.clone());
+        point.para = ParaStyle { justify, kashida: opts(KashidaMode::Force, 50), ..Default::default() };
+        let grown = layout(&db, &point);
+        point.para.kashida = opts(KashidaMode::Off, 50);
+        let plain = layout(&db, &point);
+        let (w0, w1) = (plain.lines[0].x1 - plain.lines[0].x0, grown.lines[0].x1 - grown.lines[0].x0);
+        assert!(w1 <= w0 * 1.5 + 0.01 && w1 > w0 * 1.5 - 2.0 * one.max(1.0), "point type {justify:?}: {w0} → {w1}");
+    }
+    // Strength 0: nothing.
+    let none = layout(&db, &area(BASMALA, st, wide, Justify::Right, opts(KashidaMode::Force, 0)));
+    assert_eq!(elongation(&none, tat), vec![0]);
 }
 
 /// Latin is set bit for bit the same whatever the kashida setting.
@@ -118,7 +264,7 @@ fn latin_is_untouched_by_the_kashida_setting() {
     let set = |l: &TextLayout| {
         l.glyphs.iter().map(|g| (g.gid, g.byte, g.origin.x.to_bits(), g.origin.y.to_bits(), g.advance.to_bits())).collect::<Vec<_>>()
     };
-    for justify in [Justify::JustifyAll, Justify::JustifyLeft, Justify::Left] {
+    for justify in [Justify::JustifyAll, Justify::JustifyLeft, Justify::Left, Justify::Right, Justify::Center] {
         let base = set(&layout(&db, &area(text, CharStyle::default(), 160.0, justify, KashidaOptions::default())));
         for k in [opts(KashidaMode::Off, 0), opts(KashidaMode::Auto, 0), opts(KashidaMode::Auto, 100), opts(KashidaMode::Force, 100)] {
             assert_eq!(set(&layout(&db, &area(text, CharStyle::default(), 160.0, justify, k))), base, "{justify:?} {k:?}");

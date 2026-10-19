@@ -32,6 +32,12 @@ pub(crate) mod zoom;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// The control method the host sends (with the agent's actor) when an agent's connection closes:
+/// its label number is free again ([`agents::left`]). Nothing runs and nothing replies. A client
+/// sending it only marks its own claimed session as gone, which changes a label's number, nothing
+/// more (actors are attribution, never access).
+pub const AGENT_LEFT: &str = "varos.agent.left";
+
 /// Project promotion commands are absent from the fork's command palette.
 pub fn is_project_link(id: &str) -> bool {
     matches!(id, "help.website" | "help.appPage" | "help.github" | "help.links")

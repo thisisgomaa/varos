@@ -285,7 +285,8 @@ fn plain(st: &CharStyle) -> bool {
 /// many glyphs the line gained (0: nothing changed). Lines it can't set alike (tabs, inline
 /// graphics, a word cut at the line's start or end) and words it can't (other scripts, digits,
 /// several runs or faces, tracking, kerning, scaling, caps, super/subscript) keep their glyphs.
-/// `policy` is how much of the slack the tatweels may fill and how many a word takes.
+/// `policy` is how much of the slack the tatweels may fill and how many a word takes; `width` is
+/// the width the line grows toward (its measure when justified, its elongation target when not).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stretch_line(
     sh: &Shaper<'_>,
@@ -357,7 +358,8 @@ pub(crate) fn stretch_line(
     }
     let safe = |glyphs: &[SGlyph]| glyphs.iter().filter(|g| g.tatweel && g.len > 0).map(|g| g.byte).collect::<Vec<_>>();
     // A morx-only face's boundaries: the joining rules', each trial verified below.
-    let joining = |w: &Word| arabic::candidates(sh.text, w.bytes.clone()).map(|c| c.into_iter().map(|c| c.byte).collect()).unwrap_or_default();
+    let joining =
+        |w: &Word| arabic::kashida_candidates(sh.text, w.bytes.clone()).map(|c| c.into_iter().map(|c| c.byte).collect()).unwrap_or_default();
     let native_safe: Vec<Vec<usize>> = words.iter().map(|w| if w.morx { joining(w) } else { safe(&sg[w.glyphs.clone()]) }).collect();
     let originals: Vec<Vec<SGlyph>> = words.iter().map(|w| if w.morx || w.painted { sg[w.glyphs.clone()].to_vec() } else { vec![] }).collect();
     let leading: Vec<f64> = words.iter().map(|w| sg[w.glyphs.start].leading).collect();

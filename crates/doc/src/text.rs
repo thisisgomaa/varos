@@ -828,6 +828,8 @@ pub enum KashidaMode {
     Auto,
     /// Deeper: a larger share of each line's slack and more tatweels per word, and the last line
     /// of a paragraph justified with its last line aligned takes kashida too (its spaces don't).
+    /// In any alignment: a line that isn't justified (Left, Right, Center, point type) is elongated
+    /// by the strength, in percent of its natural width, within its box.
     Force,
 }
 
@@ -837,17 +839,19 @@ pub enum KashidaMode {
 #[serde(default)]
 pub struct KashidaOptions {
     pub mode: KashidaMode,
-    /// 0 (lightest) to 100 (strongest); 50 is Balanced. Values above 100 read as 100.
-    pub strength: u8,
+    /// 0 and up; 50 is Balanced. On a justified line: 0 (lightest) to 100 (strongest), values
+    /// above 100 read as 100 ([`Self::strength`]). On a line Force elongates without justifying
+    /// it: the growth in percent of the line's natural width, any value (owner 2026-10-19).
+    pub strength: u32,
 }
 
 impl KashidaOptions {
-    /// The strongest strength.
+    /// The strongest strength on a justified line.
     pub const MAX_STRENGTH: u8 = 100;
 
-    /// The strength, at most [`Self::MAX_STRENGTH`].
+    /// The strength on a justified line, at most [`Self::MAX_STRENGTH`].
     pub fn strength(&self) -> u8 {
-        self.strength.min(Self::MAX_STRENGTH)
+        self.strength.min(u32::from(Self::MAX_STRENGTH)) as u8
     }
 }
 
@@ -1952,6 +1956,15 @@ mod tests {
         assert_eq!(forced.kashida, KashidaOptions { mode: KashidaMode::Force, strength: 50 }, "a missing strength is 50");
         let over: ParaStyle = serde_json::from_str(r#"{"justify":"Right","kashida":{"strength":250}}"#).unwrap();
         assert_eq!(over.kashida.strength(), 100);
+        assert_eq!(over.kashida.strength, 250, "an elongation keeps its strength above 100");
+        let big: ParaStyle = serde_json::from_str(r#"{"justify":"Right","kashida":{"mode":"force","strength":1000}}"#).unwrap();
+        assert_eq!(big.kashida.strength, 1000);
+        let json = serde_json::to_string(&big).unwrap();
+        assert!(json.contains(r#""strength":1000"#), "{json}");
+        // At most 100 it is written as before.
+        let p =
+            ParaStyle { justify: Justify::JustifyRight, kashida: KashidaOptions { mode: KashidaMode::Force, strength: 80 }, ..Default::default() };
+        assert!(serde_json::to_string(&p).unwrap().contains(r#""kashida":{"mode":"force","strength":80}"#));
         // Whole text objects too.
         let mut t = TextObject::point(Point::ZERO, "بسم الله", CharStyle::default());
         t.para.kashida = KashidaOptions { mode: KashidaMode::Force, strength: 80 };

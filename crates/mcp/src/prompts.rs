@@ -405,7 +405,7 @@ pub fn get(name: &str, args: &Value) -> Result<Value, String> {
         let ids: Vec<&str> = PROMPTS.iter().map(|p| p.name).collect();
         return Err(format!("unknown prompt `{name}` ({})", ids.join("|")));
     };
-    let mut text = flow(p.text);
+    let mut text = crate::varos_brand::text(&flow(p.text)); // Varos: the brand, before the arguments
     for a in p.arguments {
         let given = args.get(a.name).filter(|v| !v.is_null()).map(|v| match v {
             Value::String(s) => s.clone(),
@@ -419,7 +419,7 @@ pub fn get(name: &str, args: &Value) -> Result<Value, String> {
         text = text.replace(&format!("{{{}}}", a.name), &value);
     }
     Ok(json!({
-        "description": p.description,
+        "description": crate::varos_brand::text(p.description), // Varos: the brand
         "messages": [{"role": "user", "content": {"type": "text", "text": text}}],
     }))
 }

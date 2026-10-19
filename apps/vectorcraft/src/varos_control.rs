@@ -116,6 +116,9 @@ pub(super) struct Link {
     /// The pool an agents-port connection moves into once it shows the token (`None`: it keeps
     /// the slot it has).
     main: Option<Arc<AtomicUsize>>,
+    /// The agents (actor sessions) its admitted lines came from: told to the app when it closes
+    /// ([`Link::departures`]).
+    sessions: RefCell<Vec<String>>,
 }
 
 impl Link {
@@ -132,6 +135,7 @@ impl Link {
             authenticated,
             slot: RefCell::new(Some(slot)),
             main: None,
+            sessions: RefCell::new(Vec::new()),
         }
     }
 
@@ -197,8 +201,56 @@ impl Link {
         }
         let mut actor = line.actor.filter(Value::is_object).unwrap_or_else(|| json!({"session": format!("connection-{}", self.connection)}));
         actor["guarded"] = json!(self.secrets.is_some());
+        if let Some(session) = actor.get("session").and_then(Value::as_str) {
+            let mut sessions = self.sessions.borrow_mut();
+            // A connection carries one agent; a few at most are remembered (and counted).
+            if !sessions.iter().any(|s| s == session) && sessions.len() < 8 {
+                sessions.push(session.to_string());
+                *OPEN_SESSIONS.lock().unwrap_or_else(PoisonError::into_inner).entry(session.to_string()).or_default() += 1;
+            }
+        }
         Ok(actor)
     }
+
+    /// The connection closed: one [`vectorcraft_ui_egui::varos::AGENT_LEFT`] request per agent it
+    /// carried that has no other connection open, so the app frees their label numbers. A client
+    /// claiming another agent's session can't free its number while that agent is connected.
+    /// Nobody waits for a reply.
+    pub(super) fn departures(&self) -> Vec<ControlRequest> {
+        let mut open = OPEN_SESSIONS.lock().unwrap_or_else(PoisonError::into_inner);
+        self.sessions
+            .borrow_mut()
+            .drain(..)
+            .filter(|session| match open.get_mut(session) {
+                Some(n) if *n > 1 => {
+                    *n -= 1;
+                    false
+                }
+                _ => {
+                    open.remove(session);
+                    true
+                }
+            })
+            .map(|session| ControlRequest::new(vectorcraft_ui_egui::varos::AGENT_LEFT, json!({})).0.with_actor(Some(json!({ "session": session }))))
+            .collect()
+    }
+}
+
+impl Drop for Link {
+    /// A link that goes without [`Link::departures`] (a worker that failed) still gives back its
+    /// count of the sessions it carried.
+    fn drop(&mut self) {
+        let _ = self.departures();
+    }
+}
+
+/// The connections open per agent session (over every port): an agent has left only when its last
+/// one closes ([`Link::departures`]).
+static OPEN_SESSIONS: Mutex<std::collections::BTreeMap<String, usize>> = Mutex::new(std::collections::BTreeMap::new());
+
+/// Methods only the host sends (an agent's departure): a line asking for one is refused.
+pub(super) fn host_only(method: &str) -> bool {
+    method == vectorcraft_ui_egui::varos::AGENT_LEFT
 }
 
 /// Listen on a fresh loopback port and publish it with fresh secrets in `dir`. `None` (and a line
@@ -313,7 +365,46 @@ mod tests {
             authenticated: Cell::new(secrets.is_none()),
             slot: RefCell::new(Some(slot())),
             main: None,
+            sessions: RefCell::new(Vec::new()),
         }
+    }
+
+    /// When the connection closes, the app is told which agents it carried (once each), so their
+    /// label numbers are free again; a connection that admitted nothing tells nothing.
+    #[test]
+    fn a_closed_connection_reports_its_agents_once() {
+        let link = open_link(None);
+        assert!(link.departures().is_empty());
+        // (Session names of their own: the count of open connections is process-wide.)
+        for session in ["s1", "s1", "s2"] {
+            set_line(line(json!({"method": "x", "actor": {"session": session, "label": "Claude Code"}})));
+            link.admit().unwrap();
+        }
+        let left: Vec<(String, Value)> = link.departures().into_iter().map(|r| (r.method.clone(), r.actor.clone().unwrap_or_default())).collect();
+        assert_eq!(
+            left,
+            vec![
+                (vectorcraft_ui_egui::varos::AGENT_LEFT.to_string(), json!({"session": "s1"})),
+                (vectorcraft_ui_egui::varos::AGENT_LEFT.to_string(), json!({"session": "s2"})),
+            ]
+        );
+        assert!(link.departures().is_empty(), "told once");
+    }
+
+    /// An agent leaves when its last connection closes; a second connection claiming its session
+    /// (a reconnect, or another client) closing first frees nothing.
+    #[test]
+    fn an_agent_leaves_with_its_last_connection() {
+        let (a, b) = (open_link(None), open_link(None));
+        for link in [&a, &b] {
+            set_line(line(json!({"method": "x", "actor": {"session": "shared-session-test"}})));
+            link.admit().unwrap();
+        }
+        assert!(b.departures().is_empty(), "the session is still connected through the other link");
+        let left: Vec<Value> = a.departures().into_iter().filter_map(|r| r.actor.clone()).collect();
+        assert_eq!(left, vec![json!({"session": "shared-session-test"})]);
+        // Clients can't send the departure themselves.
+        assert!(host_only(vectorcraft_ui_egui::varos::AGENT_LEFT) && !host_only("engine.execute"));
     }
 
     #[test]

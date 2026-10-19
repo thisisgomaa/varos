@@ -493,3 +493,104 @@ fn a_capture_written_later_keeps_its_requests_guard() {
     assert!(answers[1]["error"].as_str().unwrap_or("").contains("never overwrite"), "{}", answers[1]);
     assert!(shot.exists());
 }
+
+/// An app whose saves run in the background when they can (Background Save on, a writer callable
+/// from the worker), as the desktop app's do.
+fn app_with_background_writer() -> (VectorcraftApp, Sender<ControlRequest>) {
+    let write = |p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string());
+    let services = Services { write: Some(Box::new(write)), write_shared: Some(std::sync::Arc::new(write)), ..Services::default() };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut app = VectorcraftApp::new(Session::new(), services).with_control(rx).with_agent_guards();
+    app.session.prefs.background_save = true;
+    app.session.prefs.background_export = true;
+    (app, tx)
+}
+
+/// File › Save given an existing path (`file.save` is a UI command, not in the engine's registry)
+/// is refused before anything runs: the agent gets the error at once, nothing is written and no
+/// dialog interrupts the person (v7 live test, 2026-10-19).
+#[test]
+fn file_save_over_an_existing_file_is_refused_up_front() {
+    let (mut app, tx) = app_with_background_writer();
+    new_doc(&mut app);
+    let home = test_home(&mut app, "filesave");
+    let taken = home.join("Desktop/stress-copy.vectorcraft");
+    std::fs::write(&taken, b"keep me").unwrap();
+    for (method, params) in [
+        ("engine.execute", json!({"command": "file.save", "params": {"path": s(&taken)}})),
+        ("ui.menu.invoke", json!({"command": "file.save", "params": {"path": s(&taken)}})),
+        ("app.save", json!({"path": s(&taken)})),
+        ("engine.execute", json!({"command": "file.exportAs", "params": {"path": s(&taken), "format": "svg"}})),
+        ("engine.execute", json!({"command": "file.export.png", "params": {"path": s(&taken)}})),
+        ("engine.execute", json!({"command": "file.export.pdf", "params": {"path": s(&taken)}})),
+        ("engine.execute", json!({"command": "file.saveForWeb", "params": {"path": s(&taken), "format": "png"}})),
+    ] {
+        let r = request(&mut app, &tx, guarded(), method, params.clone());
+        let error = r["error"].as_str().unwrap_or("");
+        assert!(error.contains("already exists; agents never overwrite"), "{method} {params}: {r}");
+        assert!(r.get("background").is_none(), "{r}");
+        assert_eq!(std::fs::read(&taken).unwrap(), b"keep me");
+        assert!(app.ui.dialog.is_none() && app.ui.told.is_empty(), "no dialog for an agent's refusal");
+        assert!(app.background.jobs.is_empty(), "nothing was started");
+    }
+    // Export for Screens writes a set: only into an empty folder.
+    let busy = home.join("Desktop/screens");
+    std::fs::create_dir_all(&busy).unwrap();
+    std::fs::write(busy.join("Artboard 1.png"), b"keep me").unwrap();
+    let r = request(&mut app, &tx, guarded(), "engine.execute", json!({"command": "file.exportForScreens", "params": {"folder": s(&busy)}}));
+    assert!(r.get("error").is_some(), "{r}");
+    assert_eq!(std::fs::read(busy.join("Artboard 1.png")).unwrap(), b"keep me");
+    assert!(app.ui.dialog.is_none() && app.background.jobs.is_empty());
+    // A new name saves.
+    let fresh = home.join("Desktop/fresh.vectorcraft");
+    let r = request(&mut app, &tx, guarded(), "engine.execute", json!({"command": "file.save", "params": {"path": s(&fresh)}}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert!(fresh.exists());
+}
+
+/// A save the parameters let through but the write-time guard refuses (a template whose
+/// extension lands on an existing file) runs at once for an agent, even with Background Save on:
+/// the refusal is the agent's reply, and the person sees no dialog (only the status bar).
+#[test]
+fn a_write_time_refusal_is_the_agents_reply_never_a_dialog() {
+    let (mut app, tx) = app_with_background_writer();
+    new_doc(&mut app);
+    let home = test_home(&mut app, "bgsave");
+    let taken = home.join("Desktop/poster.vctemplate");
+    std::fs::write(&taken, b"keep me").unwrap();
+    let template = json!({"command": "file.saveAsTemplate", "params": {"path": s(&home.join("Desktop/poster.png"))}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", template);
+    assert!(r["error"].as_str().unwrap_or("").contains("never overwrite"), "{r}");
+    assert!(r.get("background").is_none(), "{r}");
+    crate::background::wait_all(&mut app);
+    assert!(app.ui.dialog.is_none() && app.ui.told.is_empty(), "no dialog: {:?}", app.ui.dialog.as_ref().map(|d| &d.kind));
+    assert_eq!(std::fs::read(&taken).unwrap(), b"keep me");
+    // The person's own save still goes to the background.
+    let mine = home.join("Desktop/mine.vectorcraft");
+    let r = app.run("file.saveAs", json!({"path": s(&mine)})).unwrap();
+    assert_eq!(r["background"], true, "{r}");
+    crate::background::wait_all(&mut app);
+    assert!(mine.exists());
+}
+
+/// When an agent's connection closes the host says so (`varos.agent.left`): the next agent with
+/// its label is plain "Claude Code" again, not "Claude Code 2", while two at once are told apart.
+#[test]
+fn an_agent_that_left_frees_its_label_number() {
+    let (mut app, tx) = app();
+    new_doc(&mut app);
+    request(&mut app, &tx, claude("s1"), "engine.execute", rect(10));
+    let first = last_actor(&app).unwrap();
+    request(&mut app, &tx, claude("s2"), "engine.execute", rect(20));
+    assert_eq!(app.agents.registry.label(ActorKey(last_actor(&app).unwrap())), "Claude Code 2");
+    for session in ["s1", "s2"] {
+        let (left, reply) = ControlRequest::new(super::AGENT_LEFT, json!({}));
+        tx.send(left.with_actor(Some(json!({ "session": session })))).unwrap();
+        app.drain_control(&egui::Context::default());
+        assert!(reply.try_recv().is_err(), "nothing replies to a departure");
+    }
+    request(&mut app, &tx, claude("s3"), "engine.execute", rect(30));
+    assert_eq!(app.agents.registry.label(ActorKey(last_actor(&app).unwrap())), "Claude Code");
+    // The History rows of the first keep its name.
+    assert_eq!(app.agents.registry.label(ActorKey(first)), "Claude Code");
+}

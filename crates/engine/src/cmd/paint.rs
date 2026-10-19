@@ -206,8 +206,8 @@ impl Session {
 /// The fill or stroke a proxy shows for `n` ([`Node::proxy_paint`]: fill or stroke `item` when it
 /// is of that kind, type's first run, else the topmost one).
 pub(crate) fn proxy_paint(n: &Node, stroke: bool, item: Option<usize>) -> Paint {
-    match n.proxy_paint(stroke, item) {
-        Some((p, ..)) => p.clone(),
+    match proxy_paint_only(n, stroke, item) {
+        Some(p) => p.clone(),
         // Type without runs shows the default character style.
         None if matches!(n.kind, NodeKind::Text(_)) => {
             let st = CharStyle::default();
@@ -215,6 +215,20 @@ pub(crate) fn proxy_paint(n: &Node, stroke: bool, item: Option<usize>) -> Paint 
         }
         None => Paint::None,
     }
+}
+
+/// Varos: the paint [`Node::proxy_paint`] gives, without the box it fits the paint to. Measuring
+/// that box takes the exact bounds of every part of a compound path, and the proxies (Toolbar,
+/// Control bar, Properties) ask for the paint every frame: 13.9k parts cost ~25 ms a call.
+fn proxy_paint_only(n: &Node, stroke: bool, item: Option<usize>) -> Option<&Paint> {
+    let item = n.appearance.item_of_kind(item, !stroke);
+    if item.is_none()
+        && let NodeKind::Text(t) = &n.kind
+    {
+        let st = &t.runs.first()?.style;
+        return Some(if stroke { &st.stroke } else { &st.fill });
+    }
+    if stroke { n.appearance.stroke_at(item).map(|s| &s.paint) } else { n.appearance.fill_at(item).map(|f| &f.paint) }
 }
 
 /// Do two paints look the same in a proxy? Solid colours compare without their swatch link and

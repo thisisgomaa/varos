@@ -119,6 +119,13 @@ pub(crate) fn observe(app: &mut VectorcraftApp) {
     agents.presence.retain(|uid| open.contains(&uid), now);
 }
 
+/// An agent's connection closed ([`super::AGENT_LEFT`]): its session's label number is free for
+/// the next agent with its label (owner: "Claude Code", not "Claude Code 7").
+pub(crate) fn left(app: &mut VectorcraftApp, req: &ControlRequest) {
+    let (session, ..) = actor_fields(req.actor.as_ref());
+    app.agents.registry.depart(&session);
+}
+
 /// A control request is about to run: register its agent, record the steps of every document
 /// for it, light up the artboard it works on, and put the write guard in force for a guarded one.
 pub(crate) fn before(app: &mut VectorcraftApp, req: &ControlRequest) -> Option<Pending> {
@@ -170,6 +177,13 @@ fn write_guard(places: Option<Places>, own_file: Option<String>) -> file_access:
 }
 
 const NO_HOME: &str = "agents can't write files here: the home folder is unknown";
+
+/// Is a request of an agent through Varos' agents port running on this thread (its write guard in
+/// force: [`before`])? Work it starts runs at once rather than in the background, so what fails is
+/// its reply, never a dialog that interrupts the person (owner 2026-10-19).
+pub(crate) fn guarded_request_running() -> bool {
+    file_access::write_guard().is_some()
+}
 
 /// The request ran (or failed): end its write guard, stop recording for its agent, log what it
 /// changed in each document, and reveal it on the canvas.
@@ -392,14 +406,28 @@ pub(crate) const READS: &[&str] = &[
     "text.findFontFiles",
 ];
 
-/// Control methods outside the command registry that write a file at their `path`.
-pub(crate) const UI_WRITERS: &[&str] = &["app.save", "app.export", "ui.render", "ui.screenshot"];
+/// Control methods and UI commands outside the engine's command registry that write a file at
+/// their `path`: File › Save (`file.save`, which the registry doesn't hold: the app saves) and the
+/// app's own export commands are refused up front for an existing file, like the registry's.
+pub(crate) const UI_WRITERS: &[&str] = &[
+    "app.save",
+    "app.export",
+    "ui.render",
+    "ui.screenshot",
+    "file.save",
+    "file.exportAs",
+    "file.export.svg",
+    "file.export.png",
+    "file.export.pdf",
+    "file.exportForScreens",
+    "file.saveForWeb",
+];
 
 /// Commands that write over the document's own file when it is the path they are given.
 const SAVES_OWN_FILE: &[&str] = &["app.save", "document.save", "file.save"];
 
 /// Commands that write a set of files with names they make up into the `folder` they are given.
-const WRITES_A_SET: &[&str] = &["assets.export", "document.exportForScreens"];
+const WRITES_A_SET: &[&str] = &["assets.export", "document.exportForScreens", "file.exportForScreens"];
 
 /// Commands that give the path they are given an extension of their own.
 const RENAMES_ITS_FILE: &[&str] = &["file.saveAsTemplate"];

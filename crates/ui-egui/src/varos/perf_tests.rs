@@ -127,3 +127,37 @@ fn canvas_hover_consumes_this_frames_pointer_without_editing() {
         assert_eq!(app.session.active().unwrap().revision, revision, "hover alone leaves the document unchanged");
     }
 }
+
+/// The UI pass with a huge compound path selected (the v7 stress document: one compound of 13.9k
+/// parts). `VAROS_STRESS_DOC=<file.vectorcraft>` names the document; its first top-level object
+/// is selected. Per-section costs with `VAROS_PROFILE=1`.
+#[test]
+#[ignore = "CPU timing: run alone with VAROS_PROFILE=1 VAROS_STRESS_DOC=<file> and --nocapture"]
+fn headless_ui_with_a_huge_compound_selected() {
+    let Some(path) = std::env::var_os("VAROS_STRESS_DOC") else { return };
+    let path = path.to_string_lossy().to_string();
+    let ctx = egui::Context::default();
+    let mut app = VectorcraftApp::new(Session::new(), Default::default());
+    app.services.native_menu = Some(NativeMenu::new(Box::new(NullMenu)));
+    app.canvas.worker_started = true;
+    app.run("document.open", json!({ "path": path })).unwrap();
+    let id = app.session.active().unwrap().doc.layers[0].children().unwrap()[0].id;
+    for (label, select) in [("unselected", false), ("selected", true)] {
+        if select {
+            app.run("select.set", json!({"ids": [id.0]})).unwrap();
+        }
+        for i in 0..10 {
+            frame(&mut app, &ctx, i, true, 1.0);
+        }
+        profile::capture();
+        let n: usize = std::env::var("VAROS_STRESS_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(30).max(30);
+        let mut times: Vec<_> = (10..10 + n).map(|i| frame(&mut app, &ctx, i, true, 1.0)).collect();
+        times.sort_by(f64::total_cmp);
+        eprintln!("PERF {label}: p50={:.3}ms p95={:.3}ms", times[n / 2], times[n * 95 / 100]);
+        let mut costs: Vec<_> = profile::captured().into_iter().collect();
+        costs.sort_by(|a, b| b.1.total_ms.total_cmp(&a.1.total_ms));
+        for (name, cost) in costs.into_iter().take(14) {
+            eprintln!("  {name}: mean={:.3}ms max={:.3}ms calls={}", cost.total_ms / cost.calls.max(1) as f64, cost.max_ms, cost.calls);
+        }
+    }
+}

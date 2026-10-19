@@ -1851,25 +1851,39 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             // Arabic words, re-shaped in the paragraph's own face; its word spaces take the rest.
             // The re-shaped words are spliced into the paragraph's glyphs: later indices move.
             // The paragraph's kashida setting: Off takes none; Force also stretches the last line of
-            // a paragraph justified with its last line aligned (with kashida only: its spaces stay).
+            // a paragraph justified with its last line aligned (with kashida only: its spaces stay),
+            // and elongates a line that isn't justified at all (Left, Right, Center, point type) by
+            // its strength in percent of the line's width, within the box (owner 2026-10-19).
             let force = para.kashida.mode == vectorcraft_doc::text::KashidaMode::Force;
-            let force_last = force && last_of_para && matches!(para.justify, Justify::JustifyLeft | Justify::JustifyCenter | Justify::JustifyRight);
+            // (Area type only: a point type line isn't justified at all, so Force elongates it.)
+            let force_last = force
+                && last_of_para
+                && regions.is_some()
+                && matches!(para.justify, Justify::JustifyLeft | Justify::JustifyCenter | Justify::JustifyRight);
+            let justified_line = kashida::justified(para.justify, last_of_para) && regions.is_some();
+            let grow = force && !justified_line && !force_last;
             if rtl
                 && !cx.vertical
                 && !hyph
-                && regions.is_some()
+                && (regions.is_some() || grow)
                 && compressed.is_empty()
                 && wakan.is_empty()
                 && para.kashida.mode != vectorcraft_doc::text::KashidaMode::Off
-                && (kashida::justified(para.justify, last_of_para) || force_last)
+                && (justified_line || force_last || grow)
                 // Single Word Justification's Align Left/Center/Right aligns a one-word line
                 // instead of justifying it: no kashida either.
-                && (sg[i..trimmed].iter().any(SGlyph::is_space) || para.justification.single_word == SingleWordJustify::FullJustify || force_last)
+                && (sg[i..trimmed].iter().any(SGlyph::is_space) || para.justification.single_word == SingleWordJustify::FullJustify || force_last || grow)
             {
                 let levels = bidi.as_ref().map_or(&[][..], |b| &b.levels[..]);
                 let shaper = kashida::Shaper { db: cx.db, text: cx.text, runs: &cx.runs, feats: &cx.opts.features, levels, para_start: pr.start };
-                let policy = vectorcraft_text_arabic::policy(para.kashida.strength(), force);
-                let grown = kashida::stretch_line(&shaper, &mut sg, &mut flex, &para.justification, policy, i, trimmed, end, width);
+                let (policy, target) = if grow {
+                    let natural: f64 = sg[i..trimmed].iter().map(|g| g.adv).sum();
+                    let room = regions.is_some().then_some(width);
+                    (vectorcraft_text_arabic::growth_policy(), vectorcraft_text_arabic::growth_target(natural, para.kashida.strength, room))
+                } else {
+                    (vectorcraft_text_arabic::policy(para.kashida.strength(), force), width)
+                };
+                let grown = kashida::stretch_line(&shaper, &mut sg, &mut flex, &para.justification, policy, i, trimmed, end, target);
                 if grown != 0 {
                     end = end.saturating_add_signed(grown);
                     trimmed = trimmed.saturating_add_signed(grown);

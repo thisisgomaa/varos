@@ -49,6 +49,10 @@ pub struct ActorInfo {
     /// 1 for the first live session with this base label, 2 for the second…
     pub ordinal: u32,
     pub last_seen: Instant,
+    /// Its connection closed ([`Registry::depart`]): its number is free for a new session with the
+    /// same label. It keeps its key if it comes back (a reconnect), renumbered if its number was
+    /// taken meanwhile.
+    pub departed: bool,
 }
 
 impl ActorInfo {
@@ -58,7 +62,9 @@ impl ActorInfo {
     }
 }
 
-/// The live agent sessions, numbered so that two sessions with the same label stay apart.
+/// The live agent sessions, numbered so that two sessions with the same label stay apart: a
+/// label is numbered only while another session with it is connected ("Claude Code", "Claude Code
+/// 2"); once they have both ended, the next is plain "Claude Code" again.
 #[derive(Debug, Default)]
 pub struct Registry {
     by_session: BTreeMap<String, ActorKey>,
@@ -72,24 +78,52 @@ impl Registry {
     }
 
     /// The key for a request from `session`, registering it on first sight. A known session keeps
-    /// its key and label; a new one with the same label as a live session gets the smallest free
-    /// ordinal ("Claude Code 2").
+    /// its key and label; a new one with the same label as a connected session gets the smallest
+    /// free ordinal ("Claude Code 2"). Sessions that departed don't hold their numbers.
     pub fn admit(&mut self, session: &str, profile: &str, label: &str, now: Instant) -> ActorKey {
         if let Some(key) = self.by_session.get(session).copied()
-            && let Some(info) = self.actors.get_mut(&key)
+            && let Some(info) = self.actors.get(&key)
         {
-            info.last_seen = now;
+            let (base, ordinal, departed) = (info.base_label.clone(), info.ordinal, info.departed);
+            // Back after its connection closed: its number again, unless another took it.
+            let ordinal = if departed && self.taken(&base, Some(key)).contains(&ordinal) { self.free(&base, Some(key)) } else { ordinal };
+            if let Some(info) = self.actors.get_mut(&key) {
+                info.last_seen = now;
+                info.departed = false;
+                info.ordinal = ordinal;
+            }
             return key;
         }
         let base_label = sanitize_label(label);
-        let taken: Vec<u32> = self.actors.values().filter(|a| a.base_label == base_label).map(|a| a.ordinal).collect();
-        let ordinal = (1..).find(|n| !taken.contains(n)).unwrap_or(1);
+        let ordinal = self.free(&base_label, None);
         self.next += 1;
         let key = ActorKey(self.next);
         self.by_session.insert(session.to_string(), key);
-        self.actors
-            .insert(key, ActorInfo { key, session: session.to_string(), profile: sanitize_profile(profile), base_label, ordinal, last_seen: now });
+        self.actors.insert(
+            key,
+            ActorInfo { key, session: session.to_string(), profile: sanitize_profile(profile), base_label, ordinal, last_seen: now, departed: false },
+        );
         key
+    }
+
+    /// The numbers the connected sessions labelled `base` hold (`but` aside).
+    fn taken(&self, base: &str, but: Option<ActorKey>) -> Vec<u32> {
+        self.actors.values().filter(|a| a.base_label == base && !a.departed && Some(a.key) != but).map(|a| a.ordinal).collect()
+    }
+
+    /// The smallest number no connected session labelled `base` holds (`but` aside).
+    fn free(&self, base: &str, but: Option<ActorKey>) -> u32 {
+        let taken = self.taken(base, but);
+        (1..).find(|n| !taken.contains(n)).unwrap_or(1)
+    }
+
+    /// The connection of `session` closed (its agent ended, or the connection timed out): its
+    /// number is free for the next session with its label. Its key and label stay until it is
+    /// forgotten ([`Self::forget_idle`]), so a reconnect is still the same agent.
+    pub fn depart(&mut self, session: &str) {
+        if let Some(info) = self.by_session.get(session).and_then(|key| self.actors.get_mut(key)) {
+            info.departed = true;
+        }
     }
 
     pub fn get(&self, key: ActorKey) -> Option<&ActorInfo> {
