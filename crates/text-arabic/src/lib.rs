@@ -173,23 +173,95 @@ pub fn plan_with<T>(
     Ok(Plan { slots: inserted, width, payload })
 }
 
-/// The boundaries of `text[range]` where kashida may go: `varos-text`'s [`candidates`] (joining
-/// rules: between two joining letters, never inside لا, never next to harakat), less those in the
-/// name of God ([`sacred_from`]).
+/// The boundaries of `text[range]` where kashida may go, ranked for Arabic typography (owner
+/// decision 2026-10-19). `varos-text`'s [`candidates`] give the joins the joining rules allow
+/// (between two joining letters, never inside لا, never next to harakat); of those:
+///
+/// - none in the name of God ([`sacred_from`]);
+/// - none right after the definite article: between the lam of ال (also وال، بال، فال، كال، لل)
+///   and the first letter of the stem (never الـرحمن);
+/// - none in a word whose stem is two letters or fewer (رب، بالحق);
+/// - ranked ([`Candidate::priority`], lower first): 0 the join before the word's final letter
+///   (الرحمـن، العالميـن، الحمـد، بسـم), then mid-stem joins after a seen or sheen (1), a sad or
+///   dad (2), a kaf or a letter of the beh family (3), then any other the rules allow (4).
 pub fn kashida_candidates(text: &str, range: std::ops::Range<usize>) -> Result<Vec<Candidate>, &'static str> {
     let all = candidates(text, range.clone())?;
-    let mut sacred: std::collections::HashMap<usize, Option<usize>> = std::collections::HashMap::new();
+    let mut words: std::collections::HashMap<usize, WordShape> = std::collections::HashMap::new();
     Ok(all
         .into_iter()
-        .filter(|c| {
-            let from = *sacred.entry(c.word).or_insert_with(|| {
+        .filter_map(|c| {
+            let w = words.entry(c.word).or_insert_with(|| {
                 let rest = &text[c.word..range.end.max(c.word)];
                 let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-                sacred_from(&rest[..end]).map(|off| c.word + off)
+                WordShape::of(&rest[..end], c.word)
             });
-            from.is_none_or(|from| c.byte <= from)
+            if w.stem_letters <= 2 || w.sacred.is_some_and(|from| c.byte > from) || w.stem_start.is_some_and(|stem| c.byte == stem) {
+                return None;
+            }
+            let prev = text[..c.byte].chars().next_back().unwrap_or(' ');
+            let priority = if Some(c.byte) == w.last_letter {
+                0
+            } else {
+                match prev {
+                    'س' | 'ش' => 1,
+                    'ص' | 'ض' => 2,
+                    'ك' | 'ب' | 'ت' | 'ث' | 'ن' | 'ي' | 'ئ' => 3,
+                    _ => 4,
+                }
+            };
+            Some(Candidate { priority, ..c })
         })
         .collect())
+}
+
+/// What [`kashida_candidates`] reads of a word (byte offsets into the text).
+struct WordShape {
+    /// Where the name of God begins ([`sacred_from`]).
+    sacred: Option<usize>,
+    /// The first letter of the stem after a definite article.
+    stem_start: Option<usize>,
+    /// The letters of the stem (the word without its article).
+    stem_letters: usize,
+    /// The word's final letter.
+    last_letter: Option<usize>,
+}
+
+impl WordShape {
+    fn of(word: &str, at: usize) -> Self {
+        let letters = arabic_letters(word);
+        let chars: Vec<char> = letters.iter().map(|l| l.1).collect();
+        let article = article_len(&chars);
+        Self {
+            sacred: sacred_from(word).map(|off| at + off),
+            stem_start: article.and_then(|n| letters.get(n)).map(|l| at + l.0),
+            stem_letters: chars.len() - article.unwrap_or(0),
+            last_letter: letters.last().map(|l| at + l.0),
+        }
+    }
+}
+
+/// The Arabic letters of `word` with their byte offsets: harakat, tatweels and punctuation read
+/// through, alef wasla (ٱ) read as an alef.
+fn arabic_letters(word: &str) -> Vec<(usize, char)> {
+    word.char_indices()
+        .filter(|&(_, c)| c != TATWEEL && !is_harakat(c) && c.script() == Script::Arabic && c.is_alphabetic())
+        .map(|(i, c)| (i, if c == '\u{0671}' { 'ا' } else { c }))
+        .collect()
+}
+
+/// How many letters a definite article takes at the start of `letters` (its proclitics
+/// included): ال، وال، فال، بال، كال، وبال، فبال، وكال، لل، ولل، فلل. `None`: no article.
+fn article_len(letters: &[char]) -> Option<usize> {
+    let mut i = 0;
+    if matches!(letters.first(), Some('و' | 'ف')) && letters.len() > 3 {
+        i = 1;
+    }
+    let rest = &letters[i..];
+    if rest.starts_with(&['ل', 'ل']) {
+        return Some(i + 2);
+    }
+    let j = if matches!(rest.first(), Some('ب' | 'ك')) && rest.get(1..3) == Some(&['ا', 'ل'][..]) { i + 1 } else { i };
+    letters[j..].starts_with(&['ا', 'ل']).then_some(j + 2)
 }
 
 /// Where the name of God begins in `word` (a byte offset into it), which no tatweel may enter:
@@ -202,11 +274,7 @@ pub fn sacred_from(word: &str) -> Option<usize> {
     if word.chars().any(|c| matches!(c, '\u{FDF0}'..='\u{FDFD}')) {
         return Some(0);
     }
-    let letters: Vec<(usize, char)> = word
-        .char_indices()
-        .filter(|&(_, c)| c != TATWEEL && !is_harakat(c) && c.script() == Script::Arabic && c.is_alphabetic())
-        .map(|(i, c)| (i, if c == '\u{0671}' { 'ا' } else { c }))
-        .collect();
+    let letters = arabic_letters(word);
     let chars: Vec<char> = letters.iter().map(|l| l.1).collect();
     let name = if chars.ends_with(&['ل', 'ل', 'ه']) {
         3
@@ -356,6 +424,65 @@ mod tests {
         assert!(kept(t).iter().all(|c| !is_harakat(t[..c.byte].chars().next_back().unwrap())));
     }
 
+    /// No tatweel right after the definite article's lam, none in a stem of two letters, and the
+    /// join before a word's final letter is each word's first choice when the rules allow one
+    /// there (owner decision 2026-10-19: الرحمـن، not الـرحمن).
+    #[test]
+    fn the_article_short_stems_and_the_final_letter() {
+        let kept = |t: &str| kashida_candidates(t, 0..t.len()).unwrap();
+        // The stem's first letter after each article form takes none.
+        for (word, stem) in [
+            ("الرحمن", "ر"),
+            ("الحمد", "ح"),
+            ("العالمين", "ع"),
+            ("والحمد", "ح"),
+            ("بالعالمين", "ع"),
+            ("فالكتاب", "ك"),
+            ("كالبحر", "ب"),
+            ("للناس", "ن"),
+            ("وللناس", "ن"),
+            ("ٱلرَّحْمَٰنِ", "ر"),
+        ] {
+            let at = word.find(stem).unwrap();
+            let c = kept(word);
+            assert!(c.iter().all(|c| c.byte != at), "{word}: a tatweel after the article: {c:?}");
+            // (A fully vocalized word takes none: no tatweel goes next to harakat.)
+            assert!(!c.is_empty() || word.chars().any(is_harakat), "{word}: the stem still takes kashida");
+        }
+        // Stems of two letters take none.
+        for word in ["رب", "من", "بالحق", "الحق", "في"] {
+            assert!(kept(word).is_empty(), "{word}: {:?}", kept(word));
+        }
+        // Each word's best join: before its final letter.
+        for (word, last) in [("الرحمن", 'ن'), ("العالمين", 'ن'), ("الحمد", 'د'), ("بسم", 'م'), ("الرحيم", 'م')] {
+            let mut c = kept(word);
+            c.sort_unstable_by_key(|c| (c.priority, c.byte));
+            assert_eq!(c[0].byte, word.rfind(last).unwrap(), "{word}: {c:?}");
+            assert_eq!(c[0].priority, 0);
+        }
+        // Then seen, sad, kaf/beh, the rest.
+        let p = |t: &str, at: &str| kept(t).into_iter().find(|c| c.byte == t.find(at).unwrap()).map(|c| c.priority);
+        assert_eq!(p("مستقيم", "ت"), Some(1), "after a seen");
+        assert_eq!(p("نصبوا", "ب"), Some(2), "after a sad");
+        assert_eq!(p("مكتوب", "ت"), Some(3), "after a kaf");
+        assert_eq!(p("محمود", "م"), None, "the first letter starts no join");
+        // A line: with one tatweel a word, every word takes it before its final letter.
+        let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين";
+        let safe: HashSet<usize> = candidates(text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
+        let measure =
+            |slots: &[usize]| Some(Measured { width: 300.0 + 3.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () });
+        let plan = plan_with(text, 0..text.len(), 300.0, safe.clone(), 1000.0, Policy::MINIMAL, measure).unwrap();
+        let finals: Vec<usize> = ["بسم", "الرحمن", "الرحيم", "الحمد", "العالمين"]
+            .iter()
+            .map(|w| {
+                let start = text.find(w).unwrap();
+                let last = w.chars().next_back().unwrap();
+                start + w.rfind(last).unwrap()
+            })
+            .collect();
+        assert_eq!(plan.slots, finals);
+    }
+
     /// A line that isn't justified grows by its strength in percent, within its box.
     #[test]
     fn growth_targets() {
@@ -372,7 +499,7 @@ mod tests {
     /// is rejected.
     #[test]
     fn re_shapes_are_capped_and_per_word_is_bounded() {
-        let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين ".repeat(20);
+        let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين ".repeat(30);
         let safe: HashSet<usize> = candidates(&text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
         assert!(safe.len() > 200);
         for (per_word, cap) in [(1, 64), (2, 64), (3, 96), (4, 128), (5, 160), (8, 256), (99, 256)] {

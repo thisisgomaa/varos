@@ -64,10 +64,17 @@ a right-aligned line stays on its right edge, a centred one stays centred. Auto 
 
 **Where the tatweels go** (both kinds of line, owner decision 2026-10-19): `plan_with` spreads them
 across the words of the line, one more per word a round, the words in reading order (right to
-left), each word's boundaries in `varos-text`'s priority order (after a seen, then a sad, then the
-rest), so Force no longer spends the whole slack on the first words (it replaced `varos-text`'s
+left), each word's boundaries best first, so Force no longer spends the whole slack on the first words (it replaced `varos-text`'s
 `plan`, which walks the boundaries in priority order across the whole line). Never in the name of
 God: `sacred_from` keeps every tatweel out of الله, لله and اللهم with any proclitic (والله، بالله،
 فلله، تالله…), out of the sacred ligatures U+FDF0..U+FDFD (ﷲ, ﷺ…), and out of a longer word's
 trailing الله (عبدالله). The joining rules already keep them out of لا and away from harakat.
+
+Which join a word takes first (`kashida_candidates`, owner decision 2026-10-19, after the renders
+showed الـرحمن): the join before the word's **final letter** (الرحمـن، العالميـن، الحمـد، بسـم), then
+mid-stem joins after a seen/sheen, a sad/dad, a kaf or a letter of the beh family, then any other
+the joining rules allow. Never right after the **definite article** (between the lam of ال, وال،
+بال، فال، كال، لل and the stem's first letter), and none in a word whose **stem is two letters or
+fewer** (رب، بالحق). A face can still refuse a join: Geeza Pro's final ين fails the `morx` trial,
+so العالمين takes its next join there (العـالمين).
 A line costs at most 256 trial re-shapes (`plan_with`'s cap).

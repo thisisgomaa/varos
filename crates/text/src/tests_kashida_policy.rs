@@ -127,7 +127,7 @@ fn tatweel_words(l: &TextLayout, text: &str, (face, tat): (u32, u32)) -> std::co
 /// and 5), in a single-line Justify All paragraph (the only line, justified like any other); on
 /// the OpenType path (HarfRust's safe flags) and on the morx path (the joining rules, each trial
 /// verified).
-fn assert_spread(l: &TextLayout, text: &str, tat: (u32, u32), what: &str) {
+fn assert_spread(l: &TextLayout, text: &str, tat: (u32, u32), what: &str, finals: bool) {
     assert_eq!(l.lines.len(), 1, "{what}: one line");
     let per = tatweel_words(l, text, tat);
     eprintln!("{what}: tatweels per word {per:?}");
@@ -135,6 +135,27 @@ fn assert_spread(l: &TextLayout, text: &str, tat: (u32, u32), what: &str) {
     assert!(per.len() >= 4, "{what}: tatweels in {} words only: {per:?}", per.len());
     let (most, least) = (per.values().max().copied().unwrap_or(0), per.values().min().copied().unwrap_or(0));
     assert!(most <= least + 1, "{what}: one word took the elongation: {per:?}");
+    // Never right after the article's lam (الـرحمن): the stem's first letter takes none.
+    let after_article: Vec<usize> = text
+        .split(' ')
+        .scan(0, |at, w| {
+            let start = *at;
+            *at += w.len() + 1;
+            Some(w.strip_prefix("ال").filter(|_| w.chars().count() > 4).map(|_| start + "ال".len()))
+        })
+        .flatten()
+        .collect();
+    assert!(!after_article.is_empty());
+    let tatweels: Vec<usize> = l.glyphs.iter().filter(|g| g.font_id == tat.0 && g.gid == tat.1 && g.len == 0).map(|g| g.byte).collect();
+    assert!(tatweels.iter().all(|b| !after_article.contains(b)), "{what}: a tatweel after the article: {tatweels:?} {after_article:?}");
+    // Each word's first tatweel goes before its final letter (all the Basmala's do), where the
+    // face takes one there: a morx face's trial there can fail (Geeza Pro's ين), and the word
+    // then takes its next join.
+    for (k, w) in text.split(' ').enumerate().filter(|(k, _)| finals && per.contains_key(k)) {
+        let start: usize = text.split(' ').take(k).map(|w| w.len() + 1).sum();
+        let last = start + w.rfind(w.chars().next_back().unwrap()).unwrap();
+        assert!(tatweels.contains(&last), "{what}: word {k} {w} not elongated before its final letter: {tatweels:?}");
+    }
 }
 
 #[test]
@@ -144,7 +165,7 @@ fn force_spreads_kashida_across_words_and_spares_the_name_of_god() {
     // Noto Sans Arabic is wider than Noto Naskh: 30 pt keeps the Basmala on one 600 pt line.
     let st = CharStyle { font_family: FAMILY.into(), size: 30.0, ..Default::default() };
     let l = layout(&db, &area(BASMALA, st.clone(), 600.0, Justify::JustifyAll, opts(KashidaMode::Force, 100)));
-    assert_spread(&l, BASMALA, tat, "Noto Sans Arabic");
+    assert_spread(&l, BASMALA, tat, "Noto Sans Arabic", true);
     // The only line is justified like any other: its measure filled.
     assert!((l.lines[0].x1 - l.lines[0].x0 - 600.0).abs() < 0.01, "{:?}", (l.lines[0].x0, l.lines[0].x1));
     // The morx path on the same face.
@@ -152,7 +173,7 @@ fn force_spreads_kashida_across_words_and_spares_the_name_of_god() {
     FORCED_MORX.with(|f| f.borrow_mut().push(face));
     let l = layout(&db, &area(BASMALA, st, 600.0, Justify::JustifyAll, opts(KashidaMode::Force, 100)));
     FORCED_MORX.with(|f| f.borrow_mut().clear());
-    assert_spread(&l, BASMALA, tat, "Noto Sans Arabic, morx path");
+    assert_spread(&l, BASMALA, tat, "Noto Sans Arabic, morx path", true);
 }
 
 /// The fonts of the live agent test, when installed: Noto Naskh Arabic (OpenType) and Geeza Pro
@@ -169,7 +190,8 @@ fn installed_fonts_spread_kashida_and_spare_the_name_of_god() {
         let tat = (face.id(), face.glyph_for('\u{0640}'));
         let st = CharStyle { font_family: family.into(), size: 36.0, ..Default::default() };
         let l = layout(&db, &area(BASMALA, st, 600.0, Justify::JustifyAll, opts(KashidaMode::Force, 100)));
-        assert_spread(&l, BASMALA, tat, family);
+        // Geeza Pro's final ين refuses a tatweel (its morx trial changes the letters' forms).
+        assert_spread(&l, BASMALA, tat, family, family != "Geeza Pro");
     }
 }
 
@@ -198,7 +220,7 @@ fn force_elongates_lines_that_are_not_justified() {
         let (w0, w1) = (off.lines[0].x1 - off.lines[0].x0, on.lines[0].x1 - on.lines[0].x0);
         let target = w0 * 1.3;
         assert!(w1 <= target + 0.01 && w1 > target - one.max(1.0) * 2.0, "{justify:?}: {w0} → {w1}, target {target}, one tatweel {one}");
-        assert_spread(&on, BASMALA, tat, &format!("{justify:?} Force 30"));
+        assert_spread(&on, BASMALA, tat, &format!("{justify:?} Force 30"), true);
         let ((a0, a1), (b0, b1)) = (ink(&off), ink(&on));
         match justify {
             Justify::Right | Justify::Auto => assert!((a1 - b1).abs() < 0.5, "{justify:?}: right edge {a1} → {b1}"),
