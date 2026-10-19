@@ -5202,3 +5202,11 @@ swatch	Bright Violet	Violet cerah
 	Modern Sans	Sans modern
 	Guessed from the font's name; fonts it can't place are under All Arabic	Ditebak dari nama font; font yang tidak dapat digolongkan ada di Semua Arab
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Pembentukan AAT: font ini disusun dengan tabel morx miliknya sendiri, bukan aturan OpenType untuk bahasa Arab
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Kashida
+	No kashida: word spacing alone justifies the lines	Tanpa kashida: hanya spasi kata yang meratakan baris
+	Justified lines take tatweels in their Arabic words before word spacing	Baris rata kiri-kanan mendapat tatweel pada kata Arabnya sebelum spasi kata
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Lebih dalam: lebih banyak tatweel per kata dan lebih banyak ruang kosong tiap baris; baris terakhir paragraf rata kiri-kanan dengan baris terakhir yang disejajarkan juga mendapat kashida
+	Tatweels in the Arabic words of justified right-to-left lines	Tatweel pada kata Arab di baris rata kiri-kanan dari kanan ke kiri
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Berapa banyak ruang kosong baris yang diisi kashida dan berapa tatweel yang didapat sebuah kata (50: seimbang)
+	Mixed: the selected paragraphs differ	Campuran: paragraf yang dipilih berbeda

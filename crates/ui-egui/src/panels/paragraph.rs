@@ -207,8 +207,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         }
     });
-    // Varos: kashida controls, for paragraphs that run right to left (the ones kashida stretches).
-    if rtl {
+    // Varos: kashida controls, when any paragraph the panel acts on runs right to left (the ones
+    // kashida stretches).
+    if crate::varos::kashida_ui::shown(app, rtl) {
         crate::varos::kashida_ui::controls(app, ui, &para);
     }
     ui.add_space(4.0);

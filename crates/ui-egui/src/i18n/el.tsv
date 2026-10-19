@@ -5171,3 +5171,11 @@ effect	Points	Σημεία
 	Modern Sans	Σύγχρονη sans
 	Guessed from the font's name; fonts it can't place are under All Arabic	Εκτίμηση από το όνομα της γραμματοσειράς· όσες δεν κατατάσσονται βρίσκονται στο «Όλα τα αραβικά»
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Μορφοποίηση AAT: η γραμματοσειρά στοιχειοθετείται με τους δικούς της πίνακες morx, όχι με τους κανόνες OpenType για τα αραβικά
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Κασίντα
+	No kashida: word spacing alone justifies the lines	Χωρίς κασίντα: μόνο το διάστημα λέξεων πλήρως στοιχίζει τις γραμμές
+	Justified lines take tatweels in their Arabic words before word spacing	Οι πλήρως στοιχισμένες γραμμές παίρνουν ταταουίλ στις αραβικές λέξεις πριν από το διάστημα λέξεων
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Βαθύτερα: περισσότερα ταταουίλ ανά λέξη και μεγαλύτερο μέρος του κενού κάθε γραμμής· και η τελευταία γραμμή παραγράφου με πλήρη στοίχιση και στοιχισμένη τελευταία γραμμή παίρνει κασίντα
+	Tatweels in the Arabic words of justified right-to-left lines	Ταταουίλ στις αραβικές λέξεις πλήρως στοιχισμένων γραμμών από δεξιά προς τα αριστερά
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Πόσο από το κενό μιας γραμμής γεμίζει η κασίντα και πόσα ταταουίλ παίρνει μια λέξη (50: ισορροπημένα)
+	Mixed: the selected paragraphs differ	Μικτό: οι επιλεγμένες παράγραφοι διαφέρουν

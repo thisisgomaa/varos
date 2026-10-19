@@ -187,8 +187,8 @@ fn joins_letters(face: &crate::fontdb::FontFace) -> bool {
 /// (b) every authored glyph is unchanged: same glyph id (the letters beside each tatweel kept
 ///     their joining forms), same cluster and the same offsets (marks stay where they were);
 /// (c) no glyph is `.notdef`;
-/// (d) the word grew by the tatweels' advances, within a font unit each (the neighbours'
-///     advances didn't change).
+/// (d) every authored glyph keeps its advance (within a font unit), and the word grew by the
+///     tatweels' advances, within a font unit each.
 pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usize]) -> bool {
     let k = slots.len();
     if trial.len() != original.len() + k || trial.iter().any(|g| g.gid == 0) {
@@ -204,10 +204,19 @@ pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usiz
         return false;
     }
     let authored = trial.iter().filter(|g| g.len > 0);
+    // One font unit, in points.
+    let unit_of = |g: &SGlyph| g.sx.abs() + EPS;
+    // Each authored glyph on its own, advance included: a gain in one letter and a loss in
+    // another must not cancel out in the word's total.
     let same = authored.clone().count() == original.len()
-        && authored
-            .zip(original)
-            .all(|(a, b)| a.gid == b.gid && a.byte == b.byte && a.len == b.len && (a.dx - b.dx).abs() < EPS && (a.dy - b.dy).abs() < EPS);
+        && authored.zip(original).all(|(a, b)| {
+            a.gid == b.gid
+                && a.byte == b.byte
+                && a.len == b.len
+                && (a.dx - b.dx).abs() < EPS
+                && (a.dy - b.dy).abs() < EPS
+                && (a.adv - b.adv).abs() <= unit_of(b)
+        });
     let grown: f64 = trial.iter().map(|g| g.adv).sum::<f64>() - original.iter().map(|g| g.adv).sum::<f64>();
     let added: f64 = tatweels.iter().map(|g| g.adv).sum();
     let unit: f64 = tatweels.iter().map(|g| g.sx.abs()).sum();

@@ -4796,3 +4796,11 @@ lighting	Light	광원
 	Modern Sans	모던 산세리프
 	Guessed from the font's name; fonts it can't place are under All Arabic	글꼴 이름으로 추정합니다. 분류할 수 없는 글꼴은 '모든 아랍어'에 있습니다
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT 셰이핑: 이 글꼴은 OpenType 아랍어 규칙이 아니라 자체 morx 표로 조판됩니다
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	카시다
+	No kashida: word spacing alone justifies the lines	카시다 없음: 단어 간격만으로 줄을 양쪽 정렬합니다
+	Justified lines take tatweels in their Arabic words before word spacing	양쪽 정렬된 줄은 단어 간격보다 먼저 아랍어 단어에 타트윌을 넣습니다
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	더 깊게: 단어당 타트윌을 늘리고 각 줄의 여백을 더 많이 채웁니다. 마지막 줄을 맞춘 양쪽 정렬 단락의 마지막 줄에도 카시다를 넣습니다
+	Tatweels in the Arabic words of justified right-to-left lines	오른쪽에서 왼쪽으로 양쪽 정렬된 줄의 아랍어 단어에 넣는 타트윌
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	카시다가 줄의 여백을 얼마나 채우고 단어에 타트윌을 몇 개 넣는지(50: 균형)
+	Mixed: the selected paragraphs differ	혼합: 선택한 단락의 설정이 다릅니다

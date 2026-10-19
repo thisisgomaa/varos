@@ -3,8 +3,8 @@
 pub(crate) mod arabic_fonts;
 pub(crate) mod cursors;
 pub(crate) mod home;
-// Varos: the Paragraph panel's kashida controls.
 pub mod icons;
+// Varos: the Paragraph panel's kashida controls.
 pub(crate) mod kashida_ui;
 pub mod names;
 #[cfg(test)]

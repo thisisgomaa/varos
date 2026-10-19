@@ -5055,3 +5055,11 @@ lighting	Light	光源
 	Modern Sans	现代无衬线
 	Guessed from the font's name; fonts it can't place are under All Arabic	根据字体名称推测；无法归类的字体在“全部阿拉伯文”中
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT 塑形：此字体使用自身的 morx 表排版，而非 OpenType 阿拉伯文规则
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	卡希达
+	No kashida: word spacing alone justifies the lines	无卡希达：仅用词间距使各行两端对齐
+	Justified lines take tatweels in their Arabic words before word spacing	两端对齐的行先在阿拉伯文单词中加入延伸符，再调整词间距
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	更强：每个单词加入更多延伸符，填充每行更多的空白；末行对齐的两端对齐段落的末行也加入卡希达
+	Tatweels in the Arabic words of justified right-to-left lines	从右到左两端对齐的行中阿拉伯文单词里的延伸符
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	卡希达填充一行空白的多少，以及每个单词加入多少延伸符（50：均衡）
+	Mixed: the selected paragraphs differ	混合：所选段落的设置不同

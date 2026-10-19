@@ -113,3 +113,19 @@ LEFT OUT / RISKS
 - Geeza Pro with harakat takes no kashida (not investigated).
 - Owner hand test needed: Paragraph panel with Arabic justified text, Off / Auto / Force,
   slider 0 / 50 / 100, Geeza Pro and Al Nile.
+
+REVIEW FIXES (2026-10-19, on top of f5f0fbdd + merge of main bc47c4b3, uncommitted)
+1. morx_trial_ok compares each authored glyph's advance (within one font unit) besides the word
+   total: +d/-d can no longer cancel. Test: morx_trials_are_verified (swapped advances rejected).
+2. Mixed selections: no lit segment, a dash after "Kashida" / "Strength" when the paragraphs
+   differ (modes present outlined), slider shows the first paragraph's value; a click applies to
+   every targeted paragraph (no "already on" guard). Test:
+   a_mixed_selection_shows_mixed_and_a_click_sets_every_paragraph (Auto+Off -> Auto -> both Auto).
+3. Controls show when ANY targeted paragraph runs right to left (kashida_ui::targeted walks the
+   Type tool's range or every paragraph of the selected objects, groups included). Test:
+   the_controls_show_when_any_selected_paragraph_is_right_to_left.
+4. plan_with bounds per_word to MAX_PER_WORD (5); re-shape cap 64 (<=2/word), 96/128/160 for
+   3/4/5, documented as a deliberate divergence from the pinned plan()'s 64; f32/f64 note added.
+   Test: re_shapes_are_capped_and_per_word_is_bounded.
+NIT: labels/tooltips through tl!; 7 new rows in each of the 23 complete-language catalogs
+   (Off/Auto/Force/Strength already had rows).

@@ -5126,3 +5126,11 @@ imageTrace	Outline	კონტური
 	Modern Sans	თანამედროვე უსერიფო
 	Guessed from the font's name; fonts it can't place are under All Arabic	შეფასებულია შრიფტის სახელით; დაუჯგუფებელი შრიფტები არის „ყველა არაბულში“
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT ფორმირება: ეს შრიფტი იწყობა საკუთარი morx ცხრილებით და არა არაბულის OpenType წესებით
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	ქაშიდა
+	No kashida: word spacing alone justifies the lines	ქაშიდის გარეშე: სტრიქონებს მხოლოდ სიტყვებს შორის მანძილი ასწორებს
+	Justified lines take tatweels in their Arabic words before word spacing	გასწორებული სტრიქონები არაბულ სიტყვებში სიტყვებს შორის მანძილამდე თათვილებს იღებს
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	უფრო ღრმად: მეტი თათვილი სიტყვაში და სტრიქონის თავისუფალი სივრცის მეტი წილი; ბოლო სტრიქონიც იღებს ქაშიდას, თუ აბზაცი გასწორებულია სწორებული ბოლო სტრიქონით
+	Tatweels in the Arabic words of justified right-to-left lines	თათვილები მარჯვნიდან მარცხნივ გასწორებული სტრიქონების არაბულ სიტყვებში
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	სტრიქონის თავისუფალი სივრცის რა ნაწილს ავსებს ქაშიდა და რამდენ თათვილს იღებს სიტყვა (50: დაბალანსებული)
+	Mixed: the selected paragraphs differ	შერეული: არჩეული აბზაცები განსხვავდება

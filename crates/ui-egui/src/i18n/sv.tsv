@@ -5175,3 +5175,11 @@ theme	Appearance	Utseende
 	Modern Sans	Modern sans
 	Guessed from the font's name; fonts it can't place are under All Arabic	Gissat utifrån teckensnittets namn; teckensnitt utan grupp finns under All arabiska
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-formning: teckensnittet sätts med sina egna morx-tabeller, inte med OpenType-regler för arabiska
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Kashida
+	No kashida: word spacing alone justifies the lines	Ingen kashida: bara ordmellanrummet justerar raderna
+	Justified lines take tatweels in their Arabic words before word spacing	Justerade rader får tatweels i sina arabiska ord före ordmellanrum
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Djupare: fler tatweels per ord och mer av varje rads utrymme; även sista raden i ett justerat stycke med justerad sista rad får kashida
+	Tatweels in the Arabic words of justified right-to-left lines	Tatweels i de arabiska orden på justerade rader från höger till vänster
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Hur mycket av en rads utrymme kashida fyller och hur många tatweels ett ord får (50: balanserat)
+	Mixed: the selected paragraphs differ	Blandat: de markerade styckena skiljer sig åt

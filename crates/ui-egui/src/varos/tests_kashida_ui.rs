@@ -127,3 +127,79 @@ fn set_format_takes_the_kashida_settings() {
     app.run("edit.undo", json!({})).unwrap();
     assert_eq!(kashida(&app, id).strength, 100);
 }
+
+fn app_with_two(first: &str, second: &str) -> (VectorcraftApp, [u64; 2]) {
+    let mut app = VectorcraftApp::new(Session::new(), Default::default());
+    app.run("file.new", json!({"width": 800, "height": 600})).unwrap();
+    let ids = [(first, 50), (second, 300)].map(|(text, y)| {
+        app.run("text.create", json!({"x": 20, "y": y, "text": text, "area": {"width": 300, "height": 200}, "justify": "justifyAll"})).unwrap()["id"]
+            .as_u64()
+            .unwrap()
+    });
+    app.session.execute("select.set", &json!({"ids": ids})).unwrap();
+    (app, ids)
+}
+
+/// Paragraphs that differ show as mixed, and a click sets every one of them, even to the mode the
+/// first already has.
+#[test]
+fn a_mixed_selection_shows_mixed_and_a_click_sets_every_paragraph() {
+    let (mut app, [a, b]) = app_with_two("بسم الله الرحمن الرحيم", "الحمد لله رب العالمين");
+    app.session.execute("select.set", &json!({"ids": [b]})).unwrap();
+    app.run("text.setFormat", json!({"kashida": "off", "kashidaStrength": 80})).unwrap();
+    app.session.execute("select.set", &json!({"ids": [a, b]})).unwrap();
+    assert_eq!((kashida(&app, a).mode, kashida(&app, b).mode), (KashidaMode::Auto, KashidaMode::Off));
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let frame = |app: &mut VectorcraftApp, events: Vec<egui::Event>| -> (KashidaRects, Vec<String>) {
+        let mut rects = None;
+        let mut out = ctx.run_ui(input(events), |ui| {
+            let para = crate::panels::character::text_style(app).unwrap().1;
+            rects = Some(controls(app, ui, &para));
+        });
+        out.textures_delta.clear();
+        let texts = out
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+                _ => None,
+            })
+            .collect();
+        (rects.unwrap(), texts)
+    };
+    let (r, texts) = frame(&mut app, vec![]);
+    assert!(r.mixed_mode && r.mixed_strength, "{r:?}");
+    assert!(texts.iter().any(|t| t == "Kashida –") && texts.iter().any(|t| t == "Strength –"), "{texts:?}");
+    // Auto: the first paragraph has it already; the second takes it too.
+    let auto = r.segments[1].center();
+    frame(&mut app, vec![egui::Event::PointerMoved(auto), button(auto, true)]);
+    frame(&mut app, vec![button(auto, false)]);
+    assert_eq!((kashida(&app, a).mode, kashida(&app, b).mode), (KashidaMode::Auto, KashidaMode::Auto));
+    let (r, _) = frame(&mut app, vec![]);
+    assert!(!r.mixed_mode && r.mixed_strength, "modes agree now, strengths still differ");
+    // One step undoes it.
+    app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(kashida(&app, b).mode, KashidaMode::Off);
+}
+
+/// The controls show when any paragraph the panel acts on runs right to left, not only the first.
+#[test]
+fn the_controls_show_when_any_selected_paragraph_is_right_to_left() {
+    let shows = |app: &mut VectorcraftApp| {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut out = ctx.run_ui(input(vec![]), |ui| crate::panels::paragraph::show(app, ui));
+        out.textures_delta.clear();
+        out.shapes.iter().any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text().starts_with("Kashida")))
+    };
+    let (mut mixed, _) = app_with_two("Typography first", "بسم الله الرحمن الرحيم");
+    assert!(shows(&mut mixed), "Latin first, Arabic second");
+    let targets = super::targeted(&mixed);
+    assert_eq!(targets.iter().map(|(_, rtl)| *rtl).collect::<Vec<_>>(), [false, true]);
+    let (mut latin, _) = app_with_two("Typography", "Kerning");
+    assert!(!shows(&mut latin));
+    // A text with a Latin paragraph and an Arabic one.
+    let (mut paras, _) = app_with("Typography\nبسم الله الرحمن الرحيم");
+    assert!(shows(&mut paras), "the second paragraph runs right to left");
+}

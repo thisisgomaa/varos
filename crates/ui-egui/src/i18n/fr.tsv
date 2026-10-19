@@ -5218,3 +5218,11 @@ theme	Appearance	Apparence
 	Modern Sans	Sans moderne
 	Guessed from the font's name; fonts it can't place are under All Arabic	Déduit du nom de la police ; les polices non classées sont sous « Tout l’arabe »
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Mise en forme AAT : cette police est composée avec ses propres tables morx, pas avec les règles OpenType de l’arabe
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Kashida
+	No kashida: word spacing alone justifies the lines	Pas de kashida : seule l’espace entre les mots justifie les lignes
+	Justified lines take tatweels in their Arabic words before word spacing	Les lignes justifiées reçoivent des tatwils dans leurs mots arabes avant l’espace entre les mots
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Plus marqué : plus de tatwils par mot et une plus grande part du blanc de chaque ligne ; la dernière ligne d’un paragraphe justifié à dernière ligne alignée reçoit aussi le kashida
+	Tatweels in the Arabic words of justified right-to-left lines	Tatwils dans les mots arabes des lignes justifiées de droite à gauche
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Part du blanc d’une ligne que remplit le kashida et nombre de tatwils par mot (50 : équilibré)
+	Mixed: the selected paragraphs differ	Mixte : les paragraphes sélectionnés diffèrent

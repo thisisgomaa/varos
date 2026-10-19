@@ -4813,3 +4813,11 @@ theme	Appearance	Giao diện
 	Modern Sans	Sans hiện đại
 	Guessed from the font's name; fonts it can't place are under All Arabic	Đoán từ tên phông; phông không xếp được nằm trong Tất cả Ả Rập
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Định hình AAT: phông này được sắp chữ bằng bảng morx riêng, không theo quy tắc OpenType cho tiếng Ả Rập
+# Varos: kashida controls of the Paragraph panel.
+	Kashida	Kashida
+	No kashida: word spacing alone justifies the lines	Không kashida: chỉ khoảng cách từ căn đều các dòng
+	Justified lines take tatweels in their Arabic words before word spacing	Các dòng căn đều nhận tatweel trong các từ Ả Rập trước khoảng cách từ
+	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Sâu hơn: nhiều tatweel hơn mỗi từ và lấp nhiều khoảng trống hơn ở mỗi dòng; dòng cuối của đoạn căn đều có dòng cuối được canh lề cũng nhận kashida
+	Tatweels in the Arabic words of justified right-to-left lines	Tatweel trong các từ Ả Rập của các dòng căn đều từ phải sang trái
+	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Kashida lấp bao nhiêu khoảng trống của một dòng và mỗi từ nhận bao nhiêu tatweel (50: cân bằng)
+	Mixed: the selected paragraphs differ	Hỗn hợp: các đoạn đã chọn khác nhau

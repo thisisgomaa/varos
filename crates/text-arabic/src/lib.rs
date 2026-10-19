@@ -66,7 +66,17 @@ pub fn policy(strength: u8, force: bool) -> Policy {
 
 /// [`plan`] with a numeric [`Policy`]: the same choice, order and checks as `varos-text`'s
 /// (whose policies are fixed), so [`Policy::BALANCED`] plans exactly what `Kashida::Balanced`
-/// does. Re-shapes are capped at 32 per allowed tatweel per word (64 for Balanced and lighter).
+/// does.
+///
+/// Two deliberate differences from the pinned `varos-text` `plan`, which caps every policy at 64
+/// re-shapes: `per_word` is bounded to [`Policy::MAX_PER_WORD`] (5), and the re-shape cap is 32 per
+/// allowed tatweel per word, at least 64: 64 for Minimal and Balanced (as `plan`), 96, 128 and 160
+/// for 3, 4 and 5 per word, so the deeper policies aren't starved of trials on long lines. A line
+/// never costs more than 160 re-shapes.
+///
+/// `plan` is generic over the width type (the COSMIC path measures in f32); hosts here measure in
+/// f64 and this takes f64 only. Its comparisons use the same 0.001 epsilon; only widths within
+/// an f32 ulp of a bound could compare differently than in an f32 host, which no caller here is.
 pub fn plan_with<T>(
     text: &str,
     range: std::ops::Range<usize>,
@@ -79,13 +89,14 @@ pub fn plan_with<T>(
     use std::collections::HashMap;
     let all = candidates(text, range)?;
     let mut width = natural;
-    let per_word = policy.per_word;
+    let per_word = policy.per_word.min(Policy::MAX_PER_WORD);
     let fraction = if policy.fraction.is_finite() { policy.fraction.clamp(0.0, 1.0) } else { 0.0 };
     let budget = (target - natural).max(0.0) * fraction;
     let epsilon = 0.001;
     let mut safe = if per_word > 0 { safe } else { Default::default() };
     let mut slots: Vec<Candidate> = if per_word > 0 { all.into_iter().filter(|c| safe.contains(&c.byte)).collect() } else { vec![] };
     slots.sort_unstable_by_key(|c| (c.priority, c.byte));
+    // At most 32 × 5 = 160 (see above).
     let cap = 32 * per_word.max(2);
     let mut word_counts = HashMap::<usize, usize>::new();
     let mut inserted: Vec<usize> = Vec::new();
@@ -208,6 +219,49 @@ mod tests {
             .map(|p| plan_with(text, 0..text.len(), 300.0, safe.clone(), 400.0, p, measure).unwrap().slots.len())
             .collect();
         assert!(counts.windows(2).all(|w| w[0] <= w[1]) && counts[0] < counts[3], "{counts:?}");
+    }
+
+    /// The re-shape cap: 64 up to two per word, 32 per allowed tatweel above, and a policy asking
+    /// for more than five per word is held to five (160 re-shapes at most), even when every trial
+    /// is rejected.
+    #[test]
+    fn re_shapes_are_capped_and_per_word_is_bounded() {
+        let text = "بسم الله الرحمن الرحيم الحمد لله رب العالمين ".repeat(20);
+        let safe: HashSet<usize> = candidates(&text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
+        assert!(safe.len() > 200);
+        for (per_word, cap) in [(1, 64), (2, 64), (3, 96), (4, 128), (5, 160), (99, 160)] {
+            let mut calls = 0;
+            let p = plan_with(
+                &text,
+                0..text.len(),
+                100.0,
+                safe.clone(),
+                1000.0,
+                Policy { per_word, fraction: 1.0 },
+                |_: &[usize]| -> Option<Measured<f64, ()>> {
+                    calls += 1;
+                    None
+                },
+            )
+            .unwrap();
+            assert!(p.slots.is_empty());
+            assert_eq!(calls, cap, "{per_word} per word");
+        }
+        // Accepted trials: never more than five per word.
+        let mut calls = 0;
+        let p = plan_with(&text, 0..text.len(), 100.0, safe.clone(), 1e9, Policy { per_word: 99, fraction: 1.0 }, |slots: &[usize]| {
+            calls += 1;
+            Some(Measured { width: 100.0 + slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () })
+        })
+        .unwrap();
+        assert!(calls <= 160 && !p.slots.is_empty());
+        let mut per: std::collections::HashMap<usize, usize> = Default::default();
+        let words = candidates(&text, 0..text.len()).unwrap();
+        for s in &p.slots {
+            let w = words.iter().find(|c| c.byte == *s).map(|c| c.word).unwrap();
+            *per.entry(w).or_default() += 1;
+        }
+        assert!(per.values().all(|n| *n <= Policy::MAX_PER_WORD), "{per:?}");
     }
 
     #[test]

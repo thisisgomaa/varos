@@ -229,6 +229,15 @@ fn morx_trials_are_verified() {
     let mut moved = trial.clone();
     moved.iter_mut().find(|g| g.len > 0).unwrap().dy += 1.0;
     assert!(!super::morx_trial_ok(&original, &moved, &[slot]), "a moved mark or letter");
+    // Two letters swapping advances keep the word's total: rejected all the same.
+    let mut swapped = trial.clone();
+    let letters: Vec<usize> = swapped.iter().enumerate().filter(|(_, g)| g.len > 0).map(|(i, _)| i).collect();
+    let (a, b) = (letters[0], letters[letters.len() - 1]);
+    let (wa, wb) = (swapped[a].adv, swapped[b].adv);
+    assert!((wa - wb).abs() > 1.0, "two letters of different widths");
+    swapped[a].adv = wb;
+    swapped[b].adv = wa;
+    assert!(!super::morx_trial_ok(&original, &swapped, &[slot]), "advances that cancel out in the total");
     let mut wide = trial.clone();
     wide.iter_mut().find(|g| g.len > 0).unwrap().adv += 5.0;
     assert!(!super::morx_trial_ok(&original, &wide, &[slot]), "a neighbour's advance changed");
