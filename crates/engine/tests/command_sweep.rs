@@ -219,6 +219,8 @@ fn structured_junk() {
         ("path.insertAnchor", json!({"id": 2, "subpath": 0, "segment": 99, "t": 5})),
         ("path.insertAnchor", json!({"id": 2, "subpath": 7, "segment": 0, "t": -1})),
         ("path.setHandle", json!({"id": 2, "subpath": 0, "anchor": 100, "which": "in", "x": 0, "y": 0})),
+        ("path.moveAnchor", json!({"id": 2, "subpath": 0, "anchor": 100, "x": 0, "y": 0})),
+        ("path.moveAnchor", json!({"id": 2, "subpath": 0, "anchor": 0, "x": 1e308, "y": -1e308})),
         ("path.removeAnchor", json!({"id": 2, "subpath": 0, "anchor": 0})),
         ("path.split", json!({"id": 2, "subpath": 0, "segment": 1000, "t": 0.5})),
         ("path.reshapeSegment", json!({"id": 2, "subpath": 0, "segment": 0, "t": 2.0, "dx": 1e308, "dy": 0})),
@@ -353,6 +355,9 @@ fn structured_junk() {
         ("object.path.offsetPath", json!({"offset": 1e308})),
         ("object.path.offsetPath", json!({"offset": -1e308})),
         ("object.path.simplify", json!({"tolerance": -1, "cornerAngle": 1e308})),
+        ("object.path.simplify", json!({"level": 1e308, "tolerance": "x"})),
+        ("object.path.simplify", json!({"level": -1e308, "auto": "yes"})),
+        ("object.path.simplify", json!({"auto": true, "level": [1]})),
         (
             "shape.rectangularGrid",
             json!({"x": 0, "y": 0, "width": 1e308, "height": -1e308, "rows": 999, "columns": u64::MAX, "rowSkew": 1e308, "columnSkew": -1e308, "frame": false, "fill": true}),
