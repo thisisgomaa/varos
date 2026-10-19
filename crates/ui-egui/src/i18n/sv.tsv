@@ -5201,3 +5201,11 @@ theme	Appearance	Utseende
 	Arabic Extended-A	Arabiska, utökad A
 	Arabic Presentation Forms-A	Arabiska presentationsformer A
 	Arabic Presentation Forms-B	Arabiska presentationsformer B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Följ den markerade textens skriftsystem
+	Latin samples	Latinska exempel
+	Arabic samples in Arabic-capable fonts	Arabiska exempel i teckensnitt med stöd för arabiska
+	Serif	Serif
+	Sans	Sans
+	Script	Handstil

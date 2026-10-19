@@ -4855,3 +4855,11 @@ lighting	Light	Свет
 	Arabic Extended-A	Арабский, расширение A
 	Arabic Presentation Forms-A	Арабские формы представления A
 	Arabic Presentation Forms-B	Арабские формы представления B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Следовать письменности выбранного текста
+	Latin samples	Латинские образцы
+	Arabic samples in Arabic-capable fonts	Арабские образцы в шрифтах с поддержкой арабского
+	Serif	С засечками
+	Sans	Без засечек
+	Script	Рукописный

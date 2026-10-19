@@ -5228,3 +5228,11 @@ swatch	Bright Violet	Kraftig violet
 	Arabic Extended-A	Arabisk, udvidet A
 	Arabic Presentation Forms-A	Arabiske præsentationsformer A
 	Arabic Presentation Forms-B	Arabiske præsentationsformer B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Følg det valgte teksts skriftsystem
+	Latin samples	Latinske prøver
+	Arabic samples in Arabic-capable fonts	Arabiske prøver i skrifttyper med arabisk understøttelse
+	Serif	Serif
+	Sans	Sans
+	Script	Håndskrift

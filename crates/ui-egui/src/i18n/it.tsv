@@ -4859,3 +4859,11 @@ lighting	Light	Luce
 	Arabic Extended-A	Arabo esteso A
 	Arabic Presentation Forms-A	Forme di presentazione arabe A
 	Arabic Presentation Forms-B	Forme di presentazione arabe B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Segui la scrittura del testo selezionato
+	Latin samples	Esempi latini
+	Arabic samples in Arabic-capable fonts	Esempi arabi nei font che supportano l’arabo
+	Serif	Con grazie
+	Sans	Senza grazie
+	Script	Calligrafico

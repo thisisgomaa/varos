@@ -4821,3 +4821,11 @@ effect	Regular	Regelmäßig
 	Arabic Extended-A	Arabisch, erweitert A
 	Arabic Presentation Forms-A	Arabische Präsentationsformen A
 	Arabic Presentation Forms-B	Arabische Präsentationsformen B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Schrift des ausgewählten Textes folgen
+	Latin samples	Lateinische Beispiele
+	Arabic samples in Arabic-capable fonts	Arabische Beispiele in Schriften mit arabischer Unterstützung
+	Serif	Serifen
+	Sans	Serifenlos
+	Script	Schreibschrift

@@ -4822,3 +4822,11 @@ lighting	Light	광원
 	Arabic Extended-A	아랍 문자 확장 A
 	Arabic Presentation Forms-A	아랍 표시형 A
 	Arabic Presentation Forms-B	아랍 표시형 B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	선택한 텍스트의 문자 체계 따르기
+	Latin samples	라틴 문자 샘플
+	Arabic samples in Arabic-capable fonts	아랍어 지원 글꼴의 아랍어 샘플
+	Serif	세리프
+	Sans	산세리프
+	Script	필기체

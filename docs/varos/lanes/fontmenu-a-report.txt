@@ -1,0 +1,85 @@
+Lane FONTMENU-A — concept A, Script first
+2026-10-19 | branch lane-fontmenu-a | base fece2e1f | no commit
+Status: implemented, requested gates passed, independent source/visual review passed;
+owner native hand test pending. STATE.md/BACKLOG.md unchanged.
+
+Menu, top to bottom
+1. Search field; at its right Auto / Aa / shaped أب sample segments with tooltips.
+   Auto follows selected text. Aa always uses the generic Latin sample, including
+   with Arabic, Japanese, Thai or Cyrillic selected. أب uses the Arabic sample in
+   Arabic-capable families; other families retain their non-Arabic selected sample.
+   With no Arabic-capable family installed, the glyph segment has a translated
+   Arabic text fallback. Sample mode survives closing/reopening with menu state.
+2. Full-width, exclusive All / Arabic / Latin / Japanese / Thai script switch.
+   Arabic uses the existing cmap/joining capability detection. Other script
+   matching remains upstream's (including its broad Latin classification).
+3. Only under Arabic: All Arabic / Naskh / Kufi / Ruq’ah / Diwani / Thuluth /
+   Modern Sans style chips. An available matching face shapes its Arabic name;
+   otherwise the translated Latin label appears. Latin tooltips identify styles.
+   Labels use the existing bounded, background sample cache and wasm frame budget.
+4. One horizontally scrolling kind strip: star / Any Kind / Serif / Sans /
+   Rounded / Script / Mono / Decorative. No wrapping into more kind rows.
+5. Existing family/style rows: name, Arabic name when available and space permits,
+   per-mode sample, AAT marker and star. Existing selection/preview behavior kept.
+
+Files, additions/deletions (code/catalog diff: 28 files, +520/-98)
++272/-0  crates/ui-egui/src/varos/font_filters.rs (new header, modes tests,
+         no-Arabic-font fallback test and opt-in GPU screenshot helper)
+ +23/-53 crates/ui-egui/src/varos/arabic_fonts.rs (sample mode enum and policy)
+ +13/-43 crates/ui-egui/src/font_menu.rs (header delegation; cache visibility hook;
+         unused upstream header helpers removed or retained only for their tests)
+  +2/-0  crates/ui-egui/src/varos/mod.rs (module registration)
+ +26/-2  crates/ui-egui/src/varos/tests_arabic_fonts.rs (updated integration,
+         Latin hides styles, Arabic close/reopen persistence)
++184/-0  23 catalogs, +8 each: bg, cs, da, de, el, es, fi, fr, hu, id, it, ja,
+         ka, ko, nl, pl, pt-br, ru, sv, uk, vi, zh-hans, zh-hant.
+This report is additional to the code/catalog counts. No assets or fonts added.
+
+Requested gates — all PASS
+cargo build --offline -j 4 -p vectorcraft
+  Finished `dev` profile [optimized + debuginfo] target(s) in 6m 09s
+cargo test --offline -j 4 -p vectorcraft-ui-egui -- --test-threads=4
+  1726 passed; 0 failed; 3 ignored; finished in 11.25s; doc tests 0/0.
+  every_tl_literal_is_translated: ok
+  sample_switch_overrides_arabic_selection_and_survives_state_round_trip: ok
+  sample_segment_has_a_label_without_arabic_fonts: ok
+  clicking_the_arabic_chip_lists_only_arabic_families: ok (now clicks the script
+  segment, checks Arabic families/style visibility and close/reopen persistence).
+cargo clippy --offline -j 4 -p vectorcraft-ui-egui --lib -- -D warnings
+  Finished `dev` profile [optimized + debuginfo] target(s) in 1m 08s
+rustfmt --edition 2024 --check [the five touched Rust files]: exit 0.
+  Used rustfmt directly: cargo fmt rejects the required --offline -j 4 flags.
+git diff --check: exit 0.
+No CARGO_TARGET_DIR override, no concurrent cargo runs, no edits during runs.
+
+Review and visible evidence
+Independent reviewer: /root/review_fontmenu. Found and resolved: Aa leaking other
+selected scripts; synchronous header font loading/cache churn; weak persistence
+assertion; blank no-Arabic-font fallback. Final source and visual review: no
+remaining material findings. Compact Arabic style lettering is legible/unclipped.
+
+GPU screenshot test was attempted separately with --ignored and failed because
+this sandbox has no graphics adapter ("No adapter found"). It remains opt-in;
+it is one of the normal suite's three ignored tests, not a required passing gate.
+A temporary external Rust helper rasterized the actual egui triangles and font
+textures from the built library. Inspected all three at the real 360-point menu
+width, including the existing family rows. This verifies layout, not native GPU
+or physical pointer behavior. No helper source was added to the repository.
+  /tmp/fontmenu-a-evidence/all.png
+  /tmp/fontmenu-a-evidence/arabic.png
+  /tmp/fontmenu-a-evidence/latin.png
+Logs: /tmp/fontmenu-build.log, /tmp/fontmenu-tests-final.log,
+      /tmp/fontmenu-clippy.log, /tmp/fontmenu-visual.log (GPU limitation).
+The HTML spec was absent here; read the exact concept A and panel 4 from the
+parent checkout: ~/Documents/AI workspace/varos-next/docs/varos/mockups/font-menu-filters.html
+Local plan/STATUS.md and plan/execution-plan.md were absent in this worktree.
+
+Owner hand test (not yet performed)
+1. Select Arabic text. Open the font menu. Auto previews that text; Aa gives
+   Latin samples; أب gives the generic Arabic line in Arabic-capable families.
+2. Pick Arabic. Only Arabic-capable families remain, with the Arabic style row.
+   Try a style and All Arabic; names should use a matching face when available.
+3. Pick Latin (styles disappear), then Japanese/Thai. Inspect the single kind
+   strip and its horizontal scrolling at a narrow menu width.
+4. Pick Arabic and a sample mode, close/reopen: choices remain. Check a star,
+   hover preview and apply a font; the existing row interactions should remain.

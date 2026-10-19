@@ -5228,3 +5228,11 @@ swatch	Bright Violet	Violet cerah
 	Arabic Extended-A	Arab Diperluas-A
 	Arabic Presentation Forms-A	Bentuk Presentasi Arab-A
 	Arabic Presentation Forms-B	Bentuk Presentasi Arab-B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Ikuti aksara teks yang dipilih
+	Latin samples	Contoh Latin
+	Arabic samples in Arabic-capable fonts	Contoh Arab pada font yang mendukung bahasa Arab
+	Serif	Serif
+	Sans	Sans
+	Script	Tulisan tangan

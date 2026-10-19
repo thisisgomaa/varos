@@ -4899,3 +4899,11 @@ lighting	Light	ライト
 	Arabic Extended-A	アラビア文字拡張 A
 	Arabic Presentation Forms-A	アラビア表示形 A
 	Arabic Presentation Forms-B	アラビア表示形 B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	選択したテキストの文字体系に合わせる
+	Latin samples	ラテン文字のサンプル
+	Arabic samples in Arabic-capable fonts	アラビア文字対応フォントでアラビア文字を表示
+	Serif	セリフ
+	Sans	サンセリフ
+	Script	筆記体

@@ -4839,3 +4839,11 @@ lighting	Light	Світло
 	Arabic Extended-A	Арабська, розширення A
 	Arabic Presentation Forms-A	Арабські форми подання A
 	Arabic Presentation Forms-B	Арабські форми подання B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Відповідно до письма вибраного тексту
+	Latin samples	Латинські зразки
+	Arabic samples in Arabic-capable fonts	Арабські зразки у шрифтах із підтримкою арабської
+	Serif	Із зарубками
+	Sans	Без зарубок
+	Script	Рукописний

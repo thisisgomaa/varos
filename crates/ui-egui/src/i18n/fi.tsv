@@ -5209,3 +5209,11 @@ mark-style	Japanese	Japanilainen
 	Arabic Extended-A	Arabia, laajennus A
 	Arabic Presentation Forms-A	Arabian esitysmuodot A
 	Arabic Presentation Forms-B	Arabian esitysmuodot B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Seuraa valitun tekstin kirjoitusjärjestelmää
+	Latin samples	Latinalaiset näytteet
+	Arabic samples in Arabic-capable fonts	Arabialaiset näytteet arabiaa tukevissa fonteissa
+	Serif	Päätteellinen
+	Sans	Päätteetön
+	Script	Käsinkirjoitus

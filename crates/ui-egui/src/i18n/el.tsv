@@ -5197,3 +5197,11 @@ effect	Points	Σημεία
 	Arabic Extended-A	Αραβικά, επέκταση A
 	Arabic Presentation Forms-A	Αραβικές μορφές παρουσίασης A
 	Arabic Presentation Forms-B	Αραβικές μορφές παρουσίασης B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Ακολουθήστε τη γραφή του επιλεγμένου κειμένου
+	Latin samples	Λατινικά δείγματα
+	Arabic samples in Arabic-capable fonts	Αραβικά δείγματα σε γραμματοσειρές με αραβική υποστήριξη
+	Serif	Με πατούρες
+	Sans	Χωρίς πατούρες
+	Script	Καλλιγραφική

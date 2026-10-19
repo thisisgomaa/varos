@@ -5245,3 +5245,11 @@ mark-style	Japanese	Japonské
 	Arabic Extended-A	Arabština rozšířená A
 	Arabic Presentation Forms-A	Arabské prezentační tvary A
 	Arabic Presentation Forms-B	Arabské prezentační tvary B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Podle písma vybraného textu
+	Latin samples	Latinské ukázky
+	Arabic samples in Arabic-capable fonts	Arabské ukázky v písmech podporujících arabštinu
+	Serif	Patkové
+	Sans	Bezpatkové
+	Script	Psací

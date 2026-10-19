@@ -5081,3 +5081,11 @@ lighting	Light	光源
 	Arabic Extended-A	阿拉伯文扩展 A
 	Arabic Presentation Forms-A	阿拉伯文表现形式 A
 	Arabic Presentation Forms-B	阿拉伯文表现形式 B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	跟随所选文本的文字系统
+	Latin samples	拉丁文示例
+	Arabic samples in Arabic-capable fonts	在支持阿拉伯文的字体中显示阿拉伯文示例
+	Serif	衬线
+	Sans	无衬线
+	Script	手写体

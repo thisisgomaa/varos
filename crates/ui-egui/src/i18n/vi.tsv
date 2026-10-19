@@ -4839,3 +4839,11 @@ theme	Appearance	Giao diện
 	Arabic Extended-A	Ả Rập mở rộng A
 	Arabic Presentation Forms-A	Dạng trình bày Ả Rập A
 	Arabic Presentation Forms-B	Dạng trình bày Ả Rập B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Theo hệ chữ của văn bản đã chọn
+	Latin samples	Mẫu chữ Latinh
+	Arabic samples in Arabic-capable fonts	Mẫu chữ Ả Rập trong phông hỗ trợ tiếng Ả Rập
+	Serif	Có chân
+	Sans	Không chân
+	Script	Viết tay

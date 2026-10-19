@@ -5231,3 +5231,11 @@ imageTrace	Outline	Körvonal
 	Arabic Extended-A	Arab bővített A
 	Arabic Presentation Forms-A	Arab megjelenítési formák A
 	Arabic Presentation Forms-B	Arab megjelenítési formák B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	A kijelölt szöveg írásrendszerének követése
+	Latin samples	Latin minták
+	Arabic samples in Arabic-capable fonts	Arab minták az arab írást támogató betűtípusokban
+	Serif	Talpas
+	Sans	Talpatlan
+	Script	Kézírásos

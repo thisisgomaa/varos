@@ -3,7 +3,9 @@
 pub(crate) mod agents;
 // Varos: the font menu's Arabic filter, samples and markers.
 pub(crate) mod arabic_fonts;
+// Varos: concept A script-first font menu header.
 pub(crate) mod cursors;
+pub(crate) mod font_filters;
 pub(crate) mod home;
 pub mod icons;
 // Varos: the Paragraph panel's kashida controls.

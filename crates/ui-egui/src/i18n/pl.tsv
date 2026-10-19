@@ -5097,3 +5097,11 @@ mark-style	Japanese	Japońskie
 	Arabic Extended-A	Arabski rozszerzony A
 	Arabic Presentation Forms-A	Arabskie formy prezentacyjne A
 	Arabic Presentation Forms-B	Arabskie formy prezentacyjne B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Zgodnie z pismem zaznaczonego tekstu
+	Latin samples	Próbki łacińskie
+	Arabic samples in Arabic-capable fonts	Próbki arabskie w czcionkach obsługujących arabski
+	Serif	Szeryfowe
+	Sans	Bezszeryfowe
+	Script	Odręczne

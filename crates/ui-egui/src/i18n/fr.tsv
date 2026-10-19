@@ -5244,3 +5244,11 @@ theme	Appearance	Apparence
 	Arabic Extended-A	Arabe étendu A
 	Arabic Presentation Forms-A	Formes de présentation arabes A
 	Arabic Presentation Forms-B	Formes de présentation arabes B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Suivre l’écriture du texte sélectionné
+	Latin samples	Exemples latins
+	Arabic samples in Arabic-capable fonts	Exemples arabes dans les polices compatibles avec l’arabe
+	Serif	Avec empattements
+	Sans	Sans empattements
+	Script	Manuscrite

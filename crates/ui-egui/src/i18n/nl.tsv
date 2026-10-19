@@ -5271,3 +5271,11 @@ swatch	Bright Violet	Felviolet
 	Arabic Extended-A	Arabisch, uitgebreid A
 	Arabic Presentation Forms-A	Arabische presentatievormen A
 	Arabic Presentation Forms-B	Arabische presentatievormen B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Schrift van geselecteerde tekst volgen
+	Latin samples	Latijnse voorbeelden
+	Arabic samples in Arabic-capable fonts	Arabische voorbeelden in lettertypen die Arabisch ondersteunen
+	Serif	Schreef
+	Sans	Schreefloos
+	Script	Handschrift

@@ -5187,3 +5187,11 @@ mark-style	Japanese	Japonesas
 	Arabic Extended-A	Árabe extendido A
 	Arabic Presentation Forms-A	Formas de presentación árabes A
 	Arabic Presentation Forms-B	Formas de presentación árabes B
+
+# Varos: concept A script-first font filters.
+	Follow the selected text's script	Seguir la escritura del texto seleccionado
+	Latin samples	Muestras latinas
+	Arabic samples in Arabic-capable fonts	Muestras árabes en fuentes compatibles con árabe
+	Serif	Con serifas
+	Sans	Sin serifas
+	Script	Caligráfica
