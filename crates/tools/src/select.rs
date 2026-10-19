@@ -262,13 +262,48 @@ pub fn matrix_json(a: Affine) -> Value {
 /// Selection bounds used for the bounding box: visual bounds with Use Preview Bounds, else
 /// geometric bounds.
 pub fn selection_bounds(cx: &ToolContext) -> Option<Rect> {
-    cx.doc.bounds_of(&cx.selection.objects, cx.preview_bounds)
+    measured(cx, &cx.selection.objects, false, || cx.doc.bounds_of(&cx.selection.objects, cx.preview_bounds).map(OrientedBox::aligned))
+        .map(|b| b.rect)
 }
 
 /// [`selection_bounds`] square to the selection's own angle: the bounding box the Selection tool
 /// shows and drags (rotated after a rotation).
 pub fn selection_box(cx: &ToolContext) -> Option<OrientedBox> {
-    cx.doc.oriented_bounds(&cx.selection.objects, cx.preview_bounds)
+    measured(cx, &cx.selection.objects, true, || cx.doc.oriented_bounds(&cx.selection.objects, cx.preview_bounds))
+}
+
+/// What a [`measured`] box was measured for: the document revision, the objects, oriented or
+/// square to the page, and Use Preview Bounds.
+type MeasureKey = ((u64, u64), Vec<NodeId>, bool, bool);
+
+thread_local! {
+    /// Varos: the boxes measured for the document revision last asked about.
+    static MEASURED: std::cell::RefCell<Vec<(MeasureKey, Option<OrientedBox>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Varos: `measure` the box of `ids`, once per document revision. The Selection tool measures the
+/// selection on every pointer move (its cursor: the bounding box's handles, the type widget, the
+/// hovered object's centre), and exact bounds of a compound path of 13.9k parts cost ~25 ms each
+/// time. [`ToolContext::revision`] moves with every change of the document or the selection; a
+/// context outside an open document (revision `(0, _)`, as tests build them) measures every time.
+fn measured(cx: &ToolContext, ids: &[NodeId], oriented: bool, measure: impl FnOnce() -> Option<OrientedBox>) -> Option<OrientedBox> {
+    if cx.revision.0 == 0 {
+        return measure();
+    }
+    let key: MeasureKey = (cx.revision, ids.to_vec(), oriented, cx.preview_bounds);
+    if let Some(b) = MEASURED.with(|m| m.borrow().iter().find(|(k, _)| *k == key).map(|(_, b)| *b)) {
+        return b;
+    }
+    let b = measure();
+    MEASURED.with(|m| {
+        let mut m = m.borrow_mut();
+        // Another revision: what was kept is stale. A few boxes per revision at most.
+        if m.first().is_some_and(|(k, _)| k.0 != cx.revision) || m.len() >= 8 {
+            m.clear();
+        }
+        m.push((key, b));
+    });
+    b
 }
 
 /// The objects of `ids` that lie entirely inside marquee `r`, edges included, measured by their
@@ -334,7 +369,7 @@ impl SelectionTool {
                 if !cx.smart_guides {
                     return None;
                 }
-                let c = cx.doc.bounds_of(&[id], cx.preview_bounds)?.center();
+                let c = measured(cx, &[id], false, || cx.doc.bounds_of(&[id], cx.preview_bounds).map(OrientedBox::aligned))?.rect.center();
                 (c.distance(p) <= reach).then_some((c, "center"))
             })
         })

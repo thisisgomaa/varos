@@ -116,10 +116,10 @@ pub(crate) fn error_with(id: Value, code: i64, message: impl Into<String>, data:
 pub(crate) fn stateless_request(method: &str, params: &Value) -> Option<Result<Value, (i64, String)>> {
     Some(match method {
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({"tools": tool_definitions()})),
+        "tools/list" => Ok(crate::varos_brand::value(json!({"tools": tool_definitions()}))), // Varos: the brand
         "resources/list" => Ok(resources::list()),
         "resources/templates/list" => Ok(resources::templates()),
-        "prompts/list" => Ok(prompts::list()),
+        "prompts/list" => Ok(crate::varos_brand::value(prompts::list())), // Varos: the brand
         "prompts/get" => {
             let name = params.get("name").and_then(Value::as_str);
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
@@ -419,8 +419,9 @@ impl Server {
                         "completions": {},
                         "logging": {},
                     },
-                    "serverInfo": {"name": "vectorcraft", "title": "VectorCraft", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": format!("{INSTRUCTIONS} Backend: {}.", self.backend.describe()),
+                    // Varos: the product name agents read (the server's name stays upstream's id).
+                    "serverInfo": {"name": "vectorcraft", "title": crate::varos_brand::PRODUCT, "version": env!("CARGO_PKG_VERSION")},
+                    "instructions": format!("{} Backend: {}.", crate::varos_brand::text(INSTRUCTIONS), self.backend.describe()),
                 }))
             }
             "tools/call" => {

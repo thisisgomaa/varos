@@ -159,6 +159,8 @@ pub fn run_with_progress(
     then: impl FnOnce(&mut VectorcraftApp, Result<Value, String>) -> Result<Value, String> + 'static,
 ) -> Result<Value, String> {
     let mut work: Work = Box::new(work);
+    // Varos: an agent's request saves and exports now, so a failure is its reply (no dialog later).
+    let enabled = enabled && !crate::varos::agents::guarded_request_running();
     let shared = app.services.write_shared.clone().filter(|_| enabled && app.services.download.is_none());
     if let Some(write) = shared {
         let id = app.background.next_id;

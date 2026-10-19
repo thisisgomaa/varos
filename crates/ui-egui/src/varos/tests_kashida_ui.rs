@@ -118,14 +118,63 @@ fn set_format_takes_the_kashida_settings() {
     let (mut app, id) = app_with("بسم الله");
     app.run("text.setFormat", json!({"kashida": "off"})).unwrap();
     assert_eq!(kashida(&app, id).mode, KashidaMode::Off);
+    // No upper bound (owner 2026-10-19): justified lines read it as 100, Force elongates by it.
     app.run("text.setFormat", json!({"kashidaStrength": 250})).unwrap();
-    assert_eq!(kashida(&app, id).strength, 100);
+    assert_eq!((kashida(&app, id).strength, kashida(&app, id).strength()), (250, 100));
+    app.run("text.setFormat", json!({"kashidaStrength": -5})).unwrap();
+    assert_eq!(kashida(&app, id).strength, 0);
     app.run("text.setFormat", json!({"kashidaStrength": 12.6})).unwrap();
     assert_eq!(kashida(&app, id).strength, 13);
     assert!(app.run("text.setFormat", json!({"kashida": "maybe"})).is_err());
     assert!(app.run("text.setFormat", json!({"kashidaStrength": "x"})).is_err());
     app.run("edit.undo", json!({})).unwrap();
-    assert_eq!(kashida(&app, id).strength, 100);
+    assert_eq!(kashida(&app, id).strength, 0);
+}
+
+/// The slider's rail spans 0–100, and its number field takes more: typing 250 there sets 250.
+#[test]
+fn the_strength_field_takes_more_than_100() {
+    let (mut app, id) = app_with("بسم الله الرحمن الرحيم");
+    app.run("text.setFormat", json!({"kashida": "force"})).unwrap();
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let frame = |app: &mut VectorcraftApp, events: Vec<egui::Event>| {
+        let mut rects = None;
+        let mut out = ctx.run_ui(input(events), |ui| {
+            let para = crate::panels::character::text_style(app).unwrap().1;
+            rects = Some(controls(app, ui, &para));
+        });
+        out.textures_delta.clear();
+        rects.unwrap()
+    };
+    let r = frame(&mut app, vec![]);
+    // The number field is at the right end of the slider's response.
+    let field = egui::pos2(r.slider.right() - 8.0, r.slider.center().y);
+    frame(&mut app, vec![egui::Event::PointerMoved(field)]);
+    frame(&mut app, vec![button(field, true)]);
+    frame(&mut app, vec![button(field, false)]);
+    let key = |key, pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Default::default() };
+    // Select what the field holds and type over it.
+    let all = egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND };
+    frame(&mut app, vec![all, egui::Event::Text("250".into())]);
+    frame(&mut app, vec![key(egui::Key::Enter, true), key(egui::Key::Enter, false)]);
+    frame(&mut app, vec![]);
+    assert_eq!(kashida(&app, id), KashidaOptions { mode: KashidaMode::Force, strength: 250 });
+    // It shows 250, not 100.
+    let mut out = ctx.run_ui(input(vec![]), |ui| {
+        let para = crate::panels::character::text_style(&app).unwrap().1;
+        controls(&mut app, ui, &para);
+    });
+    out.textures_delta.clear();
+    let shown: Vec<String> = out
+        .shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(shown.iter().any(|t| t == "250"), "{shown:?}");
 }
 
 fn app_with_two(first: &str, second: &str) -> (VectorcraftApp, [u64; 2]) {

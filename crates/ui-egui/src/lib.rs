@@ -884,6 +884,11 @@ impl VectorcraftApp {
                 continue;
             }
             handled += 1;
+            // Varos: an agent's connection closed; nothing to run or answer.
+            if req.method == varos::AGENT_LEFT {
+                varos::agents::left(self, &req);
+                continue;
+            }
             let reply = req.reply.clone();
             // Guarded per request: a panic must not drop the channel (taken out of `self` above).
             let roots = self.automation_roots.clone();

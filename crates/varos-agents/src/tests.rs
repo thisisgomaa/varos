@@ -314,6 +314,44 @@ fn a_second_session_with_the_same_label_is_numbered() {
     assert_eq!(r.label(b), "Claude Code 2");
 }
 
+/// A label is numbered only while another session with it is connected: after both end, the
+/// next one is plain again; one that reconnects keeps its key, renumbered if its number was taken.
+#[test]
+fn numbers_are_reused_once_sessions_end() {
+    let now = Instant::now();
+    let mut r = Registry::new();
+    let a = r.admit("s-1", "claude-code", "Claude Code", now);
+    let b = r.admit("s-2", "claude-code", "Claude Code", now);
+    assert_eq!((r.label(a), r.label(b)), ("Claude Code".to_string(), "Claude Code 2".to_string()));
+    // Both end (their connections close).
+    r.depart("s-1");
+    r.depart("s-2");
+    let c = r.admit("s-3", "claude-code", "Claude Code", now);
+    assert_eq!(r.label(c), "Claude Code", "plain again after both ended");
+    // One after another, never numbered (the v7 live test numbered them up to 7).
+    for k in 4..10 {
+        r.depart(&format!("s-{}", k - 1));
+        let s = r.admit(&format!("s-{k}"), "claude-code", "Claude Code", now);
+        assert_eq!(r.label(s), "Claude Code", "session {k}");
+    }
+    // Two at once while the others have ended.
+    let x = r.admit("x", "claude-code", "Claude Code", now);
+    assert_eq!(r.label(x), "Claude Code 2");
+    // The first reconnects: same key; its number 1 is taken by s-9, so it is renumbered.
+    assert_eq!(r.admit("s-1", "claude-code", "Claude Code", now), a);
+    assert_eq!(r.label(a), "Claude Code 3");
+    // A reconnect whose number is free keeps it.
+    r.depart("x");
+    assert_eq!(r.admit("x", "claude-code", "Claude Code", now), x);
+    assert_eq!(r.label(x), "Claude Code 2");
+    // Other labels are numbered apart.
+    let codex = r.admit("c", "codex", "Codex", now);
+    assert_eq!(r.label(codex), "Codex");
+    // An unknown session departing changes nothing.
+    r.depart("nobody");
+    assert_eq!(r.len(), 11);
+}
+
 #[test]
 fn profiles_are_reduced_to_a_safe_id() {
     let mut r = Registry::new();

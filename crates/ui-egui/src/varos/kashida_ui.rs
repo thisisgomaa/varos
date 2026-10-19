@@ -2,7 +2,9 @@
 //!
 //! Under the alignment buttons, when any paragraph the panel acts on runs right to left (the only
 //! kind kashida stretches): a segmented **Kashida: Off · Auto · Force** control and a **Strength** slider
-//! (0–100, 50 by default; off while Kashida is Off). Both act through `text.setFormat` (`kashida`,
+//! (0–100, 50 by default; off while Kashida is Off). The slider's number field takes any value from
+//! 0 up (owner 2026-10-19): justified lines read more than 100 as 100, and Force elongates lines
+//! that aren't justified by the strength in percent. Both act through `text.setFormat` (`kashida`,
 //! `kashidaStrength`) on the paragraphs the panel acts on, as the panel's other controls do: a
 //! click is one undo step, a slider drag previews live and is one undo step when released. When
 //! the paragraphs differ, the controls show it (no lit segment, a dash after the label) and a click
@@ -119,7 +121,7 @@ pub(crate) fn controls(app: &mut VectorcraftApp, ui: &mut Ui, para: &ParaStyle) 
     let k: KashidaOptions = para.kashida;
     let all = targeted(app);
     let mixed_mode = all.iter().any(|(o, _)| o.mode != all[0].0.mode);
-    let mixed_strength = all.iter().any(|(o, _)| o.strength() != all[0].0.strength());
+    let mixed_strength = all.iter().any(|(o, _)| o.strength != all[0].0.strength);
     let any_on = all.is_empty() && k.mode != KashidaMode::Off || all.iter().any(|(o, _)| o.mode != KashidaMode::Off);
     let mut rects = KashidaRects { segments: [Rect::NOTHING; 3], slider: Rect::NOTHING, mixed_mode, mixed_strength };
     let mixed_tip = tl!("Mixed: the selected paragraphs differ");
@@ -181,9 +183,11 @@ pub(crate) fn controls(app: &mut VectorcraftApp, ui: &mut Ui, para: &ParaStyle) 
             tl!("How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)")
         });
         ui.add_enabled_ui(any_on, |ui| {
-            let mut v = f64::from(k.strength());
+            let mut v = f64::from(k.strength);
             ui.spacing_mut().slider_width = (ui.available_width() - 44.0).max(60.0);
-            let resp = widgets::slider(ui, egui::Slider::new(&mut v, 0.0..=100.0).step_by(1.0).max_decimals(0));
+            // The rail spans 0–100; its number field takes more (an elongation in percent).
+            let slider = egui::Slider::new(&mut v, 0.0..=100.0).step_by(1.0).max_decimals(0).clamping(egui::SliderClamping::Never);
+            let resp = widgets::slider(ui, slider);
             rects.slider = resp.rect;
             // A drag previews from its first change and commits once, when released.
             let dragging: bool = crate::panels::pstate(ui.ctx(), DRAGGING);
@@ -202,7 +206,7 @@ pub(crate) fn controls(app: &mut VectorcraftApp, ui: &mut Ui, para: &ParaStyle) 
                 Live::Idle => {}
             }
             if phase != Live::Idle {
-                let p = on_paragraphs(app, json!({ "kashidaStrength": v.round() }));
+                let p = on_paragraphs(app, json!({ "kashidaStrength": v.round().max(0.0) }));
                 crate::panels::live_run(app, STEP, "text.setFormat", p, phase);
             }
         });

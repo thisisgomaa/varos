@@ -116,6 +116,9 @@ pub(super) struct Link {
     /// The pool an agents-port connection moves into once it shows the token (`None`: it keeps
     /// the slot it has).
     main: Option<Arc<AtomicUsize>>,
+    /// The agents (actor sessions) its admitted lines came from: told to the app when it closes
+    /// ([`Link::departures`]).
+    sessions: RefCell<Vec<String>>,
 }
 
 impl Link {
@@ -132,6 +135,7 @@ impl Link {
             authenticated,
             slot: RefCell::new(Some(slot)),
             main: None,
+            sessions: RefCell::new(Vec::new()),
         }
     }
 
@@ -197,7 +201,24 @@ impl Link {
         }
         let mut actor = line.actor.filter(Value::is_object).unwrap_or_else(|| json!({"session": format!("connection-{}", self.connection)}));
         actor["guarded"] = json!(self.secrets.is_some());
+        if let Some(session) = actor.get("session").and_then(Value::as_str) {
+            let mut sessions = self.sessions.borrow_mut();
+            // A connection carries one agent; a few at most are remembered.
+            if !sessions.iter().any(|s| s == session) && sessions.len() < 8 {
+                sessions.push(session.to_string());
+            }
+        }
         Ok(actor)
+    }
+
+    /// The connection closed: one [`vectorcraft_ui_egui::varos::AGENT_LEFT`] request per agent it
+    /// carried, so the app frees their label numbers. Nobody waits for a reply.
+    pub(super) fn departures(&self) -> Vec<ControlRequest> {
+        self.sessions
+            .borrow_mut()
+            .drain(..)
+            .map(|session| ControlRequest::new(vectorcraft_ui_egui::varos::AGENT_LEFT, json!({})).0.with_actor(Some(json!({ "session": session }))))
+            .collect()
     }
 }
 
@@ -313,7 +334,32 @@ mod tests {
             authenticated: Cell::new(secrets.is_none()),
             slot: RefCell::new(Some(slot())),
             main: None,
+            sessions: RefCell::new(Vec::new()),
         }
+    }
+
+    /// When the connection closes, the app is told which agents it carried (once each), so their
+    /// label numbers are free again; a connection that admitted nothing tells nothing.
+    #[test]
+    fn a_closed_connection_reports_its_agents_once() {
+        let link = open_link(None);
+        assert!(link.departures().is_empty());
+        for session in ["s1", "s1", "s2"] {
+            set_line(line(json!({"method": "x", "actor": {"session": session, "label": "Claude Code"}})));
+            link.admit().unwrap();
+        }
+        set_line(line(json!({"method": "x"})));
+        link.admit().unwrap();
+        let left: Vec<(String, Value)> = link.departures().into_iter().map(|r| (r.method.clone(), r.actor.clone().unwrap_or_default())).collect();
+        assert_eq!(
+            left,
+            vec![
+                (vectorcraft_ui_egui::varos::AGENT_LEFT.to_string(), json!({"session": "s1"})),
+                (vectorcraft_ui_egui::varos::AGENT_LEFT.to_string(), json!({"session": "s2"})),
+                (vectorcraft_ui_egui::varos::AGENT_LEFT.to_string(), json!({"session": "connection-7"})),
+            ]
+        );
+        assert!(link.departures().is_empty(), "told once");
     }
 
     #[test]

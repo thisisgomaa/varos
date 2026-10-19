@@ -148,6 +148,11 @@ fn spawn_link(
             ctx.request_repaint();
             Some(rrx.recv_timeout(REPLY_WAIT).unwrap_or_else(|_| timed_out(&ticket)))
         });
+        // Varos: the agents it carried have left (their label numbers are free again).
+        for req in link.departures() {
+            let _ = tx.send(req);
+        }
+        ctx.request_repaint();
     })
 }
 
