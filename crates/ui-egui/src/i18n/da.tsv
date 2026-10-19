@@ -5210,3 +5210,21 @@ swatch	Bright Violet	Kraftig violet
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweels i de arabiske ord i justerede linjer fra højre mod venstre
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Hvor meget af en linjes luft kashida udfylder, og hvor mange tatweels et ord får (50: afbalanceret)
 	Mixed: the selected paragraphs differ	Blandet: de valgte afsnit er forskellige
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Retning
+	Paragraph direction	Afsnitsretning
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto: efter afsnittets første bogstav
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Farv harakat (arabiske vokaltegn) for sig, adskilt fra deres bogstaver
+	Gold	Guld
+	Hide the harakat: they stay in the text	Skjul harakat: de bliver i teksten
+	As Letters	Som bogstaver
+	Give the harakat their letters' colour again	Giv harakat deres bogstavers farve igen
+	Style Harakat	Formatér harakat
+	Arabic Letters	Arabiske bogstaver
+	Arabic Supplement	Arabisk, supplement
+	Arabic Extended-A	Arabisk, udvidet A
+	Arabic Presentation Forms-A	Arabiske præsentationsformer A
+	Arabic Presentation Forms-B	Arabiske præsentationsformer B

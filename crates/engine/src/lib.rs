@@ -1373,6 +1373,9 @@ pub struct Session {
     /// Varos: the agent whose request is running ([`Session::set_actor`]), which every open
     /// document's [`History::actor`] follows, and a document opened or made meanwhile starts with.
     actor: Option<u64>,
+    /// Varos: type created empty in this session, until text first reaches it (document uid,
+    /// object): [`cmd::varos_arabic::arabic_new_type_leading`]. Not saved.
+    pub(crate) varos_new_type: std::collections::HashSet<(u64, NodeId)>,
 }
 
 impl Default for Session {
@@ -1437,6 +1440,7 @@ impl Session {
             link_stamps: Default::default(),
             link_scan: None,
             actor: None, // Varos
+            varos_new_type: Default::default(), // Varos
         }
     }
 

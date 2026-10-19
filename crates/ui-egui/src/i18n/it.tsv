@@ -4841,3 +4841,21 @@ lighting	Light	Luce
 	Tatweels in the Arabic words of justified right-to-left lines	Tatwil nelle parole arabe delle righe giustificate da destra a sinistra
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Quanto spazio libero di una riga riempie la kashida e quanti tatwil riceve una parola (50: bilanciato)
 	Mixed: the selected paragraphs differ	Misto: i paragrafi selezionati sono diversi
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Direzione
+	Paragraph direction	Direzione del paragrafo
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto: dalla prima lettera del paragrafo
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Colora le harakat (vocali arabe) separatamente dalle lettere
+	Gold	Oro
+	Hide the harakat: they stay in the text	Nascondi le harakat: restano nel testo
+	As Letters	Come le lettere
+	Give the harakat their letters' colour again	Ridai alle harakat il colore delle loro lettere
+	Style Harakat	Stile harakat
+	Arabic Letters	Lettere arabe
+	Arabic Supplement	Arabo supplementare
+	Arabic Extended-A	Arabo esteso A
+	Arabic Presentation Forms-A	Forme di presentazione arabe A
+	Arabic Presentation Forms-B	Forme di presentazione arabe B

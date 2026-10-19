@@ -650,6 +650,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         }
     });
+    // Varos: the Middle Eastern rows (Digits, Harakat), with the Middle Eastern options.
+    crate::varos::middle_eastern_ui::character_rows(app, ui, &s);
 }
 
 /// The `text.setFormat` params of the Superscript or Subscript toggle `p` for text whose

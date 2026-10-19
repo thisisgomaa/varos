@@ -4821,3 +4821,21 @@ theme	Appearance	Giao diện
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweel trong các từ Ả Rập của các dòng căn đều từ phải sang trái
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Kashida lấp bao nhiêu khoảng trống của một dòng và mỗi từ nhận bao nhiêu tatweel (50: cân bằng)
 	Mixed: the selected paragraphs differ	Hỗn hợp: các đoạn đã chọn khác nhau
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Hướng
+	Paragraph direction	Hướng đoạn
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Tự động: theo chữ cái đầu của đoạn
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Tô màu harakat (dấu nguyên âm Ả Rập) riêng với chữ cái
+	Gold	Vàng kim
+	Hide the harakat: they stay in the text	Ẩn harakat: chúng vẫn ở trong văn bản
+	As Letters	Như chữ cái
+	Give the harakat their letters' colour again	Trả lại cho harakat màu của chữ cái
+	Style Harakat	Định dạng harakat
+	Arabic Letters	Chữ cái Ả Rập
+	Arabic Supplement	Ả Rập bổ sung
+	Arabic Extended-A	Ả Rập mở rộng A
+	Arabic Presentation Forms-A	Dạng trình bày Ả Rập A
+	Arabic Presentation Forms-B	Dạng trình bày Ả Rập B

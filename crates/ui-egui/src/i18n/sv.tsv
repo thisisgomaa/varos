@@ -5183,3 +5183,21 @@ theme	Appearance	Utseende
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweels i de arabiska orden på justerade rader från höger till vänster
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Hur mycket av en rads utrymme kashida fyller och hur många tatweels ett ord får (50: balanserat)
 	Mixed: the selected paragraphs differ	Blandat: de markerade styckena skiljer sig åt
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Riktning
+	Paragraph direction	Styckets riktning
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto: efter styckets första bokstav
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Färga harakat (arabiska vokaltecken) för sig, skilt från bokstäverna
+	Gold	Guld
+	Hide the harakat: they stay in the text	Dölj harakat: de finns kvar i texten
+	As Letters	Som bokstäverna
+	Give the harakat their letters' colour again	Ge harakat bokstävernas färg igen
+	Style Harakat	Formatera harakat
+	Arabic Letters	Arabiska bokstäver
+	Arabic Supplement	Arabiska, tillägg
+	Arabic Extended-A	Arabiska, utökad A
+	Arabic Presentation Forms-A	Arabiska presentationsformer A
+	Arabic Presentation Forms-B	Arabiska presentationsformer B

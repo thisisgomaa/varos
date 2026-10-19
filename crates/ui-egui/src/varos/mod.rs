@@ -8,6 +8,8 @@ pub(crate) mod home;
 pub mod icons;
 // Varos: the Paragraph panel's kashida controls.
 pub(crate) mod kashida_ui;
+// Varos: the Middle Eastern rows of the Character and Paragraph panels (direction, digits, harakat).
+pub(crate) mod middle_eastern_ui;
 pub mod names;
 #[cfg(test)]
 mod perf_tests;

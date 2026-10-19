@@ -321,12 +321,13 @@ mod wayland {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vectorcraft_ui_egui::brand::APP_NAME;
 
     fn request() -> SaveRequest {
         let pick = FilePick {
             name: "Untitled-1.vectorcraft".into(),
             folder: Some("/home/me/Art".into()),
-            filters: vec![("VectorCraft", &["vectorcraft"]), ("SVG", &["svg"]), ("PDF-compatible .ai", &["ai"])],
+            filters: vec![(APP_NAME, &["vectorcraft"]), ("SVG", &["svg"]), ("PDF-compatible .ai", &["ai"])],
         };
         SaveRequest::new(&pick, "x11:3a0000f".into())
     }
@@ -337,9 +338,9 @@ mod tests {
     fn the_request_names_the_file_type_the_dialog_starts_on() {
         let request = request();
         let o = options(&request, "t1");
-        assert_eq!(o.get("current_filter"), Some(&Value::from(("VectorCraft".to_string(), vec![(0u32, "*.vectorcraft".to_string())]))));
+        assert_eq!(o.get("current_filter"), Some(&Value::from((APP_NAME.to_string(), vec![(0u32, "*.vectorcraft".to_string())]))));
         let filters = vec![
-            ("VectorCraft".to_string(), vec![(0u32, "*.vectorcraft".to_string())]),
+            (APP_NAME.to_string(), vec![(0u32, "*.vectorcraft".to_string())]),
             ("SVG".to_string(), vec![(0u32, "*.svg".to_string())]),
             ("PDF-compatible .ai".to_string(), vec![(0u32, "*.ai".to_string())]),
         ];

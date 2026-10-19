@@ -5210,3 +5210,21 @@ swatch	Bright Violet	Violet cerah
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweel pada kata Arab di baris rata kiri-kanan dari kanan ke kiri
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Berapa banyak ruang kosong baris yang diisi kashida dan berapa tatweel yang didapat sebuah kata (50: seimbang)
 	Mixed: the selected paragraphs differ	Campuran: paragraf yang dipilih berbeda
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Arah
+	Paragraph direction	Arah paragraf
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Otomatis: menurut huruf pertama paragraf
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Warnai harakat (tanda vokal Arab) terpisah dari hurufnya
+	Gold	Emas
+	Hide the harakat: they stay in the text	Sembunyikan harakat: tetap ada di teks
+	As Letters	Seperti Huruf
+	Give the harakat their letters' colour again	Kembalikan warna huruf ke harakat
+	Style Harakat	Gaya Harakat
+	Arabic Letters	Huruf Arab
+	Arabic Supplement	Suplemen Arab
+	Arabic Extended-A	Arab Diperluas-A
+	Arabic Presentation Forms-A	Bentuk Presentasi Arab-A
+	Arabic Presentation Forms-B	Bentuk Presentasi Arab-B

@@ -431,15 +431,25 @@ mod tests {
     /// Every shortcut the Mac menu shows as a key equivalent has one AppKit can match.
     #[test]
     fn every_menu_shortcut_maps_to_a_key_equivalent() {
-        let app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
-        let bar = native_menu::layout(&app).bar;
-        let mut native = 0;
-        for it in bar.items() {
-            let Some(c) = it.shortcut.and_then(vectorcraft_ui_egui::shortcuts::parse).filter(native_menu::native_ok) else { continue };
-            assert!(accelerator(&c).is_some(), "{:?} ({:?}) has no key equivalent", it.shortcut, it.command);
-            native += 1;
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        // Home has only the app menu; opening a document exposes the editor's shortcuts.
+        // Also cover returning Home while that document remains open.
+        for (state, command) in [("Home", None), ("editor", Some("file.new")), ("Home over document", Some("app.home"))] {
+            if let Some(command) = command {
+                app.run(command, serde_json::json!({})).unwrap();
+            }
+            let bar = native_menu::layout(&app).bar;
+            let mut native = 0;
+            for it in bar.items() {
+                let Some(shortcut) = it.shortcut else { continue };
+                let c = vectorcraft_ui_egui::shortcuts::parse(shortcut).unwrap_or_else(|| panic!("{state}: invalid shortcut {shortcut}"));
+                if native_menu::native_ok(&c) {
+                    assert!(accelerator(&c).is_some(), "{state}: {:?} ({:?}) has no key equivalent", it.shortcut, it.command);
+                    native += 1;
+                }
+            }
+            assert!(native > 0, "{state}: no key equivalents checked");
         }
-        assert!(native > 70, "{native} key equivalents");
     }
 
     #[test]

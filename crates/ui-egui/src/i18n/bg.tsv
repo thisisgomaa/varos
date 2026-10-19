@@ -5192,3 +5192,21 @@ theme	Appearance	Външен вид
 	Tatweels in the Arabic words of justified right-to-left lines	Татвили в арабските думи на двустранно подравнените редове отдясно наляво
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Каква част от свободното място на реда запълва кашидата и колко татвила получава една дума (50: балансирано)
 	Mixed: the selected paragraphs differ	Смесено: избраните абзаци се различават
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Посока
+	Paragraph direction	Посока на абзаца
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Авто: по първата буква на абзаца
+	Harakat	Харакат
+	Colour the harakat (Arabic vowel marks) apart from their letters	Оцветяване на хараката (арабските гласни знаци) отделно от буквите
+	Gold	Златно
+	Hide the harakat: they stay in the text	Скриване на хараката: остава в текста
+	As Letters	Като буквите
+	Give the harakat their letters' colour again	Връщане на цвета на буквите към хараката
+	Style Harakat	Оформяне на хараката
+	Arabic Letters	Арабски букви
+	Arabic Supplement	Арабски, допълнение
+	Arabic Extended-A	Арабски, разширение A
+	Arabic Presentation Forms-A	Арабски форми за представяне A
+	Arabic Presentation Forms-B	Арабски форми за представяне B
