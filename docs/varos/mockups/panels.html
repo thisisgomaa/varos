@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Varos Panels</title>
+<style>
+:root{--bg:#121418;--panel:#1a1d23;--surf:#22262e;--hov:#2a2f38;--line:#30363f;--tx:#eceef2;--mu:#a2a8b3;--dis:#6f7580;--ac:#0c8ce9;--ag:#c76a20;--well:#0f1115}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:12px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;padding:32px 40px 48px}
+[lang=ar]{font-family:"Geeza Pro",system-ui,sans-serif}
+header h1{font-size:18px;font-weight:600}
+header p{color:var(--mu);margin-top:4px;max-width:900px}
+section.blk{margin-top:40px;padding-top:24px;border-top:1px solid var(--line)}
+.blk>h2{font-size:13px;font-weight:600}
+.blk>h2 b{color:var(--mu);font-weight:500;margin-right:6px}
+.why{color:var(--mu);margin:4px 0 16px;max-width:760px}
+.row-v{display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start}
+.cap{color:var(--mu);font-size:11px;margin-bottom:8px;max-width:300px}
+.cap b{color:var(--tx);font-weight:500}
+.note{color:var(--mu);font-size:11px;margin-top:8px;max-width:300px}
+/* panel */
+.pn{width:260px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:visible;position:relative}
+.ph{display:flex;align-items:center;gap:2px;height:28px;padding:0 4px;border-bottom:1px solid var(--line)}
+.ph span{padding:3px 8px;border-radius:3px;color:var(--mu);font-size:11px}
+.ph .on{background:var(--surf);color:var(--tx)}
+.ph .mn{margin-left:auto;letter-spacing:1px}
+.pb{padding:6px 8px 8px}
+.r{display:flex;align-items:center;gap:6px;height:24px}
+.lb{width:60px;flex:none;color:var(--mu);font-size:11px;white-space:nowrap}
+.fld,.dd{height:20px;background:var(--surf);border:1px solid var(--line);border-radius:3px;display:flex;align-items:center;gap:4px;padding:0 6px;font-size:11px;min-width:0;white-space:nowrap}
+.dd::after{content:"";margin-left:auto;width:5px;height:5px;border:solid var(--mu);border-width:0 1px 1px 0;transform:translate(0,-2px) rotate(45deg)}
+.dd.open{border-color:var(--ac)}
+.fld .u,.dd .u{color:var(--mu)}
+.f1{flex:1}
+.num{width:40px;justify-content:flex-end}
+.seg{display:flex;flex:1;background:var(--surf);border:1px solid var(--line);border-radius:3px;padding:1px;gap:1px;height:20px}
+.seg span{flex:1;display:grid;place-items:center;border-radius:2px;color:var(--mu);white-space:nowrap;font-size:11px;padding:0 4px}
+.seg .on{background:var(--ac);color:#fff}
+.seg .on i{font-style:normal;opacity:.7;margin-left:3px}
+.seg .mx{background:var(--hov);color:var(--tx)}
+.seg.ic{flex:none;height:24px}
+.seg.ic span{flex:none;width:28px;padding:0;color:var(--mu)}
+.seg.ic .ka{width:36px}
+.seg.ic.tx{flex:1}.seg.ic.tx span{flex:1;width:auto;display:flex;gap:5px;justify-content:center;align-items:center}
+.seg .lit{background:var(--well);color:var(--tx)}
+.seg .gho{outline:1px dashed var(--dis);outline-offset:-3px}
+.ka{font-family:"Geeza Pro",sans-serif;font-size:13px;line-height:1;font-weight:400}
+.pb{position:relative}
+.tt{position:absolute;background:var(--surf);border:1px solid var(--line);border-radius:3px;padding:2px 7px;font-size:10.5px;white-space:nowrap;color:var(--tx);z-index:3}
+.hk{font-family:"Geeza Pro",sans-serif;font-size:16px;color:var(--mu);width:18px;text-align:center;flex:none}
+.dg{width:30px;font-size:12px}
+.dg[lang=ar]{font-size:13px}
+.gh{display:flex;align-items:center;gap:6px;margin:8px 0 2px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu)}
+.gh::after{content:"";flex:1;height:1px;background:var(--line);order:2}
+.gh .x{order:3;font-size:11px;text-transform:none;letter-spacing:0}
+.ib{width:24px;height:22px;flex:none;display:grid;place-items:center;border-radius:3px;color:var(--mu);border:1px solid transparent}
+.ib.lit{background:var(--well);color:var(--tx);border-color:var(--line)}
+.ibs{display:flex;gap:2px}
+.sl{flex:1;height:14px;position:relative}
+.sl::before{content:"";position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:var(--line)}
+.sl .fill{position:absolute;left:0;top:6px;height:2px;border-radius:1px;background:var(--mu)}
+.sl .th{position:absolute;top:2px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:var(--tx)}
+.dis,.dis .lb,.dis .fld{color:var(--dis)}
+.dis .sl .th{background:var(--dis)}.dis .sl .fill{background:var(--line)}
+.ctx{opacity:.55}
+.tag{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--dis);margin-left:auto}
+/* menus/popovers */
+.pop{position:absolute;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;z-index:2}
+.mi{display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;border-radius:3px;font-size:11px}
+.mi .ck{width:10px;color:var(--tx)}
+.mi .smp{margin-left:auto;color:var(--mu);font-size:13px}
+.mi.hv{background:var(--hov)}
+.mi .d{color:var(--mu);font-size:10px;margin-left:auto}
+.sw{width:14px;height:14px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.12)}
+.sw.cur{outline:1px solid var(--ac);outline-offset:1px}
+.well{display:flex;align-items:center;gap:4px;height:20px;padding:0 4px 0 3px;background:var(--surf);border:1px solid var(--line);border-radius:3px}
+.well .sw{width:14px;height:14px}
+.well::after{content:"";width:4px;height:4px;border:solid var(--mu);border-width:0 1px 1px 0;transform:translate(0,-1px) rotate(45deg);margin:0 2px}
+.hex{font:11px ui-monospace,Menlo,monospace;color:var(--mu)}
+.tb{height:22px;padding:0 8px;display:flex;align-items:center;gap:5px;border-radius:3px;border:1px solid var(--line);color:var(--mu);font-size:11px}
+.tb.lit{background:var(--well);color:var(--tx)}
+.sv{height:96px;border-radius:3px;background:linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,#e0302f);position:relative}
+.hue{height:8px;border-radius:3px;margin-top:6px;background:linear-gradient(90deg,red,#ff0,lime,cyan,blue,#f0f,red);position:relative}
+.knob{position:absolute;width:10px;height:10px;border-radius:50%;border:2px solid #fff;margin:-5px 0 0 -5px}
+/* font rows (approved style) */
+.menu{width:360px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px}
+.sr{display:flex;gap:6px;padding:4px 4px 8px}
+.search{flex:1;display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;background:var(--surf);border:1px solid var(--line);border-radius:3px;color:var(--mu)}
+.menu .seg{height:24px}.sr .seg{flex:none}.sr .seg span{padding:0 7px}
+.segw{margin:0 4px 8px}
+.cond{margin:0 4px 8px}
+.fr{padding:5px 8px 4px;border-radius:3px}
+.fr.hov{background:var(--hov)}
+.fr.sel{background:var(--ac);color:#fff}
+.fr .n{display:flex;align-items:center;gap:6px;font-size:12px}
+.fr .ar{color:var(--mu)}
+.aat{font-size:9px;letter-spacing:.06em;padding:0 4px;border:1px solid var(--line);border-radius:3px;color:var(--mu);line-height:14px}
+.st{margin-left:auto;color:var(--mu);opacity:.35}
+.st.on{color:var(--tx);opacity:1}
+.fr.hov .st{opacity:1}
+.fr.sel .ar,.fr.sel .st,.fr.sel .aat{color:#fff;border-color:rgba(255,255,255,.5)}
+.fr .s{font-size:19px;line-height:26px;white-space:nowrap;overflow:hidden;text-align:right}
+.fr.cmp{display:flex;align-items:center;height:24px;padding:0 8px}
+.fr.cmp .n{flex:1}
+.an{position:relative;outline:1px dashed var(--dis);outline-offset:1px;border-radius:2px}
+.an::before{content:attr(data-n);position:absolute;top:-15px;left:-2px;font:600 9px Inter,system-ui,sans-serif;color:var(--mu)}
+.anrow .n{gap:12px}
+.anat{display:grid;grid-template-columns:18px 1fr;gap:3px 6px;font-size:11px;color:var(--mu);margin-top:12px;max-width:360px}
+.anat b{color:var(--tx);font-weight:600}
+/* history */
+.chips{display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px;border-bottom:1px solid var(--line)}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 6px;height:20px;border:1px solid var(--line);border-radius:3px;color:var(--mu);white-space:nowrap;font-size:11px}
+.chip.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--ag);flex:none}
+.hl{padding:4px}
+.hr{display:flex;align-items:center;gap:8px;height:24px;padding:0 6px 0 8px;border-radius:3px;font-size:11px;position:relative}
+.hr .ic{width:14px;display:grid;place-items:center;color:var(--mu);flex:none}
+.hr .who{margin-left:auto;color:var(--ag);font-size:10.5px}
+.hr.hov{background:var(--hov)}
+.hr.sel{background:var(--ac);color:#fff}
+.hr.sel .ic{color:#fff}.hr.sel .who{color:rgba(255,255,255,.85)}
+.hr.fut{color:var(--dis)}.hr.fut .ic{color:var(--dis)}.hr.fut .who{color:var(--ag);opacity:.45}
+.hr .act{margin-left:auto;display:flex;align-items:center;justify-content:center;width:20px;height:18px;border-radius:3px;background:var(--surf);border:1px solid var(--line);color:var(--tx)}
+.tip{position:absolute;right:-4px;top:-26px;background:var(--surf);border:1px solid var(--line);border-radius:3px;padding:2px 7px;font-size:10.5px;white-space:nowrap;color:var(--tx)}
+.grp{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;font-size:10.5px;color:var(--mu);margin-top:4px}
+.grp b{color:var(--ag);font-weight:600}
+.grp .t{margin-left:auto}
+.hr.in{padding-left:20px}
+.pf{border-top:1px solid var(--line);padding:6px 8px;display:flex;gap:6px;align-items:center}
+.btn{height:22px;display:flex;align-items:center;justify-content:center;gap:6px;padding:0 10px;border-radius:3px;background:var(--surf);border:1px solid var(--line);font-size:11px;color:var(--tx)}
+.pf .btn{flex:1}
+/* home */
+.win{width:720px;height:450px;background:var(--bg);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+.tbar{height:30px;flex:none;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel);position:relative}
+.tl{display:flex;gap:8px}.tl i{width:12px;height:12px;border-radius:50%;background:#3a3f48}
+.tname{position:absolute;left:0;right:0;text-align:center;display:flex;justify-content:center;align-items:center;gap:6px;font-size:12px;color:var(--mu);pointer-events:none}
+.hm{padding:26px 32px 0;display:flex;flex-direction:column;flex:1;min-height:0}
+.hh{display:flex;align-items:center;justify-content:space-between}
+.hh h3{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.hh p{font-size:20px;color:var(--mu);text-align:right}
+.acts{display:flex;gap:8px;margin-top:16px}
+.acts .btn{height:28px;padding:0 14px;font-size:12px}
+.btn.pri{background:var(--tx);color:var(--bg);border-color:var(--tx);font-weight:500}
+.cols{display:flex;gap:28px;margin-top:26px;min-height:0}
+.lab{font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.cards{display:grid;grid-template-columns:repeat(3,124px);gap:8px}
+.card{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:8px}
+.card.hov{background:var(--hov)}
+.card .th{height:54px;display:grid;place-items:center}
+.card .th i{display:block;border:1px solid var(--mu);border-radius:1px}
+.card .nm{margin-top:6px;font-size:11px}
+.card .dm{font-size:10px;color:var(--mu)}
+.rec{flex:1;min-width:0}
+.rr{display:flex;align-items:center;gap:10px;height:34px;padding:0 8px;border-radius:3px}
+.rr.hov{background:var(--hov)}
+.rr .tn{width:30px;height:22px;border-radius:3px;background:#e9e6df;flex:none;position:relative;overflow:hidden}
+.rr .nm{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rr .pt{font-size:10px;color:var(--mu)}
+.rr .tm{margin-left:auto;font-size:10px;color:var(--mu);white-space:nowrap}
+/* legend */
+.leg{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px 24px;max-width:1100px}
+.lg{display:flex;align-items:center;gap:10px;font-size:11px}
+.lg .sw{width:28px;height:20px;border-radius:3px;border:1px solid var(--line)}
+.lg span{color:var(--mu)}
+.rules{padding:0;color:var(--mu);font-size:11px;margin-top:16px;max-width:1100px;columns:2;column-gap:40px}
+.rules li{margin-bottom:4px;list-style:none}
+.rules b{color:var(--tx);font-weight:500}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+ <symbol id="al" viewBox="0 0 14 14"><path d="M2 3h10M2 6h7M2 9h10M2 12h6" stroke="currentColor" stroke-width="1.2"/></symbol>
+ <symbol id="ac" viewBox="0 0 14 14"><path d="M2 3h10M3.5 6h7M2 9h10M4 12h6" stroke="currentColor" stroke-width="1.2"/></symbol>
+ <symbol id="ar" viewBox="0 0 14 14"><path d="M2 3h10M5 6h7M2 9h10M6 12h6" stroke="currentColor" stroke-width="1.2"/></symbol>
+ <symbol id="jl" viewBox="0 0 14 14"><path d="M2 3h10M2 6h10M2 9h10M2 12h5" stroke="currentColor" stroke-width="1.2"/></symbol>
+ <symbol id="jc" viewBox="0 0 14 14"><path d="M2 3h10M2 6h10M2 9h10M4.5 12h5" stroke="currentColor" stroke-width="1.2"/></symbol>
+ <symbol id="jr" viewBox="0 0 14 14"><path d="M2 3h10M2 6h10M2 9h10M7 12h5" stroke="currentColor" stroke-width="1.2"/></symbol>
+ <symbol id="ja" viewBox="0 0 14 14"><path d="M2 3h10M2 6h10M2 9h10M2 12h10" stroke="currentColor" stroke-width="1.2"/></symbol>
+<symbol id="dauto" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 9.5 7.5 2l3 7.5M5.6 6.8h3.8"/><path d="M3 13h10M4.6 11.4 3 13l1.6 1.6M11.4 11.4 13 13l-1.6 1.6"/></g></symbol>
+ <symbol id="drtl" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5v7M11.5 2.5v7M12.5 2.5H8a2 2 0 0 0 0 4h1"/><path d="M13 13H3M4.6 11.4 3 13l1.6 1.6"/></g></symbol>
+ <symbol id="dltr" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5v7M8.5 2.5v7M9.5 2.5H5a2 2 0 0 0 0 4h1"/><path d="M3 13h10M11.4 11.4 13 13l-1.6 1.6"/></g></symbol>
+ <symbol id="kstr" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5v5h12V5"/><path d="M5 13h6M6.2 11.8 5 13l1.2 1.2M9.8 11.8 11 13l-1.2 1.2"/></g></symbol>
+ <symbol id="asl" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M1.8 7.5c0 2.6 1.4 3.3 3.7 3.3s3.6-.6 3.6-3.3"/><circle cx="5.4" cy="13.3" r=".6" fill="currentColor"/><path d="M11.2 10.5 14.4 8.7"/><path d="M10.2 3v10" stroke-dasharray="1 1.6" stroke-width="1"/></g></symbol>
+<symbol id="mg" viewBox="0 0 12 12"><g fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="5" cy="5" r="3.6"/><path d="M7.7 7.7 11 11"/></g></symbol>
+ <symbol id="me" viewBox="0 0 14 14"><g fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="7" cy="4.8" r="2.4"/><path d="M2.5 12.5c.6-2.4 2.3-3.6 4.5-3.6s3.9 1.2 4.5 3.6" stroke-linecap="round"/></g></symbol>
+ <symbol id="k0" viewBox="0 0 24 16"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6.5c0 3 1.2 4.5 3.5 4.5H16V6.5"/></g><g fill="currentColor"><circle cx="11" cy="13.6" r=".8"/><circle cx="15" cy="13.6" r=".8"/></g></symbol>
+ <symbol id="k1" viewBox="0 0 24 16"><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5c0 3 1.2 4.5 3.5 4.5H20V6.5"/></g><g fill="currentColor"><circle cx="7" cy="13.6" r=".8"/><circle cx="19" cy="13.6" r=".8"/></g></symbol>
+ <symbol id="k2" viewBox="0 0 24 16"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 6.5c0 3 1.2 4.5 3.5 4.5H22.2V6.5"/></g><g fill="currentColor"><circle cx="5" cy="13.8" r=".9"/><circle cx="21.2" cy="13.8" r=".9"/></g></symbol>
+ <symbol id="hrk" viewBox="0 0 16 16"><circle cx="8" cy="10" r="3.6" fill="none" stroke="currentColor" stroke-width="1.1" stroke-dasharray="1.3 1.5"/><path d="M5.5 4.6 10.6 2.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+ <symbol id="eyeoff" viewBox="0 0 14 14"><g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M1.5 7S3.6 3.2 7 3.2 12.5 7 12.5 7 10.4 10.8 7 10.8 1.5 7 1.5 7z"/><circle cx="7" cy="7" r="1.8"/><path d="M2.5 12 11.5 2"/></g></symbol>
+ <symbol id="drop" viewBox="0 0 14 14"><path d="M7 1.8 10.4 6.4a4 4 0 1 1-6.8 0z" fill="none" stroke="currentColor" stroke-width="1.2"/></symbol>
+ <symbol id="pick" viewBox="0 0 14 14"><path d="M9.5 1.8l2.7 2.7-1.4 1.4-2.7-2.7zM8.4 4.3 2.6 10.1 2 12l1.9-.6 5.8-5.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+ <symbol id="undo" viewBox="0 0 14 14"><path d="M4.5 3 2 5.5 4.5 8M2 5.5h6.5a3.5 3.5 0 0 1 0 7H6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+ <symbol id="doc" viewBox="0 0 14 14"><path d="M3.5 1.8h4.5l2.5 2.5v7.9h-7zM8 1.8v2.5h2.5" fill="none" stroke="currentColor" stroke-width="1.1"/></symbol>
+ <symbol id="rect" viewBox="0 0 14 14"><rect x="2.5" y="3.5" width="9" height="7" rx=".5" fill="none" stroke="currentColor" stroke-width="1.1"/></symbol>
+ <symbol id="mv" viewBox="0 0 14 14"><path d="M7 1.5v11M1.5 7h11M7 1.5 5.5 3M7 1.5 8.5 3M7 12.5 5.5 11M7 12.5 8.5 11M1.5 7 3 5.5M1.5 7 3 8.5M12.5 7 11 5.5M12.5 7 11 8.5" fill="none" stroke="currentColor" stroke-width="1.1"/></symbol>
+ <symbol id="mark" viewBox="0 0 20 20"><rect x=".5" y=".5" width="19" height="19" rx="5" fill="#22262e" stroke="#30363f"/><path d="M5.2 5.5 10 14.5l4.8-9" fill="none" stroke="#eceef2" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header>
+  <h1>Varos panels: design pass on the provisional pieces</h1>
+  <p>Real size, dark theme, same tokens as the approved font-menu sample. Panels are 260 px wide with 24 px rows. Azure marks only what is selected or focused; orange only marks agents.</p>
+</header>
+
+<!-- ================= 1. PARAGRAPH ================= -->
+<section class="blk">
+  <h2><b>1</b>Paragraph panel · Middle Eastern group</h2>
+  <p class="why">Icons first, as in Illustrator: Direction and Kashida are small icon groups that sit right under the Justify buttons, because Kashida only matters for justified Arabic. Tooltips carry the words; the icon+text variant is there for people who want labels.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>A · Icons (recommended)</b>: Auto is on and resolves to RTL; the RTL icon shows a dashed ring to say "this is what Auto picked". Kashida Auto, strength 60.</p>
+      <div class="pn">
+        <div class="ph"><span>Character</span><span class="on">Paragraph</span><span>OpenType</span><span class="mn">···</span></div>
+        <div class="pb">
+          <div class="r"><div class="ibs"><span class="ib"><svg width="14" height="14"><use href="#al"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ac"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ar"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#jl"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#jc"/></svg></span><span class="ib lit"><svg width="14" height="14"><use href="#jr"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ja"/></svg></span></div></div>
+          <div class="gh">Middle Eastern<span class="x">⌄</span></div>
+          <div class="r"><div class="seg ic"><span class="lit"><svg width="16" height="16"><use href="#dauto"/></svg></span><span class="gho"><svg width="16" height="16"><use href="#drtl"/></svg></span><span><svg width="16" height="16"><use href="#dltr"/></svg></span></div><span style="flex:1"></span><div class="seg ic"><span class="ka"><svg width="24" height="16"><use href="#k0"/></svg></span><span class="ka lit"><svg width="24" height="16"><use href="#k1"/></svg></span><span class="ka"><svg width="24" height="16"><use href="#k2"/></svg></span></div></div>
+          <div class="r"><span class="ib" style="width:20px"><svg width="16" height="16"><use href="#kstr"/></svg></span><div class="sl"><span class="fill" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="fld num">60</span></div>
+          <div class="gh" style="margin-top:10px">Indents &amp; spacing<span class="tag">upstream</span></div>
+          <div class="r ctx"><span class="fld f1"><span class="u">←|</span>0 pt</span><span class="fld f1"><span class="u">|→</span>0 pt</span><span class="fld f1"><span class="u">¶↑</span>0 pt</span></div>
+          <span class="tt" style="left:2px;top:30px">Auto direction · resolves to right-to-left</span>
+        </div>
+      </div>
+      <p class="note">Tooltips (shown here for two buttons): Auto direction, Right-to-left, Left-to-right · Kashida Off, Auto, Force · Kashida strength.</p>
+    </div>
+    <div>
+      <p class="cap"><b>B · Icon + text</b>: same controls with labels. Kashida is Off, so Strength greys out but keeps 60 for when it comes back.</p>
+      <div class="pn">
+        <div class="ph"><span>Character</span><span class="on">Paragraph</span><span>OpenType</span><span class="mn">···</span></div>
+        <div class="pb">
+          <div class="r"><div class="ibs"><span class="ib"><svg width="14" height="14"><use href="#al"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ac"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ar"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#jl"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#jc"/></svg></span><span class="ib lit"><svg width="14" height="14"><use href="#jr"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ja"/></svg></span></div></div>
+          <div class="gh">Middle Eastern<span class="x">⌄</span></div>
+          <div class="r"><div class="seg ic tx"><span class="lit"><svg width="16" height="16"><use href="#dauto"/></svg>Auto</span><span class="gho"><svg width="16" height="16"><use href="#drtl"/></svg>RTL</span><span><svg width="16" height="16"><use href="#dltr"/></svg>LTR</span></div></div>
+          <div class="r"><div class="seg ic tx"><span class="lit"><svg width="24" height="16"><use href="#k0"/></svg>Off</span><span><svg width="24" height="16"><use href="#k1"/></svg>Auto</span><span><svg width="24" height="16"><use href="#k2"/></svg>Force</span></div></div>
+          <div class="r dis"><span class="ib" style="width:20px;color:var(--dis)"><svg width="16" height="16"><use href="#kstr"/></svg></span><div class="sl"><span class="fill" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="fld num">60</span></div>
+          <div class="gh" style="margin-top:10px">Indents &amp; spacing<span class="tag">upstream</span></div>
+          <div class="r ctx"><span class="fld f1"><span class="u">←|</span>0 pt</span><span class="fld f1"><span class="u">|→</span>0 pt</span><span class="fld f1"><span class="u">¶↑</span>0 pt</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>C · Mixed selection</b> (icons): one RTL and one LTR paragraph, Kashida differs. Nothing lights; values present are tinted; the number reads "–".</p>
+      <div class="pn">
+        <div class="ph"><span>Character</span><span class="on">Paragraph</span><span>OpenType</span><span class="mn">···</span></div>
+        <div class="pb">
+          <div class="r"><div class="ibs"><span class="ib"><svg width="14" height="14"><use href="#al"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ac"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ar"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#jl"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#jc"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#jr"/></svg></span><span class="ib"><svg width="14" height="14"><use href="#ja"/></svg></span></div></div>
+          <div class="gh">Middle Eastern<span class="x">⌄</span></div>
+          <div class="r"><div class="seg ic"><span><svg width="16" height="16"><use href="#dauto"/></svg></span><span class="mx"><svg width="16" height="16"><use href="#drtl"/></svg></span><span class="mx"><svg width="16" height="16"><use href="#dltr"/></svg></span></div><span style="flex:1"></span><div class="seg ic"><span class="ka mx"><svg width="24" height="16"><use href="#k0"/></svg></span><span class="ka mx"><svg width="24" height="16"><use href="#k1"/></svg></span><span class="ka"><svg width="24" height="16"><use href="#k2"/></svg></span></div></div>
+          <div class="r"><span class="ib" style="width:20px"><svg width="16" height="16"><use href="#kstr"/></svg></span><div class="sl"></div><span class="fld num">–</span></div>
+          <div class="gh" style="margin-top:10px">Indents &amp; spacing<span class="tag">upstream</span></div>
+          <div class="r ctx"><span class="fld f1"><span class="u">←|</span>0 pt</span><span class="fld f1"><span class="u">|→</span>–</span><span class="fld f1"><span class="u">¶↑</span>0 pt</span></div>
+        </div>
+      </div>
+      <p class="note">Clicking any button sets every selected paragraph at once (one undo step).</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 2. CHARACTER ================= -->
+<section class="blk">
+  <h2><b>2</b>Character panel · Digits and Harakat</h2>
+  <p class="why">One "Middle Eastern" group, icons first. Digits is a dropdown that shows the digits themselves; Harakat is a colour well (any colour) plus four quick presets, then Hide and As letters as light-up icon toggles.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>A · Normal</b>: Hindi digits; harakat red (the matching preset carries the azure ring); As letters is on, so it is lit.</p>
+      <div class="pn">
+        <div class="ph"><span class="on">Character</span><span>Paragraph</span><span>OpenType</span><span class="mn">···</span></div>
+        <div class="pb">
+          <div class="r ctx"><span class="dd f1" lang="ar" style="font-family:'Geeza Pro'">Geeza Pro</span></div>
+          <div class="r ctx"><span class="dd f1">Regular</span><span class="fld" style="width:58px"><span class="u">T</span>24 pt</span></div>
+          <div class="gh">Middle Eastern<span class="x">⌄</span></div>
+          <div class="r"><span class="dd" style="width:70px"><span lang="ar" style="font-size:13px">٤٥٦</span></span><span style="flex:1"></span><span class="ibs"><span class="ib"><svg width="16" height="16"><use href="#eyeoff"/></svg></span><span class="ib lit"><svg width="16" height="16"><use href="#asl"/></svg></span></span></div>
+          <div class="r"><span class="hk"><svg width="16" height="16"><use href="#hrk"/></svg></span><span class="well"><span class="sw" style="background:#d63b3b"></span></span><span class="hex">D63B3B</span><span style="margin-left:auto;display:flex;gap:4px"><span class="sw cur" style="background:#d63b3b"></span><span class="sw" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span></span></div>
+          <span class="tt" style="right:2px;top:56px">Show harakat as letters</span>
+        </div>
+      </div>
+      <p class="note">Tooltips: Digits: Hindi · Hide harakat · Show harakat as letters · Harakat colour.</p>
+    </div>
+    <div>
+      <p class="cap"><b>Digits menu</b>, open. Each choice leads with its own digits; names follow Illustrator.</p>
+      <div style="position:relative;width:260px;height:150px">
+        <span class="dd open" style="width:70px;position:absolute;left:8px;top:0"><span lang="ar" style="font-size:13px">٤٥٦</span></span>
+        <div class="pop" style="left:8px;top:24px;width:190px">
+          <div class="mi"><span class="ck"></span><span class="dg" style="color:var(--mu)">Aa</span>Default<span class="d">follows text</span></div>
+          <div class="mi"><span class="ck"></span><span class="dg">456</span>Arabic</div>
+          <div class="mi hv"><span class="ck">✓</span><span class="dg" lang="ar">٤٥٦</span>Hindi</div>
+          <div class="mi"><span class="ck"></span><span class="dg" lang="ar">۴۵۶</span>Farsi</div>
+        </div>
+      </div>
+      <p class="cap" style="margin-top:6px"><b>Hide on</b>: colour controls grey out (nothing to colour).</p>
+      <div class="pn"><div class="pb" style="padding-top:4px;padding-bottom:4px">
+        <div class="r"><span class="dd" style="width:70px"><span lang="ar" style="font-size:13px">٤٥٦</span></span><span style="flex:1"></span><span class="ibs"><span class="ib lit"><svg width="16" height="16"><use href="#eyeoff"/></svg></span><span class="ib"><svg width="16" height="16"><use href="#asl"/></svg></span></span></div>
+        <div class="r" style="opacity:.4"><span class="hk"><svg width="16" height="16"><use href="#hrk"/></svg></span><span class="well"><span class="sw" style="background:#d63b3b"></span></span><span class="hex">D63B3B</span><span style="margin-left:auto;display:flex;gap:4px"><span class="sw" style="background:#d63b3b"></span><span class="sw" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span></span></div>
+      </div></div>
+    </div>
+    <div>
+      <p class="cap"><b>B · Colour well open</b>: any colour, hex, eyedropper, presets. Picking green moves the ring.</p>
+      <div class="pn">
+        <div class="ph"><span class="on">Character</span><span>Paragraph</span><span>OpenType</span><span class="mn">···</span></div>
+        <div class="pb">
+          <div class="gh" style="margin-top:2px">Middle Eastern<span class="x">⌄</span></div>
+          <div class="r"><span class="dd" style="width:70px"><span style="font-size:12px">456</span></span><span style="flex:1"></span><span class="ibs"><span class="ib"><svg width="16" height="16"><use href="#eyeoff"/></svg></span><span class="ib"><svg width="16" height="16"><use href="#asl"/></svg></span></span></div>
+          <div class="r"><span class="hk"><svg width="16" height="16"><use href="#hrk"/></svg></span><span class="well" style="border-color:var(--ac)"><span class="sw" style="background:#2f9e5b"></span></span><span class="hex">2F9E5B</span><span style="margin-left:auto;display:flex;gap:4px"><span class="sw" style="background:#d63b3b"></span><span class="sw cur" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span></span></div>
+          <div class="pop" style="left:30px;top:84px;width:196px;padding:8px">
+            <div class="sv"><span class="knob" style="left:62%;top:42%;background:#2f9e5b"></span></div>
+            <div class="hue"><span class="knob" style="left:40%;top:4px;background:transparent"></span></div>
+            <div class="r" style="margin-top:6px"><span class="fld f1"><span class="u">#</span><span class="hex" style="color:var(--tx)">2F9E5B</span></span><span class="ib"><svg width="14" height="14"><use href="#pick"/></svg></span></div>
+            <div class="r" style="gap:4px"><span class="sw" style="background:#d63b3b"></span><span class="sw cur" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span><span style="margin-left:auto;font-size:10px;color:var(--mu)">Presets</span></div>
+          </div>
+        </div>
+      </div>
+      <div style="height:150px"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 3. FONT ROW ================= -->
+<section class="blk">
+  <h2><b>3</b>Font menu row · bilingual anatomy</h2>
+  <p class="why">The approved row from concept A (the owner's pick), taken apart. The Latin name leads, the Arabic name follows in the family's own face, markers stay small and grey, and the star sits at the far end so it never moves.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>Expanded rows</b> under the concept A header (owner pick: script first, Arabic chosen): normal · hover · selected.</p>
+      <div class="menu">
+        <div class="sr"><div class="search"><svg width="12" height="12"><use href="#mg"/></svg>Search fonts</div><div class="seg"><span>Auto</span><span>Aa</span><span class="on" lang="ar">أب</span></div></div>
+        <div class="seg segw"><span>All</span><span class="on">Arabic</span><span>Latin</span><span>Japanese</span><span>Thai</span></div>
+        <div class="seg cond"><span class="on">All</span><span>Naskh</span><span>Kufi</span><span>Ruq'ah</span><span>Diwani</span><span>Thuluth</span><span>Modern</span></div>
+        <div style="border-top:1px solid var(--line);margin:0 -4px 4px"></div>
+        <div class="fr"><div class="n">DecoType Naskh<span class="ar" dir="rtl" lang="ar" style="font-family:'DecoType Naskh','Geeza Pro'">ديكوتايب نسخ</span><span class="aat">AAT</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'DecoType Naskh','Geeza Pro'">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+        <div class="fr hov"><div class="n">Damascus<span class="ar" dir="rtl" lang="ar" style="font-family:Damascus,'Geeza Pro'">دمشق</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:Damascus,'Geeza Pro'">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+        <div class="fr sel"><div class="n">Geeza Pro<span class="ar" dir="rtl" lang="ar">جيزة برو</span><span class="st on" style="color:#fff">★</span></div><div class="s" dir="rtl" lang="ar">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+      </div>
+      <p class="cap" style="margin-top:20px"><b>Compact rows</b> (samples off): 24 px, names only.</p>
+      <div class="menu">
+        <div class="fr cmp"><div class="n">DecoType Naskh<span class="ar" dir="rtl" lang="ar" style="font-family:'DecoType Naskh','Geeza Pro'">ديكوتايب نسخ</span><span class="aat">AAT</span><span class="st">☆</span></div></div>
+        <div class="fr cmp hov"><div class="n">Damascus<span class="ar" dir="rtl" lang="ar" style="font-family:Damascus,'Geeza Pro'">دمشق</span><span class="st">☆</span></div></div>
+        <div class="fr cmp sel"><div class="n">Geeza Pro<span class="ar" dir="rtl" lang="ar">جيزة برو</span><span class="st on" style="color:#fff">★</span></div></div>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>Anatomy</b></p>
+      <div class="menu anrow" style="padding:18px 4px 6px">
+        <div class="fr"><div class="n"><span class="an" data-n="1">DecoType Naskh</span><span class="ar an" data-n="2" dir="rtl" lang="ar" style="font-family:'DecoType Naskh','Geeza Pro'">ديكوتايب نسخ</span><span class="aat an" data-n="3">AAT</span><span class="st an" data-n="4" style="opacity:1">☆</span></div><div class="s an" data-n="5" dir="rtl" lang="ar" style="margin-top:16px;font-family:'DecoType Naskh','Geeza Pro'">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+      </div>
+      <div class="anat">
+        <b>1</b><span>Latin name: 12 px, text colour. Always first, so the list sorts and scans in one language.</span>
+        <b>2</b><span>Arabic name: 12 px in the family's own face, muted, right-to-left. Hidden for non-Arabic fonts.</span>
+        <b>3</b><span>AAT marker: 9 px caps in a 3 px outline. Means Apple-only shaping; tooltip explains.</span>
+        <b>4</b><span>Favourite: 35 % at rest, full on hover, solid ★ when on. Pinned to the right edge.</span>
+        <b>5</b><span>Sample: 19 px, right-aligned for Arabic, left for Latin; truncates, never wraps.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 4. HISTORY ================= -->
+<section class="blk">
+  <h2><b>4</b>History panel · agent steps</h2>
+  <p class="why">Agent steps carry an orange dot and the agent's name on the right, so you can see who did what without reading. Filters narrow the list to one author; "Back to before this agent" undoes a whole agent run in one move.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>A · Flat list</b>. Selected = the current state (later steps are greyed, ready to redo). Hovering an agent step shows the rewind button.</p>
+      <div class="pn">
+        <div class="ph"><span class="on">History</span><span class="mn">···</span></div>
+        <div class="chips"><span class="chip on">All</span><span class="chip" title="Me"><svg width="12" height="12"><use href="#me"/></svg></span><span class="chip"><span class="dot"></span>Claude Code</span><span class="chip"><span class="dot"></span>Claude Code 2</span></div>
+        <div class="hl">
+          <div class="hr"><span class="ic"><svg width="14" height="14"><use href="#doc"/></svg></span>Open</div>
+          <div class="hr"><span class="ic"><svg width="14" height="14"><use href="#rect"/></svg></span>Rectangle</div>
+          <div class="hr"><span class="ic"><span class="dot"></span></span>New artboard<span class="who">Claude Code</span></div>
+          <div class="hr hov"><span class="ic"><span class="dot"></span></span>Type: Arabic headline<span class="act"><svg width="12" height="12"><use href="#undo"/></svg></span><span class="tip">Back to before this agent</span></div>
+          <div class="hr"><span class="ic"><span class="dot"></span></span>Font: Geeza Pro<span class="who">Claude Code</span></div>
+          <div class="hr sel"><span class="ic"><span class="dot"></span></span>Kashida: Auto<span class="who">Claude Code</span></div>
+          <div class="hr fut"><span class="ic"><svg width="14" height="14"><use href="#mv"/></svg></span>Move</div>
+          <div class="hr fut"><span class="ic"><span class="dot" style="opacity:.45"></span></span>Swatch: Brand gold<span class="who">Claude Code 2</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>B · Grouped by agent run</b>, filtered to Claude Code. Each run is one block; the footer acts on the run that holds the selection.</p>
+      <div class="pn">
+        <div class="ph"><span class="on">History</span><span class="mn">···</span></div>
+        <div class="chips"><span class="chip">All</span><span class="chip" title="Me"><svg width="12" height="12"><use href="#me"/></svg></span><span class="chip on"><span class="dot"></span>Claude Code</span><span class="chip"><span class="dot"></span>Claude Code 2</span></div>
+        <div class="hl">
+          <div class="grp"><span class="dot"></span><b>Claude Code</b>· 2 steps<span class="t">13:41</span></div>
+          <div class="hr in"><span class="ic"><span class="dot"></span></span>Rectangle ×3</div>
+          <div class="hr in"><span class="ic"><span class="dot"></span></span>Align centre</div>
+          <div class="grp"><span class="dot"></span><b>Claude Code</b>· 4 steps<span class="t">14:02</span></div>
+          <div class="hr in"><span class="ic"><span class="dot"></span></span>New artboard</div>
+          <div class="hr in hov"><span class="ic"><span class="dot"></span></span>Type: Arabic headline</div>
+          <div class="hr in"><span class="ic"><span class="dot"></span></span>Font: Geeza Pro</div>
+          <div class="hr in sel"><span class="ic"><span class="dot"></span></span>Kashida: Auto</div>
+        </div>
+        <div class="pf"><span class="btn"><svg width="12" height="12"><use href="#undo"/></svg>Back to before this agent</span></div>
+      </div>
+      <p class="note">In a filtered view the name column is dropped: the chip already says who.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 5. CANVAS PRESENCE ================= -->
+<section class="blk">
+  <h2><b>5</b>Canvas presence · agent at work</h2>
+  <p class="why">Orange shows where an agent is working; azure shows what you hold. When both apply to the same object, azure wins and the orange outline is not drawn.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>Artboard 300 × 200</b> while Claude Code works.</p>
+      <svg width="380" height="270" viewBox="0 0 380 270" style="background:#17191d;border:1px solid var(--line);border-radius:8px;display:block">
+        <rect x="40" y="50" width="300" height="200" fill="#f4f1ea"/>
+        <rect x="40" y="50" width="300" height="200" fill="none" stroke="#c76a20" stroke-width="1.5"/>
+        <text x="40" y="42" font-size="10.5" fill="#a2a8b3" font-family="Inter,system-ui">Poster A4</text>
+        <rect x="250" y="25" width="90" height="19" rx="3" fill="#c76a20"/>
+        <text x="295" y="38.3" font-size="11" font-weight="600" fill="#fff" text-anchor="middle" font-family="Inter,system-ui">Claude Code</text>
+        <!-- object 1: rect, full outline -->
+        <rect x="64" y="72" width="120" height="80" fill="#1f3a5f"/>
+        <rect x="63.5" y="71.5" width="121" height="81" fill="none" stroke="#c76a20" stroke-width="1"/>
+        <!-- object 2: arabic headline, 40% -->
+        <text x="312" y="210" font-size="30" fill="#1b1b1b" text-anchor="end" font-family="Geeza Pro">فاروس</text>
+        <rect x="237.5" y="183.5" width="80" height="35" fill="none" stroke="#c76a20" stroke-opacity=".4" stroke-width="1"/>
+        <!-- object 3: circle selected by human -->
+        <circle cx="262" cy="110" r="30" fill="#c9a227"/>
+        <rect x="231.5" y="79.5" width="61" height="61" fill="none" stroke="#0c8ce9" stroke-width="1"/>
+        <g fill="#fff" stroke="#0c8ce9" stroke-width="1"><rect x="228.5" y="76.5" width="6" height="6"/><rect x="259" y="76.5" width="6" height="6"/><rect x="289.5" y="76.5" width="6" height="6"/><rect x="228.5" y="107" width="6" height="6"/><rect x="289.5" y="107" width="6" height="6"/><rect x="228.5" y="137.5" width="6" height="6"/><rect x="259" y="137.5" width="6" height="6"/><rect x="289.5" y="137.5" width="6" height="6"/></g>
+      </svg>
+      <div class="anat" style="max-width:380px">
+        <b style="color:var(--ag)">—</b><span>Artboard: 1.5 px orange, held 4 s after the last step. Chip sits above the top-right corner, right edges aligned, 6 px gap.</span>
+        <b style="color:var(--ag)">—</b><span>Blue rectangle: just added, 1 px orange at full strength.</span>
+        <b style="color:var(--ag);opacity:.4">—</b><span>Arabic headline: same outline at 40 %, mid-fade (0.9 s).</span>
+        <b style="color:var(--ac)">—</b><span>Gold circle: the agent changed it, but you selected it, so only azure shows.</span>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>Chip</b>: two treatments, same 19 px height and 11 px semibold.</p>
+      <svg width="300" height="150" viewBox="0 0 300 150" style="background:#17191d;border:1px solid var(--line);border-radius:8px;display:block">
+        <text x="16" y="24" font-size="10" fill="#a2a8b3" font-family="Inter,system-ui">SOLID (recommended)</text>
+        <rect x="16" y="32" width="90" height="19" rx="3" fill="#c76a20"/><text x="61" y="45.3" font-size="11" font-weight="600" fill="#fff" text-anchor="middle" font-family="Inter,system-ui">Claude Code</text>
+        <rect x="114" y="32" width="102" height="19" rx="3" fill="#c76a20"/><text x="165" y="45.3" font-size="11" font-weight="600" fill="#fff" text-anchor="middle" font-family="Inter,system-ui">Claude Code 2</text>
+        <text x="16" y="84" font-size="10" fill="#a2a8b3" font-family="Inter,system-ui">OUTLINE (quieter, for long runs)</text>
+        <rect x="16.5" y="92.5" width="99" height="18" rx="3" fill="#17191d" stroke="#c76a20"/><circle cx="27" cy="101.5" r="3" fill="#c76a20"/><text x="71" y="105.3" font-size="11" font-weight="600" fill="#e7a36c" text-anchor="middle" font-family="Inter,system-ui">Claude Code</text>
+        <rect x="124.5" y="92.5" width="111" height="18" rx="3" fill="#17191d" stroke="#c76a20"/><circle cx="135" cy="101.5" r="3" fill="#c76a20"/><text x="185" y="105.3" font-size="11" font-weight="600" fill="#e7a36c" text-anchor="middle" font-family="Inter,system-ui">Claude Code 2</text>
+        <text x="16" y="136" font-size="10" fill="#6f7580" font-family="Inter,system-ui">Several agents stay orange; the name tells them apart.</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 6. HOME ================= -->
+<section class="blk">
+  <h2><b>6</b>Home screen</h2>
+  <p class="why">Only what you need to start: the greeting in both languages, two actions, presets and recent files. No rails, panels or menus until a file is open.</p>
+  <div class="win">
+    <div class="tbar"><div class="tl"><i></i><i></i><i></i></div><div class="tname"><svg width="14" height="14"><use href="#mark"/></svg>Varos</div></div>
+    <div class="hm">
+      <div class="hh"><div style="display:flex;align-items:center;gap:12px"><svg width="34" height="34"><use href="#mark"/></svg><h3>Welcome to Varos</h3></div><p dir="rtl" lang="ar">أهلاً بك في فاروس</p></div>
+      <div class="acts"><span class="btn pri">New file</span><span class="btn">Open…</span><span style="margin-left:auto;align-self:center;color:var(--dis);font-size:11px">⌘N · ⌘O</span></div>
+      <div class="cols">
+        <div>
+          <div class="lab">Start with</div>
+          <div class="cards">
+            <div class="card"><div class="th"><i style="width:30px;height:42px"></i></div><div class="nm">A4</div><div class="dm">210 × 297 mm</div></div>
+            <div class="card hov"><div class="th"><i style="width:40px;height:40px"></i></div><div class="nm">Post</div><div class="dm">1080 × 1080 px</div></div>
+            <div class="card"><div class="th"><i style="width:26px;height:46px"></i></div><div class="nm">Story</div><div class="dm">1080 × 1920 px</div></div>
+            <div class="card"><div class="th"><i style="width:56px;height:35px"></i></div><div class="nm">Web</div><div class="dm">1440 × 900 px</div></div>
+            <div class="card"><div class="th"><i style="width:34px;height:46px"></i></div><div class="nm">Poster</div><div class="dm">50 × 70 cm</div></div>
+            <div class="card"><div class="th"><i style="width:36px;height:36px;border-radius:9px"></i></div><div class="nm">Icon</div><div class="dm">1024 × 1024 px</div></div>
+          </div>
+        </div>
+        <div class="rec">
+          <div class="lab">Recent</div>
+          <div class="rr hov"><span class="tn"><i style="position:absolute;inset:5px 8px;background:#1f3a5f"></i></span><div style="min-width:0"><div class="nm">Ramadan poster.varos</div><div class="pt">Documents › Clients</div></div><span class="tm">2 h ago</span></div>
+          <div class="rr"><span class="tn" style="background:#c9a227"></span><div style="min-width:0"><div class="nm"><span dir="rtl" lang="ar">شعار المقهى</span>.varos</div><div class="pt">Desktop</div></div><span class="tm">Yesterday</span></div>
+          <div class="rr"><span class="tn" style="background:#2a2f38"></span><div style="min-width:0"><div class="nm">Icon set v3.varos</div><div class="pt">Documents › Varos</div></div><span class="tm">Oct 14</span></div>
+          <div class="rr"><span class="tn"></span><div style="min-width:0"><div class="nm">Menu card.svg</div><div class="pt">Downloads</div></div><span class="tm">Oct 9</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LEGEND ================= -->
+<section class="blk">
+  <h2>Tokens</h2>
+  <p class="why">One source for every colour above (lives in the theme file in code).</p>
+  <div class="leg">
+    <div class="lg"><i class="sw" style="background:#121418"></i>Background<span>#121418</span></div>
+    <div class="lg"><i class="sw" style="background:#1a1d23"></i>Panel<span>#1a1d23</span></div>
+    <div class="lg"><i class="sw" style="background:#22262e"></i>Surface (fields)<span>#22262e</span></div>
+    <div class="lg"><i class="sw" style="background:#2a2f38"></i>Hover<span>#2a2f38</span></div>
+    <div class="lg"><i class="sw" style="background:#0f1115"></i>Lit well (toggle on)<span>#0f1115</span></div>
+    <div class="lg"><i class="sw" style="background:#30363f"></i>Hairline<span>#30363f</span></div>
+    <div class="lg"><i class="sw" style="background:#eceef2"></i>Text<span>#eceef2</span></div>
+    <div class="lg"><i class="sw" style="background:#a2a8b3"></i>Muted<span>#a2a8b3</span></div>
+    <div class="lg"><i class="sw" style="background:#6f7580"></i>Disabled<span>#6f7580</span></div>
+    <div class="lg"><i class="sw" style="background:#0c8ce9"></i>Azure: selected / focus<span>#0c8ce9</span></div>
+    <div class="lg"><i class="sw" style="background:#c76a20"></i>Orange: agent only<span>#c76a20</span></div>
+  </div>
+  <ul class="rules">
+    <li><b>Radii</b> 3 px on controls, 8 px on panels, menus, cards.</li>
+    <li><b>No shadows.</b> Popovers separate by a hairline only.</li>
+    <li><b>Rows</b> 24 px; fields 20 px; labels 11 px muted; group heads 10 px caps.</li>
+    <li><b>Icons first</b> (owner, 2026-10-19): any control with an obvious icon is an icon; tooltips carry the words; text stays only where no icon reads clearly.</li>
+    <li><b>Text choices</b> (font-menu segments, filter chips, list rows) select in azure, as in the approved font menu.</li>
+    <li><b>Icon choices and toggles</b> (alignment, Direction, Kashida, Hide, As letters) light up: dark well, bright icon, no azure.</li>
+    <li><b>Mixed</b>: nothing lit, present values tinted with Hover, numbers read "–".</li>
+    <li><b>Arabic</b> always dir="rtl", right-aligned, in the font it names when shown as a sample.</li>
+    <li><b>Type</b> Inter / system-ui; decoration comes from type weight and colour only.</li>
+  </ul>
+</section>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Font Menu Filters</title>
+<style>
+:root{--bg:#121418;--panel:#1a1d23;--surf:#22262e;--hov:#2a2f38;--line:#30363f;--tx:#eceef2;--mu:#a2a8b3;--ac:#0c8ce9}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:12px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;padding:32px}
+header h1{font-size:18px;font-weight:600}
+header p{color:var(--mu);margin-top:4px;max-width:900px}
+.grid{display:flex;flex-wrap:wrap;gap:40px;margin-top:28px;align-items:flex-start}
+.col{width:360px}
+.col h2{font-size:13px;font-weight:600}
+.why{color:var(--mu);margin:4px 0 12px;min-height:34px}
+.cap{color:var(--mu);font-size:11px;margin:16px 0 6px}
+.menu{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.sr{display:flex;gap:6px;padding:8px}
+.search{flex:1;display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;background:var(--surf);border:1px solid var(--line);border-radius:3px;color:var(--mu)}
+.search svg,.btn svg{flex:none}
+.seg{display:flex;background:var(--surf);border:1px solid var(--line);border-radius:3px;padding:1px;gap:1px}
+.seg span{flex:1;text-align:center;padding:3px 7px;border-radius:2px;color:var(--mu);white-space:nowrap;font-size:11px}
+.seg .on{background:var(--ac);color:#fff}
+.seg.full{margin:0 8px 8px}
+.strip{display:flex;gap:4px;padding:0 8px 8px;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 85%,transparent)}
+.wrap{display:flex;flex-wrap:wrap;gap:4px}
+.chip{padding:3px 8px;border:1px solid var(--line);border-radius:3px;color:var(--mu);white-space:nowrap;font-size:11px}
+.chip.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.chip .arl{margin-left:5px;font-size:13px;color:var(--tx)}
+.chip.on .arl{color:#fff}
+.cond{margin:0 8px 8px;padding:6px;border:1px dashed var(--line);border-radius:3px}
+.cond .tag{font-size:10px;color:var(--mu);margin-bottom:5px}
+.cond .seg{margin:0}
+.list{border-top:1px solid var(--line);padding:4px}
+.r{padding:5px 8px 4px;border-radius:3px}
+.r.hov{background:var(--hov)}
+.r.sel{background:var(--ac);color:#fff}
+.n{display:flex;align-items:center;gap:6px;font-size:12px}
+.ar{color:var(--mu)}
+.aat{font-size:9px;letter-spacing:.06em;padding:0 4px;border:1px solid var(--line);border-radius:3px;color:var(--mu);line-height:14px}
+.st{margin-left:auto;color:var(--mu);opacity:.35}
+.st.on{color:var(--tx);opacity:1}
+.r.hov .st{opacity:1}
+.r.sel .ar,.r.sel .st,.r.sel .aat{color:#fff;border-color:rgba(255,255,255,.5)}
+.s{font-size:18px;line-height:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.s[dir=rtl]{text-align:right;font-size:19px}
+.foot{border-top:1px solid var(--line);padding:6px 10px;color:var(--mu);font-size:11px;display:flex;justify-content:space-between;gap:8px}
+.btn{display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;background:var(--surf);border:1px solid var(--line);border-radius:3px;color:var(--tx)}
+.btn.open{background:var(--hov)}
+.badge{background:var(--ac);color:#fff;border-radius:3px;padding:0 5px;font-size:10px;line-height:15px}
+.toks{display:flex;flex-wrap:wrap;gap:4px;padding:0 8px 8px;align-items:center}
+.tok{display:inline-flex;align-items:center;gap:2px;padding:2px 2px 2px 8px;background:var(--surf);border:1px solid var(--line);border-radius:3px;font-size:11px}
+.tok b{font-weight:500}
+.tok i{font-style:normal;color:var(--mu);padding:0 5px}
+.link{color:var(--mu);font-size:11px;margin-left:auto}
+.sec{padding:8px;border-top:1px solid var(--line)}
+.lab{font-size:10px;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.ck{display:flex;align-items:center;gap:8px;padding:3px 0}
+.ck span{width:12px;height:12px;border:1px solid var(--line);border-radius:3px;background:var(--surf)}
+.tabs{display:flex;border-bottom:1px solid var(--line);padding:4px 4px 0}
+.tabs span{flex:1;text-align:center;padding:7px 0 8px;color:var(--mu);border-radius:3px 3px 0 0}
+.tabs .on{background:var(--surf);color:var(--tx)}
+.body{display:flex;border-top:1px solid var(--line)}
+.rail{width:92px;flex:none;border-right:1px solid var(--line);padding:6px 4px}
+.rail .lab{padding:4px 6px 2px;margin:0}
+.ri{padding:3px 6px;border-radius:3px;color:var(--mu);font-size:11px;white-space:nowrap}
+.ri.on{background:var(--ac);color:#fff}
+.hr{height:1px;background:var(--line);margin:6px 2px}
+.body .list{border-top:0;flex:1;min-width:0}
+.legend{display:flex;align-items:center;gap:6px}
+.note{color:var(--mu);font-size:11px;margin-top:6px}
+.small{padding:12px;display:flex;flex-direction:column;gap:6px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><symbol id="mg" viewBox="0 0 12 12"><g fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="5" cy="5" r="3.6"/><path d="M7.7 7.7 11 11"/></g></symbol><symbol id="fn" viewBox="0 0 12 12"><path d="M1.5 2h9L7 6.3V10L5 9V6.3z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol></svg>
+
+<header>
+  <h1>Font menu: three ways to filter</h1>
+  <p>Real size (360 px menu), dark theme. Same six fonts and the same row states in every concept: Helvetica Neue is a favourite, Georgia is hovered, Geeza Pro is selected, DecoType Naskh carries the AAT marker. Pick one, or mix parts.</p>
+</header>
+
+<div class="grid">
+
+<!-- ============ A ============ -->
+<section class="col">
+  <h2>A · Script first</h2>
+  <p class="why">Arabic is a first-class script, not a bolt-on chip. Samples follow each font; Aa / أب pins one language.</p>
+  <div class="menu">
+    <div class="sr">
+      <div class="search"><svg width="12" height="12"><use href="#mg"/></svg>Search fonts</div>
+      <div class="seg"><span class="on">Auto</span><span>Aa</span><span lang="ar">أب</span></div>
+    </div>
+    <div class="seg full"><span class="on">All</span><span>Arabic</span><span>Latin</span><span>Japanese</span><span>Thai</span></div>
+    <div class="cond">
+      <div class="tag">Shows only when Arabic is picked above</div>
+      <div class="seg"><span class="on">All</span><span>Naskh</span><span>Kufi</span><span>Ruq'ah</span><span>Diwani</span><span>Thuluth</span><span>Modern</span></div>
+    </div>
+    <div class="strip"><span class="chip">★</span><span class="chip on">Any Kind</span><span class="chip">Serif</span><span class="chip">Sans Serif</span><span class="chip">Rounded</span><span class="chip">Script</span><span class="chip">Monospaced</span><span class="chip">Decorative</span></div>
+    <div class="list">
+      <div class="r"><div class="n">Helvetica Neue<span class="st on">★</span></div><div class="s" style="font-family:'Helvetica Neue',sans-serif">Sample copy</div></div>
+      <div class="r hov"><div class="n">Georgia<span class="st">☆</span></div><div class="s" style="font-family:Georgia,serif">Sample copy</div></div>
+      <div class="r"><div class="n">Avenir Next<span class="st">☆</span></div><div class="s" style="font-family:'Avenir Next',sans-serif">Sample copy</div></div>
+      <div class="r sel"><div class="n">Geeza Pro<span class="ar" dir="rtl" lang="ar">جيزة برو</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'Geeza Pro',serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+      <div class="r"><div class="n">DecoType Naskh<span class="ar" dir="rtl" lang="ar">ديكوتايب نسخ</span><span class="aat">AAT</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'DecoType Naskh',serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+      <div class="r"><div class="n">Diwan Kufi<span class="ar" dir="rtl" lang="ar">ديوان كوفي</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'Diwan Kufi',sans-serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ B ============ -->
+<section class="col">
+  <h2>B · Filter drawer</h2>
+  <p class="why">All chips live in one drawer behind Filters, so the list stays tall. Active filters show as removable tokens.</p>
+  <div class="menu">
+    <div class="sr">
+      <div class="search"><svg width="12" height="12"><use href="#mg"/></svg>Search fonts</div>
+      <div class="btn"><svg width="12" height="12"><use href="#fn"/></svg>Filters<span class="badge">2</span></div>
+    </div>
+    <div class="toks">
+      <span class="tok">Script: <b>Latin, Arabic</b><i>×</i></span>
+      <span class="tok">Kind: <b>Serif, Sans</b><i>×</i></span>
+      <span class="link">Clear</span>
+    </div>
+    <div class="list">
+      <div class="r"><div class="n">Helvetica Neue<span class="st on">★</span></div><div class="s" style="font-family:'Helvetica Neue',sans-serif">Sample copy</div></div>
+      <div class="r hov"><div class="n">Georgia<span class="st">☆</span></div><div class="s" style="font-family:Georgia,serif">Sample copy</div></div>
+      <div class="r"><div class="n">Avenir Next<span class="st">☆</span></div><div class="s" style="font-family:'Avenir Next',sans-serif">Sample copy</div></div>
+      <div class="r sel"><div class="n">Geeza Pro<span class="ar" dir="rtl" lang="ar">جيزة برو</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'Geeza Pro',serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+      <div class="r"><div class="n">DecoType Naskh<span class="ar" dir="rtl" lang="ar">ديكوتايب نسخ</span><span class="aat">AAT</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'DecoType Naskh',serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+      <div class="r"><div class="n">Diwan Kufi<span class="ar" dir="rtl" lang="ar">ديوان كوفي</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'Diwan Kufi',sans-serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+    </div>
+    <div class="foot"><span>148 fonts</span><span>2 filters on</span></div>
+  </div>
+  <p class="cap">Same menu with the drawer open (it pushes the list down; Done folds it away)</p>
+  <div class="menu">
+    <div class="sr">
+      <div class="search"><svg width="12" height="12"><use href="#mg"/></svg>Search fonts</div>
+      <div class="btn open"><svg width="12" height="12"><use href="#fn"/></svg>Filters<span class="badge">2</span></div>
+    </div>
+    <div class="sec"><div class="lab">Script</div><div class="wrap"><span class="chip">All</span><span class="chip on">Arabic</span><span class="chip on">Latin</span><span class="chip">Japanese</span><span class="chip">Thai</span></div></div>
+    <div class="sec"><div class="lab">Kind</div><div class="wrap"><span class="chip">Any</span><span class="chip on">Serif / Mincho</span><span class="chip on">Sans / Gothic</span><span class="chip">Rounded</span><span class="chip">Script / Brush</span><span class="chip">Mono</span><span class="chip">Decorative</span></div></div>
+    <div class="sec"><div class="lab">Arabic style</div><div class="wrap"><span class="chip on">All Arabic</span><span class="chip">Naskh</span><span class="chip">Kufi</span><span class="chip">Ruq'ah</span><span class="chip">Diwani</span><span class="chip">Thuluth</span><span class="chip">Modern Sans</span></div></div>
+    <div class="sec"><div class="lab">Show only</div>
+      <div class="ck"><span></span>★ Favourites</div>
+      <div class="ck"><span></span>Fonts with the <span class="aat" style="width:auto;height:auto">AAT</span> marker</div>
+    </div>
+    <div class="foot"><span>Reset</span><span style="color:var(--tx)">Done</span></div>
+  </div>
+</section>
+
+<!-- ============ C ============ -->
+<section class="col">
+  <h2>C · Tabs + facets</h2>
+  <p class="why">Tabs pick the world; a slim rail holds grouped facets. On the Arabic tab the rail shows style groups only.</p>
+  <div class="menu">
+    <div class="tabs"><span class="on">All</span><span>★ Favs</span><span>Arabic</span><span>Latin</span><span>CJK</span></div>
+    <div class="sr">
+      <div class="search"><svg width="12" height="12"><use href="#mg"/></svg>Search fonts</div>
+    </div>
+    <div class="body">
+      <div class="rail">
+        <div class="lab">Kind</div>
+        <div class="ri on">Any</div><div class="ri">Serif</div><div class="ri">Sans Serif</div><div class="ri">Rounded</div><div class="ri">Script</div><div class="ri">Mono</div><div class="ri">Decorative</div>
+        <div class="hr"></div>
+        <div class="lab">Arabic</div>
+        <div class="ri on">All</div><div class="ri">Naskh</div><div class="ri">Kufi</div><div class="ri">Ruq'ah</div><div class="ri">Diwani</div><div class="ri">Thuluth</div><div class="ri">Modern</div>
+      </div>
+      <div class="list">
+        <div class="r"><div class="n">Helvetica Neue<span class="st on">★</span></div><div class="s" style="font-family:'Helvetica Neue',sans-serif">Sample copy</div></div>
+        <div class="r hov"><div class="n">Georgia<span class="st">☆</span></div><div class="s" style="font-family:Georgia,serif">Sample copy</div></div>
+        <div class="r"><div class="n">Avenir Next<span class="st">☆</span></div><div class="s" style="font-family:'Avenir Next',sans-serif">Sample copy</div></div>
+        <div class="r sel"><div class="n">Geeza Pro<span class="ar" dir="rtl" lang="ar">جيزة برو</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'Geeza Pro',serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+        <div class="r"><div class="n">DecoType Naskh<span class="ar" dir="rtl" lang="ar">ديكوتايب نسخ</span><span class="aat">AAT</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'DecoType Naskh',serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+        <div class="r"><div class="n">Diwan Kufi<span class="ar" dir="rtl" lang="ar">ديوان كوفي</span><span class="st">☆</span></div><div class="s" dir="rtl" lang="ar" style="font-family:'Diwan Kufi',sans-serif">سَلامٌ على الخَطِّ العَرَبيّ</div></div>
+      </div>
+    </div>
+    <div class="foot"><span class="legend"><span class="aat">AAT</span>Apple shaping: looks right on Mac only</span></div>
+  </div>
+</section>
+
+<!-- ============ Arabic style groups ============ -->
+<section class="col">
+  <h2>Arabic style groups, two treatments</h2>
+  <p class="why">Segmented: one pick, fixed width, fast to scan. Chips: wrap, allow multi-select, each name in its own style.</p>
+  <div class="menu small">
+    <div class="lab">Segmented</div>
+    <div class="seg"><span>All</span><span class="on">Naskh</span><span>Kufi</span><span>Ruq'ah</span><span>Diwani</span><span>Thuluth</span><span>Modern</span></div>
+    <p class="note">One pick at a time. Fits 360 px only with short labels.</p>
+    <div class="lab" style="margin-top:10px">Chips</div>
+    <div class="wrap">
+      <span class="chip">All Arabic</span>
+      <span class="chip on">Naskh<span class="arl" dir="rtl" lang="ar" style="font-family:'DecoType Naskh',serif">نسخ</span></span>
+      <span class="chip">Kufi<span class="arl" dir="rtl" lang="ar" style="font-family:'Diwan Kufi',sans-serif">كوفي</span></span>
+      <span class="chip">Ruq'ah<span class="arl" dir="rtl" lang="ar" style="font-family:'Aref Ruqaa','Geeza Pro',serif">رقعة</span></span>
+      <span class="chip">Diwani<span class="arl" dir="rtl" lang="ar" style="font-family:Farah,'Geeza Pro',serif">ديواني</span></span>
+      <span class="chip">Thuluth<span class="arl" dir="rtl" lang="ar" style="font-family:'Diwan Thuluth',serif">ثلث</span></span>
+      <span class="chip">Modern Sans<span class="arl" dir="rtl" lang="ar" style="font-family:'Geeza Pro',sans-serif">حديث</span></span>
+    </div>
+    <p class="note">Wraps to two lines; Ruq'ah falls back to Geeza Pro (no Ruq'ah face ships with macOS).</p>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
