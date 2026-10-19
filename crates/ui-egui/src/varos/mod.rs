@@ -14,10 +14,20 @@ pub mod names;
 #[cfg(test)]
 mod perf_tests;
 pub(crate) mod profile;
+// Varos: several icon panels open at once, stacked beside the icon column.
+pub(crate) mod panel_stack;
 pub(crate) mod shortcuts;
 #[cfg(test)]
 mod tests_agents;
+#[cfg(test)]
+mod tests_panel_stack;
+#[cfg(test)]
+mod tests_text_scale;
+#[cfg(test)]
+mod tests_zoom;
 pub mod theme;
+// Varos: General › Smooth Zoom (off: every zoom lands in one frame).
+pub(crate) mod zoom;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;

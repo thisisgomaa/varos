@@ -489,6 +489,10 @@ pub struct UiState {
     /// default (`crate::varos::middle_eastern_ui::default_on`); later the user's own choice stands.
     #[serde(default)]
     pub varos_middle_eastern: bool,
+    /// Varos: the icon panels popped out at once and the dock's keep-open mode
+    /// (`crate::varos::panel_stack`).
+    #[serde(default)]
+    pub varos_panel_stack: crate::varos::panel_stack::PanelStack,
 }
 
 /// The desktop window's geometry, kept across launches.
@@ -800,6 +804,7 @@ impl Default for UiState {
             glyphs_preview: 0,
             window: None,
             varos_middle_eastern: false,
+            varos_panel_stack: Default::default(),
         }
     }
 }

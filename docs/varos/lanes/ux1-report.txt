@@ -1,0 +1,105 @@
+lane-ux1 report — 2026-10-19 — implementer: Opus 5.5 — base 86e24d2a (varos-next main). Not committed.
+
+Three owner requests: instant zoom, several panels open at once, outer scale handles on area type.
+
+1. ZOOM WITHOUT GLIDE ("Smooth Zoom" preference, off by default)
+What the user sees: Preferences › General › Options has a new "Smooth Zoom" checkbox, off.
+Off: Cmd-wheel, Alt-wheel and (with Zoom with Mouse Wheel) a plain wheel notch zoom all at once,
+in the frame the notch arrives, with no glide frames. On: upstream's glide as before.
+Where the glide came from: egui spreads mouse-wheel notches over ~0.1 s (Cmd-wheel is egui's
+zoom, Alt-wheel a smoothed scroll the canvas turns into zoom), and with Zoom with Mouse Wheel the
+canvas glides each notch itself (#888, WHEEL_GLIDE). Cmd +/-, Actual Size/Fit, the Zoom tool's
+click and marquee, trackpad pinch and the Navigator were already instant.
+Name: "Smooth Zoom", not "Animate Zoom": Performance › "Animated Zoom" already exists (the Zoom
+tool's drag/hold zoom, an upstream preference) and two near-identical names would confuse.
+That press-and-hold zoom of the Zoom tool is a user-driven continuous zoom, left as it was.
+Files:
+  + crates/ui-egui/src/varos/zoom.rs (instant(): this frame's raw wheel/pinch events)
+  + crates/ui-egui/src/varos/tests_zoom.rs (4 tests)
+  ~ crates/engine/src/lib.rs (+4: Prefs.smooth_zoom field + default false, marked Varos)
+  ~ crates/engine/src/cmd/prefscmds.rs (+1: PREF_SPECS row smoothZoom, General › Options)
+  ~ crates/ui-egui/src/canvas.rs (+7 hook in handle_input; +1 line in upstream test
+    wheel_notches_zoom_in_a_glide, which now turns smoothZoom on because the glide is opt-in)
+  ~ 23 catalogs crates/ui-egui/src/i18n/*.tsv (+2 each: "# Varos:" heading + "Smooth Zoom")
+Tests: without_smooth_zoom_a_notch_zooms_in_one_frame (Cmd, Alt, wheel-zooms plain and Alt:
+first frame == final, > 1.01), with_smooth_zoom_a_notch_glides_to_the_same_zoom (first frame
+partial, same final zoom within 1e-3), pinch_and_zoom_in_land_at_once, smooth_zoom_is_off_by_default.
+
+2. SEVERAL PANELS OPEN AT ONCE (dock "keep open" mode, on by default)
+What the user sees: clicking Character then Paragraph in the right icon column keeps both open.
+They stack top to bottom left of the column (oldest on top, newest below), each card with the
+same title strip, panel menu and » (put away) as upstream's flyout; the stack scrolls when taller
+than the window. Every open panel's icon is lit. Clicking a lit icon closes only that panel;
+each card's » closes only its own. With one panel open it looks exactly as before (upstream draws
+it); from two on the stack draws them. Window › <panel> toggles the same way and ticks every open
+panel. The open set is saved in ui.json (UiState.varos_panel_stack {keep_open, open}).
+User Interface › Auto-Collapse Iconic Panels on = flyouts are transient, so the column goes back
+to upstream's one-at-a-time swap. keep_open=false also gives upstream's swap (no UI toggle yet).
+Design: upstream's UiState.open_panel stays "the newest open panel", so all upstream code
+(workspaces, docking, floating, shortcuts) keeps working; varos::panel_stack::reconcile follows
+what upstream did to open_panel each frame (opened -> added; put away -> removed; floated or back
+in the expanded dock -> leaves the stack; a workspace applied -> stack restarts from its panel).
+Files:
+  + crates/ui-egui/src/varos/panel_stack.rs
+  + crates/ui-egui/src/varos/tests_panel_stack.rs (5 tests, real clicks)
+  ~ crates/ui-egui/src/state.rs (+5: varos_panel_stack field + default)
+  ~ crates/ui-egui/src/dock.rs (+6/-2: icon lit/toggle hook; stack hook at top of floating_panel)
+  ~ crates/ui-egui/src/panel_docking.rs (+5/-4: same two hooks for the shared-docking icon rail
+    and its collapsed icons)
+  ~ crates/ui-egui/src/menus.rs (+3/-3: Window › panel toggles and ticks via panel_stack)
+Tests: opening_a_second_panel_keeps_the_first_open, a_cards_close_button_closes_only_that_panel,
+without_keep_open_an_icon_swaps_the_flyout (keep_open off, and Auto-Collapse on),
+the_open_panels_are_saved_with_the_ui_state (+ old profiles without the field load with
+defaults), floating_or_a_workspace_takes_panels_out_of_the_stack.
+
+3. OUTER SCALE HANDLES ON AREA TYPE
+What the user sees: with area type selected (Selection tool, bounding box on), the 8 square
+handles still resize the frame (text reflows, same size). Four small filled circles in the
+selection colour sit 10 screen points outside each corner (diagonally); dragging one scales the
+whole object like a shape: frame, type size and leading together, always in proportion (no Shift
+needed), Alt scales about the centre. The cursor over them is the corner's diagonal resize cursor.
+One undo step ("Scale"). They are hit-tested before the frame handles. Rectangles and other
+objects are unchanged (their corners keep the rotate zone). Smart Guides snapping applies as for
+any bounding-box scale.
+Mechanism: the same object.transform the bounding box uses, without typeAreas (upstream's own
+"scale the type too" path: the type's size and leading scale through its transform and the
+Character panel reports the scaled size, #1034). No engine change.
+Files:
+  + crates/tools/src/varos_text_scale.rs (geometry, hit test, 1 unit test)
+  + crates/ui-egui/src/varos/tests_text_scale.rs (4 tests through Session::pointer)
+  ~ crates/tools/src/lib.rs (+2: module)
+  ~ crates/tools/src/select.rs (+26/-4: Scaling.outer field; press/cursor hooks before the frame
+    handles; drag keeps proportion and subtracts the grab offset)
+  ~ crates/ui-egui/src/canvas.rs (+4: draw the four circles after the 8 handles)
+Tests: an_outer_handle_scales_type_and_frame_together (uneven drag -> width and height x k,
+effective type size 12 -> 12k, anchored at the opposite corner, one undo restores), alt_on_an_
+outer_handle_scales_about_the_centre, a_corner_handle_reshapes_the_frame_only (+60/+20 frame,
+size stays 12), only_area_type_has_outer_handles; tools: the_outer_handle_scales_whole_and_in_
+proportion (Begin "Scale", no typeAreas, uniform x1.5 matrix; the corner still "Resize Type Area").
+
+GATES (run in this worktree, one at a time, -j 4)
+  cargo build --offline -j 4 -p vectorcraft                       -> Finished, exit 0
+  cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-tools -p vectorcraft-engine
+    -- --test-threads=4                                            -> all ok, 0 failed
+    (ui-egui lib 1737 passed/2 ignored, engine lib 2574 passed/2 ignored, tools 435 passed,
+     engine integration tests all ok)
+  cargo clippy --offline -j 4 -p vectorcraft-engine -p vectorcraft-tools -p vectorcraft-ui-egui
+    --lib -- -D warnings                                          -> Finished, no warnings
+  cargo fmt --all -- --check                                      -> ok
+  git diff --check (+ trailing-space grep on the new files)       -> ok
+First test run had 5 failures, all fixed: 4 were my harness (icon positions shift once a panel
+opens; the clicks now re-read them), 1 upstream test (the_type_widget_shows_which_kind_the_type_is)
+counted my circles as type widgets because they had the same 3.5 px radius; the outer handles are
+now 3 px, which also tells them apart from the type widget visually.
+
+LEFT OUT / RISKS
+- No owner hand test yet: feel of instant zoom, the stacked panels' look, the outer handles' size
+  and offset (10 pt, 3 px circles) are provisional design choices for the owner.
+- Upstream closes its flyout on any panel-layout change (float/dock/move commands set
+  open_panel = None). With the stack that closes the newest open panel only; the others stay.
+- keep_open has no UI switch (always on unless Auto-Collapse is on); add one if the owner wants it.
+- The stack's cards reuse upstream's flyout header look (chevrons-right as close), 8 px card radius.
+  Properties/Layers in a stack of several get 320 pt of height each.
+- Outer handles show when ANY selected object is area type (mixed selections scale everything).
+- Not run: cargo xtask ci, clippy --all-targets, wasm checks; docs/mcp.md prose does not list the
+  new smoothZoom preference.

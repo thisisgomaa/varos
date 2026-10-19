@@ -694,6 +694,13 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     let mut turn = turn_before;
     let (pointer, m, space, (factor, scroll)) =
         ui.input(|i| (i.pointer.clone(), i.modifiers, i.key_down(egui::Key::Space), wheel(i, wheel_zooms, line, rect.height(), &mut turn)));
+    // Varos: General › Smooth Zoom off (the default): the zoom lands in this frame, no glide.
+    let (factor, scroll) = if app.session.prefs.smooth_zoom {
+        (factor, scroll)
+    } else {
+        let alt = turn.alt;
+        ui.input(|i| crate::varos::zoom::instant(i, wheel_zooms, alt, &mut turn.glide, line, rect.height(), WHEEL_ZOOM, (factor, scroll)))
+    };
     if turn != turn_before {
         ui.data_mut(|d| d.insert_temp(turn_id, turn));
     }
@@ -2480,6 +2487,10 @@ fn selection_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf, curve
             let hr = egui::Rect::from_center_size(c, vec2(6.0 + grow, 6.0 + grow));
             p.rect_filled(hr, 0.0, Color32::WHITE);
             p.rect_stroke(hr, 0.0, Stroke::new(1.0, color), StrokeKind::Inside);
+        }
+        // Varos: area type's outer corner handles (scale it whole), filled circles past the corners.
+        for (_, q) in vectorcraft_tools::varos_text_scale::handles(&st.doc, &st.selection, &b, xf.zoom) {
+            p.circle_filled(xf.to_screen(q), vectorcraft_tools::varos_text_scale::RADIUS_PX + grow / 2.0, color);
         }
         // The type widget beside it: hollow on point type, filled on area type.
         if let Some(w) = vectorcraft_tools::typewidget::TypeWidget::of(&st.doc, &st.selection, &b, xf.zoom) {
@@ -5690,6 +5701,7 @@ mod tests {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
         app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
         app.session.execute("prefs.set", &json!({"key": "zoomWithMouseWheel", "value": true})).unwrap();
+        app.session.execute("prefs.set", &json!({"key": "smoothZoom", "value": true})).unwrap(); // Varos: the glide is opt-in
         let ctx = egui::Context::default();
         let run = |app: &mut VectorcraftApp| {
             let mut raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), ..Default::default() };

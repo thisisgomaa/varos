@@ -66,13 +66,13 @@ fn toggle(app: &mut VectorcraftApp, collapsed: bool) {
 /// One icon of the column: a click pops its panel out (or puts it away); dragged out of the
 /// column (`column`), the panel floats.
 fn panel_icon(app: &mut VectorcraftApp, ui: &mut Ui, id: &'static str, label: &str, icon: &str, _column: Rect) {
-    let open = app.ui.open_panel.as_deref() == Some(id);
+    let open = crate::varos::panel_stack::is_open(app, id); // Varos: every open panel's icon is lit
     // Its own id: the icons below it move up when it floats, and mustn't take over its drag.
     let (_, rect) = ui.allocate_space(vec2(30.0, 30.0));
     let resp = widgets::paint_icon_button(ui, ui.interact(rect, ui.id().with(("panel-icon", id)), Sense::click_and_drag()), icon, label, open);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, ui.is_enabled(), open, tl!(label)));
     if resp.clicked() {
-        app.ui.open_panel = if open { None } else { Some(id.to_string()) };
+        crate::varos::panel_stack::toggle(app, id); // Varos: keep-open toggles this panel only
     }
     crate::panel_docking::legacy_tab(app, ui, id, &resp);
 }
@@ -306,6 +306,10 @@ pub(crate) fn panel_tabs(
 /// A panel popped out next to the icon column: an icon panel, or one of the tabbed group's panels
 /// while the dock is collapsed. Dragging its title floats it.
 pub fn floating_panel(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    // Varos: two or more panels open at once stack beside the column instead.
+    if crate::varos::panel_stack::show(app, ctx) {
+        return;
+    }
     let open = app.ui.open_panel.as_deref();
     let Some(id) =
         open.and_then(|p| crate::state::all_panels().map(|(q, _)| q).find(|q| *q == p).or_else(|| crate::panels::library_panel::intern(p)))
