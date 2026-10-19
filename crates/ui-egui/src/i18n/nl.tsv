@@ -5246,24 +5246,15 @@ swatch	Bright Violet	Felviolet
 	Guessed from the font's name; fonts it can't place are under All Arabic	Geschat op de naam van het lettertype; lettertypen zonder indeling staan onder Alle Arabische
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-vormgeving: dit lettertype wordt gezet met zijn eigen morx-tabellen, niet met OpenType-regels voor Arabisch
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Kashida
 	No kashida: word spacing alone justifies the lines	Geen kashida: alleen de woordafstand lijnt de regels uit
 	Justified lines take tatweels in their Arabic words before word spacing	Uitgevulde regels krijgen tatweels in hun Arabische woorden vóór woordafstand
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Dieper: meer tatweels per woord en meer van de ruimte van elke regel; ook de laatste regel van een uitgevulde alinea met uitgelijnde laatste regel krijgt kashida
-	Tatweels in the Arabic words of justified right-to-left lines	Tatweels in de Arabische woorden van uitgevulde regels van rechts naar links
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Hoeveel van de ruimte van een regel kashida vult en hoeveel tatweels een woord krijgt (50: evenwichtig)
-	Mixed: the selected paragraphs differ	Gemengd: de geselecteerde alinea’s verschillen
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Richting
-	Paragraph direction	Alinearichting
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Auto: volgens de eerste letter van de alinea
-	Harakat	Harakat
 	Colour the harakat (Arabic vowel marks) apart from their letters	De harakat (Arabische klinkertekens) apart van hun letters kleuren
 	Gold	Goud
 	Hide the harakat: they stay in the text	Harakat verbergen: ze blijven in de tekst
-	As Letters	Als letters
 	Give the harakat their letters' colour again	De harakat weer de kleur van hun letters geven
 	Style Harakat	Harakat opmaken
 	Arabic Letters	Arabische letters
@@ -5306,3 +5297,14 @@ swatch	Bright Violet	Felviolet
 	Oct	okt
 	Nov	nov
 	Dec	dec
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Midden-Oosten
+	Show or hide the Middle Eastern options	Opties voor het Midden-Oosten tonen of verbergen
+	Auto direction: from the paragraph's first letter, now right to left	Automatische richting: volgens de eerste letter van de alinea, nu van rechts naar links
+	Auto direction: from the paragraph's first letter, now left to right	Automatische richting: volgens de eerste letter van de alinea, nu van links naar rechts
+	Kashida strength	Kashida-sterkte
+	Mixed: the selected text differs	Gemengd: de geselecteerde tekst verschilt
+	Harakat colour: click for any colour	Harakat-kleur: klik voor een willekeurige kleur
+	As letters	Als letters
+	Saturation and brightness	Verzadiging en helderheid
+	Hex colour	Hexkleur

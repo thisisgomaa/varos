@@ -4109,24 +4109,15 @@ lighting	Light	光源
 	Guessed from the font's name; fonts it can't place are under All Arabic	依字體名稱推測；無法歸類的字體位於「全部阿拉伯文」
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT 塑形：此字體使用自身的 morx 表排版，而非 OpenType 阿拉伯文規則
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	卡希達
 	No kashida: word spacing alone justifies the lines	無卡希達：僅以字間距使各行左右對齊
 	Justified lines take tatweels in their Arabic words before word spacing	左右對齊的行先在阿拉伯文單字中加入延伸符，再調整字間距
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	更強：每個單字加入更多延伸符，填滿每行更多的空白；末行對齊的左右對齊段落的末行也加入卡希達
-	Tatweels in the Arabic words of justified right-to-left lines	由右至左左右對齊的行中阿拉伯文單字裡的延伸符
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	卡希達填滿一行空白的多寡，以及每個單字加入多少延伸符（50：均衡）
-	Mixed: the selected paragraphs differ	混合：所選段落的設定不同
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	方向
-	Paragraph direction	段落方向
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	自動：依段落的第一個字母
-	Harakat	母音符號
 	Colour the harakat (Arabic vowel marks) apart from their letters	將母音符號（阿拉伯文母音標記）與字母分開著色
 	Gold	金色
 	Hide the harakat: they stay in the text	隱藏母音符號：它們仍在文字中
-	As Letters	同字母
 	Give the harakat their letters' colour again	讓母音符號恢復其字母的顏色
 	Style Harakat	母音符號樣式
 	Arabic Letters	阿拉伯文字母
@@ -4170,3 +4161,14 @@ lighting	Light	光源
 	Oct	10月
 	Nov	11月
 	Dec	12月
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	中東
+	Show or hide the Middle Eastern options	顯示或隱藏中東選項
+	Auto direction: from the paragraph's first letter, now right to left	自動方向：依段落的第一個字母，目前為從右到左
+	Auto direction: from the paragraph's first letter, now left to right	自動方向：依段落的第一個字母，目前為從左到右
+	Kashida strength	卡希達強度
+	Mixed: the selected text differs	混合：所選文字的設定不同
+	Harakat colour: click for any colour	母音符號顏色：按一下選擇任意顏色
+	As letters	同字母
+	Saturation and brightness	飽和度和亮度
+	Hex colour	十六進位顏色

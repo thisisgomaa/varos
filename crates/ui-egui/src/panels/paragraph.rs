@@ -196,13 +196,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         alignment_buttons(app, ui, &para, 28.0);
         // Varos: Paragraph Direction is the Middle Eastern row below (Auto · RTL · LTR).
     });
-    // Varos: the Middle Eastern row (Paragraph Direction), with the Middle Eastern options.
-    crate::varos::middle_eastern_ui::paragraph_rows(app, ui, &para, rtl);
-    // Varos: kashida controls, when any paragraph the panel acts on runs right to left (the ones
-    // kashida stretches).
-    if crate::varos::kashida_ui::shown(app, rtl) {
-        crate::varos::kashida_ui::controls(app, ui, &para);
-    }
+    // Varos: the Middle Eastern group (Direction; Kashida and Strength for right-to-left paragraphs).
+    crate::varos::middle_eastern_ui::paragraph_group(app, ui, &para, rtl);
     ui.add_space(4.0);
     let fw = ((ui.available_width() - 66.0) / 2.0).clamp(60.0, 100.0);
     // Indents and paragraph spacing are distances (General); type sizes follow Units ▸ Type.

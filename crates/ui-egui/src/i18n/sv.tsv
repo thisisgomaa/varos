@@ -5176,24 +5176,15 @@ theme	Appearance	Utseende
 	Guessed from the font's name; fonts it can't place are under All Arabic	Gissat utifrån teckensnittets namn; teckensnitt utan grupp finns under All arabiska
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-formning: teckensnittet sätts med sina egna morx-tabeller, inte med OpenType-regler för arabiska
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Kashida
 	No kashida: word spacing alone justifies the lines	Ingen kashida: bara ordmellanrummet justerar raderna
 	Justified lines take tatweels in their Arabic words before word spacing	Justerade rader får tatweels i sina arabiska ord före ordmellanrum
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Djupare: fler tatweels per ord och mer av varje rads utrymme; även sista raden i ett justerat stycke med justerad sista rad får kashida
-	Tatweels in the Arabic words of justified right-to-left lines	Tatweels i de arabiska orden på justerade rader från höger till vänster
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Hur mycket av en rads utrymme kashida fyller och hur många tatweels ett ord får (50: balanserat)
-	Mixed: the selected paragraphs differ	Blandat: de markerade styckena skiljer sig åt
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Riktning
-	Paragraph direction	Styckets riktning
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Auto: efter styckets första bokstav
-	Harakat	Harakat
 	Colour the harakat (Arabic vowel marks) apart from their letters	Färga harakat (arabiska vokaltecken) för sig, skilt från bokstäverna
 	Gold	Guld
 	Hide the harakat: they stay in the text	Dölj harakat: de finns kvar i texten
-	As Letters	Som bokstäverna
 	Give the harakat their letters' colour again	Ge harakat bokstävernas färg igen
 	Style Harakat	Formatera harakat
 	Arabic Letters	Arabiska bokstäver
@@ -5237,3 +5228,14 @@ varos-home	Web	Webb
 	Oct	okt
 	Nov	nov
 	Dec	dec
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Mellanöstern
+	Show or hide the Middle Eastern options	Visa eller dölj alternativen för Mellanöstern
+	Auto direction: from the paragraph's first letter, now right to left	Automatisk riktning: efter styckets första bokstav, nu från höger till vänster
+	Auto direction: from the paragraph's first letter, now left to right	Automatisk riktning: efter styckets första bokstav, nu från vänster till höger
+	Kashida strength	Kashida-styrka
+	Mixed: the selected text differs	Blandat: den markerade texten skiljer sig åt
+	Harakat colour: click for any colour	Harakatfärg: klicka för valfri färg
+	As letters	Som bokstäverna
+	Saturation and brightness	Mättnad och ljusstyrka
+	Hex colour	Hexfärg

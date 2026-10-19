@@ -4814,24 +4814,15 @@ theme	Appearance	Giao diện
 	Guessed from the font's name; fonts it can't place are under All Arabic	Đoán từ tên phông; phông không xếp được nằm trong Tất cả Ả Rập
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Định hình AAT: phông này được sắp chữ bằng bảng morx riêng, không theo quy tắc OpenType cho tiếng Ả Rập
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Kashida
 	No kashida: word spacing alone justifies the lines	Không kashida: chỉ khoảng cách từ căn đều các dòng
 	Justified lines take tatweels in their Arabic words before word spacing	Các dòng căn đều nhận tatweel trong các từ Ả Rập trước khoảng cách từ
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Sâu hơn: nhiều tatweel hơn mỗi từ và lấp nhiều khoảng trống hơn ở mỗi dòng; dòng cuối của đoạn căn đều có dòng cuối được canh lề cũng nhận kashida
-	Tatweels in the Arabic words of justified right-to-left lines	Tatweel trong các từ Ả Rập của các dòng căn đều từ phải sang trái
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Kashida lấp bao nhiêu khoảng trống của một dòng và mỗi từ nhận bao nhiêu tatweel (50: cân bằng)
-	Mixed: the selected paragraphs differ	Hỗn hợp: các đoạn đã chọn khác nhau
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Hướng
-	Paragraph direction	Hướng đoạn
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Tự động: theo chữ cái đầu của đoạn
-	Harakat	Harakat
 	Colour the harakat (Arabic vowel marks) apart from their letters	Tô màu harakat (dấu nguyên âm Ả Rập) riêng với chữ cái
 	Gold	Vàng kim
 	Hide the harakat: they stay in the text	Ẩn harakat: chúng vẫn ở trong văn bản
-	As Letters	Như chữ cái
 	Give the harakat their letters' colour again	Trả lại cho harakat màu của chữ cái
 	Style Harakat	Định dạng harakat
 	Arabic Letters	Chữ cái Ả Rập
@@ -4876,3 +4867,14 @@ varos-home	Web	Web
 	Oct	Thg10
 	Nov	Thg11
 	Dec	Thg12
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Trung Đông
+	Show or hide the Middle Eastern options	Hiện hoặc ẩn các tùy chọn Trung Đông
+	Auto direction: from the paragraph's first letter, now right to left	Hướng tự động: theo chữ cái đầu của đoạn, hiện là từ phải sang trái
+	Auto direction: from the paragraph's first letter, now left to right	Hướng tự động: theo chữ cái đầu của đoạn, hiện là từ trái sang phải
+	Kashida strength	Độ mạnh kashida
+	Mixed: the selected text differs	Hỗn hợp: văn bản đã chọn khác nhau
+	Harakat colour: click for any colour	Màu harakat: nhấp để chọn màu bất kỳ
+	As letters	Như chữ cái
+	Saturation and brightness	Độ bão hòa và độ sáng
+	Hex colour	Màu hex

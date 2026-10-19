@@ -1,0 +1,184 @@
+Lane PARAGRAPH — Middle Eastern groups of the Paragraph and Character panels
+Date: 2026-10-19
+Worktree: ~/Documents/AI workspace/lanes/lane-paragraph (branch lane-paragraph, base aa0f6316)
+Implementer: Opus 5.5. No commit, merge, push or download. Cargo always --offline -j 4, own target dir.
+Spec: docs/varos/mockups/panels.html, panel 1 variants A (icons) and C (mixed), panel 2 (Digits, Harakat).
+
+WHAT THE CONTROLS LOOK LIKE
+Paragraph panel, right under the alignment buttons:
+- "MIDDLE EASTERN" group head: 10 pt caps, muted, a hairline, a chevron; click folds the group.
+- Direction: one segmented group (surface, 1 pt hairline, 3 pt corners), three 28 pt icon buttons:
+  Auto (A over a double arrow), RTL (pilcrow + arrow left), LTR (pilcrow + arrow right).
+  The lit one is a dark well with the icon bright (no azure). Auto lit draws a dashed ring on the
+  side it resolved to (RTL for Arabic, LTR for Latin). Tooltip of Auto names the resolved side.
+- Kashida (right-to-left paragraphs only): a full-width segmented group, icon + label:
+  Off / Auto / Force with the mockup's tatweel icons (short, long, longest and heavier).
+- Strength: the stretch icon, a rail (2 pt hairline, muted fill up to a light 10 pt thumb, 0-100)
+  and a 40 pt number field that takes any value >= 0 (250 shows 250; the thumb sits at the end).
+  Greyed while every paragraph is Off (value kept).
+- Mixed selection (variant C): nothing lit; the values present are tinted with Hover; Auto's ring
+  is not drawn; the rail drops its thumb and the field reads "–". A click sets every paragraph.
+Character panel, after the style toggles:
+- Same "MIDDLE EASTERN" head.
+- Row 1: Digits dropdown (112 pt) whose button shows the digits themselves and the name
+  ("Aa Default", "456 Arabic", "٤٥٦ Hindi", "۴۵۶ Farsi"); its list leads each row with its digits,
+  a check on the current one. Mixed reads "–". At the right: Hide (eye-off) and As letters
+  (letter + mark) icon toggles, lit as dark wells when they match the harakat.
+- Row 2: harakat icon, a colour well (swatch + chevron, azure border while open), the hex in mono
+  muted, and the four preset swatches (14 pt) at the right; the preset matching the harakat colour
+  carries the azure ring. Hide on greys the whole row out.
+- Colour well popover: upstream's colour field (saturation x brightness at the hue), upstream's hue
+  slider, upstream's hex field and the four presets. Dragging previews on the art and is one undo
+  step on release; a typed hex or a preset is one step.
+
+ICON DECISIONS (owner rule: icon-only when well known, icon + label when not, tooltip always)
+- Direction: icon-only. Pilcrow-with-arrow is the standard paragraph-direction glyph in layout
+  tools; Auto's "A" + double arrow reads with its tooltip.
+- Kashida Off/Auto/Force: icon + label. Tatweel-length glyphs are new; nobody knows them yet.
+- Strength: icon + rail + field. The number says what it is; the icon only marks the row.
+- Hide / As letters: icon-only (eye-off is universal; As letters sits beside it with a tooltip).
+- Digits: the digits themselves + the name (the glyphs ARE the icon).
+- Digit glyphs are 4-5-6, as in the mockup, not 0-1-2 as written in the card: in Hindi and Farsi
+  digits 0, 1 and 2 are the same shapes, so 0-1-2 could not tell the two apart.
+- Icons are the mockup's inline SVG symbols, copied verbatim into standalone white currentColor
+  SVGs (crates/ui-egui/assets/varos/icons/varos-me-*.svg, 10 files), loaded by a new
+  varos/me_icons.rs (same conventions as varos/icons.rs; not catalogue names, so their own table).
+
+STATE AND COMMANDS (unchanged paths and undo granularity)
+- Direction, Kashida, Strength: text.setFormat {direction | kashida | kashidaStrength} on the
+  paragraphs the panel acts on (Type tool selection or selected type, groups included).
+- Digits: text.setFormat {digits}. Harakat: text.styleHarakat {fill: #hex | none | inherit}.
+- Click = one undo step. Strength rail drag and colour-field drag = live preview, one step on release.
+- Harakat state is read from the runs in one pass: shared fill, all hidden, all as letters.
+- Hide off restores the colour picked last in the panel (else "inherit"); As letters off restores
+  the colour picked last (else the first preset, red).
+
+DECISIONS / DEVIATIONS TO REVIEW
+1. "The colour popover upstream uses for fills" is the Fill/Stroke chip popover (Swatches / Color
+   panel). It edits the fill or stroke proxy, so it cannot colour harakat without changing
+   upstream. The popover is built from the same upstream widgets instead (widgets::popover,
+   color_field, color_slider_named, hex_field). No eyedropper: upstream's screen sampler only
+   delivers to fill, stroke or the Color Picker dialog.
+2. Mockup A shows harakat red AND As letters lit; with the document model those exclude each other
+   (As letters = harakat have their letters' fill). As letters lights only when that is true.
+3. Kashida needs labels (owner rule), so Direction and Kashida are two rows, not one as in variant A.
+4. egui shapes a run of Arabic-Indic digits right to left and shows ٤٥٦ as ٦٥٤ (seen in the first
+   capture). The dropdown paints those digits one by one, left to right.
+5. Mixed tint uses the Hover token (#2a2f38 on #22262e) exactly as the mockup; it is subtle.
+6. Dead code and strings removed: the old segmented text controls, row labels and the strength
+   label/drag state. Catalog rows no longer used anywhere (Kashida, Tatweels in…, Mixed: the
+   selected paragraphs differ, Direction, Paragraph direction, RTL, LTR, Harakat, As Letters) were
+   removed from the Varos sections of all 23 catalogs; 7 new rows appended at the END of each
+   catalog under "# Varos: Middle Eastern groups…".
+
+FILES (+ added / ~ changed)
++ crates/ui-egui/src/varos/me_icons.rs                      icon table + paint helper + test
++ crates/ui-egui/assets/varos/icons/varos-me-*.svg          10 original glyphs from the mockup
+~ crates/ui-egui/src/varos/middle_eastern_ui.rs             groups, shared widgets, harakat well
+~ crates/ui-egui/src/varos/kashida_ui.rs                    icon+label kashida, rail, "–" field
+~ crates/ui-egui/src/varos/tests_middle_eastern_ui.rs       new/updated tests + opt-in capture
+~ crates/ui-egui/src/varos/tests_kashida_ui.rs              expectations for the new widgets
+~ crates/ui-egui/src/varos/mod.rs                           registers me_icons (1 marked line)
+~ crates/ui-egui/src/panels/paragraph.rs                    hook: 2 Varos calls -> 1 (paragraph_group)
+~ crates/ui-egui/src/i18n/*.tsv (23)                        -9 dead rows, +7 new rows each
+~ ASSETS.md (+10 rows), NOTICE (+1 paragraph)
+panels/character.rs unchanged (its hook already calls character_rows).
+Diff: 31 tracked files, +1290 / -516, plus 11 new files.
+
+TESTS (new or rewritten)
+varos::middle_eastern_ui::tests
+- the_direction_buttons_set_auto_rtl_and_ltr: icon-only, Auto lit + ring on the resolved side,
+  RTL/LTR/Auto set the value, one undo each, Latin rings LTR, row hidden without the options.
+- a_mixed_selection_lights_nothing_and_tints_what_it_has: variant C; nothing lit, tints exactly
+  the present values, "–" field, a click sets both paragraphs in one step; mixed digits read "–".
+- the_harakat_row_colours_hides_and_restores_the_harakat: presets, Hide, As letters; azure ring
+  moves to the preset; lit toggles; Hide off returns to red; letters and text untouched.
+- the_harakat_colour_well_applies_any_colour: opens the well, clicks the colour field -> an
+  arbitrary colour (≈ HSB 0/80/70, not a preset) through text.styleHarakat, one step; typed hex
+  3A7BD5 applies exactly, one more step.
+- the_digits_dropdown_shows_and_sets_the_digits: list row sets Hindi; button shows ٤ ٥ ٦ in order.
+- every_control_has_a_tooltip: every control of both groups (head, 3 direction, 3 kashida,
+  strength icon/rail/field, digits, hide, as letters, harakat icon, well, 4 presets) has a tip,
+  and hovering it shows it.
+- capture_the_middle_eastern_groups (ignored, opt-in, needs a GPU adapter).
+varos::kashida_ui::tests: 6 existing tests kept, expectations updated (field rect, "–", tints).
+varos::me_icons::tests::every_icon_rasterizes_white.
+
+GATES (final source, this worktree)
+PASS cargo build --offline -j 4 -p vectorcraft                          exit 0, 4:51 wall
+PASS cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -- --test-threads=4
+     exit 0; 4636 passed, 0 failed, 7 ignored (ui-egui lib: 1758 passed, 5 ignored), 6:35 wall
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui --lib -- -D warnings          exit 0
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui --all-targets -- -D warnings  exit 0
+PASS cargo fmt --all -- --check                                         exit 0
+PASS git diff --check                                                   exit 0 (new files checked
+     separately: no trailing whitespace)
+Asset attribution (xtask assets logic, replicated): all new SVGs attributed. One pre-existing
+     tracked file lacks a row: lane-icons-atlas.png (repo root, from ee967887), not this lane.
+Earlier failures during the work: Default not derivable for egui::Rect (fixed); two tests failed
+     on missing image loaders / a field tooltip under the text edit (fixed); clippy panic! in a
+     test-only helper and manual_contains (fixed).
+Logs: target/paragraph-lane/{gate-build,gate-test,gate-clippy-lib,gate-clippy-all,gate-fmt,gate-diffcheck}.log
+
+CAPTURES (headless, Dark, 2x, viewed)
+VAROS_PARAGRAPH_CAPTURE="$PWD/target/paragraph-captures" cargo test --offline -j 4 \
+  -p vectorcraft-ui-egui -- --test-threads=4 --ignored capture_the_middle_eastern_groups
+target/paragraph-captures/: paragraph-a.png, paragraph-c.png, paragraph-off.png, character.png,
+character-well.png, character-digits.png, character-hidden.png.
+
+LEFT / RISKS
+- Owner hand test not done (feel of the rail, popover position, tint strength, icon legibility).
+- No eyedropper in the harakat popover (see decision 1).
+- "Colour picked last" is per window session (egui memory), not per document.
+- Independent review not done yet (WORKSHOP gate 7).
+
+REVIEW FIXES (independent review, fix-first, no BLOCK; Opus 5.5, 2026-10-19)
+1. Escape during a colour-well drag cancels. egui ends a drag on Escape as if released, which
+   committed the dragged colour. Now the live interaction is dropped (session cancel_interaction):
+   the harakat get back their colour, no undo step. Two paths: escape_popover (below) when the
+   shortcuts run first (the real host: logic before the panels), and inside the popover when they
+   did not (a "live" flag in egui memory + Escape pressed). Covers the colour field and the hue.
+   Test: escape_during_a_colour_drag_restores_the_harakat_colour (both paths; 3-frame drag
+   previews, Escape -> original fill, no interaction left, undo length unchanged, release after
+   changes nothing, popover closed).
+2. Escape with the popover open only closes it. The host runs shortcuts::handle BEFORE the panels,
+   so the Type tool claimed Escape (ended typing, switched tool) and the popover never saw it.
+   New middle_eastern_ui::escape_popover, called by one marked Varos hook line at the top of
+   shortcuts::handle: when the well's popover was open last frame, it consumes Escape, closes the
+   popover and drops a live drag. No focus is taken. Test:
+   escape_closes_the_colour_popover_and_the_type_tool_keeps_typing (tool stays "type", still
+   editing; the next Escape reaches the tool). Mutation check: with the hook removed this test
+   fails (the tool eats Escape, the popover stays open).
+3. Accessible names: Strength text editor = its tip "Kashida strength" (TextInput); the colour
+   field = "Saturation and brightness" (Slider, upstream's field had no node); the hex editor =
+   "Hex colour" (TextInput); As letters is named by its label. Set via accesskit_node_builder as
+   upstream's slider_info does. Test: the_fields_have_accessible_names (AccessKit tree).
+4. As letters = icon + label ("As letters"); Hide stays icon-only. toggle() takes a label and a
+   max width; a long translation ends in "…" so the row never overflows; Hide + As letters sit
+   together at the right end. Test: the harakat row test checks Hide 24 wide, "As letters" painted,
+   the toggle inside the row. Capture viewed: target/paragraph-captures-review/character.png.
+5. 3 pt corners on the Strength field and the hex field via a fork wrapper, control_corners():
+   after upstream's widget paints, its 5 pt boxes in that range get 3 pt. No upstream widget edited.
+   Test: the_fields_have_three_point_corners. Captures viewed (paragraph-a.png, character-well.png).
+6. Fold state persisted: new UiState field varos_me_folded (serde default; struct Folded
+   {paragraph, character}), one marked hook in state.rs (+ its Default line). Replaces the egui
+   memory pstate. Test: the_folded_groups_are_saved_with_the_ui_state (click folds, ui.json
+   round-trip, restart draws folded, older profile without the field -> open).
+Catalogs: 3 rows appended at the end of all 23 catalogs (As letters [old "As Letters"
+translations reused], Saturation and brightness, Hex colour).
+Files: varos/middle_eastern_ui.rs, varos/tests_middle_eastern_ui.rs, shortcuts.rs (+2 hook
+lines), state.rs (+5), i18n/*.tsv (+3 each).
+
+REVIEW-FIX GATES (this worktree, final source)
+PASS cargo build --offline -j 4 -p vectorcraft                          exit 0, 1:05 wall
+PASS cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -- --test-threads=4
+     exit 0; 4641 passed, 0 failed, 7 ignored (ui-egui lib: 1763 passed, 5 ignored), 6:00 wall
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui --lib -- -D warnings          exit 0
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui --all-targets -- -D warnings  exit 0
+PASS cargo fmt --all -- --check                                         exit 0
+PASS git diff --check                                                   exit 0
+Logs: target/paragraph-lane/review-gate-{build,test,clippy-lib,clippy-all,fmt,diffcheck}.log
+Failures on the way: the corner test first matched boxes by fill (the popover fades in, so its
+colours differ) and then required every box to be 3 pt (upstream paints a second 0 pt box at the
+field); it now checks "a 3 pt box and no 5 pt box" by geometry.
+Left: owner hand test (Escape feel, As letters width in long languages, which elide).

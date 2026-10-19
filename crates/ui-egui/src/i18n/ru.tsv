@@ -4830,24 +4830,15 @@ lighting	Light	Свет
 	Guessed from the font's name; fonts it can't place are under All Arabic	Определено по названию шрифта; шрифты без группы находятся в разделе «Все арабские»
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Формирование AAT: этот шрифт набирается собственными таблицами morx, а не правилами OpenType для арабского
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Кашида
 	No kashida: word spacing alone justifies the lines	Без кашиды: строки выключает только межсловный пробел
 	Justified lines take tatweels in their Arabic words before word spacing	Выключенные строки получают татвилы в арабских словах раньше межсловных пробелов
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Сильнее: больше татвилов на слово и большая часть свободного места строки; последняя строка абзаца с выключкой и выровненной последней строкой тоже получает кашиду
-	Tatweels in the Arabic words of justified right-to-left lines	Татвилы в арабских словах выключенных строк справа налево
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Какую часть свободного места строки заполняет кашида и сколько татвилов получает слово (50: сбалансированно)
-	Mixed: the selected paragraphs differ	Смешанное: выбранные абзацы различаются
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Направление
-	Paragraph direction	Направление абзаца
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Авто: по первой букве абзаца
-	Harakat	Харакат
 	Colour the harakat (Arabic vowel marks) apart from their letters	Окрашивать харакат (арабские огласовки) отдельно от букв
 	Gold	Золотой
 	Hide the harakat: they stay in the text	Скрыть харакат: они остаются в тексте
-	As Letters	Как буквы
 	Give the harakat their letters' colour again	Вернуть харакату цвет его букв
 	Style Harakat	Оформление хараката
 	Arabic Letters	Арабские буквы
@@ -4892,3 +4883,14 @@ varos-home	Web	Веб
 	Oct	окт
 	Nov	ноя
 	Dec	дек
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Ближний Восток
+	Show or hide the Middle Eastern options	Показать или скрыть ближневосточные параметры
+	Auto direction: from the paragraph's first letter, now right to left	Автонаправление: по первой букве абзаца, сейчас справа налево
+	Auto direction: from the paragraph's first letter, now left to right	Автонаправление: по первой букве абзаца, сейчас слева направо
+	Kashida strength	Сила кашиды
+	Mixed: the selected text differs	Смешанное: выделенный текст различается
+	Harakat colour: click for any colour	Цвет хараката: щёлкните, чтобы выбрать любой цвет
+	As letters	Как буквы
+	Saturation and brightness	Насыщенность и яркость
+	Hex colour	Шестнадцатеричный цвет

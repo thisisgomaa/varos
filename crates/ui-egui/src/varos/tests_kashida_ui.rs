@@ -1,4 +1,4 @@
-//! Varos: the Paragraph panel's kashida controls ([`super`]), driven headless.
+//! Varos: the Paragraph panel's kashida rows ([`super`]), driven headless.
 
 use serde_json::json;
 use vectorcraft_doc::NodeKind;
@@ -65,10 +65,10 @@ fn force_and_a_strength_drag_change_the_paragraph_and_undo_restores_them() {
     assert_eq!(steps(&app), before + 1, "one step");
     // Drag the strength from the middle of the rail toward its right end.
     let r = frame(&mut app, vec![]);
-    assert!(r.slider.width() > 40.0, "{:?}", r.slider);
-    // The rail, before the value field (about 44 pt).
-    let rail = r.slider.width() - 48.0;
-    let (y, x0) = (r.slider.center().y, r.slider.left());
+    assert!(r.slider.width() > 40.0 && r.field.left() >= r.slider.right(), "{:?} {:?}", r.slider, r.field);
+    // The rail's bar, 5 pt in from its ends.
+    let rail = r.slider.width() - 10.0;
+    let (y, x0) = (r.slider.center().y, r.slider.left() + 5.0);
     let at = |share: f32| egui::pos2(x0 + rail * share, y);
     frame(&mut app, vec![egui::Event::PointerMoved(at(0.5)), button(at(0.5), true)]);
     for share in [0.6, 0.7, 0.8, 0.9] {
@@ -86,8 +86,7 @@ fn force_and_a_strength_drag_change_the_paragraph_and_undo_restores_them() {
     assert_eq!(kashida(&app, id), KashidaOptions::default());
 }
 
-/// The Paragraph panel shows the controls for a right-to-left paragraph only, and Off greys the
-/// slider out.
+/// The Paragraph panel shows the controls for a right-to-left paragraph only.
 #[test]
 fn the_paragraph_panel_shows_kashida_for_right_to_left_paragraphs() {
     let texts = |app: &mut VectorcraftApp| {
@@ -105,11 +104,12 @@ fn the_paragraph_panel_shows_kashida_for_right_to_left_paragraphs() {
     };
     let (mut arabic, _) = app_with("بسم الله الرحمن الرحيم");
     let shown = texts(&mut arabic);
-    for label in ["Kashida", "Off", "Auto", "Force", "Strength"] {
+    // Icon + label buttons; the strength field reads 50.
+    for label in ["Off", "Auto", "Force", "50"] {
         assert!(shown.iter().any(|t| t == label), "{label} in {shown:?}");
     }
     let (mut latin, _) = app_with("Typography");
-    assert!(!texts(&mut latin).iter().any(|t| t == "Kashida"), "no kashida controls for left-to-right type");
+    assert!(!texts(&mut latin).iter().any(|t| t == "Force"), "no kashida controls for left-to-right type");
 }
 
 /// The command the controls use: values are checked, clamped and undoable.
@@ -148,8 +148,8 @@ fn the_strength_field_takes_more_than_100() {
         rects.unwrap()
     };
     let r = frame(&mut app, vec![]);
-    // The number field is at the right end of the slider's response.
-    let field = egui::pos2(r.slider.right() - 8.0, r.slider.center().y);
+    // The number field after the rail.
+    let field = r.field.center();
     frame(&mut app, vec![egui::Event::PointerMoved(field)]);
     frame(&mut app, vec![button(field, true)]);
     frame(&mut app, vec![button(field, false)]);
@@ -219,7 +219,13 @@ fn a_mixed_selection_shows_mixed_and_a_click_sets_every_paragraph() {
     };
     let (r, texts) = frame(&mut app, vec![]);
     assert!(r.mixed_mode && r.mixed_strength, "{r:?}");
-    assert!(texts.iter().any(|t| t == "Kashida –") && texts.iter().any(|t| t == "Strength –"), "{texts:?}");
+    // Nothing lit; the modes the paragraphs have are tinted; the field reads "–".
+    let get = |r: &KashidaRects, key: &str| r.controls.iter().find(|c| c.key == key).cloned().unwrap();
+    for (key, tinted) in [("kashida-off", true), ("kashida-auto", true), ("kashida-force", false)] {
+        let c = get(&r, key);
+        assert!(!c.lit && c.tinted == tinted, "{c:?}");
+    }
+    assert!(texts.iter().any(|t| t == "–") && !texts.iter().any(|t| t == "50" || t == "80"), "{texts:?}");
     // Auto: the first paragraph has it already; the second takes it too.
     let auto = r.segments[1].center();
     frame(&mut app, vec![egui::Event::PointerMoved(auto), button(auto, true)]);
@@ -227,6 +233,7 @@ fn a_mixed_selection_shows_mixed_and_a_click_sets_every_paragraph() {
     assert_eq!((kashida(&app, a).mode, kashida(&app, b).mode), (KashidaMode::Auto, KashidaMode::Auto));
     let (r, _) = frame(&mut app, vec![]);
     assert!(!r.mixed_mode && r.mixed_strength, "modes agree now, strengths still differ");
+    assert!(get(&r, "kashida-auto").lit && !get(&r, "kashida-off").tinted, "{:?}", r.controls);
     // One step undoes it.
     app.run("edit.undo", json!({})).unwrap();
     assert_eq!(kashida(&app, b).mode, KashidaMode::Off);
@@ -240,12 +247,12 @@ fn the_controls_show_when_any_selected_paragraph_is_right_to_left() {
         crate::theme::install_fonts(&ctx);
         let mut out = ctx.run_ui(input(vec![]), |ui| crate::panels::paragraph::show(app, ui));
         out.textures_delta.clear();
-        out.shapes.iter().any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text().starts_with("Kashida")))
+        out.shapes.iter().any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text() == "Force"))
     };
     let (mut mixed, _) = app_with_two("Typography first", "بسم الله الرحمن الرحيم");
     assert!(shows(&mut mixed), "Latin first, Arabic second");
     let targets = super::targeted(&mixed);
-    assert_eq!(targets.iter().map(|(_, rtl)| *rtl).collect::<Vec<_>>(), [false, true]);
+    assert_eq!(targets.iter().map(|p| p.rtl).collect::<Vec<_>>(), [false, true]);
     let (mut latin, _) = app_with_two("Typography", "Kerning");
     assert!(!shows(&mut latin));
     // A text with a Latin paragraph and an Arabic one.
