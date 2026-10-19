@@ -5241,3 +5241,29 @@ imageTrace	Outline	Körvonal
 	Serif	Talpas
 	Sans	Talpatlan
 	Script	Kézírásos
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Új szabad vászon
+	Post	Bejegyzés
+	Story	Történet
+varos-home	Web	Web
+	Poster	Poszter
+	Icon	Ikon
+
+# Varos: Home dates and section label
+	Start with	Kezdés
+	Yesterday	Tegnap
+	{hours} h ago	{hours} órája
+	{minutes} min ago	{minutes} perce
+	Jan	jan.
+	Feb	febr.
+	Mar	márc.
+	Apr	ápr.
+	May	máj.
+	Jun	jún.
+	Jul	júl.
+	Aug	aug.
+	Sep	szept.
+	Oct	okt.
+	Nov	nov.
+	Dec	dec.

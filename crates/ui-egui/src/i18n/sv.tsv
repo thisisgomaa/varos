@@ -5211,3 +5211,29 @@ theme	Appearance	Utseende
 	Serif	Serif
 	Sans	Sans
 	Script	Handstil
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Ny fri arbetsyta
+	Post	Inlägg
+	Story	Händelse
+varos-home	Web	Webb
+	Poster	Affisch
+	Icon	Ikon
+
+# Varos: Home dates and section label
+	Start with	Börja med
+	Yesterday	I går
+	{hours} h ago	för {hours} tim sedan
+	{minutes} min ago	för {minutes} min sedan
+	Jan	jan
+	Feb	feb
+	Mar	mar
+	Apr	apr
+	May	maj
+	Jun	jun
+	Jul	jul
+	Aug	aug
+	Sep	sep
+	Oct	okt
+	Nov	nov
+	Dec	dec

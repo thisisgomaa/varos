@@ -5091,3 +5091,29 @@ lighting	Light	光源
 	Serif	衬线
 	Sans	无衬线
 	Script	手写体
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	新建自由画布
+	Post	帖子
+	Story	快拍
+	Poster	海报
+	Icon	图标
+	A4	A4
+
+# Varos: Home dates and section label
+	Start with	开始创建
+	Yesterday	昨天
+	{hours} h ago	{hours} 小时前
+	{minutes} min ago	{minutes} 分钟前
+	Jan	1月
+	Feb	2月
+	Mar	3月
+	Apr	4月
+	May	5月
+	Jun	6月
+	Jul	7月
+	Aug	8月
+	Sep	9月
+	Oct	10月
+	Nov	11月
+	Dec	12月

@@ -1,0 +1,141 @@
+HOME-2 — Home polish and New board
+2026-10-19 | branch lane-home2 | base 86e24d2a
+Implementation complete; no commit, merge, push, installation, or publishing.
+Independent source review: no outstanding findings. Owner native-window acceptance remains pending.
+
+WHAT HOME LOOKS LIKE
+- Title bar retains the app mark; Home uses the shared lane-home predicate, with no editor rails, panels, in-window menus, status or hint bars.
+- A bounded content column contains the mark + Welcome to Varos, and أهلاً بك في فاروس right-aligned on the same line. Arabic is actually shaped with HarfRust using the already licensed bundled IBM Plex Sans Arabic face, cached as a texture.
+- Three neutral primary actions with existing licensed glyphs: New file, Open, New board (empty dashed canvas). Azure is reserved for keyboard focus; controls use 3 px corners, cards 8 px; no shadows.
+- Six direct-create presets: A4, Post (1080×1080), Story (1080×1920), Web (1440×900), Poster (50×70 cm), Icon (1024×1024). Neutral hover state; desktop columns and compact layout; vertical scrolling for shorter windows.
+- Recent files are whole-row buttons: ellipsized filename, leaf folder only, filesystem modification date when available. The entire original path is in the tooltip. A /private/tmp path is never a visible folder label. Missing timestamps remain blank.
+- New file still opens upstream New Document; Cmd+N/Cmd+O and Open retain their existing paths. Presets create directly.
+- Updated all 23 complete-language catalogs. New board and new preset labels use tl!/existing translations. Web is scoped to the Home preset to preserve upstream's fixed workspace name: 17 new contextual rows, 6 existing translations reused through fallback. Arabic subtitle remains bilingual in every locale.
+
+BOARDLESS DOCUMENT DESIGN
+- file.new clamps artboard counts to at least one; changing that would change the New Document contract and recent presets. Added the engine command file.newBoard {} instead (registered metadata, always enabled, reachable through engine/control/MCP).
+- It creates an ordinary native Document with an empty artboards vector, default units/grid, an untitled name and creation metadata. There is no hidden artboard, no new serde field and no schema change. Existing file.new and old documents are untouched.
+- The canvas already skips page clipping when artboards is empty and draws no page. Rulers use the document's zero origin. Cmd+0 fits visible effect-aware art bounds; an empty board starts centred at the ruler origin using a view-only 800×600 target, never a persisted page.
+- Boardless raster export uses visible art bounds. PDF uses a temporary output-only page around those same bounds because the upstream PDF writer needs a page. Hidden art is omitted from bounds and effect reach is included.
+- PDF native editing data keeps the ORIGINAL zero-artboard document, including the common Export As/useArtboards:false path. Export never inserts a page into the live/saved native document.
+- Default print treats zero artboards like upstream Ignore Artboards. Actual print already flattens raster effects before layout. Empty artwork exports/prints return an error; explicit invalid artboard selections are validated.
+- The existing Artboard tool/engine artboard.new can add a board later; Undo returns to zero boards. Upstream still prevents deleting the last artboard with artboard.delete; Undo of the addition is supported. Artboard-specific flows retain upstream validation.
+
+FILES + / -
+Added source:
+  + crates/engine/src/cmd/varos_board.rs
+  + crates/engine/src/cmd/varos_board/tests.rs
+  + crates/ui-egui/src/varos/home_capture.rs (optional test-only capture; not an app renderer)
+Modified:
+  M crates/ui-egui/src/varos/home.rs (surface + focused interaction/fit/hover tests; shared predicate kept)
+  M crates/ui-egui/src/canvas.rs (Home and Fit hooks; upstream Home/recent bodies retained with local dead-code allowances)
+  M crates/ui-egui/src/tests_home.rs (short-folder expectation; existing click/open regression retained)
+  M crates/engine/src/cmd/mod.rs (command registration hooks)
+  M crates/engine/src/cmd/fileio/encode.rs (boardless raster defaults; PDF output-adapter routing)
+  M crates/engine/src/cmd/fileio/pdf.rs (output-only page, original native data and overflow bounds)
+  M crates/pdf/src/print/layout.rs (six-line default All→Ignore fallback for empty artboard lists)
+  M crates/ui-egui/src/i18n/{bg,cs,da,de,el,es,fi,fr,hu,id,it,ja,ka,ko,nl,pl,pt-br,ru,sv,uk,vi,zh-hans,zh-hant}.tsv
+No source files removed. Total source/catalog delta: +822 / -6 across 30 modified and 3 added source files.
+This report and text evidence are added under docs/varos/lanes/. No new shipped assets or fonts; existing mark/icons/font reused. Generated PNG/native capture fixtures live under ignored target/home2-captures/.
+No global parity scores, ROADMAP, STATE or BACKLOG changed; this fork lane does not imply owner acceptance.
+
+TESTS AND GATES (CURRENT SOURCE)
+PASS cargo build --offline -j 4 -p vectorcraft
+  Finished dev profile in 1m16s, no warnings. Evidence: home2-evidence/build-final.txt.
+BLOCKED/FAIL exact required gate:
+  cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc -- --test-threads=4
+  Document: 238 passed. Engine: 2577 passed, 1 failed, 2 ignored.
+  The only failure is unchanged tests_history_mem::mac_reads_the_machine_memory, which requires /usr/sbin/sysctl -n hw.memsize; sandbox returns Operation not permitted and the probe returns None. Exact gate stops before UI/integration execution. No test was weakened or edited to hide it.
+  Evidence: home2-evidence/tests-required.txt and host-probe.txt.
+PASS full diagnostic rerun, excluding ONLY that host probe:
+  VAROS_HOME_CAPTURE_DIR="$PWD/target/home2-captures" cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc -- --test-threads=4 --skip tests_history_mem::mac_reads_the_machine_memory
+  4847 passed total: 238 doc +2577 engine +1728 UI unit tests (=4543), plus 304 engine integration tests. 4 existing ignored, 1 filtered host probe, no failures.
+  Includes all 4 new boardless engine regressions and 6 Home tests (2 existing, 3 new behavioural tests, 1 actual capture test), plus existing Recent, New Document, shortcuts, native-menu and catalog tests.
+  Boardless coverage: rendering with Trim enabled; hit testing negative-coordinate art; native save/load with zero artboards; adding and undoing an artboard; Cmd+0 art fit and empty-origin fit; PNG/PDF art bounds; PDF 1.3/thumbnails; hidden distant artwork + shadow reach; zero-board native attachment including Export As/useArtboards:false; print preview and print PDF; empty output/invalid board errors; old two-artboard docs unchanged.
+  Evidence: home2-evidence/tests-sandbox.txt.
+PASS cargo test --offline -j 4 -p vectorcraft-pdf -- --test-threads=4
+  319 passed, 1 existing ignored. Evidence: home2-evidence/pdf-tests.txt.
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-pdf --lib -- -D warnings
+  Evidence: home2-evidence/clippy.txt.
+PASS cargo --offline fmt --all -- --check
+  fmt does not compile and does not accept -j. Evidence: home2-evidence/fmt.txt.
+PASS git diff --check
+  Evidence: home2-evidence/diff-check.txt.
+PASS cargo check --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-pdf --target wasm32-unknown-unknown
+  Three dead-code warnings in untouched files: engine store_profile; UI font_install_check_at and FONT_INSTALL_POLL. No error. Evidence: home2-evidence/wasm.txt.
+All cargo compilation commands used --offline -j 4; no CARGO_TARGET_DIR was set. Waited for each run before source edits. No dependency downloads/installs.
+
+VISUAL VERIFICATION / LIMITS
+- Read docs/varos/mockups/panels.html panel 6 and its CSS as the specification. Browser rendering was unavailable (no enabled browser; Safari Computer Use denied); no Adobe app or asset was used.
+- Inspected the real egui output at 1280×800 and 800×800, with the Post card hovered and recent-file rows populated. Test-only software composition consumes actual tessellated meshes and texture atlas (including the shaped Arabic texture), not a redrawn HTML approximation. Final round: aligned bilingual heading, no Arabic clipping, neutral hover, readable shortened recents, no editor chrome. Software sampling is not native GPU/window acceptance.
+- Local artifacts: target/home2-captures/home-1280.png and home-800.png. The actual capture test ran with VAROS_HOME_CAPTURE_DIR set during the passing full diagnostic suite.
+- Native launch used VECTORCRAFT_NO_PREFS=1 and a separate port 7989. Local control connection was denied with EPERM; WindowServer-related Connection invalid messages were observed. The process was stopped. Native screenshot/owner hand test remains unverified; evidence home2-evidence/native.txt.
+- Inherited limitation: Ignore Artboards print.preview measures unflattened visual bounds and can differ from the reach of raster effects; actual file.print flattens first. This lane did not refactor that upstream preview path.
+- The full unfiltered test gate must be rerun in an environment that allows the RAM probe. Native-window owner acceptance is still required by WORKSHOP.md. Nothing is marked done in STATE.md.
+
+OWNER HAND TEST
+1. Start with no document: only title bar, bilingual greeting, three actions, presets and Recent; hover Post and a recent row. Check folder shortening/full-path tooltip.
+2. New file and Cmd+N open New Document; Cancel returns to Home. Open/Cmd+O still open a file; each preset creates its stated size directly.
+3. New board opens a free canvas with no white page or artboard entry. Draw/pan beyond the origin; Cmd+0 fits artwork. On an empty board Cmd+0 centres the ruler origin.
+4. Save native and reopen: still zero artboards. Export PNG and PDF using normal Export As: art bounds only. Reopen editable PDF: zero boards retained; Print produces art without a crash.
+5. Artboard tool drag adds a normal artboard. Undo removes that addition and restores the free canvas.
+
+Review fixes — 2026-10-19
+=========================
+All five review findings and the NITs are addressed. Changes remain uncommitted on lane-home2. This section supersedes the earlier Home layout/date descriptions and gate results above. No raw logs, generated captures, fonts or other assets were added to the repository.
+
+PER FINDING
+FIX 1 — PASS
+- PDF-compatible .ai saves now pass drawn pages through varos_board::pdf_document. Its boardless "all" range uses visible, effect-aware art bounds. Native pdfCompatible saves use the same adapter through pdf::encode, including their explicit range "all".
+- Only the output copy gains a page. Tests compare the complete reopened native editing document with the original zero-artboard document and verify the PDF page dimensions.
+- Also covered .ai with pdfCompatible:false: validate its one output-only page and determine bounds before clearing preview artwork. Empty artwork and explicit invalid export ranges remain errors.
+- Regression: boardless_ai_save_and_pdf_compatible_native_keep_original_editing_data.
+
+FIX 2 — PASS
+- Filesystem modification timestamps are cached in egui state by the visible recent-list key. Repaints read the cache; list changes (including an empty list) refresh it.
+- The regression reads a timestamp, deletes the file and verifies the unchanged list still uses the cached value; changing the list refreshes it.
+
+FIX 3 — PASS
+- file.newBoard starts from default_settings().document(), retaining New Document's units, colour mode, raster effects PPI and background, then clears artboards and applies the grid/title.
+- The created parameter accepts Unix seconds or null, and clock_date records the default/generated value in the journal. Replay and explicit-null behaviour are tested.
+- Regression: new_board_uses_new_document_defaults_and_journals_creation_date.
+
+FIX 4 — PASS
+- New file is the primary blue action. The exact shortcut hint is right-aligned in the actions row.
+- Recent rows are 34 px, with a neutral page chip drawn in code (the retained upstream Home recent list has no thumbnail service), two-level folders, home abbreviated as ~, relative dates, and the full path on hover.
+- Start with / Recent are muted 10 px caps. New labels, relative-date templates and month names have entries in all 23 catalogs; the catalog tests pass.
+- Inspected actual egui software captures at 1280x800 and 800x800: primary action, right-side hint, Arabic subtitle, preset layout and compact recents are visible without clipping.
+
+FIX 5 — PASS
+- each_home_preset_click_creates_its_stated_size_and_units clicks all six cards and checks dimensions/units. It caught A4 inheriting Points: the Home card now explicitly requests mm.
+- Arabic subtitle coverage checks that its shaped texture is painted at the right edge, rather than merely checking an untranslated string.
+- recent_dates_are_relative_cached_and_full_path_is_in_tooltip tests relative dates, a painted recent date, list-cache invalidation, home-folder abbreviation and the actual full-path hover tooltip.
+- The boardless save regressions above pass. home_capture is #[ignore] by default and was run explicitly for visual inspection.
+
+NITs — PASS
+- png_options export_size uses art bounds for a boardless document.
+- Export As clears and disables Use Artboards when there are none.
+- Navigator falls back to art bounds, with an origin-centred view target only for empty art; no phantom 612x792 page.
+- The bilingual Arabic subtitle is a plain constant; all 23 identity translation rows were removed.
+- egui registration and shaping share the existing embedded IBM Plex Arabic bytes, and shaping uses the existing global FontDb; Home no longer embeds another copy or constructs a separate database.
+- The PDF bounds adapter receives its caller's command. Save jobs also relabel shared-encoder parameter errors with the actual save command. Empty .ai/native PDF-compatible save error labels are regression-tested.
+
+FINAL GATES
+PASS cargo build --offline -j 4 -p vectorcraft
+  Finished in 1m10s, no warnings.
+FAIL (sandbox host probe only) exact requested gate:
+  cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc -- --test-threads=4
+  Document: 238 passed. Engine: 2579 passed, 1 failed, 2 ignored. The sole failure is unchanged tests_history_mem::mac_reads_the_machine_memory; /usr/sbin/sysctl -n hw.memsize returns "Operation not permitted" in this sandbox. The moderator must rerun this unfiltered gate outside that restriction. No test was weakened to hide it.
+PASS diagnostic full suite, excluding ONLY that host probe:
+  cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc -- --test-threads=4 --skip tests_history_mem::mac_reads_the_machine_memory
+  4851 passed, 0 failed, 5 ignored, 1 filtered: 238 doc + 2579 engine + 304 engine integration + 1730 UI tests.
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc --lib -- -D warnings
+PASS cargo --offline fmt --all -- --check
+PASS git diff --check
+PASS cargo check --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine --target wasm32-unknown-unknown
+  Only the same three untouched dead-code warnings: store_profile, font_install_check_at, FONT_INSTALL_POLL.
+PASS explicit ignored software capture test:
+  VAROS_HOME_CAPTURE_DIR=/tmp/home2-review-captures cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc --lib home_capture_at_desktop_and_compact_widths -- --ignored --test-threads=4
+  1 passed. Inspected /tmp/home2-review-captures/home-1280.png and home-800.png. These consume real egui meshes/textures; native GPU/window acceptance remains unverified.
+
+Cargo compilation used --offline -j 4, test execution used --test-threads=4, runs were sequential, and CARGO_TARGET_DIR was not set by this work. Final raw gate logs are under /tmp/home2-review-{build,tests,tests-sandbox,clippy,wasm,capture}.txt, outside the repository. No commit, merge, push, install or owner-state update was performed.

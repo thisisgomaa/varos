@@ -170,7 +170,7 @@ pub fn fit(app: &mut VectorcraftApp, how: &str) {
             st.doc.art_bounds().map(|a| st.doc.artboards.iter().fold(a, |r, ab| r.union(ab.rect))).or(st.doc.artboards.first().map(|a| a.rect))
         }
         // The navigator's artboard (the first if it has gone).
-        _ => st.doc.artboards.get(current).or(st.doc.artboards.first()).map(|a| a.rect),
+        _ => st.doc.artboards.get(current).or(st.doc.artboards.first()).map(|a| a.rect).or_else(|| crate::varos::home::board_bounds(&st.doc)), // Varos: fit a free canvas.
     };
     let Some(target) = target else { return };
     let zoom = if how == "view.actualSize" {
@@ -202,7 +202,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         app.ui.home = None;
     }
     if crate::menus::home_showing(app) {
-        home(app, ui, full);
+        crate::varos::home::show(app, ui, full); // Varos: Home surface.
         return;
     }
     if app.session.active().is_none() {
@@ -2770,6 +2770,7 @@ fn draw_overlays(p: &egui::Painter, xf: &Xf, overlays: &[Overlay], t: &Tokens, l
 }
 
 /// The Home screen (`app.home`; with no document open, unless its preference is off).
+#[allow(dead_code)] // Varos: retain upstream Home; the surface hook uses varos::home.
 fn home(app: &mut VectorcraftApp, ui: &mut Ui, rect: egui::Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(rect, 0.0, t.panel_darker);
@@ -2813,6 +2814,7 @@ fn home(app: &mut VectorcraftApp, ui: &mut Ui, rect: egui::Rect) {
 
 /// The Home screen's Recent Files (#663): the first of File › Open Recent Files, each its name and
 /// folder; a click opens it. Nothing when there are none.
+#[allow(dead_code)] // Varos: retained with upstream Home for cheap merges.
 fn recent(app: &mut VectorcraftApp, ui: &mut Ui) {
     const SHOWN: usize = 6;
     let files: Vec<String> = crate::io::recent_files(app).iter().take(SHOWN).cloned().collect();

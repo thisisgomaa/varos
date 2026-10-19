@@ -109,6 +109,10 @@ pub(super) fn defaults(app: &VectorcraftApp, f: &Format) -> Map<String, Value> {
 /// The size in points of the one region an export covers (`None` when it writes several
 /// artboards): the chosen artboard, or the bounds of the visible art.
 fn export_size(doc: &vectorcraft_doc::Document, p: &Value) -> Option<(f64, f64)> {
+    if doc.artboards.is_empty() && p.get("useArtboards").and_then(Value::as_bool) != Some(true) {
+        let r = vectorcraft_render::encode::art_bounds(doc)?;
+        return Some((r.width(), r.height()));
+    }
     let pick = ArtboardPick::deserialize(p).ok()?;
     let n = doc.artboards.len();
     let r = match p["useArtboards"].as_bool() {

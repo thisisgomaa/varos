@@ -5172,3 +5172,29 @@ mark-style	Japanese	Japonesas
 	Serif	Com serifa
 	Sans	Sem serifa
 	Script	Manuscrita
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Nova tela livre
+	Post	Publicação
+	Story	Story
+varos-home	Web	Web
+	Poster	Cartaz
+	Icon	Ícone
+
+# Varos: Home dates and section label
+	Start with	Comece com
+	Yesterday	Ontem
+	{hours} h ago	há {hours} h
+	{minutes} min ago	há {minutes} min
+	Jan	jan
+	Feb	fev
+	Mar	mar
+	Apr	abr
+	May	mai
+	Jun	jun
+	Jul	jul
+	Aug	ago
+	Sep	set
+	Oct	out
+	Nov	nov
+	Dec	dez

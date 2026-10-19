@@ -5219,3 +5219,29 @@ mark-style	Japanese	Japanilainen
 	Serif	Päätteellinen
 	Sans	Päätteetön
 	Script	Käsinkirjoitus
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Uusi vapaa piirtoalue
+	Post	Julkaisu
+	Story	Tarina
+varos-home	Web	Verkko
+	Poster	Juliste
+	Icon	Kuvake
+
+# Varos: Home dates and section label
+	Start with	Aloita tästä
+	Yesterday	Eilen
+	{hours} h ago	{hours} h sitten
+	{minutes} min ago	{minutes} min sitten
+	Jan	tammi
+	Feb	helmi
+	Mar	maalis
+	Apr	huhti
+	May	touko
+	Jun	kesä
+	Jul	heinä
+	Aug	elo
+	Sep	syys
+	Oct	loka
+	Nov	marras
+	Dec	joulu

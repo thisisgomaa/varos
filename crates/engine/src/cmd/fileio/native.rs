@@ -178,7 +178,8 @@ pub(super) fn encode_to(cmd: &str, f: &Format, doc: &Document, p: &Value, w: imp
         so.preview = preview_png(&full)?;
     }
     if extras.pdf {
-        // Every artboard as PDF pages (no editing data: the file is the native document).
+        // Every artboard as PDF pages; the shared PDF adapter maps boardless "all" to art bounds.
+        // No editing data: the native file below retains the original zero-board document.
         so.pdf = Some(super::pdf::encode(cmd, &full, &json!({ "range": "all", "preserveEditing": false }))?.0);
     }
     let native = match full {

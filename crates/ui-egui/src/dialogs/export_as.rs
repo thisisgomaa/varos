@@ -59,7 +59,7 @@ fn chosen(d: &Dialog) -> Option<&'static Format> {
     find(&id).or_else(|| find("png"))
 }
 
-fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
+fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let t = Tokens::get(ui.ctx());
     let Some(f) = chosen(d) else { return false };
     let missing = unavailable(d);
@@ -76,7 +76,11 @@ fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         form::caption(ui, hint);
     }
     ui.add_space(10.0);
-    form::check(ui, d, "useArtboards", tl!("Use Artboards"));
+    let has_boards = app.session.active().is_some_and(|st| !st.doc.artboards.is_empty());
+    if !has_boards {
+        d.fields.insert("useArtboards".into(), json!(false));
+    }
+    ui.add_enabled_ui(has_boards, |ui| form::check(ui, d, "useArtboards", tl!("Use Artboards")));
     let use_artboards = d.bool("useArtboards");
     ui.add_enabled_ui(use_artboards, |ui| {
         ui.horizontal(|ui| {

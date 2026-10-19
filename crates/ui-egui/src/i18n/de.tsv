@@ -4831,3 +4831,30 @@ effect	Regular	Regelmäßig
 	Serif	Serifen
 	Sans	Serifenlos
 	Script	Schreibschrift
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Neue freie Zeichenfläche
+	Post	Beitrag
+	Story	Story
+varos-home	Web	Web
+	Poster	Plakat
+	Icon	Symbol
+	A4	A4
+
+# Varos: Home dates and section label
+	Start with	Beginnen mit
+	Yesterday	Gestern
+	{hours} h ago	vor {hours} Std.
+	{minutes} min ago	vor {minutes} Min.
+	Jan	Jan
+	Feb	Feb
+	Mar	Mär
+	Apr	Apr
+	May	Mai
+	Jun	Jun
+	Jul	Jul
+	Aug	Aug
+	Sep	Sep
+	Oct	Okt
+	Nov	Nov
+	Dec	Dez

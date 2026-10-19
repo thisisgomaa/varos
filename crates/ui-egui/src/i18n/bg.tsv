@@ -5220,3 +5220,28 @@ theme	Appearance	Външен вид
 	Serif	Серифен
 	Sans	Безсерифен
 	Script	Ръкописен
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Ново свободно платно
+	Post	Публикация
+	Story	История
+	Poster	Плакат
+	Icon	Икона
+
+# Varos: Home dates and section label
+	Start with	Започнете с
+	Yesterday	Вчера
+	{hours} h ago	преди {hours} ч
+	{minutes} min ago	преди {minutes} мин
+	Jan	яну
+	Feb	фев
+	Mar	мар
+	Apr	апр
+	May	май
+	Jun	юни
+	Jul	юли
+	Aug	авг
+	Sep	сеп
+	Oct	окт
+	Nov	ное
+	Dec	дек

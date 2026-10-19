@@ -447,7 +447,10 @@ fn encode_files(doc: &Document, f: &Format, p: &Value) -> Result<Encoded> {
         }
         return encode_files(&single_artboard(doc, rect, "Rect"), f, &q);
     }
-    if use_artboards == Some(false) {
+    // Varos: boardless PDFs retain the original native data via pdf::encode's output adapter.
+    let free_pdf = f.id == "pdf" && doc.artboards.is_empty();
+    if (use_artboards == Some(false) && !free_pdf) || (f.raster && super::super::varos_board::export_art(doc, p)) {
+        // Varos: boardless raster export.
         let bounds = vectorcraft_render::encode::art_bounds(doc).ok_or_else(|| bad(C, "nothing to export: the document has no visible art"))?;
         let mut q = super::export::without_artboards(p);
         if let Some(o) = q.as_object_mut() {

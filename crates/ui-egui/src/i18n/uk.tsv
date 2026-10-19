@@ -4849,3 +4849,30 @@ lighting	Light	Світло
 	Serif	Із зарубками
 	Sans	Без зарубок
 	Script	Рукописний
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Нове вільне полотно
+	Post	Допис
+	Story	Історія
+varos-home	Web	Веб
+	Poster	Плакат
+	Icon	Піктограма
+	A4	A4
+
+# Varos: Home dates and section label
+	Start with	Почніть із
+	Yesterday	Учора
+	{hours} h ago	{hours} год тому
+	{minutes} min ago	{minutes} хв тому
+	Jan	січ
+	Feb	лют
+	Mar	бер
+	Apr	кві
+	May	тра
+	Jun	чер
+	Jul	лип
+	Aug	сер
+	Sep	вер
+	Oct	жов
+	Nov	лис
+	Dec	гру

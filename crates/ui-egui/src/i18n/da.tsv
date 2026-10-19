@@ -5238,3 +5238,28 @@ swatch	Bright Violet	Kraftig violet
 	Serif	Serif
 	Sans	Sans
 	Script	Håndskrift
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Nyt frit lærred
+	Post	Opslag
+	Story	Historie
+	Poster	Plakat
+	Icon	Ikon
+
+# Varos: Home dates and section label
+	Start with	Start med
+	Yesterday	I går
+	{hours} h ago	for {hours} t siden
+	{minutes} min ago	for {minutes} min siden
+	Jan	jan
+	Feb	feb
+	Mar	mar
+	Apr	apr
+	May	maj
+	Jun	jun
+	Jul	jul
+	Aug	aug
+	Sep	sep
+	Oct	okt
+	Nov	nov
+	Dec	dec

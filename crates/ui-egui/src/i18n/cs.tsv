@@ -5255,3 +5255,29 @@ mark-style	Japanese	Japonské
 	Serif	Patkové
 	Sans	Bezpatkové
 	Script	Psací
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Nové volné plátno
+	Post	Příspěvek
+	Story	Příběh
+varos-home	Web	Web
+	Poster	Plakát
+	Icon	Ikona
+
+# Varos: Home dates and section label
+	Start with	Začít s
+	Yesterday	Včera
+	{hours} h ago	před {hours} h
+	{minutes} min ago	před {minutes} min
+	Jan	led
+	Feb	úno
+	Mar	bře
+	Apr	dub
+	May	kvě
+	Jun	čvn
+	Jul	čvc
+	Aug	srp
+	Sep	zář
+	Oct	říj
+	Nov	lis
+	Dec	pro

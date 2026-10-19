@@ -5162,3 +5162,29 @@ imageTrace	Outline	კონტური
 	Serif	სერიფიანი
 	Sans	უსერიფო
 	Script	ხელნაწერი
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	ახალი თავისუფალი ტილო
+	Post	პოსტი
+	Story	ისტორია
+varos-home	Web	ვებგვერდი
+	Poster	პოსტერი
+	Icon	ხატულა
+
+# Varos: Home dates and section label
+	Start with	დაიწყეთ
+	Yesterday	გუშინ
+	{hours} h ago	{hours} სთ წინ
+	{minutes} min ago	{minutes} წთ წინ
+	Jan	იან
+	Feb	თებ
+	Mar	მარ
+	Apr	აპრ
+	May	მაი
+	Jun	ივნ
+	Jul	ივლ
+	Aug	აგვ
+	Sep	სექ
+	Oct	ოქტ
+	Nov	ნოე
+	Dec	დეკ

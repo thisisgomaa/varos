@@ -107,6 +107,12 @@ fn art_bounds(doc: &Document) -> Option<Rect> {
 
 /// The regions that print: `(artboard, rect)`.
 pub(crate) fn regions(doc: &Document, set: &PrintSettings) -> Result<Vec<(Option<usize>, Rect)>, PdfError> {
+    // Varos: default print on a free canvas uses the existing Ignore Artboards path.
+    if doc.artboards.is_empty() && set.artboards == PrintArtboards::All {
+        let mut free = set.clone();
+        free.artboards = PrintArtboards::Ignore;
+        return regions(doc, &free);
+    }
     let count = doc.artboards.len();
     let picked: Vec<usize> = match set.artboards {
         PrintArtboards::Ignore => {

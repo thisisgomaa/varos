@@ -4144,3 +4144,29 @@ lighting	Light	光源
 	Serif	襯線
 	Sans	無襯線
 	Script	手寫體
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	新增自由畫布
+	Post	貼文
+	Story	限時動態
+	Poster	海報
+	Icon	圖示
+	A4	A4
+
+# Varos: Home dates and section label
+	Start with	開始建立
+	Yesterday	昨天
+	{hours} h ago	{hours} 小時前
+	{minutes} min ago	{minutes} 分鐘前
+	Jan	1月
+	Feb	2月
+	Mar	3月
+	Apr	4月
+	May	5月
+	Jun	6月
+	Jul	7月
+	Aug	8月
+	Sep	9月
+	Oct	10月
+	Nov	11月
+	Dec	12月

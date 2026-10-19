@@ -5207,3 +5207,29 @@ effect	Points	Σημεία
 	Serif	Με πατούρες
 	Sans	Χωρίς πατούρες
 	Script	Καλλιγραφική
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Νέος ελεύθερος καμβάς
+	Post	Δημοσίευση
+	Story	Ιστορία
+varos-home	Web	Ιστός
+	Poster	Αφίσα
+	Icon	Εικονίδιο
+
+# Varos: Home dates and section label
+	Start with	Ξεκινήστε με
+	Yesterday	Χθες
+	{hours} h ago	πριν από {hours} ώρες
+	{minutes} min ago	πριν από {minutes} λεπτά
+	Jan	Ιαν
+	Feb	Φεβ
+	Mar	Μαρ
+	Apr	Απρ
+	May	Μαΐ
+	Jun	Ιουν
+	Jul	Ιουλ
+	Aug	Αυγ
+	Sep	Σεπ
+	Oct	Οκτ
+	Nov	Νοε
+	Dec	Δεκ

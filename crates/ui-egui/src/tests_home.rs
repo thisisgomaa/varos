@@ -121,15 +121,15 @@ fn home_lists_recent_files_and_a_click_opens_one() {
     let ctx = egui::Context::default();
     crate::theme::install_fonts(&ctx);
     let has = |texts: &[(String, egui::Rect)], s: &str| texts.iter().any(|(t, _)| t == s);
-    assert!(!has(&home_texts(&mut app, &ctx, vec![]), "Recent Files"), "none: no section");
+    assert!(!has(&home_texts(&mut app, &ctx, vec![]), "RECENT"), "none: no section");
     let dir = std::env::temp_dir().join("vectorcraft-home-recent");
     let missing = dir.join("Gone.svg").to_string_lossy().into_owned();
     app.ui.recent_files = (0..9).map(|i| dir.join(format!("Drawing {i}.svg")).to_string_lossy().into_owned()).collect();
     app.ui.recent_files.insert(0, missing);
     let texts = home_texts(&mut app, &ctx, vec![]);
-    assert!(has(&texts, "Recent Files") && has(&texts, "Gone.svg") && has(&texts, "Drawing 4.svg"), "{texts:?}");
+    assert!(has(&texts, "RECENT") && has(&texts, "Gone.svg") && has(&texts, "Drawing 4.svg"), "{texts:?}");
     assert!(!has(&texts, "Drawing 5.svg"), "the first six only");
-    assert!(has(&texts, &dir.to_string_lossy()), "with its folder");
+    assert!(texts.iter().any(|(t, _)| t.ends_with(" › vectorcraft-home-recent")), "with its folder");
     let at = texts.iter().find(|(t, _)| t == "Gone.svg").map(|(_, r)| r.center()).unwrap();
     let press = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
     home_texts(&mut app, &ctx, vec![egui::Event::PointerMoved(at), press(true)]);

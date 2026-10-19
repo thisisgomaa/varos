@@ -5281,3 +5281,28 @@ swatch	Bright Violet	Felviolet
 	Serif	Schreef
 	Sans	Schreefloos
 	Script	Handschrift
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Nieuw vrij canvas
+	Post	Bericht
+	Story	Verhaal
+	Poster	Poster
+	Icon	Pictogram
+
+# Varos: Home dates and section label
+	Start with	Begin met
+	Yesterday	Gisteren
+	{hours} h ago	{hours} u geleden
+	{minutes} min ago	{minutes} min geleden
+	Jan	jan
+	Feb	feb
+	Mar	mrt
+	Apr	apr
+	May	mei
+	Jun	jun
+	Jul	jul
+	Aug	aug
+	Sep	sep
+	Oct	okt
+	Nov	nov
+	Dec	dec

@@ -5254,3 +5254,29 @@ theme	Appearance	Apparence
 	Serif	Avec empattements
 	Sans	Sans empattements
 	Script	Manuscrite
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Nouveau canevas libre
+	Post	Publication
+	Story	Story
+varos-home	Web	Web
+	Poster	Affiche
+	Icon	Icône
+
+# Varos: Home dates and section label
+	Start with	Commencer avec
+	Yesterday	Hier
+	{hours} h ago	il y a {hours} h
+	{minutes} min ago	il y a {minutes} min
+	Jan	janv.
+	Feb	févr.
+	Mar	mars
+	Apr	avr.
+	May	mai
+	Jun	juin
+	Jul	juil.
+	Aug	août
+	Sep	sept.
+	Oct	oct.
+	Nov	nov.
+	Dec	déc.
