@@ -246,6 +246,8 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let mut escape_pair = escape_press(ctx);
     // Followed before anything returns, so a key typed in a field isn't taken for a paste.
     let textless_paste = ctx.input(|i| app.paste_chord.textless_paste(&i.events));
+    // Varos: Escape closes the harakat colour popover first; then no shortcut or tool sees it.
+    crate::varos::middle_eastern_ui::escape_popover(app, ctx);
     // A numeric field being scrubbed has the keyboard: Escape cancels the drag.
     if crate::scrub::phase(ctx) != crate::scrub::Phase::Idle {
         return;

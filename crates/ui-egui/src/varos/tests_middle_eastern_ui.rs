@@ -202,10 +202,15 @@ fn the_harakat_row_colours_hides_and_restores_the_harakat() {
     let ctx = egui::Context::default();
     crate::theme::install_fonts(&ctx);
     egui_extras::install_image_loaders(&ctx);
-    let (rows, _) = frame(&ctx, &mut app, vec![], char_rows);
+    let (rows, texts) = frame(&ctx, &mut app, vec![], char_rows);
     for key in ["digits", "hide", "as-letters", "harakat", "well", "preset-red", "preset-green", "preset-gold", "preset-black"] {
         rows.get(key);
     }
+    // Hide is icon-only (24 wide); As letters has its icon and label, right after it, inside the row.
+    let (hide, as_letters) = (rows.get("hide").rect, rows.get("as-letters").rect);
+    assert_eq!(hide.width(), 24.0);
+    assert!(texts.iter().any(|t| t == "As letters"), "{texts:?}");
+    assert!(as_letters.width() > 50.0 && as_letters.left() > hide.right() && as_letters.right() <= 320.0, "{hide:?} {as_letters:?}");
     assert!(rows.get("as-letters").lit && !rows.get("hide").lit, "they have their letters' colour: {rows:?}");
     assert!(rows.controls.iter().filter(|c| c.key.starts_with("preset-")).all(|c| !c.lit));
     let harakat_fills = |app: &VectorcraftApp| -> Vec<Paint> {
@@ -341,6 +346,222 @@ fn every_control_has_a_tooltip() {
             assert!(texts.contains(&c.tip), "{}: no tooltip {:?} in {texts:?}", c.key, c.tip);
         }
     }
+}
+
+fn key(k: egui::Key, pressed: bool) -> egui::Event {
+    egui::Event::Key { key: k, physical_key: None, pressed, repeat: false, modifiers: Default::default() }
+}
+
+/// A frame as the host runs it (`logic` before the panels): the shortcuts first when `shortcuts`,
+/// then `rows`. → the rows drawn.
+fn host_frame(
+    ctx: &egui::Context,
+    app: &mut VectorcraftApp,
+    events: Vec<egui::Event>,
+    shortcuts: bool,
+    rows: fn(&mut VectorcraftApp, &mut egui::Ui) -> Rows,
+) -> Rows {
+    let mut out_rows = Rows::default();
+    let mut out = ctx.run_ui(input(events), |ui| {
+        if shortcuts {
+            crate::shortcuts::handle(app, ui.ctx());
+        }
+        out_rows = rows(app, ui);
+    });
+    out.textures_delta.clear();
+    out_rows
+}
+
+/// The harakat fills of text `id`, one per harakat.
+fn harakat_fills(app: &VectorcraftApp, id: u64) -> Vec<Paint> {
+    text(app, id)
+        .runs
+        .iter()
+        .flat_map(|r| r.text.chars().filter(|c| vectorcraft_text::harakat::is_harakat(*c)).map(move |_| r.style.fill.clone()))
+        .collect()
+}
+
+fn undo_steps(app: &VectorcraftApp) -> usize {
+    app.session.active().unwrap().history.undo.len()
+}
+
+/// Escape during a drag in the colour well's field drops the colour dragged: the harakat get back
+/// the colour they had, the live interaction is gone and nothing is added to the history (egui
+/// would end the drag as if released). Both as the host runs it (the shortcuts take the Escape
+/// before the panels) and with the panel alone.
+#[test]
+fn escape_during_a_colour_drag_restores_the_harakat_colour() {
+    for shortcuts in [true, false] {
+        let (mut app, id) = app_with("بِسْمِ اللَّهِ");
+        app.run("text.styleHarakat", json!({"fill": "#1E8449"})).unwrap();
+        let green = harakat_fills(&app, id);
+        let before = undo_steps(&app);
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        egui_extras::install_image_loaders(&ctx);
+        let rows = host_frame(&ctx, &mut app, vec![], shortcuts, char_rows);
+        let well = rows.get("well").rect.center();
+        host_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(well), button(well, true)], shortcuts, char_rows);
+        host_frame(&ctx, &mut app, vec![button(well, false)], shortcuts, char_rows);
+        let field = host_frame(&ctx, &mut app, vec![], shortcuts, char_rows).get("harakat-field").rect;
+        // A drag over several frames previews on the art.
+        let a = field.left_top() + egui::vec2(20.0, 20.0);
+        host_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(a), button(a, true)], shortcuts, char_rows);
+        for step in 1..=3 {
+            let to = a + egui::vec2(30.0, 15.0) * step as f32;
+            host_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(to)], shortcuts, char_rows);
+        }
+        assert_ne!(harakat_fills(&app, id), green, "{shortcuts}: the drag previews");
+        assert!(app.session.in_interaction(), "{shortcuts}");
+        let rows = host_frame(&ctx, &mut app, vec![key(egui::Key::Escape, true), key(egui::Key::Escape, false)], shortcuts, char_rows);
+        assert_eq!(harakat_fills(&app, id), green, "{shortcuts}: the colour they had");
+        assert!(!app.session.in_interaction(), "{shortcuts}: no live interaction left");
+        assert_eq!(undo_steps(&app), before, "{shortcuts}: no undo step");
+        if shortcuts {
+            assert!(!rows.controls.iter().any(|c| c.key == "harakat-field"), "{shortcuts}: the popover closed: {rows:?}");
+        }
+        // The button let go afterwards changes nothing.
+        let end = a + egui::vec2(100.0, 50.0);
+        host_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(end), button(end, false)], shortcuts, char_rows);
+        let rows = host_frame(&ctx, &mut app, vec![], shortcuts, char_rows);
+        assert_eq!(harakat_fills(&app, id), green, "{shortcuts}");
+        assert_eq!(undo_steps(&app), before, "{shortcuts}");
+        assert!(!rows.controls.iter().any(|c| c.key == "harakat-field"), "{shortcuts}: the popover is closed: {rows:?}");
+    }
+}
+
+/// Escape while the colour popover is open only closes it: no shortcut or tool sees it, so the
+/// Type tool goes on typing. The next Escape is the tool's again (it ends typing).
+#[test]
+fn escape_closes_the_colour_popover_and_the_type_tool_keeps_typing() {
+    let mut app = VectorcraftApp::new(Session::new(), Default::default());
+    app.session.prefs.show_indic_options = true;
+    app.run("file.new", json!({"width": 600, "height": 400})).unwrap();
+    app.session.select_tool("type", Default::default()).unwrap();
+    app.run("text.create", json!({"x": 20, "y": 50, "text": "بِسْمِ اللَّهِ"})).unwrap();
+    app.session.apply_actions(vec![vectorcraft_tools::Action::Notify("text.editNew".into())]).unwrap();
+    assert!(crate::panels::character::text_editing(&app).is_some());
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    egui_extras::install_image_loaders(&ctx);
+    let rows = host_frame(&ctx, &mut app, vec![], true, char_rows);
+    let well = rows.get("well").rect.center();
+    host_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(well), button(well, true)], true, char_rows);
+    host_frame(&ctx, &mut app, vec![button(well, false)], true, char_rows);
+    let rows = host_frame(&ctx, &mut app, vec![], true, char_rows);
+    assert!(rows.controls.iter().any(|c| c.key == "harakat-field"), "the popover is open: {rows:?}");
+    let escape = || vec![key(egui::Key::Escape, true), key(egui::Key::Escape, false)];
+    host_frame(&ctx, &mut app, escape(), true, char_rows);
+    let rows = host_frame(&ctx, &mut app, vec![], true, char_rows);
+    assert!(!rows.controls.iter().any(|c| c.key == "harakat-field"), "the popover closed: {rows:?}");
+    assert_eq!(app.session.tool_id(), "type", "the Type tool stays");
+    assert!(crate::panels::character::text_editing(&app).is_some(), "and goes on typing");
+    // With the popover closed, Escape is the tool's: typing ends.
+    host_frame(&ctx, &mut app, escape(), true, char_rows);
+    assert_ne!(app.session.tool_id(), "type", "the next Escape reaches the tool");
+}
+
+/// The screen-reader tree of one frame of `rows`.
+fn a11y(ctx: &egui::Context, app: &mut VectorcraftApp, rows: fn(&mut VectorcraftApp, &mut egui::Ui) -> Rows) -> Vec<egui::accesskit::Node> {
+    let mut out = ctx.run_ui(input(vec![]), |ui| {
+        rows(app, ui);
+    });
+    out.textures_delta.clear();
+    out.platform_output.accesskit_update.map(|u| u.nodes.into_iter().map(|(_, n)| n).collect()).unwrap_or_default()
+}
+
+/// Screen readers get a name for the Strength text editor, the colour field and the hex editor,
+/// and As letters' label.
+#[test]
+fn the_fields_have_accessible_names() {
+    use egui::accesskit::Role;
+    crate::i18n::set_current(crate::i18n::Lang::EN);
+    let has = |tree: &[egui::accesskit::Node], role: Role, label: &str| tree.iter().any(|n| n.role() == role && n.label() == Some(label));
+    let (mut app, _) = app_with("بسم الله الرحمن الرحيم");
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    crate::theme::install_fonts(&ctx);
+    egui_extras::install_image_loaders(&ctx);
+    frame(&ctx, &mut app, vec![], para_group);
+    let tree = a11y(&ctx, &mut app, para_group);
+    assert!(has(&tree, Role::TextInput, "Kashida strength"), "{tree:#?}");
+    let (mut app, _) = app_with("بِسْمِ اللَّهِ");
+    let rows = frame(&ctx, &mut app, vec![], char_rows).0;
+    click(&ctx, &mut app, rows.get("well").rect.center(), char_rows);
+    let tree = a11y(&ctx, &mut app, char_rows);
+    assert!(has(&tree, Role::Slider, "Saturation and brightness"), "{tree:#?}");
+    assert!(has(&tree, Role::Slider, "Hue"));
+    assert!(has(&tree, Role::TextInput, "Hex colour"), "{tree:#?}");
+    assert!(has(&tree, Role::Button, "As letters"));
+    assert!(has(&tree, Role::Button, "Hide the harakat: they stay in the text"));
+}
+
+/// The Strength field and the hex field have the 3 pt control corners (upstream draws its fields
+/// at 5 pt).
+#[test]
+fn the_fields_have_three_point_corners() {
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    egui_extras::install_image_loaders(&ctx);
+    // The field boxes: rectangles at least 20 pt tall (the popover fades in, so not by colour).
+    let boxes = |ctx: &egui::Context, app: &mut VectorcraftApp, rows: fn(&mut VectorcraftApp, &mut egui::Ui) -> Rows| {
+        let mut drawn = Rows::default();
+        let mut out = ctx.run_ui(input(vec![]), |ui| drawn = rows(app, ui));
+        out.textures_delta.clear();
+        let rects: Vec<(egui::Rect, egui::CornerRadius)> = out
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Rect(r) if r.rect.height() >= 20.0 => Some((r.rect, r.corner_radius)),
+                _ => None,
+            })
+            .collect();
+        (drawn, rects)
+    };
+    let (mut app, _) = app_with("بسم الله الرحمن الرحيم");
+    let (rows, rects) = boxes(&ctx, &mut app, para_group);
+    let field = rows.get("strength-field").rect;
+    let strength: Vec<_> = rects.iter().filter(|(r, _)| field.contains_rect(*r)).collect();
+    let three = |boxes: &[&(egui::Rect, egui::CornerRadius)]| {
+        boxes.iter().any(|(_, c)| *c == egui::CornerRadius::same(3)) && !boxes.iter().any(|(_, c)| *c == egui::CornerRadius::same(5))
+    };
+    assert!(three(&strength), "{strength:?} in {field:?}");
+    let (mut app, _) = app_with("بِسْمِ اللَّهِ");
+    let rows = frame(&ctx, &mut app, vec![], char_rows).0;
+    click(&ctx, &mut app, rows.get("well").rect.center(), char_rows);
+    let (rows, rects) = boxes(&ctx, &mut app, char_rows);
+    let row = rows.get("harakat-hex").rect;
+    let hex: Vec<_> = rects.iter().filter(|(r, _)| row.contains_rect(*r)).collect();
+    assert!(three(&hex), "{hex:?} in {row:?}");
+}
+
+/// The folded groups are kept with the UI state (`ui.json`), as the other panel choices are.
+#[test]
+fn the_folded_groups_are_saved_with_the_ui_state() {
+    let (mut app, _) = app_with("بِسْمِ اللَّهِ");
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    egui_extras::install_image_loaders(&ctx);
+    let (rows, _) = frame(&ctx, &mut app, vec![], char_rows);
+    assert!(rows.controls.len() > 1);
+    click(&ctx, &mut app, rows.get("group").rect.center(), char_rows);
+    assert!(app.ui.varos_me_folded.character && !app.ui.varos_me_folded.paragraph);
+    let (rows, _) = frame(&ctx, &mut app, vec![], char_rows);
+    assert_eq!(rows.controls.len(), 1, "folded: the head alone: {rows:?}");
+    let saved = serde_json::to_value(&app.ui).unwrap();
+    assert_eq!(saved["varos_me_folded"], json!({"paragraph": false, "character": true}));
+    let restored: crate::state::UiState = serde_json::from_value(saved).unwrap();
+    assert!(restored.varos_me_folded.character);
+    // A restart: a fresh window with the saved state draws the group folded.
+    let (mut again, _) = app_with("بِسْمِ اللَّهِ");
+    again.ui = restored;
+    let (rows, _) = frame(&egui::Context::default(), &mut again, vec![], char_rows);
+    assert_eq!(rows.controls.len(), 1, "{rows:?}");
+    // Older profiles without the field: both open.
+    let mut old = serde_json::to_value(crate::state::UiState::default()).unwrap();
+    old.as_object_mut().unwrap().remove("varos_me_folded");
+    let restored: crate::state::UiState = serde_json::from_value(old).unwrap();
+    assert_eq!(restored.varos_me_folded, super::Folded::default());
 }
 
 /// The Glyphs panel lists the Arabic blocks; a face's characters in them, and none in a Latin font.

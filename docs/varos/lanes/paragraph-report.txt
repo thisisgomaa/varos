@@ -131,3 +131,54 @@ LEFT / RISKS
 - No eyedropper in the harakat popover (see decision 1).
 - "Colour picked last" is per window session (egui memory), not per document.
 - Independent review not done yet (WORKSHOP gate 7).
+
+REVIEW FIXES (independent review, fix-first, no BLOCK; Opus 5.5, 2026-10-19)
+1. Escape during a colour-well drag cancels. egui ends a drag on Escape as if released, which
+   committed the dragged colour. Now the live interaction is dropped (session cancel_interaction):
+   the harakat get back their colour, no undo step. Two paths: escape_popover (below) when the
+   shortcuts run first (the real host: logic before the panels), and inside the popover when they
+   did not (a "live" flag in egui memory + Escape pressed). Covers the colour field and the hue.
+   Test: escape_during_a_colour_drag_restores_the_harakat_colour (both paths; 3-frame drag
+   previews, Escape -> original fill, no interaction left, undo length unchanged, release after
+   changes nothing, popover closed).
+2. Escape with the popover open only closes it. The host runs shortcuts::handle BEFORE the panels,
+   so the Type tool claimed Escape (ended typing, switched tool) and the popover never saw it.
+   New middle_eastern_ui::escape_popover, called by one marked Varos hook line at the top of
+   shortcuts::handle: when the well's popover was open last frame, it consumes Escape, closes the
+   popover and drops a live drag. No focus is taken. Test:
+   escape_closes_the_colour_popover_and_the_type_tool_keeps_typing (tool stays "type", still
+   editing; the next Escape reaches the tool). Mutation check: with the hook removed this test
+   fails (the tool eats Escape, the popover stays open).
+3. Accessible names: Strength text editor = its tip "Kashida strength" (TextInput); the colour
+   field = "Saturation and brightness" (Slider, upstream's field had no node); the hex editor =
+   "Hex colour" (TextInput); As letters is named by its label. Set via accesskit_node_builder as
+   upstream's slider_info does. Test: the_fields_have_accessible_names (AccessKit tree).
+4. As letters = icon + label ("As letters"); Hide stays icon-only. toggle() takes a label and a
+   max width; a long translation ends in "…" so the row never overflows; Hide + As letters sit
+   together at the right end. Test: the harakat row test checks Hide 24 wide, "As letters" painted,
+   the toggle inside the row. Capture viewed: target/paragraph-captures-review/character.png.
+5. 3 pt corners on the Strength field and the hex field via a fork wrapper, control_corners():
+   after upstream's widget paints, its 5 pt boxes in that range get 3 pt. No upstream widget edited.
+   Test: the_fields_have_three_point_corners. Captures viewed (paragraph-a.png, character-well.png).
+6. Fold state persisted: new UiState field varos_me_folded (serde default; struct Folded
+   {paragraph, character}), one marked hook in state.rs (+ its Default line). Replaces the egui
+   memory pstate. Test: the_folded_groups_are_saved_with_the_ui_state (click folds, ui.json
+   round-trip, restart draws folded, older profile without the field -> open).
+Catalogs: 3 rows appended at the end of all 23 catalogs (As letters [old "As Letters"
+translations reused], Saturation and brightness, Hex colour).
+Files: varos/middle_eastern_ui.rs, varos/tests_middle_eastern_ui.rs, shortcuts.rs (+2 hook
+lines), state.rs (+5), i18n/*.tsv (+3 each).
+
+REVIEW-FIX GATES (this worktree, final source)
+PASS cargo build --offline -j 4 -p vectorcraft                          exit 0, 1:05 wall
+PASS cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -- --test-threads=4
+     exit 0; 4641 passed, 0 failed, 7 ignored (ui-egui lib: 1763 passed, 5 ignored), 6:00 wall
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui --lib -- -D warnings          exit 0
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui --all-targets -- -D warnings  exit 0
+PASS cargo fmt --all -- --check                                         exit 0
+PASS git diff --check                                                   exit 0
+Logs: target/paragraph-lane/review-gate-{build,test,clippy-lib,clippy-all,fmt,diffcheck}.log
+Failures on the way: the corner test first matched boxes by fill (the popover fades in, so its
+colours differ) and then required every box to be 3 pt (upstream paints a second 0 pt box at the
+field); it now checks "a 3 pt box and no 5 pt box" by geometry.
+Left: owner hand test (Escape feel, As letters width in long languages, which elide).

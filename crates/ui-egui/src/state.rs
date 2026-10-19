@@ -493,6 +493,10 @@ pub struct UiState {
     /// (`crate::varos::panel_stack`).
     #[serde(default)]
     pub varos_panel_stack: crate::varos::panel_stack::PanelStack,
+    /// Varos: the Middle Eastern groups folded in the Paragraph and Character panels
+    /// (`crate::varos::middle_eastern_ui::group_head`).
+    #[serde(default)]
+    pub varos_me_folded: crate::varos::middle_eastern_ui::Folded,
 }
 
 /// The desktop window's geometry, kept across launches.
@@ -805,6 +809,7 @@ impl Default for UiState {
             window: None,
             varos_middle_eastern: false,
             varos_panel_stack: Default::default(),
+            varos_me_folded: Default::default(),
         }
     }
 }

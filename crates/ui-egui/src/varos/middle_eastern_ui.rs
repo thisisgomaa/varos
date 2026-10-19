@@ -15,13 +15,18 @@
 //!   slider and hex field) and four preset swatches. All through `text.styleHarakat`, which changes
 //!   only paint: letters keep their joining, marks their place.
 //!
+//! The groups' folded state is kept with the UI state (`ui.json`, [`Folded`]). Escape while the
+//! harakat colour popover is open only closes it, and drops a colour being dragged
+//! ([`escape_popover`], called before the shortcuts).
+//!
 //! State: icon choices and toggles that match the selection light up (a dark well, the icon
 //! bright, no azure); the preset matching the harakat colour carries the azure ring. A mixed
 //! selection lights nothing: the values it has are tinted, numbers read "–". Every control has a
 //! tool tip, and screen readers get its name. Labels are English sources translated through the
 //! upstream catalogs (`i18n/*.tsv`, "Varos: Middle Eastern rows").
 
-use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use egui::{Color32, FontId, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
 use vectorcraft_doc::{CharStyle, Digits, NodeKind, ParaDirection, ParaStyle, TextObject};
@@ -116,19 +121,29 @@ const ROW: f32 = 24.0;
 const FIELD: f32 = 20.0;
 const RADIUS: u8 = 3;
 
+/// The Middle Eastern groups folded, kept with the UI state (`ui.json`) as the other panel choices
+/// are ([`crate::state::UiState::varos_me_folded`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Folded {
+    /// The Paragraph panel's group.
+    pub paragraph: bool,
+    /// The Character panel's group.
+    pub character: bool,
+}
+
 /// The folding "Middle Eastern" head of a panel's group: 10 pt caps, a hairline and a chevron;
-/// `fold` is the panel state that remembers it folded. → open.
-pub(crate) fn group_head(ui: &mut Ui, fold: &str, out: &mut Vec<Drawn>) -> bool {
+/// a click flips `folded`. → open.
+pub(crate) fn group_head(ui: &mut Ui, folded: &mut bool, out: &mut Vec<Drawn>) -> bool {
     let t = Tokens::get(ui.ctx());
-    let mut folded: bool = crate::panels::pstate(ui.ctx(), fold);
     ui.add_space(6.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::click());
     let name = tl!("Middle Eastern");
     let tip = tl!("Show or hide the Middle Eastern options");
     if resp.clicked() {
-        folded = !folded;
-        crate::panels::set_pstate(ui.ctx(), fold, folded);
+        *folded = !*folded;
     }
+    let folded = *folded;
     let colour = if resp.hovered() { t.text } else { t.text_dim };
     let mut job = egui::text::LayoutJob::default();
     job.append(
@@ -234,10 +249,33 @@ fn dashed_rect(p: &egui::Painter, r: Rect, stroke: Stroke) {
     }
 }
 
-/// A light-up icon toggle 24 × 22: lit, a dark well with the icon bright (no azure). → clicked.
-pub(crate) fn toggle(ui: &mut Ui, key: &'static str, icon: &'static str, tip: &str, lit: bool, out: &mut Vec<Drawn>) -> bool {
+/// A light-up toggle 22 tall: lit, a dark well with the icon bright (no azure). Icon-only (24
+/// wide) when `label` is empty, else the icon and `label` after it, at most `max_width` wide (a
+/// longer label ends in "…"). → clicked.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn toggle(
+    ui: &mut Ui,
+    key: &'static str,
+    icon: &'static str,
+    label: &str,
+    tip: &str,
+    lit: bool,
+    max_width: f32,
+    out: &mut Vec<Drawn>,
+) -> bool {
     let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
+    const PAD: f32 = 5.0;
+    const GAP: f32 = 4.0;
+    let galley = (!label.is_empty()).then(|| {
+        let room = (max_width - 2.0 * PAD - 16.0 - GAP).max(12.0);
+        // Uncoloured (placeholder) text: it takes the toggle's ink when painted.
+        let mut job =
+            egui::text::LayoutJob::single_section(label.to_string(), egui::TextFormat::simple(FontId::proportional(11.0), Color32::PLACEHOLDER));
+        job.wrap = egui::text::TextWrapping { max_width: room, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+        ui.painter().layout_job(job)
+    });
+    let width = galley.as_ref().map_or(24.0, |g| 2.0 * PAD + 16.0 + GAP + g.size().x);
+    let (r, resp) = ui.allocate_exact_size(vec2(width, 22.0), Sense::click());
     let enabled = ui.is_enabled();
     let p = ui.painter();
     if lit {
@@ -252,8 +290,15 @@ pub(crate) fn toggle(ui: &mut Ui, key: &'static str, icon: &'static str, tip: &s
     } else {
         t.text_dim
     };
-    me_icons::paint(ui, icon, Rect::from_center_size(r.center(), Vec2::splat(16.0)), ink);
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, lit, tip));
+    match galley {
+        None => me_icons::paint(ui, icon, Rect::from_center_size(r.center(), Vec2::splat(16.0)), ink),
+        Some(g) => {
+            me_icons::paint(ui, icon, Rect::from_min_size(pos2(r.left() + PAD, r.center().y - 8.0), Vec2::splat(16.0)), ink);
+            ui.painter().galley(pos2(r.left() + PAD + 16.0 + GAP, r.center().y - g.size().y / 2.0), g, ink);
+        }
+    }
+    let name = if label.is_empty() { tip } else { label };
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, lit, name));
     out.push(Drawn { key, rect: r, tip: tip.into(), lit, ..Default::default() });
     resp.on_hover_text(tip).on_disabled_hover_text(tip).clicked()
 }
@@ -302,16 +347,19 @@ pub(crate) fn rail(ui: &mut Ui, id: &str, name: &str, tip: &str, value: Option<f
     (rect, hit)
 }
 
-/// A number field `width` wide, with the tool tip `tip`, that reads "–" for a mixed selection
-/// (`None`). → its rect, and the number committed.
+/// A number field `width` wide, with the tool tip `tip` (also its screen-reader name) and the 3 pt
+/// control corners, that reads "–" for a mixed selection (`None`). → its rect, and the number
+/// committed.
 pub(crate) fn number_field(ui: &mut Ui, id: &str, tip: &str, value: Option<f64>, width: f32) -> (Rect, Option<f64>) {
     let t = Tokens::get(ui.ctx());
     let mut focus_id = ui.id();
     let r = ui.scope(|ui| {
         focus_id = ui.id().with(id);
-        widgets::mixed_field(ui, id, value, "", 0, width)
+        control_corners(ui, |ui| widgets::mixed_field(ui, id, value, "", 0, width))
     });
     let rect = r.response.rect;
+    // Screen readers name the text editor by its tool tip.
+    ui.ctx().accesskit_node_builder(focus_id, |node| node.set_label(tip));
     // Its tool tip: a hover-only area on top of the text field, which takes no clicks.
     ui.interact(rect, ui.id().with((id, "tip")), Sense::hover()).on_hover_text(tip).on_disabled_hover_text(tip);
     if value.is_none() && !ui.memory(|m| m.has_focus(focus_id)) {
@@ -332,7 +380,10 @@ pub(crate) fn paragraph_group(app: &mut VectorcraftApp, ui: &mut Ui, para: &Para
     if !app.session.prefs.show_indic_options && !kashida {
         return rows;
     }
-    if !group_head(ui, "varos-me-paragraph-folded", &mut rows.controls) {
+    let mut folded = app.ui.varos_me_folded.paragraph;
+    let open = group_head(ui, &mut folded, &mut rows.controls);
+    app.ui.varos_me_folded.paragraph = folded;
+    if !open {
         return rows;
     }
     rows.controls.extend(paragraph_rows(app, ui, para, rtl).controls);
@@ -475,7 +526,7 @@ fn colour_harakat(app: &mut VectorcraftApp, ctx: &egui::Context, c: &Color, phas
         crate::panels::set_pstate(ctx, LAST_COLOUR, hex.clone());
     }
     let p = targeted(app, json!({ "fill": format!("#{hex}") }));
-    crate::panels::live_run(app, "Style Harakat", "text.styleHarakat", p, phase);
+    crate::panels::live_run(app, LIVE_LABEL, "text.styleHarakat", p, phase);
 }
 
 /// The digit choices: the setting, its name, the digits that show it and its `digits` value.
@@ -492,7 +543,13 @@ fn digit_choices() -> [(Digits, &'static str, &'static str, &'static str); 4] {
 /// Digits with Hide and As letters, and the Harakat row.
 pub(crate) fn character_rows(app: &mut VectorcraftApp, ui: &mut Ui, s: &CharStyle) -> Rows {
     let mut rows = Rows::default();
-    if !app.session.prefs.show_indic_options || !group_head(ui, "varos-me-character-folded", &mut rows.controls) {
+    if !app.session.prefs.show_indic_options {
+        return rows;
+    }
+    let mut folded = app.ui.varos_me_folded.character;
+    let open = group_head(ui, &mut folded, &mut rows.controls);
+    app.ui.varos_me_folded.character = folded;
+    if !open {
         return rows;
     }
     let t = Tokens::get(ui.ctx());
@@ -505,8 +562,16 @@ pub(crate) fn character_rows(app: &mut VectorcraftApp, ui: &mut Ui, s: &CharStyl
         if let Some(key) = digits_dropdown(ui, digits, &mut rows.controls) {
             run(app, "text.setFormat", json!({ "digits": key }));
         }
-        ui.add_space((ui.available_width() - 2.0 * 24.0 - 2.0).max(0.0));
-        if toggle(ui, "hide", me_icons::HARAKAT_HIDE, tl!("Hide the harakat: they stay in the text"), h.hidden, &mut rows.controls) {
+        // Hide (icon-only: the crossed eye is universal) and As letters (icon and label: its glyph
+        // is new), together at the right end.
+        let as_letters = tl!("As letters");
+        let room = (ui.available_width() - 24.0 - 2.0 - 4.0).max(0.0);
+        let label_w = {
+            let g = ui.painter().layout_no_wrap(as_letters.to_string(), FontId::proportional(11.0), Color32::PLACEHOLDER);
+            (2.0 * 5.0 + 16.0 + 4.0 + g.size().x).min(room)
+        };
+        ui.add_space((ui.available_width() - 24.0 - 2.0 - label_w).max(0.0));
+        if toggle(ui, "hide", me_icons::HARAKAT_HIDE, "", tl!("Hide the harakat: they stay in the text"), h.hidden, 24.0, &mut rows.controls) {
             // Shown again: the colour picked last, else their letters' colour.
             let fill = if h.hidden { last.map_or("inherit".into(), |c| format!("#{}", hex_digits(&c))) } else { "none".into() };
             style_harakat(app, &fill);
@@ -515,8 +580,10 @@ pub(crate) fn character_rows(app: &mut VectorcraftApp, ui: &mut Ui, s: &CharStyl
             ui,
             "as-letters",
             me_icons::HARAKAT_AS_LETTERS,
+            as_letters,
             tl!("Give the harakat their letters' colour again"),
             h.as_letters,
+            room,
             &mut rows.controls,
         ) {
             // Off: the colour picked last, else the first preset.
@@ -699,6 +766,66 @@ fn presets(ui: &mut Ui, current: Option<&str>, salt: &str, out: &mut Vec<Drawn>)
 /// grey).
 const POPOVER_HSB: &str = "varos-harakat-hsb";
 
+/// Egui memory of the well's popover: its open-state id (as [`widgets::popover`] keeps it), for
+/// [`escape_popover`], which runs before the panels are drawn.
+const WELL_POPOVER: &str = "varos-harakat-popover";
+
+/// Egui memory: a colour is being dragged in the popover, previewed on the art (a live interaction
+/// that is one undo step when released).
+const LIVE_DRAG: &str = "varos-harakat-live";
+
+/// The live interaction a harakat colour drag previews in ([`crate::panels::live_run`]).
+const LIVE_LABEL: &str = "Style Harakat";
+
+/// Drop a harakat colour being dragged: the harakat get back the colour they had, and nothing is
+/// added to the undo history.
+fn cancel_drag(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    let live = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(LIVE_DRAG))).unwrap_or(false);
+    let ours = app.session.active().and_then(|d| d.interaction.as_ref()).is_some_and(|i| i.label == LIVE_LABEL);
+    if live && ours {
+        app.session.cancel_interaction().ok();
+        app.sync_views();
+    }
+    ctx.data_mut(|d| d.remove::<(String, [f32; 3])>(egui::Id::new(POPOVER_HSB)));
+}
+
+/// Escape while the harakat colour popover is open is the popover's alone: it closes the popover
+/// and drops a colour being dragged in it (egui would end that drag as if released), and no
+/// shortcut, tool or canvas sees it (the Type tool keeps typing). Called by the shortcuts before
+/// they read the keys, and before the panels are drawn; the focus is left where it is. → it took
+/// the Escape.
+pub(crate) fn escape_popover(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
+    let Some(popover) = ctx.data(|d| d.get_temp::<egui::Id>(egui::Id::new(WELL_POPOVER))) else { return false };
+    let open = ctx.data(|d| d.get_temp::<u64>(popover)).is_some_and(|f| f + 1 >= ctx.cumulative_frame_nr());
+    if !open || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+        return false;
+    }
+    ctx.data_mut(|d| d.remove::<u64>(popover));
+    cancel_drag(app, ctx);
+    true
+}
+
+/// Draw `add` with the boxes it paints at upstream's 5 pt field corners given the Varos 3 pt
+/// control corners instead (owner rule), leaving upstream's widget code as it is.
+fn control_corners<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let layer = ui.layer_id();
+    let start = ui.ctx().graphics_mut(|g| g.entry(layer).next_idx());
+    let r = add(ui);
+    ui.ctx().graphics_mut(|g| {
+        let list = g.entry(layer);
+        for i in start.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(i), |c| {
+                if let egui::Shape::Rect(rect) = &mut c.shape
+                    && rect.corner_radius == egui::CornerRadius::same(5)
+                {
+                    rect.corner_radius = egui::CornerRadius::same(RADIUS);
+                }
+            });
+        }
+    });
+    r
+}
+
 /// The harakat colour well showing `shown` (`mixed`: the harakat differ): a click opens a popover
 /// with upstream's colour field and hue slider, a hex field and the presets; a drag previews on the
 /// art and is one undo step when released.
@@ -723,6 +850,7 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
     out.push(Drawn { key: "well", rect, tip: tip.into(), ..Default::default() });
     let resp = resp.on_hover_text(tip).on_disabled_hover_text(tip);
     let toggle = resp.clicked();
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(WELL_POPOVER), open_id));
     widgets::popover(&resp, toggle, |ui| {
         ui.set_width(196.0);
         // The colour being edited: kept while it is the one shown, so a grey keeps its hue.
@@ -735,9 +863,15 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
         let mut pick: Option<([f32; 3], Live)> = None;
         let at = |x: f32, y: f32| crate::panels::c32(&Color::from_hsb(h, x, 1.0 - y));
         let field_at = ui.next_widget_position();
+        let field_id = ui.id().with("varos-harakat-field");
         if let (Some((x, y)), phase) = widgets::color_field(ui, "varos-harakat-field", vec2(196.0, 96.0), (s, 1.0 - b), &at) {
             pick = Some(([h, x, 1.0 - y], phase));
         }
+        // Upstream's field has no screen-reader node of its own: a slider with no value, named.
+        ui.ctx().accesskit_node_builder(field_id, |node| {
+            node.set_role(egui::accesskit::Role::Slider);
+            node.set_label(tl!("Saturation and brightness"));
+        });
         out.push(Drawn { key: "harakat-field", rect: Rect::from_min_size(field_at, vec2(196.0, 96.0)), ..Default::default() });
         ui.add_space(4.0);
         let hue = |z: f32| crate::panels::c32(&Color::from_hsb(z * 360.0, 1.0, 1.0));
@@ -747,17 +881,29 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
         ui.add_space(2.0);
         let mut typed = None;
         let hex_row = ui.horizontal(|ui| {
-            if let Some(text) = widgets::hex_field(ui, "varos-harakat-hex", if mixed { "" } else { &hex }) {
+            let hex_id = ui.id().with("varos-harakat-hex");
+            if let Some(text) = control_corners(ui, |ui| widgets::hex_field(ui, "varos-harakat-hex", if mixed { "" } else { &hex })) {
                 typed = parse_hex(&text);
             }
+            ui.ctx().accesskit_node_builder(hex_id, |node| node.set_label(tl!("Hex colour")));
         });
         out.push(Drawn { key: "harakat-hex", rect: hex_row.response.rect, ..Default::default() });
         ui.add_space(4.0);
         let current = (!mixed).then_some(hex.as_str());
         let preset = ui.horizontal(|ui| presets(ui, current, "popover", &mut vec![])).inner;
+        // Egui ends a drag on Escape as if it were released: that Escape drops the colour dragged
+        // instead (when the shortcuts did not take it first, [`escape_popover`]).
+        let live = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new(LIVE_DRAG))).unwrap_or(false);
+        if live && ui.input(|i| i.key_pressed(Key::Escape)) {
+            cancel_drag(app, ui.ctx());
+            return;
+        }
         if let Some((hsb, phase)) = pick {
             let c = Color::from_hsb(hsb[0], hsb[1], hsb[2]);
-            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(POPOVER_HSB), (hex_digits(&c), hsb)));
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(egui::Id::new(POPOVER_HSB), (hex_digits(&c), hsb));
+                d.insert_temp(egui::Id::new(LIVE_DRAG), phase == Live::Dragging);
+            });
             colour_harakat(app, ui.ctx(), &c, phase);
         } else if let Some(c) = typed.or(preset) {
             colour_harakat(app, ui.ctx(), &c, Live::Released);
