@@ -2019,10 +2019,27 @@ impl FontDb {
     /// The kind of `family` (whether it sets Japanese, its class), for font menu filters: from a
     /// loaded face, else from the system font scan. Cheap: no font file is read.
     pub fn family_traits(&self, family: &str) -> FontTraits {
-        if let Some(f) = self.read_faces().iter().find(|f| f.family.eq_ignore_ascii_case(family)) {
-            return f.traits;
-        }
-        self.read_catalog().get(&family.to_ascii_lowercase()).and_then(|c| c.traits).unwrap_or_default()
+        // Varos: `arabic` is any face's, loaded or cataloged, so the order faces load in never
+        // changes it (a family whose italic, loaded first, has no Arabic still sets Arabic).
+        let (first, any_arabic) = {
+            let faces = self.read_faces();
+            let mut same = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(family));
+            let first = same.next().map(|f| f.traits);
+            (first, first.is_some_and(|t| t.arabic) || same.any(|f| f.traits.arabic))
+        };
+        let Some(mut t) = first else {
+            return self.read_catalog().get(&family.to_ascii_lowercase()).and_then(|c| c.traits).unwrap_or_default();
+        };
+        // The catalog as it stands (no scan is started for a loaded family, as before).
+        let cataloged = self.catalog.read().unwrap_or_else(|e| e.into_inner()).get(&family.to_ascii_lowercase()).and_then(|c| c.traits);
+        t.arabic = any_arabic || cataloged.is_some_and(|c| c.arabic);
+        t
+    }
+
+    /// Varos: the loaded faces of `family` (any of its names), without loading any.
+    pub fn loaded_faces(&self, family: &str) -> Vec<Arc<FontFace>> {
+        let (canonical, _) = self.canonical(family, "");
+        self.read_faces().iter().filter(|f| f.family.eq_ignore_ascii_case(family) || f.family.eq_ignore_ascii_case(&canonical)).cloned().collect()
     }
 
     /// [`face`](Self::face) by any of the family's names ([`canonical`](Self::canonical)), and how

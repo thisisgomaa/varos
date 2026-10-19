@@ -89,7 +89,7 @@ fn the_arabic_filter_keeps_arabic_families_and_its_style_groups_never_hide_unkno
     assert!(ArabicMenu::default().wanted(&db, "Source Sans 3"));
 }
 
-/// The style chips' labels are drawn with the interface font: it has the ʿ of Ruqʿah.
+/// The style chips' labels are drawn with the interface font: it has every character of them.
 #[test]
 fn the_interface_font_draws_the_style_labels() {
     let db = FontDb::with_font_dirs(vec![]);
@@ -136,7 +136,7 @@ fn clicking_the_arabic_chip_lists_only_arabic_families() {
     for _ in 0..3 {
         texts = frame(vec![]).1;
     }
-    let chip = texts.iter().find(|(t, _)| t == "Arabic").map(|(_, r)| r.center()).expect("the Arabic chip");
+    let chip = texts.iter().find(|(t, _)| t == "Arabic Fonts").map(|(_, r)| r.center()).expect("the Arabic chip");
     click(chip);
     for _ in 0..3 {
         texts = frame(vec![]).1;
@@ -202,7 +202,7 @@ fn arabic_typed_into_area_type_survives_every_installed_arabic_font() {
     let mut tried = 0;
     let mut failures = vec![];
     eprintln!(
-        "font | face | glyphs/chars | fallback | notdef | joins | lam-alef | morx only | harakat: marks laid out, moved by the shaper, misplaced"
+        "font | face | glyphs/chars | fallback | notdef | joins | lam-alef | AAT (morx) | harakat: marks laid out, moved by the shaper, misplaced"
     );
     for &font in FONTS {
         if !db.has_family(font) {
@@ -234,7 +234,7 @@ fn arabic_typed_into_area_type_survives_every_installed_arabic_font() {
             }
             if text == VOCALIZED {
                 row.push(format!("{}/{}", check.foreign, check.notdef));
-                row.push(format!("{} | {} | {}", support.joins, support.lam_alef, support.aat_only()));
+                row.push(format!("{} | {} | {}", support.joins, support.lam_alef, support.morx_shaped()));
                 row.push(format!("{} of {} harakat, {} moved, {} misplaced", check.marks, check.harakat, check.offset_marks, check.misplaced_marks));
                 if check.marks == 0 {
                     problems.push("no mark glyphs: harakat not drawn as marks".into());
@@ -261,6 +261,28 @@ fn arabic_typed_into_area_type_survives_every_installed_arabic_font() {
     // the Allah ligature (اللَّهِ) about 1.5 em away, under the next word (its raw output: x offset
     // 1472 units in Al Nile, 3313 in Farah, on a 615 / 1466 unit ligature).
     const KNOWN: &[&str] = &["Al Nile", "Farah"];
-    let unknown: Vec<&String> = failures.iter().filter(|f| !KNOWN.iter().any(|k| f.starts_with(&format!("{k}:")))).collect();
+    // Only their harakat check is exempt: any other problem in them still fails.
+    let known = |f: &String| {
+        f.split_once(": ")
+            .is_some_and(|(font, problems)| KNOWN.contains(&font) && problems.split("; ").all(|p| p.contains("harakat off their letters")))
+    };
+    let unknown: Vec<&String> = failures.iter().filter(|f| !known(f)).collect();
     assert!(unknown.is_empty(), "{unknown:#?}");
+}
+
+/// With previews off, the Arabic filter still checks joining: a row's family whose joining isn't
+/// known is loaded in the background, once, and its support becomes known.
+#[test]
+fn the_filter_checks_joining_without_previews() {
+    let db = FontDb::global();
+    let Some(family) = db.menu_family_list().iter().find(|f| db.family_traits(f).arabic && db.known_arabic_support(f).is_none()).cloned() else {
+        return; // No installed Arabic family left unloaded here.
+    };
+    let ctx = egui::Context::default();
+    super::check_joining(&ctx, &family);
+    let start = std::time::Instant::now();
+    while db.known_arabic_support(&family).is_none() && start.elapsed() < std::time::Duration::from_secs(10) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(db.known_arabic_support(&family).is_some(), "{family}: checked");
 }

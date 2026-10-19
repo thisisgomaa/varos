@@ -5112,3 +5112,17 @@ imageTrace	Outline	კონტური
 @msg	its zlib compression is damaged	მისი zlib შეკუმშვა დაზიანებულია
 @msg	its Zstandard compression is damaged	მისი Zstandard შეკუმშვა დაზიანებულია
 @msg	it decompresses to more than {_1} MB	გაშლისას {_1} MB-ს აღემატება
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	არაბული შრიფტები
+	Arabic Samples	არაბული ნიმუშები
+	Show an Arabic line in each Arabic font	ყოველ არაბულ შრიფტში არაბული სტრიქონის ჩვენება
+	Only fonts whose Arabic letters join	მხოლოდ შრიფტები, რომელთა არაბული ასოები ერთდება
+	All Arabic	ყველა არაბული
+	Naskh	ნასხი
+	Kufi	ქუფი
+	Ruq’ah	რუყა
+	Diwani	დივანი
+	Thuluth	სულუსი
+	Modern Sans	თანამედროვე უსერიფო
+	Guessed from the font's name; fonts it can't place are under All Arabic	შეფასებულია შრიფტის სახელით; დაუჯგუფებელი შრიფტები არის „ყველა არაბულში“
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT ფორმირება: ეს შრიფტი იწყობა საკუთარი morx ცხრილებით და არა არაბულის OpenType წესებით

@@ -5205,3 +5205,17 @@ mark-style	Japanese	Japonské
 	Minimum must not exceed Desired, nor Desired Maximum.	Minimum nesmí překročit požadovanou hodnotu ani požadovaná hodnota maximum.
 	Justification	Zarovnání do bloku
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	proměnné a sady dat souboru nebyly načteny (proměnné: {variables}, sady dat: {data_sets}): panel Proměnné je nezobrazuje
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Arabská písma
+	Arabic Samples	Arabské ukázky
+	Show an Arabic line in each Arabic font	Zobrazit v každém arabském písmu arabský řádek
+	Only fonts whose Arabic letters join	Jen písma, jejichž arabská písmena se spojují
+	All Arabic	Celá arabština
+	Naskh	Naskh
+	Kufi	Kufi
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Moderní bezpatkové
+	Guessed from the font's name; fonts it can't place are under All Arabic	Odhadnuto z názvu písma; nezařazená písma jsou v Celá arabština
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Tvarování AAT: toto písmo se sází vlastními tabulkami morx, ne pravidly OpenType pro arabštinu

@@ -25,7 +25,7 @@ fn arabic_coverage_is_detected_on_arabic_faces_only() {
         assert_eq!(face.family, family);
         let s = face_arabic_support(&face);
         assert!(s.covers && s.joins && s.capable(), "{family}: {s:?}");
-        assert!(s.gsub_arabic && !s.morx && !s.aat_only(), "{family}: OpenType Arabic, {s:?}");
+        assert!(s.gsub_arabic && !s.morx && !s.morx_shaped(), "{family}: OpenType Arabic, {s:?}");
         assert!(face.traits.arabic, "{family}: the loaded face's hint is its character map");
         assert!(db.may_set_arabic(family));
     }
@@ -140,31 +140,146 @@ fn arabic_text_is_told_by_its_first_letter() {
     assert!(!is_arabic_text("abc بسم"));
     assert!(!is_arabic_text("123"));
     assert!(!is_arabic_text(""));
+    assert!(!is_arabic_text("١٢٣ ٤٥"), "Arabic-Indic digits alone are not Arabic letters");
+    assert!(is_arabic_text("١٢٣ بسم"));
 }
 
-/// A face that shapes Arabic through `morx` alone (Noto without its `GSUB`, with an empty `morx`
-/// table) is marked: kashida can't stretch it.
-#[test]
-fn a_morx_only_face_is_marked() {
+/// `font` with its name table replaced (family `family`, style `style`), without the tables in
+/// `drop`, with the raw tables `add`.
+fn rebuilt(font: &[u8], family: &str, style: &str, drop: &[&[u8; 4]], add: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
     use write_fonts::types::Tag as WTag;
-    let font = skrifa::FontRef::new(NOTO).unwrap();
-    let name = crate::test_fonts::name_table(&[(1, "Morx Arabic"), (2, "Regular"), (4, "Morx Arabic"), (6, "MorxArabic")]).unwrap();
+    let font = skrifa::FontRef::new(font).unwrap();
+    let full = format!("{family} {style}");
+    let ps = format!("{}-{}", family.replace(' ', ""), style.replace(' ', ""));
+    let name = crate::test_fonts::name_table(&[(1, family), (2, style), (4, &full), (6, &ps)]).unwrap();
     let mut builder = write_fonts::FontBuilder::new();
     builder.add_raw(WTag::new(b"name"), name);
-    // morx version 2, no chains.
-    builder.add_raw(WTag::new(b"morx"), vec![0, 2, 0, 0, 0, 0, 0, 0]);
+    for (tag, data) in add {
+        builder.add_raw(WTag::new(tag), data.clone());
+    }
     for r in font.table_directory.table_records() {
         let tag = WTag::new(&r.tag().to_be_bytes());
-        if tag != WTag::new(b"GSUB") && !builder.contains(tag) {
+        if !drop.iter().any(|d| WTag::new(d) == tag) && !builder.contains(tag) {
             builder.add_raw(tag, font.table_data(r.tag()).unwrap().as_bytes());
         }
     }
-    let db = db_with(&[&builder.build(), NOTO]);
-    let face = db.face("Morx Arabic", "Regular").unwrap();
-    assert_eq!(face.family, "Morx Arabic");
-    let s = face_arabic_support(&face);
-    assert!(s.covers && s.morx && !s.gsub_arabic && s.aat_only(), "{s:?}");
-    assert!(!face_arabic_support(&db.face("Noto Sans Arabic", "Regular").unwrap()).aat_only());
+    builder.build()
+}
+
+/// An empty `morx` table: version 2, no chains.
+fn empty_morx() -> (&'static [u8; 4], Vec<u8>) {
+    (b"morx", vec![0, 2, 0, 0, 0, 0, 0, 0])
+}
+
+/// HarfRust shapes any face with a `morx` table with it, whatever its `GSUB` says (Damascus has
+/// both): such a face is morx-shaped, with or without `GSUB`. With an empty `morx` its letters
+/// don't join: it has the Arabic letters (a character map hint) but can't set Arabic.
+#[test]
+fn faces_with_morx_are_morx_shaped_and_one_that_doesnt_join_is_left_out() {
+    let only = rebuilt(NOTO, "Morx Only Arabic", "Regular", &[b"GSUB"], &[empty_morx()]);
+    let both = rebuilt(NOTO, "Morx Gsub Arabic", "Regular", &[], &[empty_morx()]);
+    let db = db_with(&[&only, &both, NOTO]);
+    for family in ["Morx Only Arabic", "Morx Gsub Arabic"] {
+        let face = db.face(family, "Regular").unwrap();
+        assert_eq!(face.family, family);
+        let s = face_arabic_support(&face);
+        assert!(s.covers && s.morx && s.morx_shaped(), "{family}: {s:?}");
+        // The cmap says Arabic, shaping says the letters don't join.
+        assert!(!s.joins && !s.capable(), "{family}: {s:?}");
+        assert!(face.traits.arabic, "{family}: the character map hint");
+        assert!(!db.may_set_arabic(family), "{family}: loaded, its joining is known: left out of the filter");
+    }
+    assert!(face_arabic_support(&db.face("Morx Gsub Arabic", "Regular").unwrap()).gsub_arabic, "GSUB kept, still morx-shaped");
+    assert!(!face_arabic_support(&db.face("Noto Sans Arabic", "Regular").unwrap()).morx_shaped());
+    assert_eq!(db.arabic_families(None), ["Noto Sans Arabic"]);
+}
+
+/// A family's support is "any face": an italic without Arabic, loaded first, neither hides the
+/// family from the Arabic filter nor overwrites what its other faces can do.
+#[test]
+fn a_family_sets_arabic_when_any_face_does_whatever_loads_first() {
+    let serif = include_bytes!("../../../assets/fonts/SourceSerif4-Regular.ttf");
+    let italic = rebuilt(serif, "Mixed Arabic", "Italic", &[], &[]);
+    let regular = rebuilt(NOTO, "Mixed Arabic", "Regular", &[], &[]);
+    // Fonts added as bytes, the italic first.
+    let db = db_with(&[&italic, &regular]);
+    let faces = db.loaded_faces("Mixed Arabic");
+    assert_eq!(faces.len(), 2);
+    assert!(!faces[0].traits.arabic && faces[1].traits.arabic, "the italic is the first loaded face");
+    assert!(db.family_traits("Mixed Arabic").arabic, "family traits: any face");
+    let s = db.known_arabic_support("Mixed Arabic").unwrap();
+    assert!(s.capable(), "{s:?}");
+    assert!(db.may_set_arabic("Mixed Arabic"));
+    assert_eq!(db.arabic_families(None), ["Mixed Arabic"]);
+    // The italic alone can't.
+    let alone = db_with(&[&italic]);
+    assert!(!alone.family_traits("Mixed Arabic").arabic && !alone.may_set_arabic("Mixed Arabic"));
+    // Aggregation: the faces that can set Arabic decide, in any order.
+    let latin = face_arabic_support(&faces[0]);
+    let arabic = face_arabic_support(&faces[1]);
+    assert_eq!(aggregate([latin, arabic]), aggregate([arabic, latin]));
+    assert_eq!(aggregate([latin, arabic]), arabic);
+    assert_eq!(aggregate([latin]), latin);
+    assert_eq!(aggregate([]), ArabicSupport::default());
+}
+
+/// A scratch font folder, removed when dropped.
+struct Folder(std::path::PathBuf);
+
+impl Folder {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("varos-arabic-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Folder(dir)
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Installed fonts: the catalog's family hint is any face's, and the first loaded face (an italic
+/// without Arabic, its file read first) doesn't change it.
+#[test]
+fn an_installed_family_whose_italic_loads_first_still_sets_arabic() {
+    let serif = include_bytes!("../../../assets/fonts/SourceSerif4-Regular.ttf");
+    let dir = Folder::new("italic-first");
+    std::fs::write(dir.0.join("a-italic.ttf"), rebuilt(serif, "Installed Arabic", "Italic", &[], &[])).unwrap();
+    std::fs::write(dir.0.join("b-regular.ttf"), rebuilt(NOTO, "Installed Arabic", "Regular", &[], &[])).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.0.clone()]);
+    db.set_system_fallback(false);
+    assert!(db.family_traits("Installed Arabic").arabic, "cataloged: any face");
+    let italic = db.face("Installed Arabic", "Italic").unwrap();
+    assert_eq!((italic.family.as_str(), italic.style.as_str()), ("Installed Arabic", "Italic"));
+    let faces = db.loaded_faces("Installed Arabic");
+    assert_eq!(faces.first().map(|f| f.style.as_str()), Some("Italic"), "the italic loaded first");
+    assert!(db.family_traits("Installed Arabic").arabic, "loaded: still any face");
+    assert!(db.may_set_arabic("Installed Arabic"));
+    assert!(db.known_arabic_support("Installed Arabic").is_some_and(ArabicSupport::capable));
+}
+
+/// No support outlives a rescan: it lives with the loaded faces, which a rescan drops when their
+/// files are gone; the family's new files are what count after it.
+#[test]
+fn a_rescan_leaves_no_stale_arabic_support() {
+    let serif = include_bytes!("../../../assets/fonts/SourceSerif4-Regular.ttf");
+    let dir = Folder::new("rescan");
+    let arabic = dir.0.join("arabic.ttf");
+    std::fs::write(&arabic, rebuilt(NOTO, "Rescan Arabic", "Regular", &[], &[])).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.0.clone()]);
+    db.set_system_fallback(false);
+    assert!(db.arabic_support("Rescan Arabic").is_some_and(ArabicSupport::capable));
+    assert!(db.may_set_arabic("Rescan Arabic"));
+    // The family is replaced by a Latin font of the same name, in another file.
+    std::fs::remove_file(&arabic).unwrap();
+    std::fs::write(dir.0.join("latin.ttf"), rebuilt(serif, "Rescan Arabic", "Regular", &[], &[])).unwrap();
+    db.load_system_fonts();
+    assert_eq!(db.known_arabic_support("Rescan Arabic"), None, "the old faces went with the rescan");
+    assert!(!db.may_set_arabic("Rescan Arabic"), "the catalog's new hint: no Arabic");
+    assert!(db.arabic_support("Rescan Arabic").is_some_and(|s| !s.capable()), "loaded again: the Latin font");
 }
 
 /// Diagnostic, not a gate: every installed family that may set Arabic, with what the checks say,
@@ -180,12 +295,12 @@ fn installed_arabic_fonts() {
     for f in candidates {
         let s = db.arabic_support(f).unwrap_or_default();
         eprintln!(
-            "{f:40} capable={} lam_alef={} gsub={} morx={} aat_only={} style={:?} arabic_name={:?}",
+            "{f:40} capable={} lam_alef={} gsub={} morx={} morx_shaped={} style={:?} arabic_name={:?}",
             s.capable(),
             s.lam_alef,
             s.gsub_arabic,
             s.morx,
-            s.aat_only(),
+            s.morx_shaped(),
             db.arabic_style(f),
             db.arabic_family_name(f)
         );

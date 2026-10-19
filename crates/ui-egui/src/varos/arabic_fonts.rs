@@ -2,8 +2,9 @@
 //!
 //! * **Arabic** chip: lists only the families that set Arabic ([`FontDb::may_set_arabic`]: the
 //!   character map has alef and beh, read while the installed fonts are cataloged; a family whose
-//!   letters turn out not to join once loaded leaves the list). With it on, best-effort style
-//!   chips narrow the list: Naskh, Kufi, Ruqʿah, Diwani, Thuluth, Modern Sans, guessed from the
+//!   letters turn out not to join once loaded leaves the list; with the filter on, the rows in view
+//!   are loaded a few per frame to check, previews on or off: [`check_joining`]). With it on, best-effort style
+//!   chips narrow the list: Naskh, Kufi, Ruq’ah, Diwani, Thuluth, Modern Sans, guessed from the
 //!   family's names ([`vectorcraft_text::arabic_fonts::guess_arabic_style`]); "All Arabic" lists
 //!   every Arabic family, the ones the guess can't place too.
 //! * **Arabic Samples** chip (and the Arabic filter): each family that sets Arabic shows an Arabic
@@ -14,8 +15,9 @@
 //!   in the row's own face, drawn right-aligned and cut at their left end. egui's own text has no
 //!   Arabic shaping, so Arabic is never drawn with it here.
 //! * Beside a family's Latin name: its Arabic name from the font's name table, when it has one,
-//!   and an **AAT** marker on families that shape Arabic with `morx` tables alone (kashida can't
-//!   stretch them), once the family is loaded (its sample was set, or the filter checked it).
+//!   and an **AAT** marker on families HarfRust shapes with their `morx` tables
+//!   ([`af::ArabicSupport::morx_shaped`]: any font with `morx`, Damascus included), once the family
+//!   is loaded (its sample was set, or the filter checked it).
 //!
 //! Samples are textures cached by the font menu by (family, style, text, size): the text tells
 //! the script, so an Arabic and a Latin sample of one face are separate entries.
@@ -38,26 +40,27 @@ pub(crate) struct ArabicMenu {
     pub samples: bool,
 }
 
-/// What the rows depend on: the filter, and what loading fonts has told since.
-pub(crate) type FilterKey = (bool, Option<ArabicStyle>, u64);
+/// What the rows depend on beyond upstream's key: the filter. What loading fonts tells (a family
+/// whose letters don't join) arrives with the font list's generation, which the key holds.
+pub(crate) type FilterKey = (bool, Option<ArabicStyle>);
 
-/// The labels below are provisional English (awaiting the owner's review), not run through the
-/// upstream catalogs yet: "Arabic" alone is, as upstream already translates it.
+/// The labels are English source strings translated through the upstream catalogs (rows in each
+/// `i18n/*.tsv`, under "Varos: Arabic font menu").
 fn style_label(s: ArabicStyle) -> &'static str {
     match s {
-        ArabicStyle::Naskh => "Naskh",
-        ArabicStyle::Kufi => "Kufi",
-        ArabicStyle::Ruqaa => "Ruqʿah",
-        ArabicStyle::Diwani => "Diwani",
-        ArabicStyle::Thuluth => "Thuluth",
-        ArabicStyle::ModernSans => "Modern Sans",
-        ArabicStyle::Unknown => "All Arabic",
+        ArabicStyle::Naskh => tl!("Naskh"),
+        ArabicStyle::Kufi => tl!("Kufi"),
+        ArabicStyle::Ruqaa => tl!("Ruq’ah"),
+        ArabicStyle::Diwani => tl!("Diwani"),
+        ArabicStyle::Thuluth => tl!("Thuluth"),
+        ArabicStyle::ModernSans => tl!("Modern Sans"),
+        ArabicStyle::Unknown => tl!("All Arabic"),
     }
 }
 
 impl ArabicMenu {
     pub fn key(&self) -> FilterKey {
-        (self.only, self.style, if self.only { af::arabic_filter_generation() } else { 0 })
+        (self.only, self.style)
     }
 
     /// Does `family` pass the Arabic filter? Cheap: no font is loaded.
@@ -71,12 +74,12 @@ impl ArabicMenu {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
             let chip = |ui: &mut Ui, on: bool, label: &str| ui.selectable_label(on, egui::RichText::new(label).size(11.0));
-            if chip(ui, self.only, tl!("Arabic")).on_hover_text("Only fonts that set Arabic (their letters join)").clicked() {
+            if chip(ui, self.only, tl!("Arabic Fonts")).on_hover_text(tl!("Only fonts whose Arabic letters join")).clicked() {
                 self.only = !self.only;
                 self.style = None;
                 refilter = true;
             }
-            if chip(ui, self.samples, "Arabic Samples").on_hover_text("An Arabic line in each font that sets Arabic").clicked() {
+            if chip(ui, self.samples, tl!("Arabic Samples")).on_hover_text(tl!("Show an Arabic line in each Arabic font")).clicked() {
                 self.samples = !self.samples;
             }
         });
@@ -90,7 +93,7 @@ impl ArabicMenu {
                 }
                 for s in ArabicStyle::ALL {
                     let r = chip(ui, self.style == Some(s), style_label(s))
-                        .on_hover_text("Guessed from the font's name: fonts it can't place are under All Arabic");
+                        .on_hover_text(tl!("Guessed from the font's name; fonts it can't place are under All Arabic"));
                     if r.clicked() {
                         self.style = if self.style == Some(s) { None } else { Some(s) };
                         refilter = true;
@@ -134,9 +137,7 @@ pub(crate) fn render_in(db: &FontDb, family: &str, style: &str, text: &str, px: 
     // .SF Arabic), never the fallback face.
     let (canonical, _) = db.canonical(family, "");
     let face = db.face(family, style).filter(|f| f.family.eq_ignore_ascii_case(family) || f.family.eq_ignore_ascii_case(&canonical))?;
-    // Remembered under the menu's name too, for its filter and AAT marker.
-    db.arabic_support(family);
-    if !db.note_arabic_support(&face).capable() {
+    if !af::face_arabic_support(&face).capable() {
         return None;
     }
     let text = if text == af::ARABIC_SAMPLE { af::arabic_sample_for(&face)? } else { text };
@@ -178,25 +179,31 @@ const NAME_HEIGHT: f32 = 16.0;
 /// A row's name in `name_rect`: `name` (upstream's label), set by the text pipeline when it is
 /// Arabic (Show Font Names in English off), and for a family row its Arabic name and AAT marker
 /// at the right end of the name column. `sample(text, height)` gives the texture of `text` set in
-/// the row's family (the font menu's sample cache).
+/// the row's family (the font menu's sample cache). With `check` (the Arabic filter is on), a
+/// family row whose joining isn't known yet is checked ([`check_joining`]).
 pub(crate) fn paint_name(
     ui: &Ui,
     name_rect: egui::Rect,
     name: &str,
     family: Option<&str>,
+    check: bool,
     sample: &dyn Fn(&str, f32) -> Option<egui::TextureHandle>,
 ) {
     let t = Tokens::get(ui.ctx());
     let painter = ui.painter_at(name_rect);
     let mut right = name_rect.right();
     let db = FontDb::global();
-    // The AAT marker, at the right end.
+    if check && let Some(f) = family {
+        check_joining(ui.ctx(), f);
+    }
+    // The AAT shaping marker, at the right end: HarfRust shapes the family with its morx tables.
     if let Some(f) = family
-        && db.known_arabic_support(f).is_some_and(af::ArabicSupport::aat_only)
+        && db.known_arabic_support(f).is_some_and(af::ArabicSupport::morx_shaped)
     {
         let r = painter.text(name_rect.right_center(), egui::Align2::RIGHT_CENTER, "AAT", egui::FontId::proportional(9.0), t.text_dim);
         let id = ui.id().with(("varos-aat", f));
-        ui.interact(r, id, egui::Sense::hover()).on_hover_text("AAT (no kashida): this font shapes Arabic with its own morx tables, so justification can't stretch its words with kashida (word spacing only)");
+        ui.interact(r, id, egui::Sense::hover())
+            .on_hover_text(tl!("AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules"));
         right = r.left() - 4.0;
     }
     let left_end = if af::is_arabic_text(name) {
@@ -225,6 +232,58 @@ pub(crate) fn paint_name(
             let at = egui::Rect::from_min_size(egui::pos2(right - size.x, name_rect.center().y - size.y * 0.5), size);
             painter.image(tex.id(), at, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), t.text_dim);
         }
+    }
+}
+
+/// Rows checked for joining in one frame, at most (each loads its family's font files).
+const CHECKS_PER_FRAME: usize = 2;
+
+/// With the Arabic filter on, check whether `family`'s letters join when that isn't known yet:
+/// load the family (off the UI thread on native, a few per frame), so its support becomes known
+/// ([`FontDb::known_arabic_support`]) and the font list's generation moves, which lists the rows
+/// again: a family whose letters don't join leaves them. Cost: the rows in view only, each once.
+/// The previews do the same loading when they are on; this keeps the filter honest when they are
+/// off.
+pub(crate) fn check_joining(ctx: &egui::Context, family: &str) {
+    use std::sync::Mutex;
+    static STARTED: Mutex<(u64, usize, Vec<String>)> = Mutex::new((0, 0, Vec::new()));
+    let db = FontDb::global();
+    if !db.family_traits(family).arabic || db.known_arabic_support(family).is_some() {
+        return;
+    }
+    {
+        let mut started = STARTED.lock().unwrap_or_else(|e| e.into_inner());
+        let (pass, count, names) = &mut *started;
+        if names.iter().any(|n| n.eq_ignore_ascii_case(family)) {
+            return;
+        }
+        let now = ctx.cumulative_pass_nr();
+        if *pass != now {
+            (*pass, *count) = (now, 0);
+        }
+        if *count >= CHECKS_PER_FRAME {
+            ctx.request_repaint();
+            return;
+        }
+        *count += 1;
+        if names.len() > 8192 {
+            names.clear();
+        }
+        names.push(family.to_string());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let (f, repaint) = (family.to_string(), ctx.clone());
+        // A failed spawn leaves the family unchecked (its hint stands), as a failed sample does.
+        let _ = std::thread::Builder::new().name("arabic-check".into()).spawn(move || {
+            db.arabic_support(&f);
+            repaint.request_repaint();
+        });
+    }
+    // The web has no threads and no installed fonts: the loaded ones are checked here.
+    #[cfg(target_arch = "wasm32")]
+    {
+        db.arabic_support(family);
     }
 }
 

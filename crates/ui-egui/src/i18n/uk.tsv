@@ -4799,3 +4799,17 @@ lighting	Light	Світло
 	Minimum	Мінімум
 	Justification	Вирівнювання за шириною
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	змінні та набори даних файлу не прочитано (змінних: {variables}, наборів даних: {data_sets}): панель «Змінні» їх не показує
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Арабські шрифти
+	Arabic Samples	Арабські зразки
+	Show an Arabic line in each Arabic font	Показувати арабський рядок у кожному арабському шрифті
+	Only fonts whose Arabic letters join	Лише шрифти, у яких арабські літери з'єднуються
+	All Arabic	Усі арабські
+	Naskh	Насх
+	Kufi	Куфі
+	Ruq’ah	Рукаа
+	Diwani	Дівані
+	Thuluth	Сульс
+	Modern Sans	Сучасний гротеск
+	Guessed from the font's name; fonts it can't place are under All Arabic	Визначено за назвою шрифту; шрифти без групи — у розділі «Усі арабські»
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Формування AAT: цей шрифт набирається власними таблицями morx, а не правилами OpenType для арабської

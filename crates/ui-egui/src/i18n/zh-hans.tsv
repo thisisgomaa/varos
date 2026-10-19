@@ -5041,3 +5041,17 @@ lighting	Light	光源
 	Minimum	最小值
 	Justification	对齐设置
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	文件的变量和数据集未被读取（变量：{variables}，数据集：{data_sets}）：“变量”面板不会列出它们
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	阿拉伯文字体
+	Arabic Samples	阿拉伯文示例
+	Show an Arabic line in each Arabic font	在每种阿拉伯文字体中显示一行阿拉伯文
+	Only fonts whose Arabic letters join	仅显示阿拉伯字母相连的字体
+	All Arabic	全部阿拉伯文
+	Naskh	纳斯赫体
+	Kufi	库法体
+	Ruq’ah	鲁格阿体
+	Diwani	迪瓦尼体
+	Thuluth	苏鲁斯体
+	Modern Sans	现代无衬线
+	Guessed from the font's name; fonts it can't place are under All Arabic	根据字体名称推测；无法归类的字体在“全部阿拉伯文”中
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT 塑形：此字体使用自身的 morx 表排版，而非 OpenType 阿拉伯文规则

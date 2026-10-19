@@ -4819,3 +4819,17 @@ lighting	Light	Luce
 	Minimum	Minimo
 	Justification	Giustificazione
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	le variabili e i set di dati del file non sono stati letti (variabili: {variables}, set di dati: {data_sets}): il pannello Variabili non li elenca
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Font arabi
+	Arabic Samples	Campioni in arabo
+	Show an Arabic line in each Arabic font	Mostra una riga in arabo in ogni font arabo
+	Only fonts whose Arabic letters join	Solo i font le cui lettere arabe si uniscono
+	All Arabic	Tutto l’arabo
+	Naskh	Naskh
+	Kufi	Cufico
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Sans moderno
+	Guessed from the font's name; fonts it can't place are under All Arabic	Dedotto dal nome del font; i font non classificati sono in Tutto l’arabo
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Composizione AAT: questo font è composto con le sue tabelle morx, non con le regole OpenType dell’arabo

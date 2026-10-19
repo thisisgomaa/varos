@@ -5122,3 +5122,17 @@ mark-style	Japanese	Japonesas
 	Minimum must not exceed Desired, nor Desired Maximum.	O mínimo não pode passar do desejado, nem o desejado do máximo.
 	Justification	Justificação
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	as variáveis e os conjuntos de dados do arquivo não foram lidos (variáveis: {variables}, conjuntos de dados: {data_sets}): o painel Variáveis não os lista
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Fontes árabes
+	Arabic Samples	Amostras em árabe
+	Show an Arabic line in each Arabic font	Mostrar uma linha em árabe em cada fonte árabe
+	Only fonts whose Arabic letters join	Somente fontes cujas letras árabes se unem
+	All Arabic	Todo o árabe
+	Naskh	Naskh
+	Kufi	Cúfico
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Sans moderna
+	Guessed from the font's name; fonts it can't place are under All Arabic	Deduzido do nome da fonte; fontes não classificadas ficam em Todo o árabe
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Modelagem AAT: esta fonte é composta com suas próprias tabelas morx, não com as regras OpenType do árabe

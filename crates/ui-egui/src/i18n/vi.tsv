@@ -4799,3 +4799,17 @@ theme	Appearance	Giao diện
 	Minimum	Tối thiểu
 	Justification	Căn đều
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	các biến và tập dữ liệu của tệp chưa được đọc (biến: {variables}, tập dữ liệu: {data_sets}): bảng Biến không liệt kê chúng
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Phông chữ Ả Rập
+	Arabic Samples	Mẫu chữ Ả Rập
+	Show an Arabic line in each Arabic font	Hiển thị một dòng chữ Ả Rập trong mỗi phông Ả Rập
+	Only fonts whose Arabic letters join	Chỉ các phông có chữ cái Ả Rập nối với nhau
+	All Arabic	Tất cả Ả Rập
+	Naskh	Naskh
+	Kufi	Kufi
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Sans hiện đại
+	Guessed from the font's name; fonts it can't place are under All Arabic	Đoán từ tên phông; phông không xếp được nằm trong Tất cả Ả Rập
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Định hình AAT: phông này được sắp chữ bằng bảng morx riêng, không theo quy tắc OpenType cho tiếng Ả Rập

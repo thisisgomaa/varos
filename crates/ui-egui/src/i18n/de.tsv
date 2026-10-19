@@ -4781,3 +4781,17 @@ effect	Regular	Regelmäßig
 	Minimum	Minimum
 	Justification	Abstände
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	die Variablen und Datensätze der Datei wurden nicht gelesen (Variablen: {variables}, Datensätze: {data_sets}): Das Bedienfeld „Variablen“ listet sie nicht auf
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Arabische Schriften
+	Arabic Samples	Arabische Schriftproben
+	Show an Arabic line in each Arabic font	In jeder arabischen Schrift eine arabische Zeile zeigen
+	Only fonts whose Arabic letters join	Nur Schriften, deren arabische Buchstaben verbunden werden
+	All Arabic	Alle arabischen
+	Naskh	Naskh
+	Kufi	Kufi
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Moderne Grotesk
+	Guessed from the font's name; fonts it can't place are under All Arabic	Aus dem Namen der Schrift geschätzt; Schriften ohne Zuordnung stehen unter „Alle arabischen“
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-Shaping: Diese Schrift wird mit ihren eigenen morx-Tabellen gesetzt, nicht mit OpenType-Regeln für Arabisch

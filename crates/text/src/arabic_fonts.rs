@@ -45,7 +45,8 @@ pub struct ArabicSupport {
     pub lam_alef: bool,
     /// Its `GSUB` table lists the `arab` script (OpenType Arabic shaping).
     pub gsub_arabic: bool,
-    /// It has a `morx` table (Apple-style shaping rules).
+    /// It has a `morx` (or older `mort`) table: HarfRust then shapes horizontal text with it and
+    /// ignores any `GSUB` ([`ArabicSupport::morx_shaped`]).
     pub morx: bool,
 }
 
@@ -55,10 +56,12 @@ impl ArabicSupport {
         self.covers && self.joins
     }
 
-    /// The face shapes Arabic through `morx` alone, with no OpenType Arabic rules: kashida
-    /// justification can't stretch it (Geeza Pro, Al Nile, Baghdad, Damascus, KufiStandardGK).
-    pub fn aat_only(self) -> bool {
-        self.covers && self.morx && !self.gsub_arabic
+    /// HarfRust shapes the face's Arabic with its `morx` tables (AAT shaping), as it does
+    /// whenever a font has them, whatever its `GSUB` says (HarfRust's `ot_shape.rs`: morx for
+    /// horizontal text when present). Damascus, which has both, is one; so are Geeza Pro, Al Nile,
+    /// Baghdad and KufiStandardGK. HarfRust then marks no join safe for a tatweel.
+    pub fn morx_shaped(self) -> bool {
+        self.covers && self.morx
     }
 }
 
@@ -134,7 +137,7 @@ fn compute_support(face: &FontFace) -> ArabicSupport {
     let covers = map.map('\u{0627}').is_some() && map.map('\u{0628}').is_some();
     let gsub_arabic =
         font.gsub().ok().and_then(|g| g.script_list().ok()).is_some_and(|l| l.script_records().iter().any(|r| r.script_tag() == Tag::new(b"arab")));
-    let morx = font.table_data(Tag::new(b"morx")).is_some();
+    let morx = font.table_data(Tag::new(b"morx")).is_some() || font.table_data(Tag::new(b"mort")).is_some();
     if !covers {
         return ArabicSupport { gsub_arabic, morx, ..Default::default() };
     }
@@ -228,39 +231,30 @@ pub fn arabic_sample_layout(db: &FontDb, face: &FontFace, text: &str, size: f64)
 }
 
 impl FontDb {
-    /// How `family` sets Arabic, loading it if need be ([`face_arabic_support`] of its Regular
-    /// face, else its closest style). `None` when the family isn't available. Remembered per
-    /// family for [`FontDb::known_arabic_support`].
+    /// How `family` sets Arabic, loading it if need be (its Regular face, else its closest style:
+    /// loading one style loads every face of an installed family), as
+    /// [`FontDb::known_arabic_support`] then sees it. `None` when the family isn't available.
     pub fn arabic_support(&self, family: &str) -> Option<ArabicSupport> {
         if let Some(s) = self.known_arabic_support(family) {
             return Some(s);
         }
         let (canonical, _) = self.canonical(family, "");
-        let face = self.face(&canonical, "Regular").filter(|f| f.family.eq_ignore_ascii_case(&canonical))?;
-        let s = face_arabic_support(&face);
-        remember(self, family, s);
-        Some(s)
+        self.face(&canonical, "Regular").filter(|f| f.family.eq_ignore_ascii_case(&canonical))?;
+        self.known_arabic_support(family)
     }
 
-    /// [`FontDb::arabic_support`] when it is already known (the family was checked, or its sample
-    /// set); never loads a font.
+    /// How the loaded faces of `family` set Arabic, aggregated as "any face" ([`aggregate`]);
+    /// `None` when none is loaded. Never loads a font. The support is kept per face (by its id,
+    /// never reused), so it goes with the faces a rescan drops and can't outlive them.
     pub fn known_arabic_support(&self, family: &str) -> Option<ArabicSupport> {
-        known().lock().unwrap_or_else(|e| e.into_inner()).get(&(db_key(self), family.to_lowercase())).copied()
+        let faces = self.loaded_faces(family);
+        (!faces.is_empty()).then(|| aggregate(faces.iter().map(|f| face_arabic_support(f))))
     }
 
-    /// Remember how `face`'s family sets Arabic (a font menu set its sample).
-    pub fn note_arabic_support(&self, face: &FontFace) -> ArabicSupport {
-        let s = face_arabic_support(face);
-        remember(self, &face.family, s);
-        s
-    }
-
-    /// May `family` set Arabic, without loading it: its known support, else the catalog's hint.
+    /// May `family` set Arabic, without loading it: the catalog's character-map hint (any face),
+    /// and when the family is loaded, whether its letters really join.
     pub fn may_set_arabic(&self, family: &str) -> bool {
-        match self.known_arabic_support(family) {
-            Some(s) => s.capable(),
-            None => self.family_traits(family).arabic,
-        }
+        self.family_traits(family).arabic && self.known_arabic_support(family).is_none_or(ArabicSupport::capable)
     }
 
     /// The families the font menus list that set Arabic, of `style` when given (best effort,
@@ -289,41 +283,20 @@ impl FontDb {
     }
 }
 
-/// Families' Arabic support by database and lowercased family name.
-type Known = HashMap<(usize, String), ArabicSupport>;
-
-fn known() -> &'static Mutex<Known> {
-    static KNOWN: std::sync::OnceLock<Mutex<Known>> = std::sync::OnceLock::new();
-    KNOWN.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Tells databases apart in [`known`] (tests make their own; the app has one).
-fn db_key(db: &FontDb) -> usize {
-    std::ptr::from_ref(db) as usize
-}
-
-fn remember(db: &FontDb, family: &str, s: ArabicSupport) {
-    /// Families kept before the table starts over.
-    const MAX: usize = 8192;
-    // A family the catalog's hint let into Arabic lists turned out not to set Arabic: lists built
-    // with the hint are stale.
-    let dropped = !s.capable() && db.family_traits(family).arabic;
-    let mut known = known().lock().unwrap_or_else(|e| e.into_inner());
-    if known.len() >= MAX {
-        known.clear();
-    }
-    let before = known.insert((db_key(db), family.to_lowercase()), s);
-    if dropped && before != Some(s) {
-        DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// A number that changes when a family the catalog hinted at turns out not to set Arabic once
-/// loaded: lists filtered with [`FontDb::may_set_arabic`] are current while it doesn't.
-pub fn arabic_filter_generation() -> u64 {
-    DROPPED.load(std::sync::atomic::Ordering::Relaxed)
+/// A family's support from its faces' as "any face": the fields of the faces that can set Arabic
+/// (or of all of them, when none can) put together. One style that can't set Arabic (an italic
+/// without it) never takes it from the family, and which style was looked at first doesn't matter.
+pub fn aggregate(faces: impl IntoIterator<Item = ArabicSupport>) -> ArabicSupport {
+    let all: Vec<ArabicSupport> = faces.into_iter().collect();
+    let capable: Vec<ArabicSupport> = all.iter().copied().filter(|s| s.capable()).collect();
+    let pool = if capable.is_empty() { &all } else { &capable };
+    pool.iter().fold(ArabicSupport::default(), |a, s| ArabicSupport {
+        covers: a.covers || s.covers,
+        joins: a.joins || s.joins,
+        lam_alef: a.lam_alef || s.lam_alef,
+        gsub_arabic: a.gsub_arabic || s.gsub_arabic,
+        morx: a.morx || s.morx,
+    })
 }
 
 /// What a shaped Arabic phrase in a face looks like, for checking a font the way a user would see

@@ -442,7 +442,7 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
             // Varos: Arabic names set by the text pipeline; a family's Arabic name and AAT marker.
             let family_row = matches!(row, Row::Family(_)).then(|| row.family());
             let named = |text: &str, h: f32| sample_texture(ui.ctx(), row.family(), None, Some(text), h);
-            crate::varos::arabic_fonts::paint_name(ui, name_rect, &name, family_row, &named);
+            crate::varos::arabic_fonts::paint_name(ui, name_rect, &name, family_row, st.arabic.only, &named);
             let sample_rect = egui::Rect::from_min_max(rect.min + vec2(name_w, 2.0), rect.max - vec2(STAR + 2.0, 2.0));
             if !look.samples {
             } else if let Some((text, rtl)) = st.arabic.row_sample(db, row.family(), sample) // Varos: Arabic samples

@@ -5231,3 +5231,17 @@ swatch	Bright Violet	Felviolet
 	Full Justify	Volledig uitvullen
 	Minimum must not exceed Desired, nor Desired Maximum.	Minimum mag niet groter zijn dan Gewenst, en Gewenst niet groter dan Maximum.
 	Justification	Uitvullen
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Arabische lettertypen
+	Arabic Samples	Arabische voorbeelden
+	Show an Arabic line in each Arabic font	Een Arabische regel tonen in elk Arabisch lettertype
+	Only fonts whose Arabic letters join	Alleen lettertypen waarvan de Arabische letters verbinden
+	All Arabic	Alle Arabische
+	Naskh	Naskh
+	Kufi	Kufi
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Moderne schreefloze
+	Guessed from the font's name; fonts it can't place are under All Arabic	Geschat op de naam van het lettertype; lettertypen zonder indeling staan onder Alle Arabische
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-vormgeving: dit lettertype wordt gezet met zijn eigen morx-tabellen, niet met OpenType-regels voor Arabisch

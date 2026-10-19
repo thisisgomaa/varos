@@ -5204,3 +5204,17 @@ theme	Appearance	Apparence
 	Minimum must not exceed Desired, nor Desired Maximum.	Le minimum ne doit pas dépasser la valeur optimale, ni la valeur optimale le maximum.
 	Justification	Justification
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	les variables et jeux de données du fichier n’ont pas été lus (variables : {variables}, jeux de données : {data_sets}) : le panneau Variables ne les affiche pas
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Polices arabes
+	Arabic Samples	Aperçus arabes
+	Show an Arabic line in each Arabic font	Afficher une ligne arabe dans chaque police arabe
+	Only fonts whose Arabic letters join	Seulement les polices dont les lettres arabes se lient
+	All Arabic	Tout l’arabe
+	Naskh	Naskhi
+	Kufi	Coufique
+	Ruq’ah	Roqaa
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Sans moderne
+	Guessed from the font's name; fonts it can't place are under All Arabic	Déduit du nom de la police ; les polices non classées sont sous « Tout l’arabe »
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Mise en forme AAT : cette police est composée avec ses propres tables morx, pas avec les règles OpenType de l’arabe
