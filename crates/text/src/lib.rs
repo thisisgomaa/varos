@@ -13,12 +13,14 @@
 // Varos: Arabic facts about fonts for the font menus (filter, samples, markers).
 pub mod arabic_fonts;
 mod composer;
+// Varos: harakat styled apart from their letters.
 pub mod craft_fonts;
 pub mod edit;
 pub mod embed;
 mod features;
 mod fontconfig;
 mod fontdb;
+pub mod harakat;
 pub mod hyphen;
 mod justify;
 // Varos: kashida (tatweel) justification of right-to-left Arabic lines.

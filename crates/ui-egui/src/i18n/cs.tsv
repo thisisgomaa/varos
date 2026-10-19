@@ -5227,3 +5227,21 @@ mark-style	Japanese	Japonské
 	Tatweels in the Arabic words of justified right-to-left lines	Tatvíly v arabských slovech zarovnaných řádků zprava doleva
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Kolik volného místa řádku kašída vyplní a kolik tatvílů slovo dostane (50: vyvážené)
 	Mixed: the selected paragraphs differ	Smíšené: vybrané odstavce se liší
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Směr
+	Paragraph direction	Směr odstavce
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto: podle prvního písmene odstavce
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Obarvit harakat (arabská znaménka samohlásek) odděleně od písmen
+	Gold	Zlatá
+	Hide the harakat: they stay in the text	Skrýt harakat: zůstanou v textu
+	As Letters	Jako písmena
+	Give the harakat their letters' colour again	Vrátit harakat barvu jejich písmen
+	Style Harakat	Styl harakat
+	Arabic Letters	Arabská písmena
+	Arabic Supplement	Arabština – doplněk
+	Arabic Extended-A	Arabština rozšířená A
+	Arabic Presentation Forms-A	Arabské prezentační tvary A
+	Arabic Presentation Forms-B	Arabské prezentační tvary B

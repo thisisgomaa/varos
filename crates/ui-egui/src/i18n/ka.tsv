@@ -5134,3 +5134,21 @@ imageTrace	Outline	კონტური
 	Tatweels in the Arabic words of justified right-to-left lines	თათვილები მარჯვნიდან მარცხნივ გასწორებული სტრიქონების არაბულ სიტყვებში
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	სტრიქონის თავისუფალი სივრცის რა ნაწილს ავსებს ქაშიდა და რამდენ თათვილს იღებს სიტყვა (50: დაბალანსებული)
 	Mixed: the selected paragraphs differ	შერეული: არჩეული აბზაცები განსხვავდება
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	მიმართულება
+	Paragraph direction	აბზაცის მიმართულება
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	ავტომატური: აბზაცის პირველი ასოს მიხედვით
+	Harakat	ჰარაქათი
+	Colour the harakat (Arabic vowel marks) apart from their letters	ჰარაქათის (არაბული ხმოვნების ნიშნები) ასოებისგან ცალკე შეღებვა
+	Gold	ოქროსფერი
+	Hide the harakat: they stay in the text	ჰარაქათის დამალვა: ტექსტში რჩება
+	As Letters	როგორც ასოები
+	Give the harakat their letters' colour again	ჰარაქათისთვის ასოების ფერის დაბრუნება
+	Style Harakat	ჰარაქათის სტილი
+	Arabic Letters	არაბული ასოები
+	Arabic Supplement	არაბული, დამატება
+	Arabic Extended-A	არაბული, გაფართოება A
+	Arabic Presentation Forms-A	არაბული საჩვენებელი ფორმები A
+	Arabic Presentation Forms-B	არაბული საჩვენებელი ფორმები B

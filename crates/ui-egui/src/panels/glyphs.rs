@@ -44,7 +44,7 @@ fn nudge_cell(index: usize, delta: i32) -> usize {
 }
 
 /// Character subsets offered by the Show menu.
-const SUBSETS: [(&str, u32, u32); 7] = [
+pub(crate) const SUBSETS: [(&str, u32, u32); 12] = [
     ("Entire Font", 0, 0x10FFFF),
     ("Basic Latin", 0x20, 0x7F),
     ("Latin-1 Supplement", 0xA0, 0xFF),
@@ -52,6 +52,12 @@ const SUBSETS: [(&str, u32, u32); 7] = [
     ("Punctuation", 0x2000, 0x206F),
     ("Currency & Symbols", 0x20A0, 0x2BFF),
     ("Greek & Cyrillic", 0x370, 0x52F),
+    // Varos: the Arabic blocks.
+    ("Arabic Letters", 0x600, 0x6FF),
+    ("Arabic Supplement", 0x750, 0x77F),
+    ("Arabic Extended-A", 0x8A0, 0x8FF),
+    ("Arabic Presentation Forms-A", 0xFB50, 0xFDFF),
+    ("Arabic Presentation Forms-B", 0xFE70, 0xFEFC), // without U+FEFF (byte order mark)
 ];
 
 thread_local! {

@@ -241,6 +241,61 @@ fn morx_trials_are_verified() {
     let mut wide = trial.clone();
     wide.iter_mut().find(|g| g.len > 0).unwrap().adv += 5.0;
     assert!(!super::morx_trial_ok(&original, &wide, &[slot]), "a neighbour's advance changed");
+    // Varos: a glyph drawn in another run (a coloured harakat that lost its colour): rejected, by
+    // the morx check, the paint check of every trial and the word's own re-shape check.
+    let mut repainted = trial.clone();
+    repainted.iter_mut().find(|g| g.len > 0).unwrap().run += 1;
+    assert!(!super::morx_trial_ok(&original, &repainted, &[slot]), "a glyph in another run");
+    assert!(super::same_paint(&original, &trial));
+    assert!(!super::same_paint(&original, &repainted));
+    let mut other_run = original.clone();
+    other_run[0].run += 1;
+    assert!(super::same_setting(&original, &original));
+    assert!(!super::same_setting(&original, &other_run), "the same glyphs in another run");
+}
+
+/// Varos: the morx path (joining rules, verified trials) stretches words whose harakat are
+/// coloured apart, and their marks keep their colour; the lines are set as without colour.
+#[test]
+fn the_morx_path_keeps_the_colour_of_harakat() {
+    use vectorcraft_doc::color::{Color, Paint};
+    const FULLY: &str = "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ";
+    let db = db_with(&[NOTO]);
+    let face = db.face(FAMILY, "Regular").unwrap();
+    let tat = tatweel(&db, FAMILY);
+    let red = Paint::solid(Color::rgb8(200, 30, 30));
+    let st = CharStyle { font_family: FAMILY.into(), size: 24.0, ..Default::default() };
+    let plain = |width| area(FULLY, st.clone(), width, Justify::JustifyAll, opts(KashidaMode::Force, 100));
+    let coloured = |width| {
+        let mut t = plain(width);
+        for r in crate::harakat::harakat_ranges(FULLY, 0..FULLY.len()) {
+            crate::edit::style_range(&mut t.runs, r.start, r.end, |st| st.fill = red.clone());
+        }
+        t
+    };
+    FORCED_MORX.with(|f| f.borrow_mut().push(face.id()));
+    let mut stretched = 0;
+    for width in [200.0, 260.0, 300.0, 420.0] {
+        let (p, c) = (plain(width), coloured(width));
+        let (a, b) = (layout(&db, &p), layout(&db, &c));
+        let set = |l: &TextLayout| l.glyphs.iter().map(|g| (g.gid, g.byte, g.len, g.origin.x.to_bits(), g.origin.y.to_bits())).collect::<Vec<_>>();
+        assert_eq!(set(&a), set(&b), "{width}: the same glyphs, tatweels and places");
+        for g in &b.glyphs {
+            let mark = g.len > 0 && g.advance.abs() < 1e-6 && !g.outline.is_empty();
+            assert_eq!(c.runs[g.run].style.fill == red, mark, "{width}: glyph {} at {} (mark: {mark})", g.gid, g.byte);
+        }
+        let mut words: Vec<usize> = b
+            .glyphs
+            .iter()
+            .filter(|g| g.gid == tat.1 && g.len == 0)
+            .map(|g| FULLY[..g.byte].rfind(' ').map_or(0, |i| i + 1))
+            .filter(|&w| FULLY[w..].split(' ').next().is_some_and(|w| w.chars().any(crate::harakat::is_harakat)))
+            .collect();
+        words.dedup();
+        stretched += words.len();
+    }
+    FORCED_MORX.with(|f| f.borrow_mut().clear());
+    assert!(stretched > 0, "words with coloured harakat take kashida through the morx path");
 }
 
 /// Installed `morx` fonts (when present) take kashida, every glyph their own, and the harakat

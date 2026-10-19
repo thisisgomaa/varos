@@ -4881,3 +4881,21 @@ lighting	Light	ライト
 	Tatweels in the Arabic words of justified right-to-left lines	右から左への均等配置の行のアラビア語の単語に入れるタトウィール
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	行の余白をカシーダがどれだけ埋め、単語あたり何個のタトウィールを入れるか（50：標準）
 	Mixed: the selected paragraphs differ	混在：選択した段落の設定が異なります
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	方向
+	Paragraph direction	段落の方向
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	自動：段落の最初の文字から判断
+	Harakat	ハラカート
+	Colour the harakat (Arabic vowel marks) apart from their letters	ハラカート（アラビア語の母音記号）を文字とは別の色にする
+	Gold	ゴールド
+	Hide the harakat: they stay in the text	ハラカートを隠す（テキストには残ります）
+	As Letters	文字と同じ
+	Give the harakat their letters' colour again	ハラカートを文字の色に戻す
+	Style Harakat	ハラカートのスタイル
+	Arabic Letters	アラビア文字
+	Arabic Supplement	アラビア文字補助
+	Arabic Extended-A	アラビア文字拡張 A
+	Arabic Presentation Forms-A	アラビア表示形 A
+	Arabic Presentation Forms-B	アラビア表示形 B

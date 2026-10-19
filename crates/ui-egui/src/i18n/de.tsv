@@ -4803,3 +4803,21 @@ effect	Regular	Regelmäßig
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweels in den arabischen Wörtern von Blocksatzzeilen von rechts nach links
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Wie viel vom Freiraum einer Zeile Kashida füllt und wie viele Tatweels ein Wort erhält (50: ausgewogen)
 	Mixed: the selected paragraphs differ	Gemischt: Die ausgewählten Absätze unterscheiden sich
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Richtung
+	Paragraph direction	Absatzrichtung
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto: nach dem ersten Buchstaben des Absatzes
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Die Harakat (arabische Vokalzeichen) getrennt von ihren Buchstaben einfärben
+	Gold	Gold
+	Hide the harakat: they stay in the text	Harakat ausblenden: Sie bleiben im Text
+	As Letters	Wie Buchstaben
+	Give the harakat their letters' colour again	Den Harakat wieder die Farbe ihrer Buchstaben geben
+	Style Harakat	Harakat gestalten
+	Arabic Letters	Arabische Buchstaben
+	Arabic Supplement	Arabisch, Ergänzung
+	Arabic Extended-A	Arabisch, erweitert A
+	Arabic Presentation Forms-A	Arabische Präsentationsformen A
+	Arabic Presentation Forms-B	Arabische Präsentationsformen B

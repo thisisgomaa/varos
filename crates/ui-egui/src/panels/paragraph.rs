@@ -194,19 +194,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         alignment_buttons(app, ui, &para, 28.0);
-        // Paragraph direction, with the Middle Eastern (Indic) options.
-        if app.session.prefs.show_indic_options {
-            ui.add_space(6.0);
-            for (to_rtl, icon, tip, id) in [
-                (false, "dc-para-ltr", tl!("Left-to-Right Paragraph Direction"), "leftToRight"),
-                (true, "dc-para-rtl", tl!("Right-to-Left Paragraph Direction"), "rightToLeft"),
-            ] {
-                if widgets::icon_button(ui, icon, tip, rtl == to_rtl, 28.0).clicked() {
-                    format(app, json!({"direction": id}));
-                }
-            }
-        }
+        // Varos: Paragraph Direction is the Middle Eastern row below (Auto · RTL · LTR).
     });
+    // Varos: the Middle Eastern row (Paragraph Direction), with the Middle Eastern options.
+    crate::varos::middle_eastern_ui::paragraph_rows(app, ui, &para, rtl);
     // Varos: kashida controls, when any paragraph the panel acts on runs right to left (the ones
     // kashida stretches).
     if crate::varos::kashida_ui::shown(app, rtl) {

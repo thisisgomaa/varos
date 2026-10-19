@@ -78,6 +78,7 @@ pub fn restore(app: &mut VectorcraftApp) {
     if !GPU_PREFERENCES.iter().any(|(v, _)| *v == p.gpu_preference) {
         p.gpu_preference = Prefs::default().gpu_preference;
     }
+    crate::varos::middle_eastern_ui::default_on(app, &mut p); // Varos: Middle Eastern options on once
     app.session.apply_prefs(p);
 }
 
