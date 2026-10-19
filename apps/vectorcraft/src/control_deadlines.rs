@@ -21,17 +21,30 @@ pub(super) struct DeadlineReader {
     line: Duration,
     until: Option<Instant>,
     waiting_for_first_byte: bool,
+    /// Varos: no read goes past this (an agents-port connection that hasn't shown its token).
+    cap: Option<Instant>,
 }
 
 impl DeadlineReader {
     pub(super) fn new(stream: TcpStream, idle: Duration, line: Duration) -> Self {
-        Self { stream, idle, line, until: None, waiting_for_first_byte: false }
+        Self { stream, idle, line, until: None, waiting_for_first_byte: false, cap: None } // Varos: cap
+    }
+
+    /// Varos: an absolute time no read goes past (`None`: none), whatever the line budgets.
+    pub(super) fn set_cap(&mut self, cap: Option<Instant>) {
+        self.cap = cap;
+    }
+
+    /// Varos: `budget` from now, but never past the cap.
+    fn capped(&self, budget: Duration) -> io::Result<Instant> {
+        let at = deadline(budget)?;
+        Ok(self.cap.map_or(at, |cap| at.min(cap)))
     }
 
     pub(super) fn begin_line(&mut self, buffered: bool) -> io::Result<()> {
         // A partial next request already in BufReader must not get an idle budget too.
         self.waiting_for_first_byte = !buffered;
-        self.until = Some(deadline(if buffered { self.line } else { self.idle })?);
+        self.until = Some(self.capped(if buffered { self.line } else { self.idle })?); // Varos: capped
         Ok(())
     }
 }
@@ -44,7 +57,7 @@ impl Read for DeadlineReader {
         self.stream.set_read_timeout(Some(remaining(self.until)?))?;
         let n = self.stream.read(buf)?;
         if n > 0 && self.waiting_for_first_byte {
-            self.until = Some(deadline(self.line)?);
+            self.until = Some(self.capped(self.line)?); // Varos: capped
             self.waiting_for_first_byte = false;
         }
         Ok(n)

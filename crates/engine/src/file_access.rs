@@ -161,17 +161,18 @@ pub fn unconfined<T>(f: impl FnOnce() -> T) -> T {
 
 /// This thread's scope, to carry to work it hands to another thread ([`ScopeHandle::run`]).
 #[derive(Clone, Debug)]
-pub struct ScopeHandle(Option<Scope>);
+pub struct ScopeHandle(Option<Scope>, Option<WriteGuard>); // Varos: and the write guard
 
 impl ScopeHandle {
     /// The scope of the calling thread.
     pub fn capture() -> Self {
-        Self(SCOPE.with(|s| s.borrow().clone()))
+        Self(SCOPE.with(|s| s.borrow().clone()), write_guard()) // Varos: write_guard
     }
 
     /// Run `f` in the captured scope.
     pub fn run<T>(self, f: impl FnOnce() -> T) -> T {
-        with_scope(self.0, f)
+        let guard = self.1; // Varos
+        with_scope(self.0, || with_write_guard(guard, f))
     }
 }
 
@@ -189,9 +190,91 @@ pub fn check_read(path: &str) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check(path, Access::Read))
 }
 
-/// May `path` be written here? Always, without roots in force.
+/// May `path` be written here? Always, without roots in force (and without a Varos write guard).
 pub fn check_write(path: &str) -> Result<(), String> {
-    current().map_or(Ok(()), |r| r.check(path, Access::Write))
+    current().map_or(Ok(()), |r| r.check(path, Access::Write))?;
+    check_write_guard(path) // Varos
+}
+
+// ---------- Varos: the agents' mistake guards at every write ----------
+
+/// Varos: a check on every path written on a thread while it is in force ([`with_write_guard`],
+/// [`set_write_guard`]), besides the roots: the mistake guards on what an agent's request writes
+/// (`crates/ui-egui/src/varos/agents.rs`). It goes with the scope to the threads work is handed to
+/// ([`ScopeHandle`]), and [`unconfined`] work (the app's own folders) is never checked by it.
+#[derive(Clone)]
+pub struct WriteGuard(Arc<WriteCheck>);
+
+/// Varos: what a [`WriteGuard`] runs on a path about to be written.
+pub type WriteCheck = dyn Fn(&str) -> Result<(), String> + Send + Sync;
+
+impl WriteGuard {
+    pub fn new(check: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(check))
+    }
+}
+
+impl std::fmt::Debug for WriteGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WriteGuard")
+    }
+}
+
+thread_local! {
+    static WRITE_GUARD: RefCell<Option<WriteGuard>> = const { RefCell::new(None) };
+}
+
+/// Varos: put `guard` in force on this thread (`None`: none); returns the one it replaces.
+pub fn set_write_guard(guard: Option<WriteGuard>) -> Option<WriteGuard> {
+    WRITE_GUARD.with(|g| g.replace(guard))
+}
+
+/// Varos: the write guard in force on this thread.
+pub fn write_guard() -> Option<WriteGuard> {
+    WRITE_GUARD.with(|g| g.borrow().clone())
+}
+
+/// Varos: what [`begin_write_guard`] replaced, which [`end_write_guard`] puts back.
+#[must_use = "end the write guard"]
+#[derive(Debug)]
+pub struct WriteGuardScope {
+    scope: Option<Scope>,
+    guard: Option<WriteGuard>,
+}
+
+/// Varos: put `guard` in force on this thread until [`end_write_guard`]. The guarded work isn't
+/// the person's, so it runs in the process's scope rather than an unconfined one (the desktop app
+/// runs each frame unconfined): only what the app opens [`unconfined`] itself, its own folders,
+/// stays unchecked.
+pub fn begin_write_guard(guard: WriteGuard) -> WriteGuardScope {
+    WriteGuardScope { scope: SCOPE.with(|s| s.replace(None)), guard: set_write_guard(Some(guard)) }
+}
+
+/// Varos: end what [`begin_write_guard`] began.
+pub fn end_write_guard(before: WriteGuardScope) {
+    SCOPE.with(|s| *s.borrow_mut() = before.scope);
+    set_write_guard(before.guard);
+}
+
+/// Varos: run `f` with `guard` in force on this thread, then the one before again (also when `f`
+/// panics).
+pub fn with_write_guard<T>(guard: Option<WriteGuard>, f: impl FnOnce() -> T) -> T {
+    struct Put(Option<WriteGuard>);
+    impl Drop for Put {
+        fn drop(&mut self) {
+            set_write_guard(self.0.take());
+        }
+    }
+    let _put = Put(set_write_guard(guard));
+    f()
+}
+
+fn check_write_guard(path: &str) -> Result<(), String> {
+    if SCOPE.with(|s| matches!(*s.borrow(), Some(Scope::Unconfined))) {
+        return Ok(());
+    }
+    // Cloned out first: the check may itself write nothing, but must not hold the cell.
+    write_guard().map_or(Ok(()), |g| (g.0)(path))
 }
 
 /// `path` made absolute with its links followed; for a path that doesn't exist (yet), its nearest
@@ -302,6 +385,34 @@ mod tests {
         assert!(e.contains("outside the write root"), "{e}");
         assert!(roots.check(&s(base.join("out/x.png")), Access::Read).unwrap_err().contains("outside the read root"));
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// Varos: a write guard checks every write on its thread and the threads its scope is carried
+    /// to, never unconfined work, and is gone afterwards.
+    #[test]
+    fn a_write_guard_checks_every_write_but_the_apps_own() {
+        let guard = WriteGuard::new(|p| if p.ends_with(".taken") { Err(format!("no: {p}")) } else { Ok(()) });
+        assert_eq!(check_write("/x/a.taken"), Ok(()));
+        with_write_guard(Some(guard), || {
+            assert_eq!(check_write("/x/a.taken"), Err("no: /x/a.taken".into()));
+            assert_eq!(check_write("/x/a.png"), Ok(()));
+            assert_eq!(unconfined(|| check_write("/x/a.taken")), Ok(()), "the app's own folders");
+            let handle = ScopeHandle::capture();
+            let other = std::thread::spawn(move || (check_write("/x/a.taken"), handle.run(|| check_write("/x/a.taken"))));
+            let (bare, carried) = other.join().unwrap();
+            assert_eq!(bare, Ok(()), "another thread has none of its own");
+            assert!(carried.is_err(), "work handed on carries it");
+        });
+        assert_eq!(check_write("/x/a.taken"), Ok(()));
+        // Begun inside the person's unconfined frame, it still checks the work it guards.
+        unconfined(|| {
+            let guard = begin_write_guard(WriteGuard::new(|p| Err(format!("no: {p}"))));
+            assert!(check_write("/x/a.png").is_err());
+            assert_eq!(unconfined(|| check_write("/x/a.png")), Ok(()));
+            end_write_guard(guard);
+            assert_eq!(check_write("/x/a.png"), Ok(()));
+            assert!(matches!(SCOPE.with(|s| s.borrow().clone()), Some(Scope::Unconfined)), "the frame's scope is back");
+        });
     }
 
     #[test]

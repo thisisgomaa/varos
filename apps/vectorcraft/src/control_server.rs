@@ -19,6 +19,8 @@ use vectorcraft_ui_egui::ControlRequest;
 
 #[path = "control_deadlines.rs"]
 mod deadlines;
+#[path = "varos_control.rs"]
+pub(crate) mod varos_control; // Varos: the always-on agents listener, its token, who sent each request
 use deadlines::{DeadlineReader, DeadlineWriter};
 
 /// Longest accepted request line (bytes, without the newline). Requests are small JSON objects;
@@ -91,9 +93,13 @@ fn accept_loop(listener: TcpListener, tx: Sender<ControlRequest>, ctx: egui::Con
 struct ConnectionSlot(Arc<AtomicUsize>);
 
 fn acquire_slot(open: &Arc<AtomicUsize>) -> Option<ConnectionSlot> {
+    acquire_slot_of(open, MAX_CONNECTIONS) // Varos: the limit is a parameter (the agents port's pools)
+}
+
+fn acquire_slot_of(open: &Arc<AtomicUsize>, max: usize) -> Option<ConnectionSlot> {
     let mut n = open.load(Ordering::SeqCst);
     loop {
-        if n >= MAX_CONNECTIONS {
+        if n >= max {
             return None;
         }
         match open.compare_exchange_weak(n, n + 1, Ordering::SeqCst, Ordering::SeqCst) {
@@ -117,10 +123,26 @@ fn spawn_connection(
     slot: ConnectionSlot,
     timeouts: ConnectionTimeouts,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
+    let link = varos_control::Link::new(&stream, slot); // Varos: the slot goes with the link
+    spawn_link(stream, tx, ctx, link, timeouts)
+}
+
+/// Varos: serve one connection through `link` (its secrets, its connection slots).
+fn spawn_link(
+    stream: TcpStream,
+    tx: Sender<ControlRequest>,
+    ctx: egui::Context,
+    link: varos_control::Link,
+    timeouts: ConnectionTimeouts,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new().name("vectorcraft-control".into()).spawn(move || {
-        let _slot = slot;
-        serve_socket(stream, timeouts, |method, params| {
+        serve_socket(stream, &link, timeouts, |method, params| {
+            let actor = match link.admit() {
+                Ok(actor) => actor,
+                Err(refused) => return Some(refused),
+            }; // Varos: the token of the always-on port; who sent it
             let (req, rrx) = ControlRequest::new(method, params);
+            let req = req.with_actor(Some(actor)); // Varos
             let ticket = req.ticket();
             tx.send(req).ok()?;
             ctx.request_repaint();
@@ -129,7 +151,7 @@ fn spawn_connection(
     })
 }
 
-fn serve_socket(stream: TcpStream, timeouts: ConnectionTimeouts, handle: impl FnMut(String, Value) -> Option<Value>) {
+fn serve_socket(stream: TcpStream, link: &varos_control::Link, timeouts: ConnectionTimeouts, handle: impl FnMut(String, Value) -> Option<Value>) {
     let Ok(read) = stream.try_clone() else { return };
     let read = DeadlineReader::new(read, timeouts.idle, timeouts.line);
     // Replies reach the writer in [`REPLY_CHUNK`] pieces ([`write_line`]), so checking the remaining
@@ -138,9 +160,11 @@ fn serve_socket(stream: TcpStream, timeouts: ConnectionTimeouts, handle: impl Fn
     serve_lines_with(
         read,
         out,
+        |line| link.screen(line), // Varos: the agents port's hello and token, before any parsing
         handle,
         |reader| {
             let buffered = !reader.buffer().is_empty();
+            reader.get_mut().set_cap(link.cap()); // Varos: an absolute window until it shows its token
             reader.get_mut().begin_line(buffered)
         },
         DeadlineWriter::begin_reply,
@@ -153,6 +177,8 @@ enum Line {
         id: Value,
         method: String,
         params: Value,
+        /// Varos: who sent it and the token it shows (`varos_control`).
+        varos: varos_control::Extras,
     },
     Blank,
     /// Not a request: reply with this error and close the connection.
@@ -171,16 +197,18 @@ fn parse_line(bytes: &[u8]) -> Line {
         Ok(v) => v,
         Err(e) => return Line::Reject(format!("bad JSON ({e}); expected one JSON request object per line; closing the connection")),
     };
-    let Some(obj) = msg.as_object() else {
+    let Value::Object(mut obj) = msg else {
         return Line::Reject("not a control request (expected a JSON object); closing the connection".into());
     };
-    let Some(method) = obj.get("method").and_then(Value::as_str) else {
+    let Some(method) = obj.get("method").and_then(Value::as_str).map(str::to_string) else {
         return Line::Reject("not a control request (missing string `method`); closing the connection".into());
     };
     Line::Request {
-        id: obj.get("id").cloned().unwrap_or(Value::Null),
-        method: method.to_string(),
-        params: obj.get("params").cloned().unwrap_or(json!({})),
+        id: obj.remove("id").unwrap_or(Value::Null),
+        method,
+        // Taken, not copied: a request's params can be large.
+        params: obj.remove("params").unwrap_or(json!({})),
+        varos: varos_control::extras(&obj), // Varos
     }
 }
 
@@ -224,12 +252,13 @@ fn write_line(out: &mut impl Write, v: &Value) -> std::io::Result<()> {
 /// returns the reply object (the request's `id` is added here).
 #[cfg(test)]
 fn serve_lines<R: Read, W: Write>(read: R, out: W, handle: impl FnMut(String, Value) -> Option<Value>) {
-    serve_lines_with(read, out, handle, |_| Ok(()), |_| Ok(()));
+    serve_lines_with(read, out, |_| varos_control::Screen::Pass, handle, |_| Ok(()), |_| Ok(()));
 }
 
 fn serve_lines_with<R: Read, W: Write>(
     read: R,
     mut out: W,
+    mut screen: impl FnMut(&[u8]) -> varos_control::Screen, // Varos: looks at a line before it is parsed
     mut handle: impl FnMut(String, Value) -> Option<Value>,
     mut begin_line: impl FnMut(&mut BufReader<R>) -> std::io::Result<()>,
     mut begin_reply: impl FnMut(&mut W) -> std::io::Result<()>,
@@ -240,7 +269,25 @@ fn serve_lines_with<R: Read, W: Write>(
         if begin_line(&mut reader).is_err() {
             return;
         }
-        let reject = match read_bounded_line(&mut reader, &mut buf, MAX_LINE) {
+        let read = read_bounded_line(&mut reader, &mut buf, MAX_LINE);
+        // Varos: the agents port looks at a line before it is parsed (its hello, its token).
+        if read == Ok(true) {
+            match screen(&buf) {
+                varos_control::Screen::Pass => {}
+                varos_control::Screen::Answer(reply) => {
+                    if begin_reply(&mut out).and_then(|()| write_line(&mut out, &reply)).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                varos_control::Screen::Refuse(reply) => {
+                    // Best effort, as below: the connection closes either way.
+                    let _ = begin_reply(&mut out).and_then(|()| write_line(&mut out, &reply));
+                    return;
+                }
+            }
+        }
+        let reject = match read {
             Ok(false) => return,
             // Nothing of a line arrived (the idle wait ran out, or the peer is gone): close without
             // a word. A line nobody asked for would be read as the reply to the client's next request.
@@ -249,7 +296,8 @@ fn serve_lines_with<R: Read, W: Write>(
             Ok(true) => match parse_line(&buf) {
                 Line::Blank => continue,
                 Line::Reject(e) => e,
-                Line::Request { id, method, params } => {
+                Line::Request { id, method, params, varos } => {
+                    varos_control::set_line(varos); // Varos
                     let Some(mut r) = handle(method, params) else { return };
                     if let Some(o) = r.as_object_mut() {
                         o.insert("id".into(), id);
@@ -285,7 +333,8 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let (stream, _) = listener.accept().unwrap();
             socket2::SockRef::from(&stream).set_send_buffer_size(4096).unwrap();
-            serve_socket(stream, timeouts, handle);
+            let slot = acquire_slot(&Arc::new(AtomicUsize::new(0))).unwrap();
+            serve_socket(stream.try_clone().unwrap(), &varos_control::Link::new(&stream, slot), timeouts, handle);
             finished.send(()).unwrap();
         });
         let client = TcpStream::connect(addr).unwrap();

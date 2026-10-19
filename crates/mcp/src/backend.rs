@@ -15,6 +15,9 @@ pub trait Backend {
     fn has_ui(&self) -> bool;
     /// Short human description ("headless", "remote 127.0.0.1:7979").
     fn describe(&self) -> String;
+    /// Varos: the client introduced itself (`initialize`'s `clientInfo`); a backend that reaches
+    /// the desktop app names the agent to it.
+    fn set_client(&mut self, _client_info: &Value) {}
 }
 
 /// A running VectorCraft app, reached through its loopback control port.
@@ -22,6 +25,13 @@ pub struct Remote {
     addr: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
+    /// Varos: the agent this server speaks for, sent with every line (`varos_actor`).
+    actor: Value,
+    /// Varos: the token of Varos' always-on port, sent with every line (`varos_connect`).
+    token: Option<String>,
+    /// Varos: the server key the app must prove it holds on every new connection before anything
+    /// else is sent (`varos_agents::auth::handshake`).
+    server_key: Option<String>,
 }
 
 /// Longest accepted control-channel reply line (bytes, without the newline). The app answers
@@ -33,7 +43,16 @@ const MAX_REPLY_BYTES: usize = 256 * 1024 * 1024;
 impl Remote {
     /// Connect to `addr` (e.g. `127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, actor: Value::Null, token: None, server_key: None }; // Varos: actor, token, server_key
+        r.reconnect()?;
+        Ok(r)
+    }
+
+    /// Varos: connect to Varos' always-on port at `addr`. Every connection (this one and each
+    /// reconnect) must first prove it is the Varos whose `server_key` the endpoint file holds;
+    /// until it does, nothing (no token, no request) is sent on it.
+    pub fn connect_varos(addr: &str, token: String, server_key: String) -> std::io::Result<Self> {
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, actor: Value::Null, token: Some(token), server_key: Some(server_key) };
         r.reconnect()?;
         Ok(r)
     }
@@ -57,7 +76,11 @@ impl Remote {
                     // The app answers within 60 s (its own timeout); leave headroom.
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
                     let read = s.try_clone()?;
-                    self.conn = Some((BufReader::new(read), s));
+                    let mut reader = BufReader::new(read);
+                    if let Some(key) = &self.server_key {
+                        crate::varos_connect::prove_server(&mut reader, &s, key)?; // Varos: the server proves who it is first
+                    }
+                    self.conn = Some((reader, s));
                     return Ok(());
                 }
                 Err(e) => last = e,
@@ -150,7 +173,14 @@ impl Backend for Remote {
         })?;
         let id = self.next_id;
         self.next_id += 1;
-        let line = json!({"id": id, "method": method, "params": params}).to_string();
+        let mut line = json!({"id": id, "method": method, "params": params});
+        if !self.actor.is_null() {
+            line["actor"] = self.actor.clone(); // Varos: who is asking
+        }
+        let mut line = line.to_string();
+        if let Some(token) = &self.token {
+            line = varos_agents::auth::with_token(line, token); // Varos: the endpoint file's token, last on the line
+        }
         let v: Value = self
             .roundtrip(&line)
             .and_then(|reply| {
@@ -191,5 +221,9 @@ impl Backend for Remote {
 
     fn describe(&self) -> String {
         format!("remote {}", self.addr)
+    }
+
+    fn set_client(&mut self, client_info: &Value) {
+        self.actor = crate::varos_actor::actor(client_info); // Varos
     }
 }

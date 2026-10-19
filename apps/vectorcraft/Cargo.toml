@@ -19,6 +19,8 @@ windows7 = ["eframe/glow"]
 [dependencies]
 vectorcraft-engine = { workspace = true }
 vectorcraft-ui-egui = { workspace = true }
+# Varos: the agents endpoint file, its secrets and the server proof (src/varos_control.rs).
+varos-agents = { workspace = true }
 vectorcraft-text = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wayland", "x11"] }
 egui = { workspace = true }
@@ -96,3 +98,5 @@ winresource = "0.1"
 socket2 = { workspace = true }
 # src/portal_save.rs's tests build and read the portal's D-Bus values on every system.
 zbus = "=5.19.0"
+# Varos: src/varos_control.rs's end-to-end test runs the real MCP proxy against the real listener.
+vectorcraft-mcp = { workspace = true }

@@ -1,4 +1,6 @@
 //! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
+// Varos: agents on the same document (identity, history tags, activity, presence).
+pub(crate) mod agents;
 // Varos: the font menu's Arabic filter, samples and markers.
 pub(crate) mod arabic_fonts;
 pub(crate) mod cursors;
@@ -13,6 +15,8 @@ pub mod names;
 mod perf_tests;
 pub(crate) mod profile;
 pub(crate) mod shortcuts;
+#[cfg(test)]
+mod tests_agents;
 pub mod theme;
 
 use std::collections::HashMap;

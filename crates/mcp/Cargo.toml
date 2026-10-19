@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 vectorcraft-engine = { workspace = true }
+# Varos: the running Varos' endpoint file (src/varos_connect.rs).
+varos-agents = { workspace = true }
 vectorcraft-render = { workspace = true }
 vectorcraft-svg = { workspace = true }
 vectorcraft-format = { workspace = true }

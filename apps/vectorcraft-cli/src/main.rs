@@ -52,7 +52,7 @@ mod system_fonts;
 
 use serde_json::{Value, json};
 use vectorcraft_engine::file_access::{self, AutomationRoots};
-use vectorcraft_mcp::{Backend, DEFAULT_ADDR, Headless, Remote, Server};
+use vectorcraft_mcp::{Backend, Headless, Remote, Server}; // Varos: DEFAULT_ADDR no longer the default
 
 /// stdout went away. A reader that stopped early (a closed pipe) ends the program quietly, as
 /// ripgrep does; any other write error is reported.
@@ -69,8 +69,9 @@ vectorcraft-cli — VectorCraft automation
 
 USAGE:
   vectorcraft-cli mcp [--connect ADDR | --headless] [--automation-read-root DIR] [--automation-write-root DIR]
-      Run the MCP server on stdio. Default: connect to a running app at 127.0.0.1:7979
-      (vectorcraft --control 7979), falling back to a headless in-process session.
+      Run the MCP server on stdio. Default (Varos): attach to the Varos that is open, found
+      through its private endpoint file; while none is open each call answers host_not_running.
+      --connect ADDR reaches an app started with --control PORT; --headless runs without the app.
       --automation-read-root / --automation-write-root confine the files the agent's commands read
       (open, place, relink, library loads…) and write (save, export, package, library saves…) to
       DIR, links followed; a root left out grants none of its access. They imply --headless: a
@@ -215,10 +216,9 @@ fn mcp(args: &[String]) -> Result<(), String> {
         // Explicit address: fail loudly if the app isn't there.
         Box::new(Remote::connect(&addr).map_err(|e| format!("cannot connect to {addr}: {e}"))?)
     } else {
-        match Remote::connect(DEFAULT_ADDR) {
-            Ok(r) => Box::new(r),
-            Err(_) => Box::new(with_stores(Headless::with_document())),
-        }
+        // Varos: attach to the open Varos (its endpoint file and token); never a silent headless
+        // document the person can't see.
+        Box::new(vectorcraft_mcp::VarosAttach::new())
     };
     eprintln!("vectorcraft-cli: MCP server on stdio ({})", backend.describe());
     // The binary owns the logger, not the library: installing one here keeps an embedder that

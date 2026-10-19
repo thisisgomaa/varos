@@ -26,6 +26,8 @@ vectorcraft-trace = { path = "crates/trace" }
 # library crate never forces them on an embedder that supplies its fonts at run time.
 vectorcraft-text = { path = "crates/text", default-features = false }
 vectorcraft-text-arabic = { path = "crates/text-arabic" }
+# Varos: agent identity, diffs, presence, activity and receipts (pure logic).
+varos-agents = { path = "crates/varos-agents" }
 vectorcraft-effects = { path = "crates/effects" }
 vectorcraft-three-d = { path = "crates/three-d" }
 vectorcraft-render = { path = "crates/render" }

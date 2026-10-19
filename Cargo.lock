@@ -4511,6 +4511,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "varos-agents"
+version = "0.13.1"
+dependencies = [
+ "getrandom 0.3.4",
+ "serde_json",
+ "sha2",
+ "vectorcraft-doc",
+ "vectorcraft-geom",
+]
+
+[[package]]
 name = "varos-text"
 version = "0.1.0"
 source = "git+ssh://git@github.com/thisisgomaa/varos.git?rev=5936eaf#5936eaf757554c82650670b19afdc7d7a7d2c610"
@@ -4541,7 +4552,9 @@ dependencies = [
  "rfd",
  "serde_json",
  "socket2",
+ "varos-agents",
  "vectorcraft-engine",
+ "vectorcraft-mcp",
  "vectorcraft-text",
  "vectorcraft-ui-egui",
  "wayland-backend",
@@ -4759,6 +4772,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "socket2",
+ "varos-agents",
  "vectorcraft-doc",
  "vectorcraft-engine",
  "vectorcraft-format",
@@ -4998,6 +5012,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "varos-agents",
  "vectorcraft-brush",
  "vectorcraft-cad",
  "vectorcraft-color",

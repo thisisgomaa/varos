@@ -1,0 +1,24 @@
+[package]
+name = "varos-agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Varos: agent identity, document diffs, on-canvas presence, activity log and request receipts (pure logic, no UI)"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# Only the document model: no engine, renderer, window or UI. The desktop glue lives in
+# crates/ui-egui/src/varos/ (see docs/varos/FORK.md).
+vectorcraft-doc = { workspace = true }
+vectorcraft-geom = { workspace = true }
+serde_json = { workspace = true }
+# The agents port's server proof (src/auth.rs): HMAC-SHA-256. Already in the tree (Cargo.lock).
+sha2 = { version = "0.10", default-features = false }
+
+# The agents port's secrets: the operating system's random source (getentropy on macOS,
+# ProcessPrng on Windows, getrandom on Linux). Not on the web build, which has no agents port.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = "0.3"

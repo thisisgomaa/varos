@@ -391,6 +391,7 @@ fn undo(s: &mut Session, _: &Value) -> Result<Value> {
     let selection = shared_selection(selection, st.history.redo.last());
     let mut turned = crate::HistoryEntry::turned(e.label, doc, selection, &st.doc, costs);
     turned.named = e.named;
+    turned.actor = e.actor; // Varos: the step keeps who made it
     st.history.redo.push(turned);
     st.history.trim();
     st.revision += 1;
@@ -416,6 +417,7 @@ fn redo(s: &mut Session, _: &Value) -> Result<Value> {
     let selection = shared_selection(selection, st.history.undo.last());
     let mut turned = crate::HistoryEntry::turned(e.label, doc, selection, &st.doc, costs);
     turned.named = e.named;
+    turned.actor = e.actor; // Varos: the step keeps who made it
     st.history.undo.push(turned);
     st.history.trim();
     st.revision += 1;

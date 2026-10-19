@@ -53,6 +53,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     rows.extend(st.history.undo.iter().map(|h| (shown(h), false)));
     let current = rows.len() - 1;
     rows.extend(st.history.redo.iter().rev().map(|h| (shown(h), true)));
+    let agents = crate::varos::agents::history_labels(app, &st.history); // Varos: agents' steps
     let mut steps: Option<i64> = None;
     crate::widgets::list_box(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -69,10 +70,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                     ui,
                     icon,
                     egui::Rect::from_center_size(r.left_center() + vec2(14.0, 0.0), vec2(14.0, 14.0)),
-                    if *future { t.text_disabled } else { t.icon },
+                    crate::varos::agents::history_icon(agents.get(i), if *future { t.text_disabled } else { t.icon }), // Varos
                 );
                 let col = if *future { t.text_disabled } else { t.text };
                 ui.painter().text(r.left_center() + vec2(30.0, 0.0), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.5), col);
+                crate::varos::agents::paint_history_agent(ui, r, agents.get(i)); // Varos
                 if resp.clicked() && i != current {
                     steps = Some(steps_to(current, i));
                 }

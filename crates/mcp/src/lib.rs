@@ -22,6 +22,9 @@ mod prompts;
 mod resources;
 mod server;
 mod tools;
+mod varos_actor; // Varos: the agent behind this server
+mod varos_connect; // Varos: attach to the running Varos
+pub use varos_connect::VarosAttach; // Varos
 
 pub use backend::{Backend, Remote};
 pub use headless::Headless;

@@ -1,0 +1,127 @@
+Lane: lane-agents (Opus 5.5), 2026-10-19, base 0d83c322. Not committed (the moderator lands it).
+Status: security-review fixes applied (review verdict was BLOCK); awaits re-review and owner hand test.
+
+WHAT THE LAYER DOES
+- Any agent the person runs (Claude Code, Codex...) works on the same open document as the person,
+  through the MCP proxy `vectorcraft-cli mcp`, with no pairing, approval, password or Keychain
+  prompt (owner decisions 2026-10-08 / 2026-10-19).
+- Who: every request names its agent (actor: session, profile, label). Labels: "Claude Code",
+  "Claude Code 2" for a second session. The actor is a claim used only for attribution.
+- History: every undo step a request records carries its agent (Session::set_actor), in whichever
+  document the request edits, including a document it opens or makes during the request. Undo and
+  redo keep the tag. The History panel shows the agent's name in orange.
+- Undo groups: an open undo group (the person scrubbing a field, or an agent's
+  edit.undoGroup.begin ... end batch) only takes in its own actor's edits. Another actor's edit
+  becomes a step of its own, and the group's owner continues in a new step.
+- Activity log: each revision of each open document, with who made it and what changed (created,
+  changed, removed, restacked containers, layer order, artboards). It serves `describe since R`
+  and per-agent review. It lives only for the session.
+- Presence: the artboard an agent works on gets an orange outline with the agent's name, and the
+  objects it creates or changes appear one by one, then fade. It is derived from the diff, so the
+  agent sends nothing for it and spends no tokens. Restacking alone lights nothing.
+- Diff cost: unchanged subtrees are skipped by pointer, and the diff descends only along changed
+  branches. Each sibling list on such a branch costs O(siblings) pointer comparisons, walked
+  pairwise from both ends with no hashing, cloning or allocation; only the stretch that really
+  differs is indexed by id. It is not O(changed): a one-part edit of a 13,900-part compound does
+  ~13,900 pointer comparisons. A counted (not timed) test holds the node visits (compared or
+  indexed) for that edit to at most 8.
+
+HOW TO CONNECT
+- Open Varos (no flag). Every launch listens on a fresh loopback port and writes
+  ~/Library/Application Support/Varos/agents/endpoint-<pid>.json (folder 0700, file 0600, written
+  atomically, symlinks refused, removed at quit). The file holds the port, a token, a server key,
+  the pid and the start time (format version 2).
+- Agent side: register `vectorcraft-cli mcp` as an MCP server. It finds the open Varos itself.
+  With none open, every call answers host_not_running. With two open, it answers
+  ambiguous_target. A Varos opened after the agent is found on the next call.
+- `--control PORT` and `mcp --connect ADDR` keep upstream's behaviour: no secrets, no guards.
+
+SECURITY MODEL
+- Trust boundary: processes of the same macOS user are trusted. A different local user, or a web
+  page, must get nothing. Safety against the user's own agents is undo plus per-agent history,
+  plus mistake guards on files. It is not a permission gate.
+- Two secrets per launch, from the OS random source (getrandom 0.3: getentropy on macOS, getrandom
+  on Linux, ProcessPrng on Windows). Both are 256 bits.
+  * Server proof (fixes the BLOCK). On every new TCP connection, the first thing the proxy sends is
+    {"method":"varos.hello","params":{"nonce":<fresh 256-bit hex>}}. The app must answer with
+    HMAC-SHA-256(server_key, "varos-agents-hello-v1\n" || nonce). The proxy checks it in constant
+    time. Only after that does it send the token or any request. Every reconnect does this again.
+    A process that took over a crashed launch's port (another user's, say) can't read the
+    endpoint file, so it can't answer. It receives one random nonce and nothing else, and the agent
+    is told host_not_running. Tested with an impostor that answers using a wrong key: it saw only
+    hellos, with no token, actor or params.
+  * Token. The proxy appends it as the last member of every request line. The app checks the
+    raw line's tail for `,"token":"<token>"}` in constant time, before any JSON is parsed. A line
+    that is neither a token line nor a small hello (<= 512 bytes) gets an `unauthorized` reply and
+    the connection closes. Params are now moved out of the parsed object, not cloned.
+  * Unauthenticated connections have their own pool (8) and one absolute 2 s window from connect.
+    Hellos and blank lines don't restart it. The first token line moves the connection into the
+    main pool (16, the upstream limit) and lifts the window. Peers that never authenticate can't
+    hold the agents' slots.
+  * Stale endpoint files: at launch a file is removed only when its port refuses the connection,
+    closes without an answer, or answers without a valid proof. A port that is slow or busy is
+    left alone.
+  * Windows: there is no private-ACL check, so the endpoint is not published. publish() refuses on
+    non-Unix, and Varos runs without an agents port there. The official build is Mac-only.
+- File mistake guards, for requests through the agents port only (the person is never guarded):
+  * Rules: never overwrite an existing file, except a save onto the document's own file. Write only
+    under home or on /Volumes/<drive>. In ~/Library, only iCloud Drive and CloudStorage. No hidden
+    or `..` components, also after links are resolved (a visible link into a hidden folder
+    fails). No relative paths. Nothing inside the running app. No folder trees: the parent must
+    exist.
+  * Checked twice. (1) Before running, on the parameters. This walks command.batch steps
+    recursively. action.batch is allowed only with destination `none` and no step that writes
+    to a path. Export for Screens and assets.export are allowed only into an existing, empty folder
+    (dot-files ignored). Save as Template's path gets a place check only, because the command
+    replaces the extension. (2) At every real write: a Varos hook in engine file_access::check_write
+    runs a per-request Writes check on the exact path written. That path is known only after
+    renaming, so this covers generated names (Export for Screens subfolders and numbered files,
+    multi-artboard exports, the template's real extension). It applies to engine writes and, through
+    VectorcraftApp::with_agent_guards, to the host's write services. It is carried to background
+    save/export threads (ScopeHandle) and to window captures written frames later
+    (PendingScreenshot keeps the asking request's guard). An existing folder may be "made" again;
+    a file is never written twice, not even one the same request wrote (a pre-check through
+    check_write must not vouch for a later write). Only an actual save of the active document
+    (app.save, document.save, file.save) may write over the document's own file; a template,
+    export or print landing on that name is refused.
+  * Which commands are guarded is built from the registry: any command whose params description
+    names path/paths/file/files/folder/folders/destinationFolder/linksFolder/userFolder/location/
+    dir/directory, except an explicit READS list (open, place, import, relink, load, find...).
+    Commands upstream adds later are guarded by default. A test walks the whole registry and
+    asserts that each guarded command refuses a path outside home. It also checks that READS has
+    no stale entries. file.print and links.unembed are now guarded.
+
+LIMITS (HONEST)
+- Any process of the same user can read the endpoint file and edit, save or export. This is by
+  design.
+- A hostile local user can't get in or read anything. They can keep the 8 pending slots busy,
+  which delays new agent connections (not established ones) for as long as they keep at it.
+  Loopback TCP gives no peer-uid check on macOS. A Unix-domain socket with getpeereid would be the
+  real fix (not done).
+- Guards are checked, then written: a program that swaps in a link between the check and the write
+  can still win that race.
+- Writes the app makes `unconfined` (its own library, fonts, recovery and preferences folders) are
+  not guarded. plugin.install and text.addFontFiles copy into those folders.
+- ui.screenshot writes on a later frame. Only its pre-check (absolute path, new file, allowed
+  place) applies, not the write-time check.
+- The activity log and presence show one document's work per request: the document in front if it
+  changed. The log records every document the request changed.
+- The restack log keeps container ids, not orders. Restacking back to the first order still
+  reports `reordered`.
+
+FILES
+- crates/varos-agents: auth.rs (new: secrets, HMAC, hello, token line), endpoint.rs (v2, server
+  key, OS RNG, no Windows publish), guard.rs (canonical hidden check, empty-folder check,
+  place-only check, Writes), diff.rs (two-ended pairwise walk, no clone, reordered,
+  diff_counted), activity.rs (restacks folded), tests.rs, Cargo.toml (sha2, getrandom
+  non-wasm).
+- crates/engine: file_access.rs (Varos write-guard hook + ScopeHandle carry),
+  lib.rs (Session::set_actor/actor, new documents inherit, UndoGroup.actor),
+  tests_varos_actor.rs (new).
+- crates/mcp: backend.rs (Remote::connect_varos, handshake on every connect, token last on the
+  line), varos_connect.rs (prove_server, verified endpoints only, impostor test).
+- crates/ui-egui: varos/agents.rs (multi-document after(), write guard per request, recursive
+  registry-driven pre-checks, with_agent_guards), varos/tests_agents.rs.
+- apps/vectorcraft: varos_control.rs (screen, pools, window, probe-based prune, end-to-end proxy
+  test), control_server.rs (screen hook before parse, params moved, slot pools),
+  control_deadlines.rs (set_budgets), main.rs (with_agent_guards), Cargo.toml (mcp dev-dependency).
