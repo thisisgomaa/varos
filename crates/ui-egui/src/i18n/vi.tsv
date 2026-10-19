@@ -4841,7 +4841,7 @@ theme	Appearance	Giao diện
 	Arabic Presentation Forms-B	Dạng trình bày Ả Rập B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	Theo hệ chữ của văn bản đã chọn
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Văn bản tiếng Ả Rập đã chọn, nếu không thì mẫu tiếng Ả Rập trong phông chữ hỗ trợ
 	Latin samples	Mẫu chữ Latinh
 	Arabic samples in Arabic-capable fonts	Mẫu chữ Ả Rập trong phông hỗ trợ tiếng Ả Rập
 	Serif	Có chân

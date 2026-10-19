@@ -4824,7 +4824,7 @@ lighting	Light	광원
 	Arabic Presentation Forms-B	아랍 표시형 B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	선택한 텍스트의 문자 체계 따르기
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	선택한 아랍어 텍스트, 그 외에는 아랍어 지원 글꼴에 아랍어 샘플 표시
 	Latin samples	라틴 문자 샘플
 	Arabic samples in Arabic-capable fonts	아랍어 지원 글꼴의 아랍어 샘플
 	Serif	세리프

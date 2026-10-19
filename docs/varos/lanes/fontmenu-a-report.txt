@@ -1,85 +1,117 @@
-Lane FONTMENU-A — concept A, Script first
-2026-10-19 | branch lane-fontmenu-a | base fece2e1f | no commit
-Status: implemented, requested gates passed, independent source/visual review passed;
-owner native hand test pending. STATE.md/BACKLOG.md unchanged.
+Lane FONTMENU-A — concept A review fixes
+2026-10-19 | branch lane-fontmenu-a | HEAD 2b193d9f | UNCOMMITTED
+Status: requested source fixes implemented; all requested gates PASS.
+Fresh real-widget mesh captures inspected; native GPU/owner hand tests pending.
+STATE.md/BACKLOG.md, parity scores and estimates unchanged; provisional UI still
+awaits owner native hand test. No assets or fonts added.
 
-Menu, top to bottom
-1. Search field; at its right Auto / Aa / shaped أب sample segments with tooltips.
-   Auto follows selected text. Aa always uses the generic Latin sample, including
-   with Arabic, Japanese, Thai or Cyrillic selected. أب uses the Arabic sample in
-   Arabic-capable families; other families retain their non-Arabic selected sample.
-   With no Arabic-capable family installed, the glyph segment has a translated
-   Arabic text fallback. Sample mode survives closing/reopening with menu state.
-2. Full-width, exclusive All / Arabic / Latin / Japanese / Thai script switch.
-   Arabic uses the existing cmap/joining capability detection. Other script
-   matching remains upstream's (including its broad Latin classification).
-3. Only under Arabic: All Arabic / Naskh / Kufi / Ruq’ah / Diwani / Thuluth /
-   Modern Sans style chips. An available matching face shapes its Arabic name;
-   otherwise the translated Latin label appears. Latin tooltips identify styles.
-   Labels use the existing bounded, background sample cache and wasm frame budget.
-4. One horizontally scrolling kind strip: star / Any Kind / Serif / Sans /
-   Rounded / Script / Mono / Decorative. No wrapping into more kind rows.
-5. Existing family/style rows: name, Arabic name when available and space permits,
-   per-mode sample, AAT marker and star. Existing selection/preview behavior kept.
+Required merge — BLOCKED by filesystem permissions
+First command was git merge main --no-edit. Git could not create
+~/Documents/AI workspace/varos-next/.git/worktrees/lane-fontmenu-a/ORIG_HEAD.lock
+(Operation not permitted): this worktree's real Git metadata is outside the
+sandbox's writable roots. main verified as 86e24d2a. No merge occurred and HEAD
+remains 2b193d9f. Moderator must run the merge in a writable environment before
+integration. No Git metadata was moved or rewritten to bypass the restriction.
+git diff fece2e1f main confirms only the two mockup additions, no source changes.
+Read main's font-menu mockup through git show; its two mockup additions have not
+been copied into the worktree as untracked files that could obstruct the merge.
+Local plan/STATUS.md, execution-plan.md and architecture.md are absent here.
 
-Files, additions/deletions (code/catalog diff: 28 files, +520/-98)
-+272/-0  crates/ui-egui/src/varos/font_filters.rs (new header, modes tests,
-         no-Arabic-font fallback test and opt-in GPU screenshot helper)
- +23/-53 crates/ui-egui/src/varos/arabic_fonts.rs (sample mode enum and policy)
- +13/-43 crates/ui-egui/src/font_menu.rs (header delegation; cache visibility hook;
-         unused upstream header helpers removed or retained only for their tests)
-  +2/-0  crates/ui-egui/src/varos/mod.rs (module registration)
- +26/-2  crates/ui-egui/src/varos/tests_arabic_fonts.rs (updated integration,
-         Latin hides styles, Arabic close/reopen persistence)
-+184/-0  23 catalogs, +8 each: bg, cs, da, de, el, es, fi, fr, hu, id, it, ja,
-         ka, ko, nl, pl, pt-br, ru, sv, uk, vi, zh-hans, zh-hant.
-This report is additional to the code/catalog counts. No assets or fonts added.
+Per-finding disposition
+1 — FIXED. Auto priority: selected Arabic text first (in every family, blank if
+    its face cannot render it); otherwise the Arabic sample line in every
+    db.may_set_arabic family; otherwise upstream's selected/generic sample.
+    Auto never requests Latin "Sample" for an Arabic-capable family. Aa remains
+    explicitly Latin. Updated Auto tooltip in all 23 translation catalogs.
+2 — FIXED. Script reset uses the existing All Scripts key; monospaced kind uses
+    Monospaced. Reuses upstream's unambiguous translations; no new keys needed.
+3 — FIXED. Per-context/per-database header memo, invalidated by db.generation():
+    one family-list classification pass builds has_arabic and ordered candidates
+    for each style. Each chip requests one candidate per call, keeps that family
+    while pending/budget-limited, and advances only after a completed cached None.
+    Added a tri-state accessor around the existing bounded sample cache; all
+    existing row callers retain their Option<TextureHandle> interface.
+4 — FIXED. A fixed shaped-name slot plus measured text-label width sets each
+    style chip's geometry before the texture arrives. Pending, available,
+    unavailable and post-reset states have the same width and 24-point height.
+    Long shaped names scale proportionally to their reserved slot.
+5 — FIXED. Both Arabic script-segment lookups choose the matching label with
+    the largest top below the search row. The sample switch's translated Arabic
+    fallback cannot win over the lower script segment on a no-Arabic-font Mac.
+6 — FIXED. Removed test-only SCRIPTS intra-doc references from production docs;
+    documented the full 0–4 mapping and the separate Arabic capability predicate.
+7 — FIXED. Named Varos ARABIC_SCRIPT constant (4), used by script selection,
+    Arabic-only visibility and opt-in screenshot state.
+8 — HAND TEST, OPEN. Deferred as requested; no closure claimed in this pass.
+9 — FIXED. Module comment now immediately precedes mod font_filters.
+10 — FIXED. Every style chip always shows its translated text label, plus its
+     shaped Arabic name when available; all style controls share a 24-point
+     minimum height, including All Arabic. No Arabic is drawn with egui text.
+11 — HAND TEST, OPEN. Deferred as requested; no closure claimed in this pass.
+12 — FIXED. Auto/Aa/Arabic sample switch is absent when in-menu previews are
+     off; the stored sample mode survives and the search field uses the row.
+13 — HAND TEST, OPEN. Deferred as requested; no closure claimed in this pass.
+14 — HAND TEST, OPEN. Deferred as requested; no closure claimed in this pass.
+15 — FIXED. Ignored GPU-evidence test moved inside font_filters::tests.
 
-Requested gates — all PASS
+Current verification — all requested gates PASS on the final source
 cargo build --offline -j 4 -p vectorcraft
-  Finished `dev` profile [optimized + debuginfo] target(s) in 6m 09s
+  Finished dev profile in 48.48s (final run, after all Rust edits).
 cargo test --offline -j 4 -p vectorcraft-ui-egui -- --test-threads=4
-  1726 passed; 0 failed; 3 ignored; finished in 11.25s; doc tests 0/0.
-  every_tl_literal_is_translated: ok
-  sample_switch_overrides_arabic_selection_and_survives_state_round_trip: ok
-  sample_segment_has_a_label_without_arabic_fonts: ok
-  clicking_the_arabic_chip_lists_only_arabic_families: ok (now clicks the script
-  segment, checks Arabic families/style visibility and close/reopen persistence).
+  1729 passed; 0 failed; 3 ignored; finished in 18.21s.
+  Doc tests: 0 passed, 0 failed.
+  every_tl_literal_is_translated and all new/updated regressions PASS.
 cargo clippy --offline -j 4 -p vectorcraft-ui-egui --lib -- -D warnings
-  Finished `dev` profile [optimized + debuginfo] target(s) in 1m 08s
-rustfmt --edition 2024 --check [the five touched Rust files]: exit 0.
-  Used rustfmt directly: cargo fmt rejects the required --offline -j 4 flags.
-git diff --check: exit 0.
-No CARGO_TARGET_DIR override, no concurrent cargo runs, no edits during runs.
+  Finished dev profile in 4.22s; no warnings.
+cargo fmt --all -- --check
+  PASS, exit 0 (format check only; no build/network operation).
+git diff --check
+  PASS, exit 0.
+No CARGO_TARGET_DIR override, no concurrent Cargo build/test/clippy runs,
+no edits during compilation, no commit. The required Git merge remains blocked.
+Logs for this review cycle (do not confuse with the prior concept-A logs):
+ /tmp/fontmenu-a-review-build-final.log
+ /tmp/fontmenu-a-review-tests.log
+ /tmp/fontmenu-a-review-clippy.log
+ /tmp/fontmenu-a-review-fmt.log
 
-Review and visible evidence
-Independent reviewer: /root/review_fontmenu. Found and resolved: Aa leaking other
-selected scripts; synchronous header font loading/cache churn; weak persistence
-assertion; blank no-Arabic-font fallback. Final source and visual review: no
-remaining material findings. Compact Arabic style lettering is legible/unclipped.
+Visible evidence — freshly generated and inspected after the final build
+ /tmp/fontmenu-a-review-evidence/all.png
+ /tmp/fontmenu-a-review-evidence/arabic.png
+ /tmp/fontmenu-a-review-evidence/latin.png
+An external temporary Rust helper linked the freshly built ui-egui library,
+rendered the real font menu at 360 points, and rasterized its actual egui meshes,
+font atlas and shaped textures. No selected text was passed: All Scripts and
+Arabic visibly show Arabic samples in Arabic-capable families under Auto.
+Arabic shows text labels plus shaped names at a consistent chip height; the
+reserved name slots give three stable wrapped style rows at this width. Latin
+hides styles. This is layout/sample evidence, not native GPU/pointer acceptance.
+Helper/logs (not part of the repo): /tmp/fontmenu-a-review-capture.rs,
+ /tmp/fontmenu-a-review-capture.log, /tmp/fontmenu-a-review-capture-run.log.
 
-GPU screenshot test was attempted separately with --ignored and failed because
-this sandbox has no graphics adapter ("No adapter found"). It remains opt-in;
-it is one of the normal suite's three ignored tests, not a required passing gate.
-A temporary external Rust helper rasterized the actual egui triangles and font
-textures from the built library. Inspected all three at the real 360-point menu
-width, including the existing family rows. This verifies layout, not native GPU
-or physical pointer behavior. No helper source was added to the repository.
-  /tmp/fontmenu-a-evidence/all.png
-  /tmp/fontmenu-a-evidence/arabic.png
-  /tmp/fontmenu-a-evidence/latin.png
-Logs: /tmp/fontmenu-build.log, /tmp/fontmenu-tests-final.log,
-      /tmp/fontmenu-clippy.log, /tmp/fontmenu-visual.log (GPU limitation).
-The HTML spec was absent here; read the exact concept A and panel 4 from the
-parent checkout: ~/Documents/AI workspace/varos-next/docs/varos/mockups/font-menu-filters.html
-Local plan/STATUS.md and plan/execution-plan.md were absent in this worktree.
+Regression coverage added/updated
+- Auto with Arabic, Latin, Japanese, Thai and no selected text; capable and
+  non-capable families. Existing explicit Latin and Arabic mode checks retained.
+- Pending/budget-limited candidates do not advance or reclassify families;
+  cached failure advances once; success stays put; font-generation change resets
+  the memo; capability remains true after label candidates are exhausted.
+- Every style's text label and geometry in pending, ready, reset and unavailable
+  states; preview-off header keeps its sample mode but draws no mode controls.
+- Deterministic script-row selection; Arabic filter and close/reopen persistence.
 
-Owner hand test (not yet performed)
-1. Select Arabic text. Open the font menu. Auto previews that text; Aa gives
-   Latin samples; أب gives the generic Arabic line in Arabic-capable families.
-2. Pick Arabic. Only Arabic-capable families remain, with the Arabic style row.
-   Try a style and All Arabic; names should use a matching face when available.
-3. Pick Latin (styles disappear), then Japanese/Thai. Inspect the single kind
-   strip and its horizontal scrolling at a narrow menu width.
-4. Pick Arabic and a sample mode, close/reopen: choices remain. Check a star,
-   hover preview and apply a font; the existing row interactions should remain.
+Owner hand tests — not performed by this lane
+Review findings 8, 11, 13 and 14 remain manual follow-ups exactly as requested.
+Native acceptance should include: script/sample selection with and without
+Arabic fonts, narrow-menu horizontal kind scrolling, all six style groups and
+unknown styles, multiple UI scales and translations, previews off/on, starred
+families, keyboard selection, hover preview cancellation, applying a font and
+closing/reopening. Neither headless geometry nor rasterized egui meshes certify
+native GPU rendering or physical pointer behavior. The original ignored GPU
+helper remains opt-in.
+
+Prior concept-A evidence
+The old /tmp/fontmenu-a-evidence images and /tmp/fontmenu-{build,tests-final,
+clippy,visual}.log describe the previous lane, not these review fixes. Its
+report's previous independent-review and "all gates passed" statements are
+superseded by the current verification above; no new independent agent review
+has been claimed.

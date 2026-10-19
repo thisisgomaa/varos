@@ -5246,7 +5246,7 @@ theme	Appearance	Apparence
 	Arabic Presentation Forms-B	Formes de présentation arabes B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	Suivre l’écriture du texte sélectionné
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Texte arabe sélectionné, sinon exemples arabes dans les polices compatibles
 	Latin samples	Exemples latins
 	Arabic samples in Arabic-capable fonts	Exemples arabes dans les polices compatibles avec l’arabe
 	Serif	Avec empattements

@@ -5203,7 +5203,7 @@ theme	Appearance	Utseende
 	Arabic Presentation Forms-B	Arabiska presentationsformer B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	Följ den markerade textens skriftsystem
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Markerad arabisk text, annars arabiska exempel i teckensnitt med arabiskt stöd
 	Latin samples	Latinska exempel
 	Arabic samples in Arabic-capable fonts	Arabiska exempel i teckensnitt med stöd för arabiska
 	Serif	Serif

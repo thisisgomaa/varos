@@ -4841,7 +4841,7 @@ lighting	Light	Світло
 	Arabic Presentation Forms-B	Арабські форми подання B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	Відповідно до письма вибраного тексту
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Виділений арабський текст, інакше арабські зразки в шрифтах із підтримкою арабської
 	Latin samples	Латинські зразки
 	Arabic samples in Arabic-capable fonts	Арабські зразки у шрифтах із підтримкою арабської
 	Serif	Із зарубками

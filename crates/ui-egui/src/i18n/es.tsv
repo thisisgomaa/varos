@@ -5189,7 +5189,7 @@ mark-style	Japanese	Japonesas
 	Arabic Presentation Forms-B	Formas de presentación árabes B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	Seguir la escritura del texto seleccionado
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Texto árabe seleccionado; si no, muestras árabes en fuentes compatibles
 	Latin samples	Muestras latinas
 	Arabic samples in Arabic-capable fonts	Muestras árabes en fuentes compatibles con árabe
 	Serif	Con serifas

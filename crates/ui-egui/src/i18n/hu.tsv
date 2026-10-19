@@ -5233,7 +5233,7 @@ imageTrace	Outline	Körvonal
 	Arabic Presentation Forms-B	Arab megjelenítési formák B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	A kijelölt szöveg írásrendszerének követése
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	A kijelölt arab szöveg, egyébként arab minták az arab írást támogató betűtípusokban
 	Latin samples	Latin minták
 	Arabic samples in Arabic-capable fonts	Arab minták az arab írást támogató betűtípusokban
 	Serif	Talpas

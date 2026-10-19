@@ -69,7 +69,7 @@ impl ArabicMenu {
     }
 
     /// The sample a row of `family` shows, given the selected text `selected`: `None` for none,
-    /// else the text (`None`: upstream's own choice, the selected text or its generic sample) and
+    /// else the text (`None`: upstream's generic sample) and
     /// whether it is set right to left.
     pub fn row_sample(&self, db: &FontDb, family: &str, selected: Option<&str>) -> Option<(Option<String>, bool)> {
         if self.samples == SampleMode::Latin {
@@ -82,7 +82,7 @@ impl ArabicMenu {
             // Set by `render` in the face itself, or no sample when the face can't.
             return Some((Some(text.to_string()), true));
         }
-        if self.samples == SampleMode::Arabic && db.may_set_arabic(family) {
+        if db.may_set_arabic(family) {
             return Some((Some(af::ARABIC_SAMPLE.to_string()), true));
         }
         Some((selected.filter(|s| !af::is_arabic_text(s)).map(str::to_string), false))

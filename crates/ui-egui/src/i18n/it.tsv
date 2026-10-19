@@ -4861,7 +4861,7 @@ lighting	Light	Luce
 	Arabic Presentation Forms-B	Forme di presentazione arabe B
 
 # Varos: concept A script-first font filters.
-	Follow the selected text's script	Segui la scrittura del testo selezionato
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Testo arabo selezionato, altrimenti esempi arabi nei font compatibili
 	Latin samples	Esempi latini
 	Arabic samples in Arabic-capable fonts	Esempi arabi nei font che supportano l’arabo
 	Serif	Con grazie
