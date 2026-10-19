@@ -257,7 +257,7 @@ pub fn encode(cmd: &str, doc: &Document, p: &Value) -> Result<(Vec<u8>, Vec<Stri
     // Keep the editable object tree independent of preview fallbacks used by the drawn pages.
     let (full, mut warnings) = crate::cmd::place::document::full_documents(doc);
     // Varos: a free canvas gets an output-only page, keeping boardless native editing data.
-    let free = super::super::varos_board::pdf_document(&full, p)?;
+    let free = super::super::varos_board::pdf_document(cmd, &full, p)?;
     let drawn = free.as_ref().unwrap_or(&full);
     let (bytes, drawn_warnings) = encode_carrying(cmd, drawn, p, || Ok(vectorcraft_format::save(doc, false)))?;
     warnings.extend(drawn_warnings);

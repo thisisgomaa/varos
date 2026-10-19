@@ -4142,4 +4142,21 @@ lighting	Light	光源
 	Poster	海報
 	Icon	圖示
 	A4	A4
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	開始建立
+	Yesterday	昨天
+	{hours} h ago	{hours} 小時前
+	{minutes} min ago	{minutes} 分鐘前
+	Jan	1月
+	Feb	2月
+	Mar	3月
+	Apr	4月
+	May	5月
+	Jun	6月
+	Jul	7月
+	Aug	8月
+	Sep	9月
+	Oct	10月
+	Nov	11月
+	Dec	12月

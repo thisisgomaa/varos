@@ -5105,4 +5105,21 @@ mark-style	Japanese	Japońskie
 varos-home	Web	WWW
 	Poster	Plakat
 	Icon	Ikona
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Zacznij od
+	Yesterday	Wczoraj
+	{hours} h ago	{hours} godz. temu
+	{minutes} min ago	{minutes} min temu
+	Jan	sty
+	Feb	lut
+	Mar	mar
+	Apr	kwi
+	May	maj
+	Jun	cze
+	Jul	lip
+	Aug	sie
+	Sep	wrz
+	Oct	paź
+	Nov	lis
+	Dec	gru

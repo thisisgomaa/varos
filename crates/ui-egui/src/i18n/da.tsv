@@ -5235,4 +5235,21 @@ swatch	Bright Violet	Kraftig violet
 	Story	Historie
 	Poster	Plakat
 	Icon	Ikon
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Start med
+	Yesterday	I går
+	{hours} h ago	for {hours} t siden
+	{minutes} min ago	for {minutes} min siden
+	Jan	jan
+	Feb	feb
+	Mar	mar
+	Apr	apr
+	May	maj
+	Jun	jun
+	Jul	jul
+	Aug	aug
+	Sep	sep
+	Oct	okt
+	Nov	nov
+	Dec	dec

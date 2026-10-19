@@ -5217,4 +5217,21 @@ theme	Appearance	Външен вид
 	Story	История
 	Poster	Плакат
 	Icon	Икона
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Започнете с
+	Yesterday	Вчера
+	{hours} h ago	преди {hours} ч
+	{minutes} min ago	преди {minutes} мин
+	Jan	яну
+	Feb	фев
+	Mar	мар
+	Apr	апр
+	May	май
+	Jun	юни
+	Jul	юли
+	Aug	авг
+	Sep	сеп
+	Oct	окт
+	Nov	ное
+	Dec	дек

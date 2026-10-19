@@ -4864,4 +4864,21 @@ varos-home	Web	Веб
 	Poster	Плакат
 	Icon	Значок
 	A4	A4
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Начать с
+	Yesterday	Вчера
+	{hours} h ago	{hours} ч назад
+	{minutes} min ago	{minutes} мин назад
+	Jan	янв
+	Feb	фев
+	Mar	мар
+	Apr	апр
+	May	май
+	Jun	июн
+	Jul	июл
+	Aug	авг
+	Sep	сен
+	Oct	окт
+	Nov	ноя
+	Dec	дек

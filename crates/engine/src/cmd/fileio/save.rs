@@ -445,18 +445,27 @@ pub(super) fn encode_ai(cmd: &str, f: &Format, doc: &Document, p: &Value) -> Res
     let pdf_compatible = bool_or(&params, "pdfCompatible", true);
     if !pdf_compatible {
         let picked: ArtboardPick = super::encode::options(f, &params)?;
-        let picked = picked.resolve(doc.artboards.len()).map_err(|e| bad(cmd, e))?;
-        if picked.is_some_and(|v| !v.into_iter().eq(0..doc.artboards.len())) {
+        // A boardless canvas has one output-only page around its art, including blank previews.
+        let page_count = doc.artboards.len().max(1);
+        let picked = picked.resolve(page_count).map_err(|e| bad(cmd, e))?;
+        if picked.is_some_and(|v| !v.into_iter().eq(0..page_count)) {
             return Err(bad(cmd, "pdfCompatible: false needs every artboard to keep the editable artwork"));
         }
     }
     let pages = doc.without_edit_modes();
     // Resolve placed files only for the drawn pages. Missing files become preview images there;
     // the native attachment keeps the original placed objects and their relinkable metadata.
-    let (pages, placed_warnings) =
-        if pdf_compatible { crate::cmd::place::document::full_documents(&pages) } else { (std::borrow::Cow::Owned(blank_pages(&pages)), Vec::new()) };
+    let (pages, placed_warnings) = if pdf_compatible {
+        crate::cmd::place::document::full_documents(&pages)
+    } else {
+        // Find a free canvas's page before removing the PDF's artwork.
+        let free = super::super::varos_board::pdf_document(cmd, &pages, &params)?;
+        (std::borrow::Cow::Owned(blank_pages(free.as_ref().unwrap_or(&pages))), Vec::new())
+    };
     let native = || super::native::ai_native(cmd, doc, &native_options);
-    let (bytes, mut warnings) = super::pdf::encode_carrying(cmd, &pages, &params, native)?;
+    let free = super::super::varos_board::pdf_document(cmd, &pages, &params)?;
+    let drawn = free.as_ref().unwrap_or(&pages);
+    let (bytes, mut warnings) = super::pdf::encode_carrying(cmd, drawn, &params, native)?;
     warnings.extend(placed_warnings);
     if !pdf_compatible {
         warnings.push(NOT_PDF_COMPATIBLE.to_string());
@@ -556,7 +565,12 @@ impl SaveJob {
     /// Encode one file of `doc` in the job's format.
     fn encode_one(&self, doc: &Document) -> Result<Encoded> {
         let (cmd, f) = (self.plan.mode.command(), self.plan.format);
-        let enc = if matches!(f.id, "ai" | "ait") { encode_ai(cmd, f, doc, &self.params)? } else { encode_all(doc, f.id, &self.params)? };
+        let encoded = if matches!(f.id, "ai" | "ait") { encode_ai(cmd, f, doc, &self.params) } else { encode_all(doc, f.id, &self.params) };
+        // Shared export encoders report their own entry point; a save error names this save.
+        let enc = encoded.map_err(|error| match error {
+            crate::EngineError::BadParams { msg, .. } => bad(cmd, msg),
+            other => other,
+        })?;
         // A legacy .ai file per artboard.
         let per_artboard = f.id == "ai" && super::legacy_ai::wanted(cmd, f, &self.params)?;
         if enc.files.len() != 1 && !per_artboard {

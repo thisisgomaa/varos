@@ -5160,4 +5160,21 @@ imageTrace	Outline	კონტური
 varos-home	Web	ვებგვერდი
 	Poster	პოსტერი
 	Icon	ხატულა
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	დაიწყეთ
+	Yesterday	გუშინ
+	{hours} h ago	{hours} სთ წინ
+	{minutes} min ago	{minutes} წთ წინ
+	Jan	იან
+	Feb	თებ
+	Mar	მარ
+	Apr	აპრ
+	May	მაი
+	Jun	ივნ
+	Jul	ივლ
+	Aug	აგვ
+	Sep	სექ
+	Oct	ოქტ
+	Nov	ნოე
+	Dec	დეკ

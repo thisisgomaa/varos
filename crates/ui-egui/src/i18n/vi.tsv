@@ -4848,4 +4848,21 @@ varos-home	Web	Web
 	Poster	Áp phích
 	Icon	Biểu tượng
 	A4	A4
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Bắt đầu với
+	Yesterday	Hôm qua
+	{hours} h ago	{hours} giờ trước
+	{minutes} min ago	{minutes} phút trước
+	Jan	Thg1
+	Feb	Thg2
+	Mar	Thg3
+	Apr	Thg4
+	May	Thg5
+	Jun	Thg6
+	Jul	Thg7
+	Aug	Thg8
+	Sep	Thg9
+	Oct	Thg10
+	Nov	Thg11
+	Dec	Thg12

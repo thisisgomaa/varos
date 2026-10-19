@@ -129,13 +129,25 @@ fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(crate::theme::font_definitions());
 }
 
+/// One embedded face shared by egui and the shaped Arabic renderer.
+pub(crate) const ARABIC_FONT: &[u8] = include_bytes!("../../assets/varos/fonts/IBMPlexSansArabic-Regular.ttf");
+
+pub(crate) fn arabic_font_db() -> &'static vectorcraft_text::FontDb {
+    static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let db = vectorcraft_text::FontDb::global();
+    INSTALLED.get_or_init(|| {
+        db.add_font(ARABIC_FONT.to_vec());
+    });
+    db
+}
+
 /// Insert after upstream font registration, retaining craft-fonts and system fallbacks.
 pub fn register_fonts(fonts: &mut FontDefinitions) {
     for (name, bytes) in [
         ("Varos Inter", include_bytes!("../../assets/varos/fonts/Inter-Regular.ttf").as_slice()),
         ("Varos Inter Medium", include_bytes!("../../assets/varos/fonts/Inter-Medium.ttf").as_slice()),
         ("Varos Inter Semibold", include_bytes!("../../assets/varos/fonts/Inter-SemiBold.ttf").as_slice()),
-        ("Varos Arabic", include_bytes!("../../assets/varos/fonts/IBMPlexSansArabic-Regular.ttf").as_slice()),
+        ("Varos Arabic", ARABIC_FONT),
         ("Varos Mono", include_bytes!("../../assets/varos/fonts/JetBrainsMono-Regular.ttf").as_slice()),
     ] {
         // Match upstream's Inter optical size so dense controls still fit at 800 pt.

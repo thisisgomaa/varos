@@ -5205,4 +5205,21 @@ effect	Points	Σημεία
 varos-home	Web	Ιστός
 	Poster	Αφίσα
 	Icon	Εικονίδιο
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Ξεκινήστε με
+	Yesterday	Χθες
+	{hours} h ago	πριν από {hours} ώρες
+	{minutes} min ago	πριν από {minutes} λεπτά
+	Jan	Ιαν
+	Feb	Φεβ
+	Mar	Μαρ
+	Apr	Απρ
+	May	Μαΐ
+	Jun	Ιουν
+	Jul	Ιουλ
+	Aug	Αυγ
+	Sep	Σεπ
+	Oct	Οκτ
+	Nov	Νοε
+	Dec	Δεκ

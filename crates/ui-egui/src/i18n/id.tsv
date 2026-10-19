@@ -5235,4 +5235,21 @@ swatch	Bright Violet	Violet cerah
 	Story	Cerita
 	Poster	Poster
 	Icon	Ikon
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Mulai dengan
+	Yesterday	Kemarin
+	{hours} h ago	{hours} j lalu
+	{minutes} min ago	{minutes} mnt lalu
+	Jan	Jan
+	Feb	Feb
+	Mar	Mar
+	Apr	Apr
+	May	Mei
+	Jun	Jun
+	Jul	Jul
+	Aug	Agu
+	Sep	Sep
+	Oct	Okt
+	Nov	Nov
+	Dec	Des

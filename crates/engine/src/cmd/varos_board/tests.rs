@@ -105,3 +105,63 @@ fn boardless_pdf_bounds_skip_hidden_art_and_keep_shadow_reach() {
     assert!((pages.pages[0].width - bounds.width()).abs() < 0.02);
     assert!((pages.pages[0].height - bounds.height()).abs() < 0.02);
 }
+
+#[test]
+fn boardless_ai_save_and_pdf_compatible_native_keep_original_editing_data() {
+    let mut s = board();
+    art(&mut s);
+    let original = s.active().unwrap().doc.clone();
+    let bounds = vectorcraft_render::encode::art_bounds(&original).unwrap();
+    for (format, options) in
+        [("ai", json!({})), ("ai", json!({"range":"all"})), ("ai", json!({"pdfCompatible":false})), ("vectorcraft", json!({"pdfCompatible":true}))]
+    {
+        let saved = s.execute("file.saveAs", &json!({"format":format,"options":options})).unwrap();
+        let data = bytes(&saved);
+        let (pdf, native) = if format == "ai" {
+            let editing = vectorcraft_pdf::editing(&data).unwrap();
+            (data, vectorcraft_format::load(&editing.data).unwrap())
+        } else {
+            (vectorcraft_format::pdf_content(&data).unwrap(), vectorcraft_format::load(&data).unwrap())
+        };
+        assert!(native.artboards.is_empty(), "{format}");
+        assert_eq!(native.art_bounds(), original.art_bounds());
+        assert_eq!(native, *original);
+        let pages = vectorcraft_pdf::info(&pdf, None).unwrap();
+        assert_eq!(pages.pages.len(), 1);
+        assert!((pages.pages[0].width - bounds.width()).abs() < 0.02);
+        assert!((pages.pages[0].height - bounds.height()).abs() < 0.02);
+    }
+    assert!(s.active().unwrap().doc.artboards.is_empty());
+    assert!(s.execute("document.exportPdf", &json!({"range":"2"})).is_err());
+    let mut empty = board();
+    for format in ["ai", "vectorcraft"] {
+        let error = empty.execute("file.saveAs", &json!({"format":format,"pdfCompatible":true})).unwrap_err().to_string();
+        assert!(error.contains("file.saveAs"), "{error}");
+    }
+}
+
+#[test]
+fn new_board_uses_new_document_defaults_and_journals_creation_date() {
+    let mut s = Session::new();
+    s.execute("prefs.set", &json!({"key":"unitsGeneral","value":"millimeters"})).unwrap();
+    s.execute("file.new", &json!({"created":1234})).unwrap();
+    let reference = s.active().unwrap().doc.clone();
+    s.execute("file.newBoard", &json!({"created":1234})).unwrap();
+    let doc = &s.active().unwrap().doc;
+    assert!(doc.artboards.is_empty());
+    assert_eq!(doc.units, reference.units);
+    assert_eq!(doc.color_mode, reference.color_mode);
+    assert_eq!(doc.raster_effects_ppi, reference.raster_effects_ppi);
+    assert_eq!(doc.setup.background, reference.setup.background);
+    assert_eq!(doc.metadata.created, Some(1234));
+    s.execute("file.newBoard", &json!({})).unwrap();
+    let (command, params) = s.journal.iter().last().unwrap();
+    assert_eq!(command, "file.newBoard");
+    assert_eq!(params["created"], json!(s.active().unwrap().doc.metadata.created));
+    let mut replay = Session::new();
+    replay.execute(command, params).unwrap();
+    assert_eq!(replay.active().unwrap().doc.metadata.created, s.active().unwrap().doc.metadata.created);
+    s.execute("file.newBoard", &json!({"created":null})).unwrap();
+    assert_eq!(s.active().unwrap().doc.metadata.created, None);
+    assert!(s.execute("file.newBoard", &json!({"created":"bad"})).is_err());
+}

@@ -5217,4 +5217,21 @@ mark-style	Japanese	Japanilainen
 varos-home	Web	Verkko
 	Poster	Juliste
 	Icon	Kuvake
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Aloita tästä
+	Yesterday	Eilen
+	{hours} h ago	{hours} h sitten
+	{minutes} min ago	{minutes} min sitten
+	Jan	tammi
+	Feb	helmi
+	Mar	maalis
+	Apr	huhti
+	May	touko
+	Jun	kesä
+	Jul	heinä
+	Aug	elo
+	Sep	syys
+	Oct	loka
+	Nov	marras
+	Dec	joulu

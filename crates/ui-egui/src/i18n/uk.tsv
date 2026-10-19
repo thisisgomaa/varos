@@ -4848,4 +4848,21 @@ varos-home	Web	Веб
 	Poster	Плакат
 	Icon	Піктограма
 	A4	A4
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Почніть із
+	Yesterday	Учора
+	{hours} h ago	{hours} год тому
+	{minutes} min ago	{minutes} хв тому
+	Jan	січ
+	Feb	лют
+	Mar	бер
+	Apr	кві
+	May	тра
+	Jun	чер
+	Jul	лип
+	Aug	сер
+	Sep	вер
+	Oct	жов
+	Nov	лис
+	Dec	гру

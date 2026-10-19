@@ -4,6 +4,7 @@ use super::*;
 use std::collections::HashMap;
 
 #[test]
+#[ignore = "optional software visual capture; set VAROS_HOME_CAPTURE_DIR"]
 fn home_capture_at_desktop_and_compact_widths() {
     let Some(root) = std::env::var_os("VAROS_HOME_CAPTURE_DIR").map(std::path::PathBuf::from) else { return };
     std::fs::create_dir_all(&root).unwrap();

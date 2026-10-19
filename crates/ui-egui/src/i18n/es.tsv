@@ -5195,4 +5195,21 @@ mark-style	Japanese	Japonesas
 varos-home	Web	Web
 	Poster	Cartel
 	Icon	Icono
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Empezar con
+	Yesterday	Ayer
+	{hours} h ago	hace {hours} h
+	{minutes} min ago	hace {minutes} min
+	Jan	ene
+	Feb	feb
+	Mar	mar
+	Apr	abr
+	May	may
+	Jun	jun
+	Jul	jul
+	Aug	ago
+	Sep	sep
+	Oct	oct
+	Nov	nov
+	Dec	dic

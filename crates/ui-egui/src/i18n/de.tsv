@@ -4830,4 +4830,21 @@ varos-home	Web	Web
 	Poster	Plakat
 	Icon	Symbol
 	A4	A4
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	Beginnen mit
+	Yesterday	Gestern
+	{hours} h ago	vor {hours} Std.
+	{minutes} min ago	vor {minutes} Min.
+	Jan	Jan
+	Feb	Feb
+	Mar	Mär
+	Apr	Apr
+	May	Mai
+	Jun	Jun
+	Jul	Jul
+	Aug	Aug
+	Sep	Sep
+	Oct	Okt
+	Nov	Nov
+	Dec	Dez

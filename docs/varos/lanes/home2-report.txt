@@ -79,3 +79,63 @@ OWNER HAND TEST
 3. New board opens a free canvas with no white page or artboard entry. Draw/pan beyond the origin; Cmd+0 fits artwork. On an empty board Cmd+0 centres the ruler origin.
 4. Save native and reopen: still zero artboards. Export PNG and PDF using normal Export As: art bounds only. Reopen editable PDF: zero boards retained; Print produces art without a crash.
 5. Artboard tool drag adds a normal artboard. Undo removes that addition and restores the free canvas.
+
+Review fixes — 2026-10-19
+=========================
+All five review findings and the NITs are addressed. Changes remain uncommitted on lane-home2. This section supersedes the earlier Home layout/date descriptions and gate results above. No raw logs, generated captures, fonts or other assets were added to the repository.
+
+PER FINDING
+FIX 1 — PASS
+- PDF-compatible .ai saves now pass drawn pages through varos_board::pdf_document. Its boardless "all" range uses visible, effect-aware art bounds. Native pdfCompatible saves use the same adapter through pdf::encode, including their explicit range "all".
+- Only the output copy gains a page. Tests compare the complete reopened native editing document with the original zero-artboard document and verify the PDF page dimensions.
+- Also covered .ai with pdfCompatible:false: validate its one output-only page and determine bounds before clearing preview artwork. Empty artwork and explicit invalid export ranges remain errors.
+- Regression: boardless_ai_save_and_pdf_compatible_native_keep_original_editing_data.
+
+FIX 2 — PASS
+- Filesystem modification timestamps are cached in egui state by the visible recent-list key. Repaints read the cache; list changes (including an empty list) refresh it.
+- The regression reads a timestamp, deletes the file and verifies the unchanged list still uses the cached value; changing the list refreshes it.
+
+FIX 3 — PASS
+- file.newBoard starts from default_settings().document(), retaining New Document's units, colour mode, raster effects PPI and background, then clears artboards and applies the grid/title.
+- The created parameter accepts Unix seconds or null, and clock_date records the default/generated value in the journal. Replay and explicit-null behaviour are tested.
+- Regression: new_board_uses_new_document_defaults_and_journals_creation_date.
+
+FIX 4 — PASS
+- New file is the primary blue action. The exact shortcut hint is right-aligned in the actions row.
+- Recent rows are 34 px, with a neutral page chip drawn in code (the retained upstream Home recent list has no thumbnail service), two-level folders, home abbreviated as ~, relative dates, and the full path on hover.
+- Start with / Recent are muted 10 px caps. New labels, relative-date templates and month names have entries in all 23 catalogs; the catalog tests pass.
+- Inspected actual egui software captures at 1280x800 and 800x800: primary action, right-side hint, Arabic subtitle, preset layout and compact recents are visible without clipping.
+
+FIX 5 — PASS
+- each_home_preset_click_creates_its_stated_size_and_units clicks all six cards and checks dimensions/units. It caught A4 inheriting Points: the Home card now explicitly requests mm.
+- Arabic subtitle coverage checks that its shaped texture is painted at the right edge, rather than merely checking an untranslated string.
+- recent_dates_are_relative_cached_and_full_path_is_in_tooltip tests relative dates, a painted recent date, list-cache invalidation, home-folder abbreviation and the actual full-path hover tooltip.
+- The boardless save regressions above pass. home_capture is #[ignore] by default and was run explicitly for visual inspection.
+
+NITs — PASS
+- png_options export_size uses art bounds for a boardless document.
+- Export As clears and disables Use Artboards when there are none.
+- Navigator falls back to art bounds, with an origin-centred view target only for empty art; no phantom 612x792 page.
+- The bilingual Arabic subtitle is a plain constant; all 23 identity translation rows were removed.
+- egui registration and shaping share the existing embedded IBM Plex Arabic bytes, and shaping uses the existing global FontDb; Home no longer embeds another copy or constructs a separate database.
+- The PDF bounds adapter receives its caller's command. Save jobs also relabel shared-encoder parameter errors with the actual save command. Empty .ai/native PDF-compatible save error labels are regression-tested.
+
+FINAL GATES
+PASS cargo build --offline -j 4 -p vectorcraft
+  Finished in 1m10s, no warnings.
+FAIL (sandbox host probe only) exact requested gate:
+  cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc -- --test-threads=4
+  Document: 238 passed. Engine: 2579 passed, 1 failed, 2 ignored. The sole failure is unchanged tests_history_mem::mac_reads_the_machine_memory; /usr/sbin/sysctl -n hw.memsize returns "Operation not permitted" in this sandbox. The moderator must rerun this unfiltered gate outside that restriction. No test was weakened to hide it.
+PASS diagnostic full suite, excluding ONLY that host probe:
+  cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc -- --test-threads=4 --skip tests_history_mem::mac_reads_the_machine_memory
+  4851 passed, 0 failed, 5 ignored, 1 filtered: 238 doc + 2579 engine + 304 engine integration + 1730 UI tests.
+PASS cargo clippy --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc --lib -- -D warnings
+PASS cargo --offline fmt --all -- --check
+PASS git diff --check
+PASS cargo check --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine --target wasm32-unknown-unknown
+  Only the same three untouched dead-code warnings: store_profile, font_install_check_at, FONT_INSTALL_POLL.
+PASS explicit ignored software capture test:
+  VAROS_HOME_CAPTURE_DIR=/tmp/home2-review-captures cargo test --offline -j 4 -p vectorcraft-ui-egui -p vectorcraft-engine -p vectorcraft-doc --lib home_capture_at_desktop_and_compact_widths -- --ignored --test-threads=4
+  1 passed. Inspected /tmp/home2-review-captures/home-1280.png and home-800.png. These consume real egui meshes/textures; native GPU/window acceptance remains unverified.
+
+Cargo compilation used --offline -j 4, test execution used --test-threads=4, runs were sequential, and CARGO_TARGET_DIR was not set by this work. Final raw gate logs are under /tmp/home2-review-{build,tests,tests-sandbox,clippy,wasm,capture}.txt, outside the repository. No commit, merge, push, install or owner-state update was performed.

@@ -4831,4 +4831,21 @@ varos-home	Web	웹
 	Poster	포스터
 	Icon	아이콘
 	A4	A4
-	أهلاً بك في فاروس	أهلاً بك في فاروس
+
+# Varos: Home dates and section label
+	Start with	시작하기
+	Yesterday	어제
+	{hours} h ago	{hours}시간 전
+	{minutes} min ago	{minutes}분 전
+	Jan	1월
+	Feb	2월
+	Mar	3월
+	Apr	4월
+	May	5월
+	Jun	6월
+	Jul	7월
+	Aug	8월
+	Sep	9월
+	Oct	10월
+	Nov	11월
+	Dec	12월

@@ -74,7 +74,13 @@ impl Cache {
         {
             return r;
         }
-        let mut region = doc.artboards.iter().map(|a| a.rect).reduce(|a, b| a.union(b)).unwrap_or(DRect::new(0.0, 0.0, 612.0, 792.0));
+        let mut region = doc
+            .artboards
+            .iter()
+            .map(|a| a.rect)
+            .reduce(|a, b| a.union(b))
+            .or_else(|| vectorcraft_render::encode::art_bounds(doc))
+            .unwrap_or(DRect::new(-400.0, -300.0, 400.0, 300.0));
         if !artboard_only && let Some(b) = doc.art_bounds() {
             region = region.union(b);
         }
