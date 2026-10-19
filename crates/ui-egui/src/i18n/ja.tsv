@@ -4874,24 +4874,15 @@ lighting	Light	ライト
 	Guessed from the font's name; fonts it can't place are under All Arabic	フォント名から推定。分類できないフォントは「すべてのアラビア語」にあります
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT シェーピング：このフォントは OpenType のアラビア語ルールではなく、独自の morx テーブルで組版されます
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	カシーダ
 	No kashida: word spacing alone justifies the lines	カシーダなし：単語間スペースだけで行を均等配置します
 	Justified lines take tatweels in their Arabic words before word spacing	均等配置の行は、単語間スペースより先にアラビア語の単語にタトウィールを入れます
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	より強く：単語あたりのタトウィールを増やし、各行の余白をより多く埋めます。最終行を揃えた均等配置の段落では最終行にもカシーダを入れます
-	Tatweels in the Arabic words of justified right-to-left lines	右から左への均等配置の行のアラビア語の単語に入れるタトウィール
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	行の余白をカシーダがどれだけ埋め、単語あたり何個のタトウィールを入れるか（50：標準）
-	Mixed: the selected paragraphs differ	混在：選択した段落の設定が異なります
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	方向
-	Paragraph direction	段落の方向
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	自動：段落の最初の文字から判断
-	Harakat	ハラカート
 	Colour the harakat (Arabic vowel marks) apart from their letters	ハラカート（アラビア語の母音記号）を文字とは別の色にする
 	Gold	ゴールド
 	Hide the harakat: they stay in the text	ハラカートを隠す（テキストには残ります）
-	As Letters	文字と同じ
 	Give the harakat their letters' colour again	ハラカートを文字の色に戻す
 	Style Harakat	ハラカートのスタイル
 	Arabic Letters	アラビア文字
@@ -4909,3 +4900,11 @@ lighting	Light	ライト
 	Serif	セリフ
 	Sans	サンセリフ
 	Script	筆記体
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	中東
+	Show or hide the Middle Eastern options	中東のオプションを表示または非表示
+	Auto direction: from the paragraph's first letter, now right to left	自動方向：段落の最初の文字から判断（現在は右から左）
+	Auto direction: from the paragraph's first letter, now left to right	自動方向：段落の最初の文字から判断（現在は左から右）
+	Kashida strength	カシーダの強さ
+	Mixed: the selected text differs	混在：選択したテキストの設定が異なります
+	Harakat colour: click for any colour	ハラカートの色：クリックして任意の色を選択

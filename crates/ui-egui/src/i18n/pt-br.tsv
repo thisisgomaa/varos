@@ -5137,24 +5137,15 @@ mark-style	Japanese	Japonesas
 	Guessed from the font's name; fonts it can't place are under All Arabic	Deduzido do nome da fonte; fontes não classificadas ficam em Todo o árabe
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Modelagem AAT: esta fonte é composta com suas próprias tabelas morx, não com as regras OpenType do árabe
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Kashida
 	No kashida: word spacing alone justifies the lines	Sem kashida: só o espaçamento entre palavras justifica as linhas
 	Justified lines take tatweels in their Arabic words before word spacing	Linhas justificadas recebem tatwils nas palavras árabes antes do espaçamento entre palavras
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Mais intenso: mais tatwils por palavra e mais do espaço livre de cada linha; a última linha de um parágrafo justificado com a última linha alinhada também recebe kashida
-	Tatweels in the Arabic words of justified right-to-left lines	Tatwils nas palavras árabes das linhas justificadas da direita para a esquerda
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Quanto do espaço livre de uma linha a kashida preenche e quantos tatwils uma palavra recebe (50: equilibrado)
-	Mixed: the selected paragraphs differ	Misto: os parágrafos selecionados são diferentes
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Direção
-	Paragraph direction	Direção do parágrafo
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Auto: pela primeira letra do parágrafo
-	Harakat	Harakat
 	Colour the harakat (Arabic vowel marks) apart from their letters	Colorir os harakat (vogais árabes) à parte das letras
 	Gold	Dourado
 	Hide the harakat: they stay in the text	Ocultar os harakat: eles continuam no texto
-	As Letters	Como as letras
 	Give the harakat their letters' colour again	Devolver aos harakat a cor das letras
 	Style Harakat	Estilo dos harakat
 	Arabic Letters	Letras árabes
@@ -5172,3 +5163,11 @@ mark-style	Japanese	Japonesas
 	Serif	Com serifa
 	Sans	Sem serifa
 	Script	Manuscrita
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Oriente Médio
+	Show or hide the Middle Eastern options	Mostrar ou ocultar as opções do Oriente Médio
+	Auto direction: from the paragraph's first letter, now right to left	Direção automática: pela primeira letra do parágrafo, agora da direita para a esquerda
+	Auto direction: from the paragraph's first letter, now left to right	Direção automática: pela primeira letra do parágrafo, agora da esquerda para a direita
+	Kashida strength	Intensidade da kashida
+	Mixed: the selected text differs	Misto: o texto selecionado é diferente
+	Harakat colour: click for any colour	Cor dos harakat: clique para escolher qualquer cor

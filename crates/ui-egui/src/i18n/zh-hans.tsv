@@ -5056,24 +5056,15 @@ lighting	Light	光源
 	Guessed from the font's name; fonts it can't place are under All Arabic	根据字体名称推测；无法归类的字体在“全部阿拉伯文”中
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT 塑形：此字体使用自身的 morx 表排版，而非 OpenType 阿拉伯文规则
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	卡希达
 	No kashida: word spacing alone justifies the lines	无卡希达：仅用词间距使各行两端对齐
 	Justified lines take tatweels in their Arabic words before word spacing	两端对齐的行先在阿拉伯文单词中加入延伸符，再调整词间距
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	更强：每个单词加入更多延伸符，填充每行更多的空白；末行对齐的两端对齐段落的末行也加入卡希达
-	Tatweels in the Arabic words of justified right-to-left lines	从右到左两端对齐的行中阿拉伯文单词里的延伸符
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	卡希达填充一行空白的多少，以及每个单词加入多少延伸符（50：均衡）
-	Mixed: the selected paragraphs differ	混合：所选段落的设置不同
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	方向
-	Paragraph direction	段落方向
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	自动：根据段落的第一个字母
-	Harakat	元音符号
 	Colour the harakat (Arabic vowel marks) apart from their letters	将元音符号（阿拉伯文元音标记）与字母分开着色
 	Gold	金色
 	Hide the harakat: they stay in the text	隐藏元音符号：它们仍在文本中
-	As Letters	同字母
 	Give the harakat their letters' colour again	让元音符号恢复其字母的颜色
 	Style Harakat	元音符号样式
 	Arabic Letters	阿拉伯文字母
@@ -5091,3 +5082,11 @@ lighting	Light	光源
 	Serif	衬线
 	Sans	无衬线
 	Script	手写体
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	中东
+	Show or hide the Middle Eastern options	显示或隐藏中东选项
+	Auto direction: from the paragraph's first letter, now right to left	自动方向：根据段落的第一个字母，当前为从右到左
+	Auto direction: from the paragraph's first letter, now left to right	自动方向：根据段落的第一个字母，当前为从左到右
+	Kashida strength	卡希达强度
+	Mixed: the selected text differs	混合：所选文本的设置不同
+	Harakat colour: click for any colour	元音符号颜色：点击选择任意颜色

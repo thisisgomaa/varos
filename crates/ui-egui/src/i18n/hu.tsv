@@ -5206,24 +5206,15 @@ imageTrace	Outline	Körvonal
 	Guessed from the font's name; fonts it can't place are under All Arabic	A betűtípus nevéből becsülve; a be nem sorolt betűtípusok a Minden arab alatt vannak
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-formázás: ezt a betűtípust a saját morx-táblái szedik, nem az arab OpenType-szabályok
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Kashida
 	No kashida: word spacing alone justifies the lines	Nincs kashida: csak a szóköz igazítja a sorokat
 	Justified lines take tatweels in their Arabic words before word spacing	A sorkizárt sorok arab szavai a szóköz előtt tatweelt kapnak
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Erősebb: szavanként több tatweel és a sorok szabad helyének nagyobb része; az igazított utolsó sorú sorkizárt bekezdés utolsó sora is kashidát kap
-	Tatweels in the Arabic words of justified right-to-left lines	Tatweelek a jobbról balra haladó sorkizárt sorok arab szavaiban
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Mennyit tölt ki a kashida egy sor szabad helyéből, és hány tatweelt kap egy szó (50: kiegyensúlyozott)
-	Mixed: the selected paragraphs differ	Vegyes: a kijelölt bekezdések eltérnek
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Irány
-	Paragraph direction	Bekezdés iránya
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Automatikus: a bekezdés első betűje szerint
-	Harakat	Harakat
 	Colour the harakat (Arabic vowel marks) apart from their letters	A harakat (arab magánhangzójelek) színezése a betűktől külön
 	Gold	Arany
 	Hide the harakat: they stay in the text	Harakat elrejtése: a szövegben maradnak
-	As Letters	Mint a betűk
 	Give the harakat their letters' colour again	A harakat visszakapják betűik színét
 	Style Harakat	Harakat formázása
 	Arabic Letters	Arab betűk
@@ -5241,3 +5232,11 @@ imageTrace	Outline	Körvonal
 	Serif	Talpas
 	Sans	Talpatlan
 	Script	Kézírásos
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Közel-keleti
+	Show or hide the Middle Eastern options	Közel-keleti beállítások megjelenítése vagy elrejtése
+	Auto direction: from the paragraph's first letter, now right to left	Automatikus irány: a bekezdés első betűje szerint, most jobbról balra
+	Auto direction: from the paragraph's first letter, now left to right	Automatikus irány: a bekezdés első betűje szerint, most balról jobbra
+	Kashida strength	Kashida erőssége
+	Mixed: the selected text differs	Vegyes: a kijelölt szöveg eltér
+	Harakat colour: click for any colour	Harakat színe: kattintson bármilyen színért

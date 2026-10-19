@@ -1,32 +1,38 @@
-//! Varos: the Paragraph panel's kashida controls (provisional UI, awaiting the owner's review).
+//! Varos: the Paragraph panel's kashida rows, in its Middle Eastern group
+//! ([`super::middle_eastern_ui::paragraph_group`]), when any paragraph the panel acts on runs right
+//! to left (the only kind kashida stretches). After the owner's panel mockup
+//! (`docs/varos/mockups/panels.html`, Paragraph variants A and C).
 //!
-//! Under the alignment buttons, when any paragraph the panel acts on runs right to left (the only
-//! kind kashida stretches): a segmented **Kashida: Off · Auto · Force** control and a **Strength** slider
-//! (0–100, 50 by default; off while Kashida is Off). The slider's number field takes any value from
-//! 0 up (owner 2026-10-19): justified lines read more than 100 as 100, and Force elongates lines
-//! that aren't justified by the strength in percent. Both act through `text.setFormat` (`kashida`,
-//! `kashidaStrength`) on the paragraphs the panel acts on, as the panel's other controls do: a
-//! click is one undo step, a slider drag previews live and is one undo step when released. When
-//! the paragraphs differ, the controls show it (no lit segment, a dash after the label) and a click
-//! sets them all. Labels and tooltips are English sources translated through the upstream
-//! catalogs (`i18n/*.tsv`, "Varos: kashida controls").
+//! * **Kashida**: three icon + label buttons, Off · Auto · Force, their tatweel icons growing
+//!   longer. The icons are new to people, so the words stay beside them.
+//! * **Strength**: its icon, a rail (0–100, 50 by default) and a number field that takes any value
+//!   from 0 up (owner 2026-10-19): justified lines read more than 100 as 100, and Force elongates
+//!   lines that aren't justified by the strength in percent. Greyed while Kashida is Off.
 //!
-//! Design: Varos tokens only. Azure marks the active segment and the slider's fill (the active
-//! state), 3 px corners on the segmented control's ends, a 1 px border, no shadows.
+//! Both act through `text.setFormat` (`kashida`, `kashidaStrength`) on the paragraphs the panel
+//! acts on, as the panel's other controls do: a click is one undo step, a rail drag previews live
+//! and is one undo step when released. When the paragraphs differ nothing lights, the modes they
+//! have are tinted, and the rail drops its thumb and the field reads "–"; a click sets them all.
+//! Labels and tooltips are English sources translated through the upstream catalogs (`i18n/*.tsv`,
+//! "Varos: kashida controls").
 
-use egui::{Color32, CornerRadius, Rect, Sense, Ui, vec2};
-use serde_json::{Value, json};
+use egui::{Rect, Ui, vec2};
+use serde_json::json;
+use vectorcraft_doc::ParaStyle;
 use vectorcraft_doc::text::{KashidaMode, KashidaOptions};
-use vectorcraft_doc::{NodeKind, ParaStyle};
 
+use super::me_icons;
+use super::middle_eastern_ui::{Choice, Drawn, for_each_text, number_field, rail, row_icon, segments, targeted as aimed};
 use crate::VectorcraftApp;
-use crate::theme::Tokens;
-use crate::widgets::{self, Live};
 
-/// The segments: mode and its `kashida` value.
-const MODES: [(KashidaMode, &str); 3] = [(KashidaMode::Off, "off"), (KashidaMode::Auto, "auto"), (KashidaMode::Force, "force")];
+/// The choices: mode, its `kashida` value, its icon and the drawn record's key.
+const MODES: [(KashidaMode, &str, &str, &str); 3] = [
+    (KashidaMode::Off, "off", me_icons::KASHIDA_OFF, "kashida-off"),
+    (KashidaMode::Auto, "auto", me_icons::KASHIDA_AUTO, "kashida-auto"),
+    (KashidaMode::Force, "force", me_icons::KASHIDA_FORCE, "kashida-force"),
+];
 
-/// A segment's label and tooltip (English sources, translated through the upstream catalogs).
+/// A choice's label and tooltip (English sources, translated through the upstream catalogs).
 fn mode_text(mode: KashidaMode) -> (&'static str, &'static str) {
     match mode {
         KashidaMode::Off => (tl!("Off"), tl!("No kashida: word spacing alone justifies the lines")),
@@ -40,174 +46,117 @@ fn mode_text(mode: KashidaMode) -> (&'static str, &'static str) {
     }
 }
 
-/// The kashida setting and direction (right to left?) of each paragraph the Paragraph panel acts
-/// on: those the Type tool's selection touches while it edits text, else every paragraph of the
-/// selected text objects (in groups too).
-pub(crate) fn targeted(app: &VectorcraftApp) -> Vec<(KashidaOptions, bool)> {
-    let Some(st) = app.session.active() else { return vec![] };
+/// A paragraph the Paragraph panel acts on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Para {
+    pub kashida: KashidaOptions,
+    /// It runs right to left (resolved).
+    pub rtl: bool,
+    /// Its direction setting (`None`: Auto).
+    pub direction: Option<vectorcraft_doc::ParaDirection>,
+}
+
+/// Each paragraph the Paragraph panel acts on: those the Type tool's selection touches while it
+/// edits text, else every paragraph of the selected text objects (in groups too).
+pub(crate) fn targeted(app: &VectorcraftApp) -> Vec<Para> {
     let mut out = vec![];
-    let mut add = |t: &vectorcraft_doc::TextObject, range: Option<(usize, usize)>| {
+    for_each_text(app, |t, range| {
         let plain = t.plain_text();
         let paras: Vec<&str> = plain.split('\n').collect();
         let indices = range.map_or(0..paras.len(), |(a, b)| t.paragraphs_in(a, b));
         for i in indices {
             let p = t.para_at(i);
-            out.push((p.kashida, vectorcraft_text::paragraph_is_rtl(paras.get(i).copied().unwrap_or_default(), p.direction)));
+            let rtl = vectorcraft_text::paragraph_is_rtl(paras.get(i).copied().unwrap_or_default(), p.direction);
+            out.push(Para { kashida: p.kashida, rtl, direction: p.direction });
         }
-    };
-    if let Some((id, a, b)) = crate::panels::character::text_editing(app) {
-        if let Some(NodeKind::Text(t)) = st.doc.node(id).map(|n| &n.kind) {
-            add(t, Some((a, b)));
-        }
-        return out;
-    }
-    fn walk(node: &vectorcraft_doc::Node, add: &mut AddText<'_>) {
-        if let NodeKind::Text(t) = &node.kind {
-            add(t, None);
-        }
-        for child in node.children().into_iter().flatten() {
-            walk(child, add);
-        }
-    }
-    for node in st.selection.objects.iter().filter_map(|id| st.doc.node(*id)) {
-        walk(node, &mut add);
-    }
+    });
     out
 }
 
-/// What [`targeted`] does with each text object: its paragraphs in a byte range (`None`: all).
-type AddText<'a> = dyn FnMut(&vectorcraft_doc::TextObject, Option<(usize, usize)>) + 'a;
-
-/// Are the controls shown: the first paragraph runs right to left (`first_rtl`), or any other the
+/// Are the rows shown: the first paragraph runs right to left (`first_rtl`), or any other the
 /// panel acts on does.
 pub(crate) fn shown(app: &VectorcraftApp, first_rtl: bool) -> bool {
-    first_rtl || targeted(app).iter().any(|(_, rtl)| *rtl)
+    first_rtl || targeted(app).iter().any(|p| p.rtl)
 }
 
 /// The step name of a change (the command's own label, already translated).
 const STEP: &str = "Character / Paragraph";
 
-/// Panel state: a strength drag is previewing.
-const DRAGGING: &str = "varos-kashida-dragging";
-
-/// Where the controls were drawn and what they showed (read by the tests; the panel ignores it).
-#[derive(Clone, Copy, Debug)]
+/// Where the rows were drawn and what they showed (read by the tests; the panel ignores it).
+#[derive(Clone, Debug)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct KashidaRects {
     pub segments: [Rect; 3],
+    /// The strength rail and its number field.
     pub slider: Rect,
+    pub field: Rect,
     /// The paragraphs differ in mode, and in strength.
     pub mixed_mode: bool,
     pub mixed_strength: bool,
+    pub controls: Vec<Drawn>,
 }
 
-/// `p` aimed at the paragraphs the Paragraph panel acts on: the Type tool's selection (ending its
-/// typing session) or the selected text objects (as the panel's own `run_on_paragraphs`).
-fn on_paragraphs(app: &mut VectorcraftApp, mut p: Value) -> Value {
-    if let Some((id, a, b)) = crate::panels::character::text_editing(app) {
-        crate::panels::character::end_typing(app);
-        p["ids"] = json!([id.0]);
-        p["start"] = json!(a);
-        p["end"] = json!(b);
-    }
-    p
-}
-
-/// The kashida controls of the paragraphs the panel acts on (`para`: the first of them). When they
-/// differ, no segment is lit and the label shows a dash (mixed); the slider shows the first
-/// paragraph's strength, its label dashed too. A click on a segment sets every paragraph.
+/// The kashida rows of the paragraphs the panel acts on (`para`: the first of them).
 pub(crate) fn controls(app: &mut VectorcraftApp, ui: &mut Ui, para: &ParaStyle) -> KashidaRects {
-    let t = Tokens::get(ui.ctx());
     let k: KashidaOptions = para.kashida;
     let all = targeted(app);
-    let mixed_mode = all.iter().any(|(o, _)| o.mode != all[0].0.mode);
-    let mixed_strength = all.iter().any(|(o, _)| o.strength != all[0].0.strength);
-    let any_on = all.is_empty() && k.mode != KashidaMode::Off || all.iter().any(|(o, _)| o.mode != KashidaMode::Off);
-    let mut rects = KashidaRects { segments: [Rect::NOTHING; 3], slider: Rect::NOTHING, mixed_mode, mixed_strength };
-    let mixed_tip = tl!("Mixed: the selected paragraphs differ");
-    let label_text = |s: &str, mixed: bool| if mixed { format!("{s} –") } else { s.to_string() };
-    ui.add_space(4.0);
+    let first = all.first().map_or(k, |p| p.kashida);
+    let mixed_mode = all.iter().any(|p| p.kashida.mode != first.mode);
+    let mixed_strength = all.iter().any(|p| p.kashida.strength != first.strength);
+    let any_on = if all.is_empty() { k.mode != KashidaMode::Off } else { all.iter().any(|p| p.kashida.mode != KashidaMode::Off) };
+    let mut rects =
+        KashidaRects { segments: [Rect::NOTHING; 3], slider: Rect::NOTHING, field: Rect::NOTHING, mixed_mode, mixed_strength, controls: vec![] };
+    ui.add_space(2.0);
+    let labels = MODES.map(|m| mode_text(m.0));
+    let choices: Vec<Choice<'_>> = MODES
+        .iter()
+        .zip(&labels)
+        .map(|((mode, _, icon, key), (label, tip))| Choice {
+            key,
+            icon,
+            icon_size: vec2(24.0, 16.0),
+            label,
+            tip: (*tip).into(),
+            lit: !mixed_mode && first.mode == *mode,
+            tinted: mixed_mode && all.iter().any(|p| p.kashida.mode == *mode),
+            ghost: false,
+        })
+        .collect();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let label = ui
-            .add_sized(vec2(58.0, 22.0), egui::Label::new(egui::RichText::new(label_text(tl!("Kashida"), mixed_mode)).size(11.5).color(t.text_dim)));
-        label.on_hover_text(if mixed_mode { mixed_tip } else { tl!("Tatweels in the Arabic words of justified right-to-left lines") });
-        let w = ((ui.available_width() - 4.0) / 3.0).clamp(40.0, 72.0);
-        for (i, (mode, key)) in MODES.iter().enumerate() {
-            let (name, tip) = mode_text(*mode);
-            let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), Sense::click());
-            rects.segments[i] = rect;
-            let on = !mixed_mode && k.mode == *mode;
-            // Mixed: the modes the paragraphs have are outlined (indeterminate), none is lit.
-            let present = mixed_mode && all.iter().any(|(o, _)| o.mode == *mode);
-            let r = 3;
-            let radius = match i {
-                0 => CornerRadius { nw: r, sw: r, ne: 0, se: 0 },
-                2 => CornerRadius { nw: 0, sw: 0, ne: r, se: r },
-                _ => CornerRadius::ZERO,
-            };
-            let fill = if on {
-                t.accent
-            } else if resp.hovered() {
-                t.hover
-            } else {
-                t.button
-            };
-            let p = ui.painter();
-            let border = if on {
-                t.accent
-            } else if present {
-                t.text_dim
-            } else {
-                t.button_border
-            };
-            p.rect(rect, radius, fill, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
-            let text = if on { Color32::WHITE } else { t.text };
-            p.text(rect.center(), egui::Align2::CENTER_CENTER, name, egui::FontId::proportional(11.5), text);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, name));
+        let w = ui.available_width();
+        if let Some(i) = segments(ui, &choices, w, &mut rects.controls) {
             // Every paragraph the panel acts on takes the mode, whatever the first one has.
-            if resp.on_hover_text(tip).clicked() {
-                let p = on_paragraphs(app, json!({ "kashida": key }));
-                app.run("text.setFormat", p).ok();
-            }
+            let p = aimed(app, json!({ "kashida": MODES[i].1 }));
+            app.run("text.setFormat", p).ok();
         }
     });
-    ui.horizontal(|ui| {
-        let label = ui.add_sized(
-            vec2(58.0, 20.0),
-            egui::Label::new(egui::RichText::new(label_text(tl!("Strength"), mixed_strength)).size(11.5).color(t.text_dim)),
-        );
-        label.on_hover_text(if mixed_strength {
-            mixed_tip
-        } else {
-            tl!("How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)")
-        });
-        ui.add_enabled_ui(any_on, |ui| {
-            let mut v = f64::from(k.strength);
-            ui.spacing_mut().slider_width = (ui.available_width() - 44.0).max(60.0);
-            // The rail spans 0–100; its number field takes more (an elongation in percent).
-            let slider = egui::Slider::new(&mut v, 0.0..=100.0).step_by(1.0).max_decimals(0).clamping(egui::SliderClamping::Never);
-            let resp = widgets::slider(ui, slider);
-            rects.slider = resp.rect;
-            // A drag previews from its first change and commits once, when released.
-            let dragging: bool = crate::panels::pstate(ui.ctx(), DRAGGING);
-            let phase = if resp.drag_stopped() && dragging {
-                Live::Released
-            } else if resp.dragged() && resp.changed() {
-                Live::Dragging
-            } else if resp.changed() && !resp.dragged() {
-                Live::Released
-            } else {
-                Live::Idle
-            };
-            match phase {
-                Live::Dragging => crate::panels::set_pstate(ui.ctx(), DRAGGING, true),
-                Live::Released => crate::panels::set_pstate(ui.ctx(), DRAGGING, false),
-                Live::Idle => {}
-            }
-            if phase != Live::Idle {
-                let p = on_paragraphs(app, json!({ "kashidaStrength": v.round().max(0.0) }));
+    for (i, key) in ["kashida-off", "kashida-auto", "kashida-force"].iter().enumerate() {
+        rects.segments[i] = rects.controls.iter().find(|c| c.key == *key).map_or(Rect::NOTHING, |c| c.rect);
+    }
+    ui.add_enabled_ui(any_on, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let tip = tl!("How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)");
+            row_icon(ui, "strength-icon", me_icons::KASHIDA_STRENGTH, tip, &mut rects.controls);
+            let value = (!mixed_strength).then_some(f64::from(first.strength));
+            let field_w = 40.0;
+            let w = (ui.available_width() - field_w - 6.0).max(40.0);
+            // The rail spans 0–100; the field takes more (an elongation in percent).
+            let (r, hit) = rail(ui, "varos-kashida-strength-rail", tl!("Kashida strength"), tip, value, 100.0, w);
+            rects.slider = r;
+            rects.controls.push(Drawn { key: "strength", rect: r, tip: tip.into(), ..Default::default() });
+            if let Some((v, phase)) = hit {
+                // A drag previews from its first change and commits once, when released.
+                let p = aimed(app, json!({ "kashidaStrength": v.max(0.0) }));
                 crate::panels::live_run(app, STEP, "text.setFormat", p, phase);
+            }
+            let (f, typed) = number_field(ui, "varos-kashida-strength-field", tl!("Kashida strength"), value, field_w);
+            rects.field = f;
+            rects.controls.push(Drawn { key: "strength-field", rect: f, tip: tl!("Kashida strength").into(), ..Default::default() });
+            if let Some(v) = typed {
+                let p = aimed(app, json!({ "kashidaStrength": v.round().max(0.0) }));
+                app.run("text.setFormat", p).ok();
             }
         });
     });

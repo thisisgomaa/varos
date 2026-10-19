@@ -5185,24 +5185,15 @@ theme	Appearance	Външен вид
 	Guessed from the font's name; fonts it can't place are under All Arabic	Определено по името на шрифта; шрифтовете без група са в „Всички арабски“
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Оформяне AAT: този шрифт се набира със собствените си таблици morx, а не с правилата OpenType за арабски
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Кашида
 	No kashida: word spacing alone justifies the lines	Без кашида: редовете се двустранно подравняват само с разстоянието между думите
 	Justified lines take tatweels in their Arabic words before word spacing	Двустранно подравнените редове получават татвили в арабските думи преди разстоянието между думите
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	По-силно: повече татвили на дума и по-голяма част от свободното място на реда; последният ред на двустранно подравнен абзац с подравнен последен ред също получава кашида
-	Tatweels in the Arabic words of justified right-to-left lines	Татвили в арабските думи на двустранно подравнените редове отдясно наляво
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Каква част от свободното място на реда запълва кашидата и колко татвила получава една дума (50: балансирано)
-	Mixed: the selected paragraphs differ	Смесено: избраните абзаци се различават
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Посока
-	Paragraph direction	Посока на абзаца
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Авто: по първата буква на абзаца
-	Harakat	Харакат
 	Colour the harakat (Arabic vowel marks) apart from their letters	Оцветяване на хараката (арабските гласни знаци) отделно от буквите
 	Gold	Златно
 	Hide the harakat: they stay in the text	Скриване на хараката: остава в текста
-	As Letters	Като буквите
 	Give the harakat their letters' colour again	Връщане на цвета на буквите към хараката
 	Style Harakat	Оформяне на хараката
 	Arabic Letters	Арабски букви
@@ -5220,3 +5211,11 @@ theme	Appearance	Външен вид
 	Serif	Серифен
 	Sans	Безсерифен
 	Script	Ръкописен
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Близкоизточни
+	Show or hide the Middle Eastern options	Показване или скриване на близкоизточните опции
+	Auto direction: from the paragraph's first letter, now right to left	Автоматична посока: по първата буква на абзаца, сега отдясно наляво
+	Auto direction: from the paragraph's first letter, now left to right	Автоматична посока: по първата буква на абзаца, сега отляво надясно
+	Kashida strength	Сила на кашидата
+	Mixed: the selected text differs	Смесено: избраният текст се различава
+	Harakat colour: click for any colour	Цвят на харакат: щракнете за произволен цвят

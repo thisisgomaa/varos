@@ -4796,24 +4796,15 @@ effect	Regular	Regelmäßig
 	Guessed from the font's name; fonts it can't place are under All Arabic	Aus dem Namen der Schrift geschätzt; Schriften ohne Zuordnung stehen unter „Alle arabischen“
 	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT-Shaping: Diese Schrift wird mit ihren eigenen morx-Tabellen gesetzt, nicht mit OpenType-Regeln für Arabisch
 # Varos: kashida controls of the Paragraph panel.
-	Kashida	Kashida
 	No kashida: word spacing alone justifies the lines	Keine Kashida: Nur der Wortabstand richtet die Zeilen im Blocksatz aus
 	Justified lines take tatweels in their Arabic words before word spacing	Zeilen im Blocksatz erhalten Tatweels in ihren arabischen Wörtern vor dem Wortabstand
 	Deeper: more tatweels per word and more of each line's slack; the last line of a paragraph justified with its last line aligned takes kashida too	Stärker: mehr Tatweels pro Wort und mehr vom Freiraum jeder Zeile; auch die letzte Zeile eines Absatzes im Blocksatz mit ausgerichteter letzter Zeile erhält Kashida
-	Tatweels in the Arabic words of justified right-to-left lines	Tatweels in den arabischen Wörtern von Blocksatzzeilen von rechts nach links
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Wie viel vom Freiraum einer Zeile Kashida füllt und wie viele Tatweels ein Wort erhält (50: ausgewogen)
-	Mixed: the selected paragraphs differ	Gemischt: Die ausgewählten Absätze unterscheiden sich
 # Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
-	Direction	Richtung
-	Paragraph direction	Absatzrichtung
-	RTL	RTL
-	LTR	LTR
 	Auto: from the paragraph's first letter	Auto: nach dem ersten Buchstaben des Absatzes
-	Harakat	Harakat
 	Colour the harakat (Arabic vowel marks) apart from their letters	Die Harakat (arabische Vokalzeichen) getrennt von ihren Buchstaben einfärben
 	Gold	Gold
 	Hide the harakat: they stay in the text	Harakat ausblenden: Sie bleiben im Text
-	As Letters	Wie Buchstaben
 	Give the harakat their letters' colour again	Den Harakat wieder die Farbe ihrer Buchstaben geben
 	Style Harakat	Harakat gestalten
 	Arabic Letters	Arabische Buchstaben
@@ -4831,3 +4822,11 @@ effect	Regular	Regelmäßig
 	Serif	Serifen
 	Sans	Serifenlos
 	Script	Schreibschrift
+# Varos: Middle Eastern groups of the Paragraph and Character panels (icon controls, harakat colour well).
+	Middle Eastern	Nahost
+	Show or hide the Middle Eastern options	Nahost-Optionen ein- oder ausblenden
+	Auto direction: from the paragraph's first letter, now right to left	Automatische Richtung: nach dem ersten Buchstaben des Absatzes, jetzt von rechts nach links
+	Auto direction: from the paragraph's first letter, now left to right	Automatische Richtung: nach dem ersten Buchstaben des Absatzes, jetzt von links nach rechts
+	Kashida strength	Kashida-Stärke
+	Mixed: the selected text differs	Gemischt: Der ausgewählte Text unterscheidet sich
+	Harakat colour: click for any colour	Harakat-Farbe: Klicken für eine beliebige Farbe
