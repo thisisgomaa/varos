@@ -5226,3 +5226,21 @@ theme	Appearance	Apparence
 	Tatweels in the Arabic words of justified right-to-left lines	Tatwils dans les mots arabes des lignes justifiées de droite à gauche
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Part du blanc d’une ligne que remplit le kashida et nombre de tatwils par mot (50 : équilibré)
 	Mixed: the selected paragraphs differ	Mixte : les paragraphes sélectionnés diffèrent
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Sens
+	Paragraph direction	Sens du paragraphe
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto : selon la première lettre du paragraphe
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Colorer les harakat (voyelles arabes) à part de leurs lettres
+	Gold	Or
+	Hide the harakat: they stay in the text	Masquer les harakat : elles restent dans le texte
+	As Letters	Comme les lettres
+	Give the harakat their letters' colour again	Redonner aux harakat la couleur de leurs lettres
+	Style Harakat	Style des harakat
+	Arabic Letters	Lettres arabes
+	Arabic Supplement	Arabe – supplément
+	Arabic Extended-A	Arabe étendu A
+	Arabic Presentation Forms-A	Formes de présentation arabes A
+	Arabic Presentation Forms-B	Formes de présentation arabes B

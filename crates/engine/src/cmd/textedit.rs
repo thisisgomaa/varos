@@ -197,6 +197,7 @@ fn edit_range(s: &mut Session, p: &Value) -> Result<Value> {
     let insert = str_param(p, "insert").unwrap_or("").to_string();
     let caret = s.edit("Typing", |d, _| {
         let t = text_mut(d, id).ok_or(EngineError::NoNode(id))?;
+        let was_empty = edit::runs_len(&t.runs) == 0; // Varos
         // Paragraph styles follow the edit: a split paragraph's new one continues its style, a
         // merge keeps the first paragraph's.
         let inserted: String = match &styled {
@@ -208,6 +209,7 @@ fn edit_range(s: &mut Session, p: &Value) -> Result<Value> {
             Some(r) => edit::replace_range_styled(&mut t.runs, a, b, r),
             None => edit::replace_range(&mut t.runs, a, b, &insert),
         };
+        super::varos_arabic::arabic_new_type_leading(t, was_empty); // Varos: Arabic typed into new type
         refresh_bounds(t);
         Ok(caret)
     })?;

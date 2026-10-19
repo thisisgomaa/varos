@@ -5169,3 +5169,21 @@ mark-style	Japanese	Japonesas
 	Tatweels in the Arabic words of justified right-to-left lines	Tatwiles en las palabras árabes de las líneas justificadas de derecha a izquierda
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Cuánto espacio libre de una línea llena la kashida y cuántos tatwiles recibe una palabra (50: equilibrado)
 	Mixed: the selected paragraphs differ	Mixto: los párrafos seleccionados son distintos
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Dirección
+	Paragraph direction	Dirección del párrafo
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto: según la primera letra del párrafo
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Colorear los harakat (vocales árabes) aparte de sus letras
+	Gold	Oro
+	Hide the harakat: they stay in the text	Ocultar los harakat: siguen en el texto
+	As Letters	Como las letras
+	Give the harakat their letters' colour again	Devolver a los harakat el color de sus letras
+	Style Harakat	Estilo de harakat
+	Arabic Letters	Letras árabes
+	Arabic Supplement	Árabe suplementario
+	Arabic Extended-A	Árabe extendido A
+	Arabic Presentation Forms-A	Formas de presentación árabes A
+	Arabic Presentation Forms-B	Formas de presentación árabes B

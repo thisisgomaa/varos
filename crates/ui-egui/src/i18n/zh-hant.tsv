@@ -4116,3 +4116,21 @@ lighting	Light	光源
 	Tatweels in the Arabic words of justified right-to-left lines	由右至左左右對齊的行中阿拉伯文單字裡的延伸符
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	卡希達填滿一行空白的多寡，以及每個單字加入多少延伸符（50：均衡）
 	Mixed: the selected paragraphs differ	混合：所選段落的設定不同
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	方向
+	Paragraph direction	段落方向
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	自動：依段落的第一個字母
+	Harakat	母音符號
+	Colour the harakat (Arabic vowel marks) apart from their letters	將母音符號（阿拉伯文母音標記）與字母分開著色
+	Gold	金色
+	Hide the harakat: they stay in the text	隱藏母音符號：它們仍在文字中
+	As Letters	同字母
+	Give the harakat their letters' colour again	讓母音符號恢復其字母的顏色
+	Style Harakat	母音符號樣式
+	Arabic Letters	阿拉伯文字母
+	Arabic Supplement	阿拉伯文補充
+	Arabic Extended-A	阿拉伯文延伸 A
+	Arabic Presentation Forms-A	阿拉伯文表現形式 A
+	Arabic Presentation Forms-B	阿拉伯文表現形式 B

@@ -4804,3 +4804,21 @@ lighting	Light	광원
 	Tatweels in the Arabic words of justified right-to-left lines	오른쪽에서 왼쪽으로 양쪽 정렬된 줄의 아랍어 단어에 넣는 타트윌
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	카시다가 줄의 여백을 얼마나 채우고 단어에 타트윌을 몇 개 넣는지(50: 균형)
 	Mixed: the selected paragraphs differ	혼합: 선택한 단락의 설정이 다릅니다
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	방향
+	Paragraph direction	단락 방향
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	자동: 단락의 첫 글자에 따라
+	Harakat	하라카트
+	Colour the harakat (Arabic vowel marks) apart from their letters	하라카트(아랍어 모음 부호)를 글자와 따로 색칠
+	Gold	금색
+	Hide the harakat: they stay in the text	하라카트 숨기기: 텍스트에는 남아 있습니다
+	As Letters	글자와 같게
+	Give the harakat their letters' colour again	하라카트에 글자 색을 다시 적용
+	Style Harakat	하라카트 스타일
+	Arabic Letters	아랍 문자
+	Arabic Supplement	아랍 문자 보충
+	Arabic Extended-A	아랍 문자 확장 A
+	Arabic Presentation Forms-A	아랍 표시형 A
+	Arabic Presentation Forms-B	아랍 표시형 B

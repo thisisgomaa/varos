@@ -5253,3 +5253,21 @@ swatch	Bright Violet	Felviolet
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweels in de Arabische woorden van uitgevulde regels van rechts naar links
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Hoeveel van de ruimte van een regel kashida vult en hoeveel tatweels een woord krijgt (50: evenwichtig)
 	Mixed: the selected paragraphs differ	Gemengd: de geselecteerde alinea’s verschillen
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Richting
+	Paragraph direction	Alinearichting
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Auto: volgens de eerste letter van de alinea
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	De harakat (Arabische klinkertekens) apart van hun letters kleuren
+	Gold	Goud
+	Hide the harakat: they stay in the text	Harakat verbergen: ze blijven in de tekst
+	As Letters	Als letters
+	Give the harakat their letters' colour again	De harakat weer de kleur van hun letters geven
+	Style Harakat	Harakat opmaken
+	Arabic Letters	Arabische letters
+	Arabic Supplement	Arabisch, aanvulling
+	Arabic Extended-A	Arabisch, uitgebreid A
+	Arabic Presentation Forms-A	Arabische presentatievormen A
+	Arabic Presentation Forms-B	Arabische presentatievormen B

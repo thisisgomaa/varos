@@ -4837,3 +4837,21 @@ lighting	Light	Свет
 	Tatweels in the Arabic words of justified right-to-left lines	Татвилы в арабских словах выключенных строк справа налево
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Какую часть свободного места строки заполняет кашида и сколько татвилов получает слово (50: сбалансированно)
 	Mixed: the selected paragraphs differ	Смешанное: выбранные абзацы различаются
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Направление
+	Paragraph direction	Направление абзаца
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Авто: по первой букве абзаца
+	Harakat	Харакат
+	Colour the harakat (Arabic vowel marks) apart from their letters	Окрашивать харакат (арабские огласовки) отдельно от букв
+	Gold	Золотой
+	Hide the harakat: they stay in the text	Скрыть харакат: они остаются в тексте
+	As Letters	Как буквы
+	Give the harakat their letters' colour again	Вернуть харакату цвет его букв
+	Style Harakat	Оформление хараката
+	Arabic Letters	Арабские буквы
+	Arabic Supplement	Арабский, дополнение
+	Arabic Extended-A	Арабский, расширение A
+	Arabic Presentation Forms-A	Арабские формы представления A
+	Arabic Presentation Forms-B	Арабские формы представления B

@@ -84,8 +84,10 @@ pub mod textstyles;
 pub(crate) mod textwrap;
 pub(crate) mod threads;
 pub(crate) mod typecmd;
+// Varos: Arabic typography commands (harakat styled apart).
 mod typemenu;
 mod variablecmds;
+mod varos_arabic;
 pub(crate) mod views;
 pub mod wand;
 pub mod webexport;
@@ -297,6 +299,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(perspgrid::specs());
         v.extend(shortcutset::specs());
         v.extend(importmatches::specs());
+        v.extend(varos_arabic::specs()); // Varos
         v
     })
 }

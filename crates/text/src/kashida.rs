@@ -306,7 +306,12 @@ pub(crate) fn stretch_line(
         let glyphs = &sg[a..j];
         let first = &glyphs[0];
         let bytes = glyphs.iter().map(|g| g.byte).min().unwrap_or(0)..glyphs.iter().map(|g| g.byte + g.len).max().unwrap_or(0);
-        let ok = glyphs.iter().all(|g| g.level.is_rtl() && g.face.id() == first.face.id() && g.run == first.run && g.gid != 0)
+        // One run, or runs that differ only in paint (harakat coloured apart: `crate::harakat`).
+        let same_run = |g: &SGlyph| {
+            g.run == first.run
+                || matches!((sh.runs.get(g.run), sh.runs.get(first.run)), (Some((_, a)), Some((_, b))) if crate::harakat::paint_only(a, b))
+        };
+        let ok = glyphs.iter().all(|g| g.level.is_rtl() && g.face.id() == first.face.id() && same_run(g) && g.gid != 0)
             // The face's own tatweel: never one borrowed from another font.
             && first.face.glyph_for(arabic::TATWEEL) != 0
             && sh.runs.get(first.run).is_some_and(|(_, st)| plain(st))

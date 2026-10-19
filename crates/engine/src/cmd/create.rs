@@ -563,6 +563,7 @@ pub(crate) fn new_type_alignment(s: &mut Session, p: &Value, cmd: &str, t: &mut 
     for r in &mut t.runs {
         r.style.char_align = align;
     }
+    super::varos_arabic::arabic_new_type_leading(t, true); // Varos: Arabic new type, 150 % leading
     Ok(())
 }
 

@@ -5191,3 +5191,21 @@ mark-style	Japanese	Japanilainen
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweelit oikealta vasemmalle kulkevien tasattujen rivien arabiankielisissä sanoissa
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Kuinka suuren osan rivin väljyydestä kashida täyttää ja kuinka monta tatweelia sana saa (50: tasapainoinen)
 	Mixed: the selected paragraphs differ	Sekalainen: valitut kappaleet eroavat toisistaan
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Suunta
+	Paragraph direction	Kappaleen suunta
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Automaattinen: kappaleen ensimmäisen kirjaimen mukaan
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	Väritä harakat (arabian vokaalimerkit) kirjaimistaan erikseen
+	Gold	Kulta
+	Hide the harakat: they stay in the text	Piilota harakat: ne jäävät tekstiin
+	As Letters	Kuten kirjaimet
+	Give the harakat their letters' colour again	Anna harakatille taas kirjainten väri
+	Style Harakat	Muotoile harakat
+	Arabic Letters	Arabialaiset kirjaimet
+	Arabic Supplement	Arabia, täydennys
+	Arabic Extended-A	Arabia, laajennus A
+	Arabic Presentation Forms-A	Arabian esitysmuodot A
+	Arabic Presentation Forms-B	Arabian esitysmuodot B

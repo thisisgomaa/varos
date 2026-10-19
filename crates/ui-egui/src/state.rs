@@ -485,6 +485,10 @@ pub struct UiState {
     /// restored at the next launch (the desktop host reads and writes it; none on the web).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<WindowGeometry>,
+    /// Varos: the Middle Eastern options were turned on once, as the fork's default
+    /// (`crate::varos::middle_eastern_ui::default_on`); later the user's own choice stands.
+    #[serde(default)]
+    pub varos_middle_eastern: bool,
 }
 
 /// The desktop window's geometry, kept across launches.
@@ -795,6 +799,7 @@ impl Default for UiState {
             image_trace_advanced: true,
             glyphs_preview: 0,
             window: None,
+            varos_middle_eastern: false,
         }
     }
 }

@@ -1,0 +1,149 @@
+Lane: lane-arabic-essentials (Opus 5.5), 2026-10-19, base d1ed0ebb. Not committed (the moderator lands it).
+Status: provisional (awaits owner hand test).
+
+WHAT THE USER SEES
+A. Middle Eastern options on by default
+   - Preferences > Type > Show Indic Options is turned on once for every install, fresh or
+     upgraded. Upgraded installs would otherwise keep their saved "off". After that the user's own
+     choice stands; it is remembered in UiState.varos_middle_eastern.
+   - Paragraph panel, under the alignment buttons: "Direction [Auto | RTL | LTR]".
+     - The Auto segment names what it resolved to: "Auto (RTL)" / "Auto (LTR)".
+     - It replaces upstream's two direction icon buttons, so the setting has one home.
+   - Character panel, at the bottom: "Digits [Default / Arabic / Hindi / Farsi]" dropdown. The
+     panel menu item still mirrors it.
+B. Harakat colour (the headline item)
+   - Character panel row "Harakat": four swatches (red, green, gold, black), Hide, As Letters.
+   - It acts on the Type tool's selection or the selected type.
+   - Hide = no fill: the marks stay in the text, for copy, search and export.
+   - As Letters gives each harakat its letter's fill again.
+   - Each click is one undo step.
+   - Letters keep their joining and marks keep their place, bit for bit.
+   - Kashida still stretches words whose harakat are coloured.
+C. New type whose first letter is Arabic gets 150 % Auto Leading. This covers type made with
+   text, and empty new type that the user then types Arabic into. Existing type and Latin type
+   keep 120 %.
+D. Glyphs panel > Show: Arabic Letters, Arabic Supplement, Arabic Extended-A, Arabic Presentation
+   Forms-A, Arabic Presentation Forms-B. Forms-B is FE70-FEFC, without the byte order mark.
+E. Verification
+   - RTL Arabic on a path is correct: same glyphs, same visual order, Auto aligned to the path
+     end, reversed and closed paths keep the glyphs.
+   - PDF copy-back: Arabic letters and Hindi-drawn digits read back exactly as typed.
+   - KNOWN ISSUE: a word set with a multi-letter ligature glyph (the Allah ligature) reads back
+     reversed: "هللا" for "الله". Cause not established (export text map or importer). Not S, so
+     not fixed. Recorded as an ignored test.
+     Note: the round-trip was checked with our own PDF importer, not external viewers.
+
+HOW B WORKS (upstream edit in crates/text/src/shape.rs, marked // Varos)
+- Before: a run boundary inside a cluster split the shaping. So a harakat coloured apart from its
+  letter was shaped apart from it, and the mark lost its attachment.
+- Now: a boundary between runs that differ only in paint (fill, stroke and how it is drawn,
+  overprint, style name) where a harakat sits on either side is no longer a shaping boundary.
+- When such a boundary exists in a segment, the same segment is shaped once more with HarfRust's
+  Characters cluster level. If that gives the same glyph sequence, each glyph takes the run of its
+  own character; a ligature or composed mark takes its first character's run.
+- Glyphs, clusters and positions are unchanged. Renderers, SVG and PDF already read the glyph's
+  run, so they need no change.
+- Latin accents keep upstream's rule (Arabic marks only).
+- Kashida accepts words whose runs differ only in paint.
+
+PER-FONT RESULTS FOR B
+Test: installed_fonts_keep_their_glyphs_with_coloured_harakat; text "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ", 48 pt.
+Every glyph is byte-identical with and without coloured harakat (face, gid, cluster, origin,
+transform, advance):
+  Font                  glyphs  in harakat colour
+  Geeza Pro                 32      13
+  SF Arabic                 36      12
+  Al Nile                   32      13
+  Baghdad                   34      15
+  Damascus                  34      15
+  KufiStandardGK            34      15
+  DecoType Naskh            34      15
+  Diwan Thuluth             31       9
+  Farah                     32      13
+  Noto Nastaliq Urdu        43      15
+  Arial                     31      12
+  Times New Roman           31      12
+  Tahoma                    34      12
+  Noto Naskh Arabic         40      15
+  Noto Kufi Arabic          40      15
+  Amiri                     37      15
+  Aref Ruqaa                39      15
+  IBM Plex Sans Arabic      34      12
+- The text has 15 harakat. Counts under 15 are fonts that draw shadda + fatha/kasra as one glyph,
+  or that ligate (Diwan Thuluth).
+- Fixture (Noto Sans Arabic): exactly the 12 mark glyphs are coloured, nothing else.
+
+FILES
+Ours (new):
+  crates/text/src/harakat.rs
+  crates/text/src/tests_arabic_essentials.rs
+  crates/engine/src/cmd/varos_arabic.rs (text.styleHarakat; arabic_new_type_leading)
+  crates/engine/src/cmd/tests_varos_arabic.rs
+  crates/ui-egui/src/varos/middle_eastern_ui.rs
+  crates/ui-egui/src/varos/tests_middle_eastern_ui.rs
+  crates/pdf/tests/arabic_copy_back.rs
+Hooks (marked Varos):
+  text/lib.rs: mod line
+  text/shape.rs:
+    - Shaped.chars field
+    - styled_marks flag and the char-level reshape
+    - the inside_clusters exemption
+    - per-glyph run
+  text/kashida.rs: same_run accepts paint-only differences
+  engine/cmd/mod.rs: mod line and specs line
+  engine/cmd/create.rs (one line in new_type_alignment)
+  engine/cmd/textedit.rs (was_empty and one call in text.editRange)
+  ui-egui/state.rs: UiState.varos_middle_eastern field and its default
+  ui-egui/prefs_dialog.rs: one line in restore
+  ui-egui/panels/paragraph.rs: direction buttons replaced by the Middle Eastern row
+  ui-egui/panels/character.rs: one call
+  ui-egui/panels/glyphs.rs: SUBSETS made pub(crate), 5 Arabic entries
+  ui-egui/varos/mod.rs: module line
+  23 crates/ui-egui/src/i18n/*.tsv: 17 rows each (new labels, tooltips, the command label,
+    subset names)
+
+TESTS
+text: harakat::tests::
+  paint_only_differences_are_told_apart
+  harakat_coloured_apart_keep_every_glyph_and_take_their_own_colour
+  coloured_harakat_keep_kashida
+  installed_fonts_keep_their_glyphs_with_coloured_harakat
+  right_to_left_arabic_on_a_path_keeps_its_glyphs_and_order
+engine: cmd::varos_arabic::tests::
+  style_harakat_fills_only_the_harakat_and_is_one_step
+  style_harakat_takes_a_range_and_checks_its_params
+  new_arabic_type_takes_150_percent_auto_leading
+ui: varos::middle_eastern_ui::tests::
+  middle_eastern_options_are_on_once_then_the_users_choice_stands
+  the_direction_row_sets_auto_rtl_and_ltr
+  the_harakat_row_colours_hides_and_restores_the_harakat
+  the_glyphs_panel_has_the_arabic_blocks
+pdf (crates/pdf/tests/arabic_copy_back.rs):
+  arabic_and_its_digits_read_back_from_pdf_as_typed
+  a_word_with_a_ligature_reads_back_in_order (ignored, known issue)
+
+GATES (all --offline -j 4, tests with --test-threads=4)
+  vectorcraft-text: 322 passed, 2 ignored
+  vectorcraft-text-arabic: 5 passed
+  vectorcraft-doc: 238 passed
+  vectorcraft-engine: 2565 lib passed, 2 ignored; all integration targets 0 failed (command sweep included)
+  vectorcraft-ui-egui: 1704 passed, 2 ignored (i18n suite included)
+  vectorcraft-pdf, test arabic_copy_back: 1 passed, 1 ignored
+  clippy --all-targets -D warnings on text, text-arabic, doc, ui-egui, engine, pdf: clean
+  cargo check --target wasm32-unknown-unknown, text and ui-egui: ok
+  cargo fmt --all -- --check: clean; git diff --check: clean
+  cargo build -p vectorcraft: ok (6m02s)
+  xtask brands: the same 32 pre-existing hits, none in this lane's files
+
+LEFT OUT / RISKS
+- The Direction row shows the first paragraph's setting. It does not show a mixed state.
+- The harakat swatches show no current state.
+- Only four fixed colours. A custom colour is available through the command (`fill: "#RRGGBB"`)
+  but not in the UI yet.
+- Arabic leading heuristic: "empty type that receives Arabic". An old empty type object that the
+  user types Arabic into also gets 150 %.
+- If the character-level reshape ever yields different glyphs, colouring falls back to the
+  letter's run for that segment. Glyphs never change; only the colour does not apply. This never
+  happened in the 18 installed fonts.
+- PDF: the Allah-ligature reversal (above). Copy-back from external PDF viewers is not verified.
+- Translations are mine (23 languages); a native-speaker review is welcome.

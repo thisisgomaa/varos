@@ -5179,3 +5179,21 @@ effect	Points	Σημεία
 	Tatweels in the Arabic words of justified right-to-left lines	Ταταουίλ στις αραβικές λέξεις πλήρως στοιχισμένων γραμμών από δεξιά προς τα αριστερά
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Πόσο από το κενό μιας γραμμής γεμίζει η κασίντα και πόσα ταταουίλ παίρνει μια λέξη (50: ισορροπημένα)
 	Mixed: the selected paragraphs differ	Μικτό: οι επιλεγμένες παράγραφοι διαφέρουν
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Κατεύθυνση
+	Paragraph direction	Κατεύθυνση παραγράφου
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Αυτόματα: από το πρώτο γράμμα της παραγράφου
+	Harakat	Χαρακάτ
+	Colour the harakat (Arabic vowel marks) apart from their letters	Χρωματισμός των χαρακάτ (αραβικά φωνηεντικά σημεία) χωριστά από τα γράμματα
+	Gold	Χρυσό
+	Hide the harakat: they stay in the text	Απόκρυψη των χαρακάτ: παραμένουν στο κείμενο
+	As Letters	Όπως τα γράμματα
+	Give the harakat their letters' colour again	Επαναφορά του χρώματος των γραμμάτων στα χαρακάτ
+	Style Harakat	Μορφή χαρακάτ
+	Arabic Letters	Αραβικά γράμματα
+	Arabic Supplement	Αραβικά, συμπλήρωμα
+	Arabic Extended-A	Αραβικά, επέκταση A
+	Arabic Presentation Forms-A	Αραβικές μορφές παρουσίασης A
+	Arabic Presentation Forms-B	Αραβικές μορφές παρουσίασης B

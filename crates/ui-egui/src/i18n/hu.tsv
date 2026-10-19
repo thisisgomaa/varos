@@ -5213,3 +5213,21 @@ imageTrace	Outline	Körvonal
 	Tatweels in the Arabic words of justified right-to-left lines	Tatweelek a jobbról balra haladó sorkizárt sorok arab szavaiban
 	How much of a line's slack kashida fills and how many tatweels a word takes (50: balanced)	Mennyit tölt ki a kashida egy sor szabad helyéből, és hány tatweelt kap egy szó (50: kiegyensúlyozott)
 	Mixed: the selected paragraphs differ	Vegyes: a kijelölt bekezdések eltérnek
+# Varos: Middle Eastern rows (direction, digits, harakat) and the Glyphs panel's Arabic blocks.
+	Direction	Irány
+	Paragraph direction	Bekezdés iránya
+	RTL	RTL
+	LTR	LTR
+	Auto: from the paragraph's first letter	Automatikus: a bekezdés első betűje szerint
+	Harakat	Harakat
+	Colour the harakat (Arabic vowel marks) apart from their letters	A harakat (arab magánhangzójelek) színezése a betűktől külön
+	Gold	Arany
+	Hide the harakat: they stay in the text	Harakat elrejtése: a szövegben maradnak
+	As Letters	Mint a betűk
+	Give the harakat their letters' colour again	A harakat visszakapják betűik színét
+	Style Harakat	Harakat formázása
+	Arabic Letters	Arab betűk
+	Arabic Supplement	Arab kiegészítés
+	Arabic Extended-A	Arab bővített A
+	Arabic Presentation Forms-A	Arab megjelenítési formák A
+	Arabic Presentation Forms-B	Arab megjelenítési formák B

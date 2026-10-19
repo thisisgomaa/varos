@@ -581,6 +581,9 @@ struct Shaped {
     vpal: Vec<Option<VAdjust>>,
     /// Right-to-left segments: HarfRust's safe-to-insert-tatweel flag of each glyph.
     tatweel: Vec<bool>,
+    /// Varos: each glyph's own character (cluster at character level), when harakat are styled
+    /// apart from their letters ([`crate::harakat`]); empty otherwise.
+    chars: Vec<u32>,
 }
 
 fn is_mark(c: char) -> bool {
@@ -636,11 +639,16 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
     };
     let manual = |byte: usize| run_at(byte).1.kerning.is_some();
     let mixed_kerning = boundaries().any(|b| manual(b) != manual(range.start));
+    // Varos: harakat styled apart from their letters (paint only): shaped with them, each glyph
+    // then takes its own character's run ([`crate::harakat`]).
+    let styled_marks =
+        boundaries().any(|b| run_at(b - 1).1 != run_at(b).1 && crate::harakat::paint_only_mark_boundary(text, b, run_at(b - 1).1, run_at(b).1));
+    let char_level = std::cell::Cell::new(false);
 
     // Shape the segment as if all of it were in `st`, with the features `more` on top.
     let shape_in = |st: &CharStyle, more: &[Feature]| {
         let mut shaped = Shaped::default();
-        let Shaped { raw, proportional, vpal, tatweel } = &mut shaped;
+        let Shaped { raw, proportional, vpal, tatweel, chars } = &mut shaped;
         let hb_shaped = face.hb().map(|hb| {
             let shaper = face.shaper.shaper(&hb).instance(face.instance.as_ref()).build();
             // gid, cluster, x and y advance, x and y offset.
@@ -660,6 +668,9 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
                 }
                 buf.set_direction(direction);
                 buf.guess_segment_properties();
+                if char_level.get() {
+                    buf.set_cluster_level(harfrust::BufferClusterLevel::Characters); // Varos
+                }
                 // Kashida justification asks where a tatweel may go (flags only: same glyphs).
                 if direction == Direction::RightToLeft {
                     buf.set_flags(buf.flags() | BufferFlags::PRODUCE_SAFE_TO_INSERT_TATWEEL);
@@ -688,6 +699,16 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
             *tatweel = flags;
             let raw = &*raw;
             let same_glyphs = |v: &[(u32, u32, i32, i32, i32, i32)]| v.len() == raw.len() && v.iter().zip(raw).all(|(a, b)| a.0 == b.0);
+            // Varos: the same shaping at character level names each glyph's own character
+            // (positions and glyphs as above; kept only when the glyphs are the same).
+            if styled_marks {
+                char_level.set(true);
+                let by_char = shape(&feats.resolve(st), along).0;
+                char_level.set(false);
+                if same_glyphs(&by_char) {
+                    *chars = by_char.iter().map(|g| g.1).collect();
+                }
+            }
             if feats.proportional(st) {
                 // `palt` is positioning only: the same glyphs set on their full widths tell which
                 // advances it changed (kerning and the rest change both alike).
@@ -741,7 +762,7 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
         }
         shaped
     };
-    let Shaped { raw, proportional, vpal, tatweel } = if mixed_kerning {
+    let Shaped { raw, proportional, vpal, tatweel, chars } = if mixed_kerning {
         // A font's kerning pair applies after a character with automatic kerning and not after one
         // with manual kerning. The segment is shaped apart where manual kerning ends, so each piece
         // is text with automatic kerning followed by text with manual kerning. A piece is shaped
@@ -776,7 +797,11 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
     cluster_starts.dedup();
     // A glyph is drawn in one style: where a cluster would take in characters of runs in different
     // styles, the runs are shaped apart, as runs that do not shape alike are.
-    let inside_clusters: Vec<usize> = boundaries().filter(|&b| cluster_starts.binary_search(&b).is_err() && run_at(b - 1).1 != run_at(b).1).collect();
+    // Varos: except at harakat styled apart only in paint ([`crate::harakat`]).
+    let inside_clusters: Vec<usize> = boundaries()
+        .filter(|&b| cluster_starts.binary_search(&b).is_err() && run_at(b - 1).1 != run_at(b).1)
+        .filter(|&b| !crate::harakat::paint_only_mark_boundary(text, b, run_at(b - 1).1, run_at(b).1))
+        .collect();
     if !inside_clusters.is_empty() {
         return shape_apart(inside_clusters, out);
     }
@@ -784,6 +809,11 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
     for (gi, &(gid, cl, xa, xo, yo)) in raw.iter().enumerate() {
         let cl = cl as usize;
         let (run, gst) = run_at(cl);
+        // Varos: a glyph of a harakat styled apart takes its own character's run (paint only).
+        let run = match chars.get(gi).map(|&c| run_at(c as usize)) {
+            Some((own, own_st)) if crate::harakat::paint_only(gst, own_st) => own,
+            _ => run,
+        };
         // Cluster end: the next larger cluster value in the segment, else the segment end.
         let end = cluster_starts.get(cluster_starts.partition_point(|&c| c <= cl)).copied().unwrap_or(range.end);
         let last_in_cluster = gi + 1 == n || raw[gi + 1].1 as usize != cl;
