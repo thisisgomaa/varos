@@ -4841,3 +4841,11 @@ lighting	Light	Світло
 	Arabic Presentation Forms-B	Арабські форми подання B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Плавне масштабування
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Виділений арабський текст, інакше арабські зразки в шрифтах із підтримкою арабської
+	Latin samples	Латинські зразки
+	Arabic samples in Arabic-capable fonts	Арабські зразки у шрифтах із підтримкою арабської
+	Serif	Із зарубками
+	Sans	Без зарубок
+	Script	Рукописний

@@ -4861,3 +4861,11 @@ lighting	Light	Luce
 	Arabic Presentation Forms-B	Forme di presentazione arabe B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Zoom fluido
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Testo arabo selezionato, altrimenti esempi arabi nei font compatibili
+	Latin samples	Esempi latini
+	Arabic samples in Arabic-capable fonts	Esempi arabi nei font che supportano l’arabo
+	Serif	Con grazie
+	Sans	Senza grazie
+	Script	Calligrafico

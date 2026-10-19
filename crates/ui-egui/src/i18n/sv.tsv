@@ -5203,3 +5203,11 @@ theme	Appearance	Utseende
 	Arabic Presentation Forms-B	Arabiska presentationsformer B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Mjuk zoom
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Markerad arabisk text, annars arabiska exempel i teckensnitt med arabiskt stöd
+	Latin samples	Latinska exempel
+	Arabic samples in Arabic-capable fonts	Arabiska exempel i teckensnitt med stöd för arabiska
+	Serif	Serif
+	Sans	Sans
+	Script	Handstil

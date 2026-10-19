@@ -4823,3 +4823,11 @@ effect	Regular	Regelmäßig
 	Arabic Presentation Forms-B	Arabische Präsentationsformen B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Weicher Zoom
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Ausgewählter arabischer Text, sonst arabische Beispiele in Schriften mit Arabisch-Unterstützung
+	Latin samples	Lateinische Beispiele
+	Arabic samples in Arabic-capable fonts	Arabische Beispiele in Schriften mit arabischer Unterstützung
+	Serif	Serifen
+	Sans	Serifenlos
+	Script	Schreibschrift

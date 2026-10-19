@@ -5212,3 +5212,11 @@ theme	Appearance	Външен вид
 	Arabic Presentation Forms-B	Арабски форми за представяне B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Плавно мащабиране
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Избраният арабски текст, иначе арабски примери в шрифтове с поддръжка на арабски
+	Latin samples	Латински образци
+	Arabic samples in Arabic-capable fonts	Арабски образци в шрифтове с поддръжка на арабски
+	Serif	Серифен
+	Sans	Безсерифен
+	Script	Ръкописен

@@ -5233,3 +5233,11 @@ imageTrace	Outline	Körvonal
 	Arabic Presentation Forms-B	Arab megjelenítési formák B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Sima nagyítás
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	A kijelölt arab szöveg, egyébként arab minták az arab írást támogató betűtípusokban
+	Latin samples	Latin minták
+	Arabic samples in Arabic-capable fonts	Arab minták az arab írást támogató betűtípusokban
+	Serif	Talpas
+	Sans	Talpatlan
+	Script	Kézírásos

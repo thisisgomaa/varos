@@ -1,16 +1,7 @@
 //! Varos: the font menu's Arabic side (provisional UI, awaiting the owner's review).
 //!
-//! * **Arabic** chip: lists only the families that set Arabic ([`FontDb::may_set_arabic`]: the
-//!   character map has alef and beh, read while the installed fonts are cataloged; a family whose
-//!   letters turn out not to join once loaded leaves the list; with the filter on, the rows in view
-//!   are loaded a few per frame to check, previews on or off: [`check_joining`]). With it on, best-effort style
-//!   chips narrow the list: Naskh, Kufi, Ruq’ah, Diwani, Thuluth, Modern Sans, guessed from the
-//!   family's names ([`vectorcraft_text::arabic_fonts::guess_arabic_style`]); "All Arabic" lists
-//!   every Arabic family, the ones the guess can't place too.
-//! * **Arabic Samples** chip (and the Arabic filter): each family that sets Arabic shows an Arabic
-//!   line ([`af::ARABIC_SAMPLE`], harakat and لا included) instead of the Latin sample. When the
-//!   selected text is Arabic, every row shows that text, and a family that can't set it shows no
-//!   sample (never a Latin "Sample" or glyphs from another font).
+//! Concept A: script-first filtering and Auto / Latin / Arabic sample modes are presented by
+//! [`super::font_filters`]. Arabic styles appear only with the Arabic script selected.
 //! * Arabic samples and names are set by the real text pipeline (bidi, HarfRust shaping, marks)
 //!   in the row's own face, drawn right-aligned and cut at their left end. egui's own text has no
 //!   Arabic shaping, so Arabic is never drawn with it here.
@@ -36,8 +27,17 @@ pub(crate) struct ArabicMenu {
     pub only: bool,
     /// With [`Self::only`]: one best-effort style group (`None`: all Arabic families).
     pub style: Option<ArabicStyle>,
-    /// Show Arabic samples in the families that set Arabic.
-    pub samples: bool,
+    /// Sample language, independent of the family filter.
+    pub samples: SampleMode,
+}
+
+/// Sample language, independent of the family filter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SampleMode {
+    #[default]
+    Auto,
+    Latin,
+    Arabic,
 }
 
 /// What the rows depend on beyond upstream's key: the filter. What loading fonts tells (a family
@@ -46,7 +46,7 @@ pub(crate) type FilterKey = (bool, Option<ArabicStyle>);
 
 /// The labels are English source strings translated through the upstream catalogs (rows in each
 /// `i18n/*.tsv`, under "Varos: Arabic font menu").
-fn style_label(s: ArabicStyle) -> &'static str {
+pub(super) fn style_label(s: ArabicStyle) -> &'static str {
     match s {
         ArabicStyle::Naskh => tl!("Naskh"),
         ArabicStyle::Kufi => tl!("Kufi"),
@@ -68,54 +68,24 @@ impl ArabicMenu {
         !self.only || db.may_set_arabic(family) && self.style.is_none_or(|s| db.arabic_style(family) == s)
     }
 
-    /// The chips; `true` when the list must be filtered again.
-    pub fn chips(&mut self, ui: &mut Ui) -> bool {
-        let mut refilter = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-            let chip = |ui: &mut Ui, on: bool, label: &str| ui.selectable_label(on, egui::RichText::new(label).size(11.0));
-            if chip(ui, self.only, tl!("Arabic Fonts")).on_hover_text(tl!("Only fonts whose Arabic letters join")).clicked() {
-                self.only = !self.only;
-                self.style = None;
-                refilter = true;
-            }
-            if chip(ui, self.samples, tl!("Arabic Samples")).on_hover_text(tl!("Show an Arabic line in each Arabic font")).clicked() {
-                self.samples = !self.samples;
-            }
-        });
-        if self.only {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-                let chip = |ui: &mut Ui, on: bool, label: &str| ui.selectable_label(on, egui::RichText::new(label).size(11.0));
-                if chip(ui, self.style.is_none(), style_label(ArabicStyle::Unknown)).clicked() {
-                    self.style = None;
-                    refilter = true;
-                }
-                for s in ArabicStyle::ALL {
-                    let r = chip(ui, self.style == Some(s), style_label(s))
-                        .on_hover_text(tl!("Guessed from the font's name; fonts it can't place are under All Arabic"));
-                    if r.clicked() {
-                        self.style = if self.style == Some(s) { None } else { Some(s) };
-                        refilter = true;
-                    }
-                }
-            });
-        }
-        refilter
-    }
-
     /// The sample a row of `family` shows, given the selected text `selected`: `None` for none,
-    /// else the text (`None`: upstream's own choice, the selected text or its generic sample) and
+    /// else the text (`None`: upstream's generic sample) and
     /// whether it is set right to left.
     pub fn row_sample(&self, db: &FontDb, family: &str, selected: Option<&str>) -> Option<(Option<String>, bool)> {
-        if let Some(text) = selected.filter(|s| af::is_arabic_text(s)) {
+        if self.samples == SampleMode::Latin {
+            // A pinned Latin sample must not inherit Japanese, Thai or any other selected script.
+            return Some((None, false));
+        }
+        if self.samples == SampleMode::Auto
+            && let Some(text) = selected.filter(|s| af::is_arabic_text(s))
+        {
             // Set by `render` in the face itself, or no sample when the face can't.
             return Some((Some(text.to_string()), true));
         }
-        if (self.samples || self.only) && db.may_set_arabic(family) {
+        if db.may_set_arabic(family) {
             return Some((Some(af::ARABIC_SAMPLE.to_string()), true));
         }
-        Some((selected.map(str::to_string), false))
+        Some((selected.filter(|s| !af::is_arabic_text(s)).map(str::to_string), false))
     }
 }
 

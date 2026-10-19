@@ -5230,3 +5230,11 @@ swatch	Bright Violet	Kraftig violet
 	Arabic Presentation Forms-B	Arabiske præsentationsformer B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Blød zoom
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Markeret arabisk tekst, ellers arabiske eksempler i skrifttyper med arabisk
+	Latin samples	Latinske prøver
+	Arabic samples in Arabic-capable fonts	Arabiske prøver i skrifttyper med arabisk understøttelse
+	Serif	Serif
+	Sans	Sans
+	Script	Håndskrift

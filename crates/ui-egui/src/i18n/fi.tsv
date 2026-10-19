@@ -5211,3 +5211,11 @@ mark-style	Japanese	Japanilainen
 	Arabic Presentation Forms-B	Arabian esitysmuodot B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Pehmeä zoomaus
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Valittu arabiankielinen teksti, muuten arabialaiset näytteet arabiaa tukevissa fonteissa
+	Latin samples	Latinalaiset näytteet
+	Arabic samples in Arabic-capable fonts	Arabialaiset näytteet arabiaa tukevissa fonteissa
+	Serif	Päätteellinen
+	Sans	Päätteetön
+	Script	Käsinkirjoitus

@@ -85,8 +85,10 @@ const MAX_PENDING: usize = 8;
 /// What a sample shows when the font lacks the selected text's characters (or there is none).
 const FALLBACK_SAMPLE: &str = "Sample";
 /// The script filter's choices: all, Japanese, Latin, Thai.
+#[cfg(test)] // Varos: header owns script labels; preserve upstream filter tests.
 const SCRIPTS: usize = 4;
 
+#[cfg(test)] // Varos: header owns script labels; preserve upstream filter tests.
 fn script_label(i: usize) -> &'static str {
     match i {
         1 => tl!("Japanese"),
@@ -96,26 +98,15 @@ fn script_label(i: usize) -> &'static str {
     }
 }
 
-/// Does a family of `traits` pass script filter `script` ([`SCRIPTS`])? Latin: neither Japanese
-/// nor Thai.
+/// Does a family of `traits` pass script filter `script` (0: all, 1: Japanese, 2: Latin,
+/// 3: Thai)? Latin: neither Japanese nor Thai. Varos index 4 is Arabic, checked separately
+/// by [`crate::varos::arabic_fonts::ArabicMenu::wanted`].
 fn script_matches(script: usize, traits: vectorcraft_text::FontTraits) -> bool {
     match script {
         1 => traits.japanese,
         2 => !traits.japanese && !traits.thai,
         3 => traits.thai,
         _ => true,
-    }
-}
-
-fn class_label(c: FontClass) -> &'static str {
-    match c {
-        FontClass::Serif => tl!("Serif / Mincho"),
-        FontClass::Sans => tl!("Sans Serif / Gothic"),
-        FontClass::Rounded => tl!("Rounded"),
-        FontClass::Script => tl!("Script / Brush"),
-        FontClass::Monospaced => tl!("Monospaced"),
-        FontClass::Decorative => tl!("Decorative"),
-        FontClass::Other => tl!("Other"),
     }
 }
 
@@ -167,7 +158,8 @@ struct MenuState {
     /// The highlighted row and the query and filters it belongs to.
     highlight: Option<usize>,
     query: String,
-    /// The filters (kept from one opening to the next): script (0..[`SCRIPTS`]), kind, and
+    /// The filters (kept from one opening to the next): script (0: all, 1: Japanese, 2: Latin, 3: Thai,
+    /// 4: Arabic via [`crate::varos::font_filters::ARABIC_SCRIPT`]), kind, and
     /// favourites only.
     script: usize,
     class: Option<FontClass>,
@@ -245,36 +237,9 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
     if ui.memory(|m| m.focused().is_none()) {
         ui.memory_mut(|m| m.request_focus(field.with("edit")));
     }
-    let query = widgets::search_field(ui, field, tl!("Search")).to_lowercase();
-    // The filters: script, then kind.
-    let mut refilter = false;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-        for i in 0..SCRIPTS {
-            if ui.selectable_label(st.script == i, egui::RichText::new(script_label(i)).size(11.0)).clicked() {
-                st.script = i;
-                refilter = true;
-            }
-        }
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-        if ui.selectable_label(st.favorites_only, egui::RichText::new("★").size(11.0)).on_hover_text(tl!("Favorites")).clicked() {
-            st.favorites_only = !st.favorites_only;
-            refilter = true;
-        }
-        if ui.selectable_label(st.class.is_none(), egui::RichText::new(tl!("Any Kind")).size(11.0)).clicked() {
-            st.class = None;
-            refilter = true;
-        }
-        for c in FontClass::ALL {
-            if ui.selectable_label(st.class == Some(c), egui::RichText::new(class_label(c)).size(11.0)).clicked() {
-                st.class = if st.class == Some(c) { None } else { Some(c) };
-                refilter = true;
-            }
-        }
-    });
-    refilter |= st.arabic.chips(ui); // Varos
+    // Varos: concept A header; upstream script indices stay compatible (Arabic is 4).
+    let query = crate::varos::font_filters::search(ui, field, &mut st.arabic, look.samples).to_lowercase();
+    let refilter = crate::varos::font_filters::filters(ui, &mut st.script, &mut st.class, &mut st.favorites_only, &mut st.arabic);
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
     let db = vectorcraft_text::FontDb::global();
     // The current family by its own name (a document may name it in Japanese: ヒラギノ角ゴシック),
@@ -558,14 +523,33 @@ thread_local! {
 /// generic sample), white with coverage as alpha (tinted when drawn). Rendered off the UI thread
 /// on native (the worker asks for a frame when it is done), a few per frame; `None` until it is
 /// ready.
-fn sample_texture(ctx: &egui::Context, family: &str, style: Option<&str>, sample: Option<&str>, height: f32) -> Option<egui::TextureHandle> {
+// Varos: shared with the shaped header labels, using the same cache and work budgets.
+pub(crate) fn sample_texture(
+    ctx: &egui::Context,
+    family: &str,
+    style: Option<&str>,
+    sample: Option<&str>,
+    height: f32,
+) -> Option<egui::TextureHandle> {
+    sample_texture_result(ctx, family, style, sample, height).flatten()
+}
+
+/// Varos header rendering needs to distinguish pending/budget-limited work (`None`) from a
+/// completed unavailable sample (`Some(None)`) before trying the next family.
+pub(crate) fn sample_texture_result(
+    ctx: &egui::Context,
+    family: &str,
+    style: Option<&str>,
+    sample: Option<&str>,
+    height: f32,
+) -> Option<Option<egui::TextureHandle>> {
     let px = (height * ctx.pixels_per_point()).round().clamp(8.0, 96.0) as u32;
     let key: Key = (family.to_string(), style.unwrap_or("Regular").to_string(), sample.unwrap_or_default().to_string(), px);
     let texture = |img: egui::ColorImage| ctx.load_texture(format!("font-sample-{family}-{px}"), img, egui::TextureOptions::LINEAR);
     SAMPLES.with(|s| {
         let mut s = s.borrow_mut();
         if let Some(t) = s.ready.get(&key) {
-            return t.clone();
+            return Some(t.clone());
         }
         // Up to ~370 KB of texture each (96 px high, 10:1): keep a few screens' worth.
         if s.ready.len() > MAX_SAMPLES {
@@ -582,7 +566,7 @@ fn sample_texture(ctx: &egui::Context, family: &str, style: Option<&str>, sample
                 s.pending.remove(&key);
                 let tex = img.map(texture);
                 s.ready.insert(key, tex.clone());
-                return tex;
+                return Some(tex);
             }
             if s.pending.len() >= MAX_PENDING || !s.take_budget(ctx) {
                 return None;
@@ -610,7 +594,7 @@ fn sample_texture(ctx: &egui::Context, family: &str, style: Option<&str>, sample
             }
             let tex = render_sample(&key.0, &key.1, &key.2, px).map(texture);
             s.ready.insert(key, tex.clone());
-            tex
+            Some(tex)
         }
     })
 }

@@ -5273,3 +5273,11 @@ swatch	Bright Violet	Felviolet
 	Arabic Presentation Forms-B	Arabische presentatievormen B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Vloeiend zoomen
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Geselecteerde Arabische tekst, anders Arabische voorbeelden in geschikte lettertypen
+	Latin samples	Latijnse voorbeelden
+	Arabic samples in Arabic-capable fonts	Arabische voorbeelden in lettertypen die Arabisch ondersteunen
+	Serif	Schreef
+	Sans	Schreefloos
+	Script	Handschrift

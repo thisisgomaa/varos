@@ -4136,3 +4136,11 @@ lighting	Light	光源
 	Arabic Presentation Forms-B	阿拉伯文表現形式 B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	平滑縮放
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	顯示所選阿拉伯語文字，否則在支援阿拉伯語的字型中顯示阿拉伯語範例
+	Latin samples	拉丁文範例
+	Arabic samples in Arabic-capable fonts	在支援阿拉伯文的字體中顯示阿拉伯文範例
+	Serif	襯線
+	Sans	無襯線
+	Script	手寫體

@@ -5199,3 +5199,11 @@ effect	Points	Σημεία
 	Arabic Presentation Forms-B	Αραβικές μορφές παρουσίασης B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Ομαλό ζουμ
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Επιλεγμένο αραβικό κείμενο, αλλιώς αραβικά δείγματα σε γραμματοσειρές που υποστηρίζουν αραβικά
+	Latin samples	Λατινικά δείγματα
+	Arabic samples in Arabic-capable fonts	Αραβικά δείγματα σε γραμματοσειρές με αραβική υποστήριξη
+	Serif	Με πατούρες
+	Sans	Χωρίς πατούρες
+	Script	Καλλιγραφική

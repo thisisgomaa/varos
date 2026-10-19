@@ -62,10 +62,13 @@ fn a_long_arabic_sample_keeps_its_start() {
 fn rows_sample_arabic_in_fonts_that_set_it() {
     let db = arabic_db();
     let off = ArabicMenu::default();
-    let samples = ArabicMenu { samples: true, ..Default::default() };
-    // Latin selected text: upstream's own sample, whatever the chips.
-    assert_eq!(off.row_sample(&db, "Noto Sans Arabic", Some("Gagaku")), Some((Some("Gagaku".into()), false)));
-    assert_eq!(off.row_sample(&db, "Noto Sans Arabic", None), Some((None, false)));
+    let samples = ArabicMenu { samples: super::SampleMode::Arabic, ..Default::default() };
+    // Auto uses Arabic in capable families, with or without non-Arabic selection.
+    for selected in [None, Some("Gagaku"), Some("雅楽"), Some("ภาษาไทย")] {
+        assert_eq!(off.row_sample(&db, "Noto Sans Arabic", selected), Some((Some(af::ARABIC_SAMPLE.into()), true)));
+        assert_eq!(off.row_sample(&db, "Source Sans 3", selected), Some((selected.map(str::to_owned), false)));
+    }
+    assert_eq!(off.row_sample(&db, "Noto Sans Arabic", Some("بسم")), Some((Some("بسم".into()), true)));
     // Arabic samples on: Arabic in the Arabic fonts, upstream's sample in the others.
     assert_eq!(samples.row_sample(&db, "Noto Sans Arabic", None), Some((Some(af::ARABIC_SAMPLE.into()), true)));
     assert_eq!(samples.row_sample(&db, "Source Sans 3", None), Some((None, false)));
@@ -136,7 +139,12 @@ fn clicking_the_arabic_chip_lists_only_arabic_families() {
     for _ in 0..3 {
         texts = frame(vec![]).1;
     }
-    let chip = texts.iter().find(|(t, _)| t == "Arabic Fonts").map(|(_, r)| r.center()).expect("the Arabic chip");
+    let chip = texts
+        .iter()
+        .filter(|(t, r)| t == "Arabic" && r.top() > at.y + 35.0)
+        .max_by(|(_, a), (_, b)| a.top().total_cmp(&b.top()))
+        .map(|(_, r)| r.center())
+        .expect("the Arabic chip");
     click(chip);
     for _ in 0..3 {
         texts = frame(vec![]).1;
@@ -151,6 +159,34 @@ fn clicking_the_arabic_chip_lists_only_arabic_families() {
     }
     let expected = families.iter().filter(|f| db.may_set_arabic(f)).count();
     assert_eq!(rows.is_empty(), expected == 0, "{expected} Arabic families installed, {} rows shown", rows.len());
+    let latin = texts.iter().find(|(t, _)| t == "Latin").map(|(_, r)| r.center()).expect("Latin script");
+    click(latin);
+    texts = frame(vec![]).1;
+    assert!(!texts.iter().any(|(t, _)| t == "All Arabic"), "Latin hides Arabic styles");
+    // Close and reopen the very same menu: filters persist like upstream's choices.
+    frame(vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
+    click(at + egui::vec2(40.0, 10.0));
+    for _ in 0..3 {
+        texts = frame(vec![]).1;
+    }
+    assert!(!texts.iter().any(|(t, _)| t == "All Arabic"));
+    let chip = texts
+        .iter()
+        .filter(|(t, r)| t == "Arabic" && r.top() > at.y + 35.0)
+        .max_by(|(_, a), (_, b)| a.top().total_cmp(&b.top()))
+        .map(|(_, r)| r.center())
+        .expect("Arabic persists as an available choice");
+    click(chip);
+    for _ in 0..3 {
+        texts = frame(vec![]).1;
+    }
+    assert!(texts.iter().any(|(t, _)| t == "All Arabic"));
+    frame(vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
+    click(at + egui::vec2(40.0, 10.0));
+    for _ in 0..3 {
+        texts = frame(vec![]).1;
+    }
+    assert!(texts.iter().any(|(t, _)| t == "All Arabic"), "Arabic survives closing and reopening");
 }
 
 /// "Try it": Arabic typed into area type, then each installed Arabic font picked from the font

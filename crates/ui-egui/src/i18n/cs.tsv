@@ -5247,3 +5247,11 @@ mark-style	Japanese	Japonské
 	Arabic Presentation Forms-B	Arabské prezentační tvary B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Plynulé zvětšování
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Vybraný arabský text, jinak arabské ukázky v písmech s podporou arabštiny
+	Latin samples	Latinské ukázky
+	Arabic samples in Arabic-capable fonts	Arabské ukázky v písmech podporujících arabštinu
+	Serif	Patkové
+	Sans	Bezpatkové
+	Script	Psací

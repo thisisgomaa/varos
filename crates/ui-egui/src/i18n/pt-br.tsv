@@ -5164,3 +5164,11 @@ mark-style	Japanese	Japonesas
 	Arabic Presentation Forms-B	Formas de apresentação árabes B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	Zoom Suave
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	Texto árabe selecionado; caso contrário, amostras em árabe nas fontes compatíveis
+	Latin samples	Amostras latinas
+	Arabic samples in Arabic-capable fonts	Amostras árabes em fontes compatíveis com árabe
+	Serif	Com serifa
+	Sans	Sem serifa
+	Script	Manuscrita

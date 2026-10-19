@@ -4901,3 +4901,11 @@ lighting	Light	ライト
 	Arabic Presentation Forms-B	アラビア表示形 B
 # Varos: General preferences (Smooth Zoom).
 	Smooth Zoom	スムーズズーム
+
+# Varos: concept A script-first font filters.
+	Selected Arabic text, otherwise Arabic samples in Arabic-capable fonts	選択したアラビア語テキスト、未選択時はアラビア文字対応フォントでアラビア語サンプルを表示
+	Latin samples	ラテン文字のサンプル
+	Arabic samples in Arabic-capable fonts	アラビア文字対応フォントでアラビア文字を表示
+	Serif	セリフ
+	Sans	サンセリフ
+	Script	筆記体
