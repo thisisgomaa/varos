@@ -1,0 +1,6 @@
+   Compiling vectorcraft-pdf v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/pdf)
+   Compiling vectorcraft-eps v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/eps)
+   Compiling vectorcraft-engine v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/engine)
+   Compiling vectorcraft-ui-egui v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/ui-egui)
+   Compiling vectorcraft v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/apps/vectorcraft)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 1m 16s

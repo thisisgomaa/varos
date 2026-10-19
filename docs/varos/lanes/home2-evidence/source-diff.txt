@@ -1,0 +1,37 @@
+4	1	crates/engine/src/cmd/fileio/encode.rs
+5	2	crates/engine/src/cmd/fileio/pdf.rs
+2	0	crates/engine/src/cmd/mod.rs
+6	0	crates/pdf/src/print/layout.rs
+4	2	crates/ui-egui/src/canvas.rs
+8	0	crates/ui-egui/src/i18n/bg.tsv
+9	0	crates/ui-egui/src/i18n/cs.tsv
+8	0	crates/ui-egui/src/i18n/da.tsv
+10	0	crates/ui-egui/src/i18n/de.tsv
+9	0	crates/ui-egui/src/i18n/el.tsv
+9	0	crates/ui-egui/src/i18n/es.tsv
+9	0	crates/ui-egui/src/i18n/fi.tsv
+9	0	crates/ui-egui/src/i18n/fr.tsv
+9	0	crates/ui-egui/src/i18n/hu.tsv
+8	0	crates/ui-egui/src/i18n/id.tsv
+10	0	crates/ui-egui/src/i18n/it.tsv
+10	0	crates/ui-egui/src/i18n/ja.tsv
+9	0	crates/ui-egui/src/i18n/ka.tsv
+10	0	crates/ui-egui/src/i18n/ko.tsv
+8	0	crates/ui-egui/src/i18n/nl.tsv
+9	0	crates/ui-egui/src/i18n/pl.tsv
+9	0	crates/ui-egui/src/i18n/pt-br.tsv
+10	0	crates/ui-egui/src/i18n/ru.tsv
+9	0	crates/ui-egui/src/i18n/sv.tsv
+10	0	crates/ui-egui/src/i18n/uk.tsv
+10	0	crates/ui-egui/src/i18n/vi.tsv
+9	0	crates/ui-egui/src/i18n/zh-hans.tsv
+9	0	crates/ui-egui/src/i18n/zh-hant.tsv
+1	1	crates/ui-egui/src/tests_home.rs
+328	0	crates/ui-egui/src/varos/home.rs
+
+Added source files:
+crates/engine/src/cmd/varos_board.rs: 51 lines
+crates/engine/src/cmd/varos_board/tests.rs: 107 lines
+crates/ui-egui/src/varos/home_capture.rs: 104 lines
+
+Total source/catalog delta: +822 / -6; 30 modified files, 3 added source files; no source file removed.

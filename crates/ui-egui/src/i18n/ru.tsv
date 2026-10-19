@@ -4855,3 +4855,13 @@ lighting	Light	Свет
 	Arabic Extended-A	Арабский, расширение A
 	Arabic Presentation Forms-A	Арабские формы представления A
 	Arabic Presentation Forms-B	Арабские формы представления B
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Новый свободный холст
+	Post	Публикация
+	Story	История
+varos-home	Web	Веб
+	Poster	Плакат
+	Icon	Значок
+	A4	A4
+	أهلاً بك في فاروس	أهلاً بك في فاروس

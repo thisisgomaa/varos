@@ -1,0 +1,435 @@
+   Compiling serde v1.0.229
+   Compiling bytemuck v1.25.2
+   Compiling num-traits v0.2.19
+   Compiling thiserror v2.0.21
+   Compiling zerocopy v0.8.59
+   Compiling zerofrom v0.1.8
+   Compiling yoke v0.8.3
+   Compiling smallvec v1.16.2
+   Compiling arrayvec v0.7.8
+   Compiling moxcms v0.8.1
+   Compiling zerovec v0.11.8
+   Compiling polycool v0.4.0
+   Compiling kurbo v0.13.1
+   Compiling hashbrown v0.17.1
+   Compiling font-types v0.12.5
+   Compiling half v2.7.1
+   Compiling vectorcraft-geom v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/geom)
+   Compiling tiff v0.11.3
+   Compiling image v0.25.10
+   Compiling font-types v0.11.3
+   Compiling read-fonts v0.39.2
+   Compiling indexmap v2.14.2
+   Compiling vectorcraft-color v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/color)
+   Compiling tinystr v0.8.4
+   Compiling icu_locale_core v2.3.0
+   Compiling write-fonts v0.48.1
+   Compiling skrifa v0.42.1
+   Compiling vectorcraft-doc v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/doc)
+   Compiling potential_utf v0.1.6
+   Compiling read-fonts v0.44.0
+   Compiling zerotrie v0.2.5
+   Compiling skrifa v0.47.0
+   Compiling icu_provider v2.3.1
+   Compiling subsetter v0.2.6
+   Compiling icu_collections v2.3.0
+   Compiling icu_locale_fallback v2.3.0
+   Compiling read-fonts v0.43.3
+   Compiling linesweeper v0.5.0
+   Compiling vectorcraft-pathops v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/pathops)
+   Compiling harfrust v0.13.3
+   Compiling icu_segmenter v2.3.0
+   Compiling vectorcraft-three-d v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/three-d)
+   Compiling vectorcraft-text v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/text)
+   Compiling vectorcraft-plugins v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/plugins)
+   Compiling float-cmp v0.9.0
+   Compiling strict-num v0.1.1
+   Compiling vectorcraft-effects v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/effects)
+   Compiling tiny-skia-path v0.12.0
+   Compiling vectorcraft-brush v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/brush)
+   Compiling phf_macros v0.13.1
+   Compiling ttf-parser v0.25.1
+   Compiling euclid v0.22.14
+   Compiling color v0.3.3
+   Compiling unicode-bidi-mirroring v0.4.0
+   Compiling unicode-ccc v0.4.0
+   Compiling rustybuzz v0.20.1
+   Compiling peniko v0.6.1
+   Compiling guillotiere v0.7.0
+   Compiling hayro-syntax v0.7.2 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling phf v0.13.1
+   Compiling either v1.18.0
+   Compiling krilla v0.8.2 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling rayon v1.12.0
+   Compiling hayro-interpret v0.7.0 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling vello_common v0.2.0
+   Compiling vello_cpu v0.2.0
+   Compiling craft-pdf v0.1.0 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
+   Compiling svgtypes v0.16.1
+   Compiling usvg v0.48.1
+   Compiling vectorcraft-pdf v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/pdf)
+   Compiling vectorcraft-render v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/render)
+   Compiling vectorcraft-metafile v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/metafile)
+   Compiling ppv-lite86 v0.2.21
+   Compiling vectorcraft-svg v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/svg)
+   Compiling vectorcraft-eps v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/eps)
+   Compiling rand_chacha v0.9.0
+   Compiling vectorcraft-affinity v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/affinity)
+   Compiling vectorcraft-format v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/format)
+   Compiling vectorcraft-cad v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/cad)
+   Compiling vectorcraft-tools v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/tools)
+   Compiling vectorcraft-trace v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/trace)
+   Compiling proptest v1.11.0
+   Compiling vectorcraft-engine v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/engine)
+   Compiling vectorcraft-testkit v0.13.1 (~/Documents/AI workspace/lanes/lane-home2/crates/testkit)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3m 54s
+     Running unittests src/lib.rs (target/debug/deps/vectorcraft_pdf-e9e45af237bbca72)
+
+running 316 tests
+test lab_spot::tests::names_are_written_like_the_pdf_writer_writes_them ... ok
+test export::tests::writable_bounds_values_the_transform_and_values_through_it ... ok
+test streams::tests::predictors_the_reader_can_apply_pass ... ok
+test streams::tests::the_decoders_read_what_the_specification_writes ... ok
+test tests::a_group_transform_effect_exports_its_image_copies ... ok
+test tests::a_later_modification_date_is_written_beside_the_creation_date ... ok
+test tests::an_image_whose_pixels_cant_be_decoded_is_left_out_with_one_note ... ok
+test tests::an_instance_whose_art_reaches_the_page_is_written ... ok
+test tests::an_instance_whose_brush_art_reaches_the_page_is_written ... ok
+test tests::art_reaching_beyond_a_billion_points_is_left_out ... ok
+test tests::artboard_range_and_bad_index ... ok
+test tests::artboards_beyond_a_billion_points_export_blank_pages ... ok
+test tests::clip_group_roundtrip ... ok
+test tests::compatibility_levels ... ok
+test tests::compress_option_changes_output ... ok
+test tests::creation_date_written ... ok
+test tests::dash_offsets_beyond_a_billion_points_wrap_into_their_pattern ... ok
+test tests::dictionary_values_the_reader_cannot_parse_are_skipped ... ok
+test tests::empty_and_populated_file_info_preserve_key_presence ... ok
+test tests::export_is_valid_pdf ... ok
+test tests::functions_and_colour_spaces_built_on_themselves_are_refused ... ok
+test tests::gradients_exported_as_shadings_and_reimported ... ok
+test tests::hidden_objects_and_template_layers_skipped ... ok
+test tests::image_roundtrip ... ok
+test tests::import_clip_from_handmade_pdf ... ok
+test tests::import_handmade_pdf ... ok
+test tests::import_invalid_dash_array_strokes_solid ... ok
+test tests::import_keeps_art_outside_the_page ... ok
+test tests::import_max_pages_and_multi_page ... ok
+test tests::import_rejects_garbage ... ok
+test tests::metadata_creator_and_title ... ok
+test tests::objects_outside_artboard_are_culled ... ok
+test tests::one_page_per_artboard_with_sizes ... ok
+test tests::opacity_and_blend_modes ... ok
+test tests::opacity_mask_exports_as_luminosity_soft_mask ... ok
+test tests::roundtrip_colours_preserved ... ok
+test tests::roundtrip_open_path_and_even_odd ... ok
+test tests::roundtrip_rect_and_ellipse_bounds ... ok
+test tests::roundtrip_stroke_params_merge_fill_and_stroke ... ok
+test tests::smooth_revolve_exports_axial_vector_shading_without_images_and_keeps_the_source_live ... ok
+test tests::stroke_alignment_and_arrowheads_export ... ok
+test tests::text_exported_as_outlines ... ok
+test tests_blend::a_group_is_written_non_isolated_unless_it_isolates_blending ... ok
+test tests_blend::a_knockout_group_with_blending_elements_is_non_isolated_unless_isolated ... ok
+test tests_blend::every_blend_mode_is_written_under_its_pdf_name_and_read_back ... ok
+test tests_blend::groups_without_blending_inside_stay_isolated_groups ... ok
+test tests_charstroke::character_and_object_strokes_on_type_keep_join_and_dashes ... ok
+test tests_cmykblend::a_cmyk_page_without_blending_through_is_an_isolated_group ... ok
+test tests_cmykblend::cmyk_colours_and_rgb_documents_have_no_rgb_warning ... ok
+test tests_cmykblend::constant_alpha_masks_are_white ... ok
+test tests_cmykblend::groups_of_cmyk_documents_blend_in_device_cmyk ... ok
+test tests_cmykblend::rgb_colours_in_a_cmyk_document_are_reported_and_separated ... ok
+test tests_cmykblend::rgb_documents_and_opaque_cmyk_pages_are_unchanged ... ok
+test tests_cmykblend::soft_mask_groups_keep_screen_luminance ... ok
+test tests_cmykimages::a_cmyk_image_masked_by_a_grey_image_of_its_grid_writes_it_as_its_smask ... ok
+test tests_cmykimages::a_cmyk_jpeg_passes_through_open_and_every_pdf_export ... ok
+test tests_cmykimages::cmyk_images_with_odd_samples_open_in_rgb_with_a_warning ... ok
+test tests_cmykimages::masked_cmyk_images_keep_their_inks_and_carry_the_mask_as_an_opacity_mask ... ok
+test tests_cmykimages::other_cmyk_images_keep_their_ink_amounts ... ok
+test tests_cmykimages::the_output_settings_convert_cmyk_images_and_compression_recompresses_them_in_cmyk ... ok
+test tests_compression::codecs_the_writer_lacks_are_zip_with_a_warning ... ok
+test streams::tests::object_and_cross_reference_streams_are_looked_at_before_the_file_is_read ... ok
+test tests_compression::images_above_the_threshold_are_resampled_to_the_target_resolution ... ok
+test tests_dashalign::fitted_dashes_are_written_as_fills_and_exact_ones_as_a_dash_array ... ok
+test tests_dashalign::fitted_dashes_on_a_rectangle_look_as_on_the_canvas ... ok
+test tests_editing::a_name_tree_node_shared_by_many_kids_is_searched_once ... ok
+test tests_editing::changed_pages_are_noticed ... ok
+test tests_editing::direct_name_tree_kids_are_all_searched ... ok
+test tests_editing::pdf_a_carries_no_editing_data ... ok
+test tests_editing::the_legacy_name_is_read_and_plain_pdfs_have_no_editing_data ... ok
+test tests_editing::the_native_document_comes_back_intact ... ok
+test tests_editing::the_native_documents_modification_date_is_the_time_of_writing ... ok
+test streams::tests::a_stream_that_decodes_past_the_cap_is_found_without_holding_it ... ok
+test tests_encrypt::damaged_files_never_panic_when_reading_the_owner_password ... ok
+test tests_encrypt::a_permissions_password_alone_opens_without_a_password_and_restricts ... ok
+test tests_encrypt::editing_data_comes_back_with_the_password ... ok
+test tests_encrypt::permission_bits_follow_the_options ... ok
+test tests_encrypt::every_level_opens_only_with_a_password ... ok
+test tests_encrypt::standards_and_bad_passwords_are_refused ... ok
+test tests_compression::jpeg_zip_and_automatic_compression ... ok
+test tests_encrypt::the_permissions_password_opens_files_of_other_writers ... ok
+test tests_encrypt::plaintext_metadata_stays_readable ... ok
+test tests_encrypt::without_a_password_nothing_changes ... ok
+test tests_file_info::a_written_pdf_gives_its_file_info_back ... ok
+test tests_file_info::an_unreadable_xmp_packet_leaves_the_information_dictionary ... ok
+test tests_encrypt::strings_and_streams_are_encrypted ... ok
+test tests_file_info::the_information_dictionary_gives_file_info ... ok
+test tests_file_info::the_xmp_packet_gives_file_info ... ok
+test tests_file_info::the_xmp_packet_wins_where_both_give_a_field ... ok
+test tests_focal::a_centred_radial_imports_without_a_focal_point ... ok
+test tests_encrypt::unicode_passwords_open_aes256_files ... ok
+test tests_fx::raster_effects_warn_on_fills_strokes_and_objects ... ok
+test tests_import_color::a_cmyk_document_with_spot_colours_round_trips ... ok
+test tests_import_color::a_color_set_after_a_pattern_is_in_the_ink_of_its_space ... ok
+test tests_import_color::a_mesh_in_one_of_two_inks_with_the_same_values_keeps_the_ink ... ok
+test tests_import_color::ai_files_read_through_their_pdf_part_keep_inks_with_the_same_values_apart ... ok
+test tests_import_color::colour_spaces_are_read_from_the_interpreters_debug_form ... ok
+test tests_import_color::device_n_inks_become_spot_swatches_and_process_plates_cmyk ... ok
+test tests_import_color::gradients_in_spot_inks_with_the_same_values_keep_their_own_ink ... ok
+test tests_import_color::gray_imports_as_gray_and_rgb_documents_stay_rgb ... ok
+test tests_import_color::ink_names_never_clash_with_the_document_swatches ... ok
+test tests_import_color::inks_are_found_past_dictionary_values_the_reader_cannot_parse ... ok
+test tests_focal::a_focal_point_round_trips_as_a_two_point_radial_shading ... ok
+test tests_import_color::inks_that_cannot_be_told_apart_import_as_rgb ... ok
+test tests_import_color::inks_with_the_same_values_export_as_separations_of_their_own ... ok
+test tests_import_color::inks_with_the_same_values_on_different_pages_keep_their_own_swatches ... ok
+test tests_import_color::rgb_numbers_stand_in_editor_documents_only ... ok
+test tests_import_color::shading_stops_keep_cmyk_and_spot_tints ... ok
+test tests_import_color::spot_colours_with_an_icc_lab_alternate_keep_their_lab_values ... ok
+test tests_import_color::spot_inks_with_the_same_values_keep_their_own_swatches ... ok
+test tests_file_info::an_xmp_packet_nested_too_deep_leaves_the_information_dictionary ... ok
+test tests_import_fidelity::a_coons_patch_mesh_becomes_a_gradient_mesh ... ok
+test tests_import_fidelity::a_fill_in_a_soft_masked_group_doesnt_take_the_stroke_drawn_after_it ... ok
+test tests_import_fidelity::a_fill_in_a_translucent_group_doesnt_take_the_stroke_drawn_after_it ... ok
+test tests_import_fidelity::a_luminosity_soft_mask_becomes_an_opacity_mask ... ok
+test tests_import_fidelity::a_luminosity_soft_mask_of_an_image_keeps_the_images_colour ... ok
+test tests_import_fidelity::a_shading_that_does_not_extend_paints_only_between_its_ends ... ok
+test tests_import_fidelity::a_shading_with_an_exponent_keeps_its_curve ... ok
+test tests_import_fidelity::a_shape_filled_with_a_shading_becomes_one_path_with_the_gradient ... ok
+test tests_import_fidelity::a_stroke_under_a_stretched_transform_stays_a_stroke ... ok
+test tests_import_fidelity::an_alpha_soft_mask_becomes_an_opacity_mask_of_its_shape ... ok
+test tests_import_fidelity::an_alpha_soft_mask_of_an_image_uses_the_images_alpha ... ok
+test tests_import_fidelity::an_object_written_as_a_fill_and_a_closed_stroke_stays_one_path_with_a_live_stroke ... ok
+test tests_import_fidelity::appearance_items_are_untouched_for_plain_art ... ok
+test tests_import_fidelity::art_past_the_page_clip_keeps_the_clip ... ok
+test tests_import_fidelity::clips_with_the_page_as_bounding_box_still_clip ... ok
+test tests_import_fidelity::different_outlines_filled_and_stroked_stay_apart ... ok
+test tests_import_color::inks_set_before_a_content_window_ends_reach_the_paths_after_it ... ok
+test tests_import_fidelity::fonts_are_noted_past_font_resources_the_reader_cannot_parse ... ok
+test tests_import_fidelity::font_names_resolve_to_available_families ... ok
+test tests_import_fidelity::glyphs_closed_up_by_half_an_em_stay_one_line ... ok
+test tests_import_color::type_in_spot_inks_with_the_same_values_keeps_its_own_ink ... ok
+test tests_import_fidelity::glyphs_turned_along_a_curve_become_type_on_a_path ... ok
+test tests_import_fidelity::isolate_and_knockout_flags_of_a_group_are_kept ... ok
+test tests_import_fidelity::gradient_stop_opacity_round_trips ... ok
+test tests_import_fidelity::isolated_and_non_isolated_groups_round_trip ... ok
+test tests_import_fidelity::text_becomes_point_type ... ok
+test tests_import_fidelity::tiling_patterns_become_pattern_swatches ... ok
+test tests_import_layers::a_form_hidden_by_its_own_group_stays_hidden ... ok
+test tests_import_fidelity::zero_width_lines_import_as_hairlines ... ok
+test tests_import_fidelity::opacity_masks_round_trip_through_pdf ... ok
+test tests_import_layers::a_pdfs_private_data_is_its_pdf_streams_joined ... ok
+test tests_import_layers::a_sublayer_that_paints_first_brings_its_parent_layer ... ok
+test tests_import_layers::an_ai_file_notes_that_its_art_off_the_artboards_is_not_read ... ok
+test tests_import_layers::a_view_state_that_is_off_hides_the_layer_with_its_art ... ok
+test tests_import_layers::an_ai_files_private_data_is_its_streams_joined ... ok
+test tests_import_layers::an_encrypted_file_keeps_its_hidden_layers ... ok
+test tests_import_layers::an_ai_files_white_page_outside_its_layers_is_not_art ... ok
+test tests_import_layers::art_past_the_page_is_clipped_in_a_pdf_but_not_in_an_ai_file ... ok
+test tests_import_layers::a_page_fill_that_is_art_stays ... ok
+test tests_import_layers::art_past_the_scan_limit_is_rejected_with_hidden_layers ... ok
+test tests_import_layers::art_past_the_scan_limit_is_rejected_with_shown_layers ... ok
+test tests_import_layers::base_state_on_lists_and_locks_are_read ... ok
+test tests_import_layers::groups_marked_inside_forms_and_clips_reach_their_layers ... ok
+test tests_import_layers::layer_names_without_a_byte_order_mark_are_pdf_doc_encoding ... ok
+test tests_import_layers::hostile_layer_orders_stay_bounded ... ok
+test tests_import_layers::nested_groups_become_sublayers_and_hidden_ones_keep_their_art ... ok
+test tests_import_layers::optional_content_groups_become_layers_and_off_art_a_hidden_layer ... ok
+test tests_import_layers::pages_share_the_layers_of_their_groups ... ok
+test tests_import_layers::without_layers_each_page_is_one_layer_of_what_shows ... ok
+test tests_import_lines::a_clip_ending_in_a_later_group_stays_with_its_art ... ok
+test tests_import_lines::a_stroke_on_the_type_of_a_moved_ai_page_is_still_the_types_stroke ... ok
+test tests_import_lines::a_stroke_written_as_stroked_glyph_outlines_is_the_types_stroke ... ok
+test tests_import_lines::layers_stack_as_the_pages_mark_them_when_one_first_paints_on_a_later_page ... ok
+test tests_import_lines::glyphs_each_followed_by_their_stroked_outline_stay_one_object ... ok
+test tests_import_lines::lines_that_were_not_wrapped_stay_point_type ... ok
+test tests_import_lines::spaces_read_from_wide_gaps_keep_the_glyphs_after_them_in_place ... ok
+test tests_import_lines::type_ending_a_layers_marked_content_stays_in_its_layer ... ok
+test tests_import_lines::words_set_ems_apart_keep_their_place ... ok
+test tests_import_lines::lines_wrapped_in_a_frame_come_back_as_area_type ... ok
+test tests_import_options::a_rotated_page_rotates_its_boxes ... ok
+test tests_import_options::a_page_without_area_gets_the_size_viewers_give_it ... ok
+test tests_import_options::an_encrypted_pdf_opens_with_its_password_only ... ok
+test tests_import_options::art_of_an_ai_page_reaching_left_does_not_lie_over_the_page_before ... ok
+test tests_import_options::bounding_boxes_of_several_pages_do_not_overlap ... ok
+test tests_import_options::art_of_neighbouring_artboards_off_a_page_is_left_to_its_own_page ... ok
+test tests_import_options::info_gives_the_boxes_of_a_user_unit_page_in_points ... ok
+test tests_import_options::each_crop_box_sizes_the_artboard_and_places_the_art_in_it ... ok
+test tests_import_options::info_lists_pages_with_their_size_rotation_and_boxes ... ok
+test tests_import_options::missing_boxes_fall_back_to_the_crop_box_and_boxes_are_clipped_to_the_media_box ... ok
+test tests_import_options::postscript_is_refused_as_such ... ok
+test tests_import_options::pages_pick_which_pages_import_and_in_what_order ... ok
+test tests_import_overprint::a_page_whose_paths_cant_be_counted_knocks_out_with_a_warning ... ok
+test tests_import_options::trim_box_artboards_take_the_bleed_box_round_them_as_the_document_bleed ... ok
+test tests_import_overprint::a_spot_colour_overprinting_a_process_colour_stays_overprinting_through_export ... ok
+test tests_import_overprint::hidden_optional_content_and_pattern_cells_dont_shift_the_count ... ok
+test tests_import_overprint::op_sets_strokes_and_fills_unless_the_state_has_its_own_fill_entry ... ok
+test tests_import_overprint::overprint_mode_0_is_reported ... ok
+test tests_import_overprint::saved_states_and_forms_keep_their_own_overprint ... ok
+test tests_import_overprint::text_overprints_as_its_graphics_state_says ... ok
+test tests_import_overprint::text_of_two_overprint_states_between_two_paths_knocks_out_with_a_warning ... ok
+test tests_layers::create_layers_writes_a_group_per_layer_with_its_states ... ok
+test tests_layers::identical_layers_stay_apart ... ok
+test tests_layers::layered_art_imports_as_it_was_drawn ... ok
+test tests_layers::overprint_preserve_writes_an_overprinting_graphics_state ... ok
+test tests_layers::overprinting_art_imports_as_it_was_drawn ... ok
+test tests_layers::pdf_a_layers_have_no_automatic_states ... ok
+test tests_layers::pdf_a_overprint_mode_is_0 ... ok
+test tests_layers::pdf_x1a_keeps_overprint ... ok
+test tests_layers::pdf_x4_keeps_pdf_layers_and_x1a_refuses_them ... ok
+test tests_layers::sublayers_are_nested_pdf_layers_and_import_back ... ok
+test tests_layers::white_overprint_is_discarded_as_the_document_setup_says ... ok
+test tests_layers::without_pdf_layers_the_layers_are_plain_page_content ... ok
+test tests_live_text::a_glyph_whose_unicode_names_another_letter_stays_outlined ... ok
+test tests_live_text::a_single_upright_glyph_comes_in_as_vertical_type_and_takes_no_horizontal_glyphs ... ok
+test tests_import_layers::thousands_of_layers_hidden_ones_included_all_come_in ... ok
+test tests_live_text::a_tagged_span_inside_a_line_leaves_the_line_whole ... ok
+test tests_live_text::cid_tables_ignore_fonts_that_are_not_cid_keyed_cff ... ok
+test tests_live_text::kangxi_radicals_from_cid_tables_become_ideographs ... ok
+test tests_live_text::letter_spaced_vertical_type_keeps_its_characters_together ... ok
+test tests_live_text::letter_spacing_in_the_pdf_becomes_tracking ... ok
+test tests_live_text::lines_of_text_in_installed_fonts_come_in_as_point_type ... ok
+test tests_live_text::hebrew_comes_back_in_logical_order ... ok
+test tests_live_text::outlined_text_in_a_missing_font_keeps_the_embedded_glyphs ... ok
+test tests_live_text::rotated_lines_keep_their_angle_and_outline_text_option_outlines_everything ... ok
+test tests_marks::a_page_past_14400_pt_is_written_with_a_user_unit_and_reads_back_at_its_size ... ok
+test tests_marks::art_in_the_bleed_is_kept_and_clipped_to_the_bleed_box ... ok
+test tests_marks::bleed_grows_the_media_box_around_the_trim_box ... ok
+test tests_live_text::text_in_a_missing_font_stays_live_type ... ok
+test tests_marks::non_printing_layers_are_left_out_unless_asked_for ... ok
+test tests_marks::marks_are_drawn_in_registration_on_every_plate_inside_the_media_box ... ok
+test tests_marks::page_information_names_the_file_artboard_and_date ... ok
+test tests_marks::page_information_prints_the_time_of_the_export_not_the_creation_date ... ok
+test tests_output::an_unknown_destination_is_refused ... ok
+test tests_layers::pdf_layers_import_back_as_layers ... ok
+test tests_output::converting_to_a_cmyk_destination_writes_k_instead_of_rg ... ok
+test tests_output::converting_to_rgb_turns_cmyk_into_rg ... ok
+test tests_output::colours_are_in_the_profiles_assigned_to_the_document ... ok
+test tests_output::pdf_a_keeps_its_own_output_intent ... ok
+test tests_output::pdf_a_tags_cmyk_colours_with_the_cmyk_profile ... ok
+test tests_output::preserve_numbers_keeps_cmyk_values_that_destination_converts ... ok
+test tests_output::printers_marks_keep_their_inks ... ok
+test tests_output::profiles_tag_colours_with_icc_based_spaces ... ok
+test tests_output::a_profile_that_tags_colours_and_is_the_output_intent_is_embedded_once ... ok
+test tests_output::tagged_cmyk_documents_blend_in_the_cmyk_profile_space ... ok
+test tests_pdf13::pdf_1_3_files_are_encrypted_with_40_bit_rc4 ... ok
+test tests_pdf13::pdf_1_3_files_say_so_and_have_no_transparency ... ok
+test tests_pdf13::which_standards_allow_pdf_1_3 ... ok
+test tests_pdfx::each_standard_writes_its_header_output_intent_boxes_and_identification ... ok
+test tests_pdfx::pdfx_1a_and_x3_files_have_no_transparency ... ok
+test tests_output::the_output_intent_embeds_its_profile_and_trapped_is_written ... ok
+test tests_pdfx::pdfx_settings_rules ... ok
+test tests_pdfx::verify_finds_what_each_standard_forbids ... ok
+test tests_presets::built_in_presets ... ok
+test tests_print::a_symbol_instance_prints_by_its_art ... ok
+test tests_print::a_symbol_instances_brush_art_keeps_its_artboard_printed ... ok
+test tests_print::artboard_range_skip_blank_and_ignore ... ok
+test tests_print::cmyk_and_a_spot_separate_into_five_plates ... ok
+test tests_print::copies_collate_and_reverse ... ok
+test tests_print::defaults_and_json ... ok
+test tests_print::fit_to_letter_scales_the_artboard_into_the_paper ... ok
+test tests_print::golden_page_one ... ok
+test tests_print::placement_and_custom_scale ... ok
+test tests_print::print_layers_and_template_layers ... ok
+test tests_print::separations_use_the_cmyk_profile_assigned_to_the_document ... ok
+test tests_print::tiles_cover_the_artboard_with_overlap ... ok
+test tests_print::trim_marks_surround_the_artboard_on_the_paper ... ok
+test tests_print::turns_mirror_and_negative ... ok
+test tests_printadvanced::a_cmyk_printer_profile_writes_device_cmyk_with_the_intent ... ok
+test tests_printadvanced::discarded_and_simulated_overprints_write_no_overprint ... ok
+test tests_printadvanced::separations_separate_with_a_cmyk_printer_profile ... ok
+test tests_printadvanced::settings_saved_before_the_advanced_options_load_with_their_defaults ... ok
+test tests_reader_compat::filled_stroked_tj_runs_preserve_app_text_outline_alpha_and_clip_grouping ... ok
+test tests_reader_compat::form_resource_scopes_keep_scanned_overprint_in_step_with_interpretation ... ok
+test tests_reader_compat::soft_mask_inversion_uses_quantized_transfer_endpoints ... ok
+test tests_reader_streaming::content_windows_preserve_layers_and_saved_overprint_state ... ok
+test tests_reader_streaming::decoded_dictionary_delimiter_split_at_content_window_is_checked ... ok
+test tests_reader_streaming::failed_content_and_form_decoders_are_errors ... ok
+test tests_reader_streaming::incomplete_instruction_window_limit_is_an_error ... ok
+test tests_reader_streaming::inline_image_crossing_a_content_window_preserves_the_next_path ... ok
+test tests_reader_streaming::long_operands_and_contents_array_boundaries_are_read_whole ... ok
+test tests_reader_streaming::lower_document_decode_limit_rejects_run_length_prefixes ... ok
+test tests_reader_streaming::lowered_materialization_limit_rejects_incomplete_nested_content ... ok
+test tests_reader_streaming::truncated_flate_does_not_return_a_partial_document ... ok
+test tests_reader_streaming::undecidable_final_operands_are_rejected ... ok
+test tests_realtext::a_run_shifted_two_billion_points_is_left_out ... ok
+test tests_realtext::a_variable_font_instance_comes_back_in_its_own_style ... ok
+test tests_realtext::an_embedded_fonts_own_cmap_names_its_glyphs ... ok
+test tests_realtext::evenly_tracked_type_on_a_path_keeps_its_length ... ok
+test tests_realtext::fonts_whose_licence_forbids_embedding_fall_back_to_outlines ... ok
+test tests_realtext::glyphs_are_named_only_by_an_exact_outline ... ok
+test tests_realtext::glyphs_spaced_each_their_own_way_keep_their_place ... ok
+test tests_realtext::gradients_on_real_text_stay_where_they_were ... ok
+test tests_realtext::overprinting_runs_are_written_or_left_out_as_other_runs_are ... ok
+test tests_realtext::pdf_a_takes_real_text ... ok
+test tests_realtext::real_text_lands_within_half_a_point_of_the_outlines ... ok
+test tests_realtext::slanted_type_reopens_as_type_that_still_leans ... ok
+test tests_realtext::subset_thresholds_below_100_percent_are_accepted_with_a_warning ... ok
+test tests_realtext::type_copied_by_a_transform_effect_is_written_as_text ... ok
+test tests_realtext::type_in_another_installed_version_reopens_in_that_version ... ok
+test tests_realtext::type_is_written_as_text_in_embedded_subset_fonts ... ok
+test tests_realtext::type_with_outline_object_is_written_as_paths_with_no_font ... ok
+test tests_realtext::unnamed_glyphs_of_an_installed_font_are_found_by_their_outline ... ok
+test tests_realtext::variable_font_instances_are_real_text_in_their_own_glyphs ... ok
+test tests_realtext::variable_font_settings_are_real_text_in_their_own_glyphs ... ok
+test tests_settings::checks_refuse_what_the_writer_cant_honour ... ok
+test tests_settings::json_is_camel_case_and_partial_objects_keep_defaults ... ok
+test tests_settings::options_not_applied_yet_come_back_as_warnings ... ok
+test tests_settings::passwords_are_never_serialized ... ok
+test tests_stroke::arrowheads_and_the_trimmed_line_match_the_shared_geometry ... ok
+test tests_stroke::line_and_head_share_one_opacity_group ... ok
+test tests_strokeout::a_lens_profile_is_written_as_a_fill ... ok
+test tests_strokeout::an_open_path_with_inside_alignment_strokes_centred ... ok
+test tests_strokeout::brushed_strokes_are_written_as_their_art ... ok
+test tests_strokeout::outside_strokes_keep_their_miter_spikes ... ok
+test tests_textstroke::an_aligned_character_stroke_is_clipped_to_its_side_of_the_glyphs ... ok
+test tests_textstroke::text_strokes_keep_cap_join_miter_dashes_and_alignment ... ok
+test tests_pdfx::pdfx_1a_files_have_no_rgb ... ok
+test tests_webview::fast_web_view_writes_a_linearised_file_whose_hints_check ... ok
+test tests_webview::pdf_layers_stay_with_a_linearised_file ... ok
+test tests_webview::encrypted_files_stay_linearised ... ok
+test tests_webview::thumbnails_are_embedded_on_every_page ... ok
+test tests_webview::with_both_off_the_file_is_unchanged ... ok
+test tests_output::images_are_converted_too ... ok
+test tests_webview::pdf_x_files_take_thumbnails_and_stay_linearised ... ok
+test streams::tests::an_image_past_the_stream_cap_within_its_declared_size_opens ... ok
+
+test result: ok. 316 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+
+     Running tests/arabic_copy_back.rs (target/debug/deps/arabic_copy_back-b88564725fc1a0f7)
+
+running 2 tests
+test a_word_with_a_ligature_reads_back_in_order ... ignored, known: the Allah ligature reads back reversed
+test arabic_and_its_digits_read_back_from_pdf_as_typed ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/embedded_system_fonts.rs (target/debug/deps/embedded_system_fonts-422375e7b9e2e69c)
+
+running 1 test
+test a_fresh_session_resolves_pdf_fonts_to_installed_families ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests/system_fonts.rs (target/debug/deps/system_fonts-157f65a8435504c8)
+
+running 1 test
+test a_fresh_session_resolves_pdf_fonts_to_installed_families ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+   Doc-tests vectorcraft_pdf
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

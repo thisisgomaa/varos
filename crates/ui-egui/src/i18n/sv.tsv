@@ -5201,3 +5201,12 @@ theme	Appearance	Utseende
 	Arabic Extended-A	Arabiska, utökad A
 	Arabic Presentation Forms-A	Arabiska presentationsformer A
 	Arabic Presentation Forms-B	Arabiska presentationsformer B
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Ny fri arbetsyta
+	Post	Inlägg
+	Story	Händelse
+varos-home	Web	Webb
+	Poster	Affisch
+	Icon	Ikon
+	أهلاً بك في فاروس	أهلاً بك في فاروس

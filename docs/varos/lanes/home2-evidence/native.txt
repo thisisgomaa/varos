@@ -1,0 +1,21 @@
+2026-10-19T17:52:49.811Z INFO  [main] vectorcraft: display GPUs (PCI vendor:device): unknown
+2026-10-19 20:52:49.882 vectorcraft[19475:21388262] Failure on line 688 in function id scheduleApplicationNotification(LSNotificationCode, NSWorkspaceNotificationCenter *): noErr == _LSModifyNotification(notificationID, 1, &code, 0, NULL, NULL, NULL)
+2026-10-19 20:52:50.141 vectorcraft[19475:21388262] TISFileInterrogator updateSystemInputSources false but old data invalid: currentCacheHeaderPtr nonNULL? 0, ->cacheFormatVersion 0, ->magicCookie 00000000, inputSourceTableCountSys 0
+2026-10-19 20:52:50.153 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.153 vectorcraft[19475:21388331] Connection Invalid error for service com.apple.hiservices-xpcservice.
+2026-10-19 20:52:50.155 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+Keyboard Layouts: duplicate keyboard layout identifier -17410.
+Keyboard Layouts: keyboard layout identifier -17410 has been replaced with -28673.
+2026-10-19 20:52:50.167 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.169 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.178 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.184 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.186 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.191 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.193 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+2026-10-19 20:52:50.200 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid
+Keyboard Layouts: duplicate keyboard layout identifier -30769.
+Keyboard Layouts: keyboard layout identifier -30769 has been replaced with -28674.
+Keyboard Layouts: duplicate keyboard layout identifier -14934.
+Keyboard Layouts: keyboard layout identifier -14934 has been replaced with -28675.
+2026-10-19 20:52:50.218 vectorcraft[19475:21388262] Error received in message reply handler: Connection invalid

@@ -1,0 +1,3 @@
+$ /usr/sbin/sysctl -n hw.memsize
+exit=1
+sysctl: sysctl fmt -1 1024 1: Operation not permitted

@@ -5244,3 +5244,12 @@ theme	Appearance	Apparence
 	Arabic Extended-A	Arabe étendu A
 	Arabic Presentation Forms-A	Formes de présentation arabes A
 	Arabic Presentation Forms-B	Formes de présentation arabes B
+
+# Varos: Home presets and a free canvas without artboards. Arabic is the bilingual subtitle.
+	New board	Nouveau canevas libre
+	Post	Publication
+	Story	Story
+varos-home	Web	Web
+	Poster	Affiche
+	Icon	Icône
+	أهلاً بك في فاروس	أهلاً بك في فاروس

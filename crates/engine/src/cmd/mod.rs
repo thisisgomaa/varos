@@ -88,6 +88,7 @@ pub(crate) mod typecmd;
 mod typemenu;
 mod variablecmds;
 mod varos_arabic;
+mod varos_board; // Varos: native free canvases.
 pub(crate) mod views;
 pub mod wand;
 pub mod webexport;
@@ -210,6 +211,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(clipboard::specs());
         v.extend(recolor::specs());
         v.extend(fileio::specs());
+        v.extend(varos_board::specs()); // Varos: New board.
         v.extend(create::specs());
         v.extend(dimension::specs());
         v.extend(object::specs());

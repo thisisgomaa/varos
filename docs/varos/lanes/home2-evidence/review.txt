@@ -1,0 +1,5 @@
+Independent source reviewer: /root/review_home2
+Final result: no outstanding source-review findings.
+Reviewed: native zero-artboard design; PNG/PDF/print/fit; preserved editing attachment; Home layout and scoped Web translation; test harness.
+Fixed findings: hidden/effect-aware PDF bounds; Export As useArtboards:false preserving zero-board native editing data.
+Reviewer did not run cargo. Author ran gates; owner native-window hand test remains pending.
