@@ -195,9 +195,9 @@ fn edit_range(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(serde_json::from_value(v.clone()).map_err(|e| bad(C, format!("bad `runs`: {e}")))?),
     };
     let insert = str_param(p, "insert").unwrap_or("").to_string();
+    let new_type = super::varos_arabic::typing_into_new_type(s, id, len == 0); // Varos
     let caret = s.edit("Typing", |d, _| {
         let t = text_mut(d, id).ok_or(EngineError::NoNode(id))?;
-        let was_empty = edit::runs_len(&t.runs) == 0; // Varos
         // Paragraph styles follow the edit: a split paragraph's new one continues its style, a
         // merge keeps the first paragraph's.
         let inserted: String = match &styled {
@@ -209,7 +209,7 @@ fn edit_range(s: &mut Session, p: &Value) -> Result<Value> {
             Some(r) => edit::replace_range_styled(&mut t.runs, a, b, r),
             None => edit::replace_range(&mut t.runs, a, b, &insert),
         };
-        super::varos_arabic::arabic_new_type_leading(t, was_empty); // Varos: Arabic typed into new type
+        super::varos_arabic::arabic_new_type_leading(t, new_type); // Varos: Arabic typed into new type
         refresh_bounds(t);
         Ok(caret)
     })?;
@@ -864,6 +864,7 @@ fn create_in_path(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         refresh_bounds(&mut t);
     }
+    let empty = t.runs.iter().all(|r| r.text.is_empty()); // Varos
     let id = s.edit(if on_path { "Type on a Path" } else { "Area Type" }, |d, sel| {
         let (par, idx, _) = d.position(pid).ok_or(EngineError::NoNode(pid))?;
         d.remove(pid)?;
@@ -876,6 +877,7 @@ fn create_in_path(s: &mut Session, p: &Value) -> Result<Value> {
         sel.set([id]);
         Ok(id)
     })?;
+    super::varos_arabic::note_new_type(s, empty.then_some(id)); // Varos: new type, empty
     let made = super::typecmd::with_bounds(s, Some(id), json!({"id": id.0}));
     Ok(super::typecmd::with_overflow(s, &[id], made))
 }

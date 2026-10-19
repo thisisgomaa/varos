@@ -45,17 +45,43 @@ pub(crate) fn paint_only_mark_boundary(text: &str, at: usize, before: &CharStyle
 }
 
 /// The byte ranges of the harakat in `text[range]`, each run of consecutive harakat as one range.
+/// The range is normalised as [`crate::edit::style_range`] takes one: its ends clamped to the
+/// text, each moved back to the start of the character it falls in, and put in order.
 pub fn harakat_ranges(text: &str, range: std::ops::Range<usize>) -> Vec<std::ops::Range<usize>> {
-    let Some(part) = text.get(range.clone()) else { return vec![] };
+    let (mut start, mut end) = (crate::edit::floor_char(text, range.start), crate::edit::floor_char(text, range.end));
+    if start > end {
+        std::mem::swap(&mut start, &mut end);
+    }
+    let Some(part) = text.get(start..end) else { return vec![] };
     let mut out: Vec<std::ops::Range<usize>> = vec![];
     for (i, c) in part.char_indices().filter(|(_, c)| is_harakat(*c)) {
-        let (a, b) = (range.start + i, range.start + i + c.len_utf8());
+        let (a, b) = (start + i, start + i + c.len_utf8());
         match out.last_mut() {
             Some(last) if last.end == a => last.end = b,
             _ => out.push(a..b),
         }
     }
     out
+}
+
+/// Each glyph's own character, from the shaping `by_char` at character cluster level of the
+/// glyphs `raw` (glyph id, cluster, x advance, x and y offset; `by_char` with the y advance after
+/// the x advance), the segment ending at byte `end`. Empty unless `by_char` sets the same glyphs
+/// the same way (glyph id, advance and offsets, glyph by glyph): repeated glyph ids alone could
+/// hide a changed correspondence. A glyph whose character lies outside its own cluster of `raw`
+/// (from its cluster value up to the next larger one, else `end`) gets its cluster's first
+/// character instead, so it keeps its cluster's run: `morx` fonts (Geeza Pro) name a letter after
+/// a mark of the next cluster at character level. `raw`'s clusters are never changed.
+pub(crate) fn own_chars(raw: &[(u32, u32, i32, i32, i32)], by_char: &[(u32, u32, i32, i32, i32, i32)], end: usize) -> Vec<u32> {
+    let same = by_char.len() == raw.len() && by_char.iter().zip(raw).all(|(c, r)| c.0 == r.0 && c.2 == r.2 && c.4 == r.3 && c.5 == r.4);
+    if !same {
+        return vec![];
+    }
+    let mut starts: Vec<u32> = raw.iter().map(|g| g.1).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let cluster_end = |cl: u32| starts.get(starts.partition_point(|&c| c <= cl)).map_or(end, |&c| c as usize);
+    by_char.iter().zip(raw).map(|(c, r)| if r.1 <= c.1 && (c.1 as usize) < cluster_end(r.1) { c.1 } else { r.1 }).collect()
 }
 
 #[cfg(test)]

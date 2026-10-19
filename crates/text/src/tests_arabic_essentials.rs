@@ -83,6 +83,78 @@ fn paint_only_differences_are_told_apart() {
     assert_eq!(harakat_ranges("اللَّهِ", 0.."اللَّهِ".len()), [6..10, 12..14], "shadda and fatha together");
 }
 
+/// A range is normalised as `edit::style_range` takes one: clamped, each end moved back to the
+/// start of its character, put in order. Never a silent empty result for a usable range.
+#[test]
+fn harakat_ranges_normalise_their_range() {
+    let word = "بِسْمِ"; // ب 0..2, kasra 2..4, س 4..6, sukun 6..8, م 8..10, kasra 10..12
+    let all = harakat_ranges(word, 0..word.len());
+    assert_eq!(harakat_ranges(word, word.len()..0), all, "reversed");
+    assert_eq!(harakat_ranges(word, 0..usize::MAX), all, "past the end");
+    assert!(harakat_ranges(word, usize::MAX..usize::MAX).is_empty(), "wholly past the end");
+    assert_eq!(harakat_ranges(word, 1..word.len()), all, "a start inside ب moves back to it");
+    assert_eq!(harakat_ranges(word, 0..7), [std::ops::Range { start: 2, end: 4 }], "an end inside the sukun moves back before it");
+    assert_eq!(harakat_ranges(word, 3..9), [2..4, 6..8], "both ends inside characters");
+    assert_eq!(harakat_ranges(word, std::ops::Range { start: 9, end: 3 }), [2..4, 6..8], "reversed, inside characters");
+    assert!(harakat_ranges(word, 4..4).is_empty(), "empty");
+}
+
+/// The character-level pass names each glyph's own character only when it sets the same glyphs
+/// the same way, and only a character in that glyph's cluster: repeated glyph ids alone don't do.
+#[test]
+fn own_chars_need_the_same_setting_and_each_character_in_its_cluster() {
+    // بَبَب right to left: final beh (cluster 8), fatha and medial beh (cluster 4), fatha and
+    // initial beh (cluster 0). The two fathas share a glyph id, and so would two behs.
+    let raw = [(10, 8, 500, 0, 0), (20, 4, 0, -30, 400), (11, 4, 300, 0, 0), (20, 0, 0, -40, 420), (12, 0, 450, 0, 0)];
+    let by_char = |own: [u32; 5]| raw.iter().zip(own).map(|(g, c)| (g.0, c, g.2, 0, g.3, g.4)).collect::<Vec<_>>();
+    let ok = by_char([8, 6, 4, 2, 0]);
+    assert_eq!(own_chars(&raw, &ok, 10), [8, 6, 4, 2, 0]);
+    // The fathas' characters swapped (the same glyph ids): each is outside its glyph's cluster,
+    // so both keep their cluster's (their letter's) character, never the other fatha's.
+    assert_eq!(own_chars(&raw, &by_char([8, 2, 4, 6, 0]), 10), [8, 4, 4, 0, 0]);
+    // A character before its glyph's cluster, or past the segment's end: the cluster's own.
+    assert_eq!(own_chars(&raw, &by_char([8, 3, 4, 2, 0]), 10), [8, 4, 4, 2, 0]);
+    assert_eq!(own_chars(&raw, &by_char([9, 6, 4, 2, 0]), 9), [8, 6, 4, 2, 0]);
+    // The same ids set otherwise (an advance or an offset changed, another glyph, one short):
+    // nothing is borrowed.
+    let mut moved = ok.clone();
+    moved[1].5 += 1;
+    assert!(own_chars(&raw, &moved, 10).is_empty(), "a mark moved");
+    let mut wider = ok.clone();
+    wider[2].2 += 1;
+    assert!(own_chars(&raw, &wider, 10).is_empty(), "an advance changed");
+    let mut other = ok.clone();
+    other[0].0 = 13;
+    assert!(own_chars(&raw, &other, 10).is_empty(), "another glyph");
+    assert!(own_chars(&raw, &ok[1..], 10).is_empty(), "a glyph short");
+}
+
+/// A word whose letters and marks repeat the same glyph ids (بَبَب): each fatha takes its own
+/// colour, on its own letter, and every glyph is set as without colour.
+#[test]
+fn repeated_glyphs_take_their_own_harakat_colour() {
+    const WORD: &str = "بَبَب"; // ب 0, fatha 2, ب 4, fatha 6, ب 8
+    let db = db_with(&[NOTO]);
+    let green = Paint::solid(Color::rgb8(30, 140, 70));
+    let plain = text_with_harakat(WORD, FAMILY, None);
+    let mut coloured = plain.clone();
+    crate::edit::style_range(&mut coloured.runs, 2, 4, |st| st.fill = green.clone());
+    crate::edit::style_range(&mut coloured.runs, 6, 8, |st| st.fill = red());
+    let (a, b) = (layout(&db, &plain), layout(&db, &coloured));
+    assert_eq!(geometry(&a), geometry(&b), "joining and mark positions unchanged");
+    let fill = |g: &crate::PositionedGlyph| coloured.runs[g.run].style.fill.clone();
+    let marks: Vec<&crate::PositionedGlyph> = b.glyphs.iter().filter(|g| g.advance.abs() < 1e-6 && !g.outline.is_empty()).collect();
+    assert_eq!(marks.len(), 2, "two fathas");
+    assert_eq!(marks[0].gid, marks[1].gid, "the same glyph id twice");
+    for m in &marks {
+        let want = if m.byte == 0 { green.clone() } else { red() };
+        assert!(m.byte == 0 || m.byte == 4, "a fatha in its letter's cluster: {}", m.byte);
+        assert_eq!(fill(m), want, "the fatha of the letter at {} keeps its own colour", m.byte);
+    }
+    let letters = plain.runs[0].style.fill.clone();
+    assert!(b.glyphs.iter().filter(|g| g.advance.abs() >= 1e-6).all(|g| fill(g) == letters), "letters keep theirs");
+}
+
 /// Coloured harakat: the letters keep their joining and the marks their attachment, glyph for
 /// glyph and bit for bit; every mark glyph (and only the marks) is drawn in the harakat's run.
 #[test]
@@ -113,7 +185,8 @@ fn harakat_coloured_apart_keep_every_glyph_and_take_their_own_colour() {
     assert_ne!(geometry(&layout(&db, &sized)), geometry(&a));
 }
 
-/// Justified kashida lines with coloured harakat set the same words, glyphs and tatweels.
+/// Justified kashida lines with coloured harakat set the same words, glyphs and tatweels, and the
+/// marks of stretched words keep their colour.
 #[test]
 fn coloured_harakat_keep_kashida() {
     let db = db_with(&[NOTO]);
@@ -136,6 +209,43 @@ fn coloured_harakat_keep_kashida() {
         assert_eq!(geometry(&a), geometry(&b), "{width}");
     }
     assert!(tatweels > 0, "the text takes kashida");
+    // Harakat on every word: the stretched words carry coloured marks, which keep their colour.
+    let mut stretched = 0;
+    for width in [200.0, 260.0, 300.0, 420.0, 600.0] {
+        let mut plain = text_with_harakat(FULLY, FAMILY, None);
+        let mut coloured = text_with_harakat(FULLY, FAMILY, Some(red()));
+        justified(&mut plain, width);
+        justified(&mut coloured, width);
+        let (a, b) = (layout(&db, &plain), layout(&db, &coloured));
+        assert_eq!(geometry(&a), geometry(&b), "{width}");
+        stretched += stretched_words_with_harakat(FULLY, &b, tat);
+        assert_marks_keep(&coloured, &b, &red(), &format!("{width}"));
+    }
+    assert!(stretched > 0, "words with coloured harakat take kashida");
+}
+
+/// Harakat on every word.
+const FULLY: &str = "بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ";
+
+/// The words of `text` with harakat that `l` stretched with a tatweel (glyph `tat`).
+fn stretched_words_with_harakat(text: &str, l: &TextLayout, tat: u32) -> usize {
+    let mut words: Vec<usize> = l
+        .glyphs
+        .iter()
+        .filter(|g| g.gid == tat && g.len == 0)
+        .map(|g| text[..g.byte].rfind(' ').map_or(0, |i| i + 1))
+        .filter(|&start| text[start..].split(' ').next().is_some_and(|w| w.chars().any(is_harakat)))
+        .collect();
+    words.dedup();
+    words.len()
+}
+
+/// Every mark glyph of `l` (no advance, some ink) is drawn in `fill`, and only the marks.
+fn assert_marks_keep(t: &TextObject, l: &TextLayout, fill: &Paint, what: &str) {
+    for g in &l.glyphs {
+        let mark = g.len > 0 && g.advance.abs() < 1e-6 && !g.outline.is_empty();
+        assert_eq!(t.runs[g.run].style.fill == *fill, mark, "{what}: glyph {} at {} (mark: {mark})", g.gid, g.byte);
+    }
 }
 
 /// The fonts installed here (when present): coloured harakat change no glyph, position or
@@ -164,6 +274,7 @@ fn installed_fonts_keep_their_glyphs_with_coloured_harakat() {
     ];
     let db = FontDb::with_font_dirs(crate::system_font_dirs());
     let harakat = VOCALIZED.chars().filter(|c| is_harakat(*c)).count();
+    let bare: String = VOCALIZED.chars().filter(|c| !is_harakat(*c)).collect();
     let mut rows = vec![];
     for &family in FONTS {
         if !db.has_family(family) {
@@ -175,6 +286,12 @@ fn installed_fonts_keep_their_glyphs_with_coloured_harakat() {
         let (a, b) = (layout(&db, &plain), layout(&db, &coloured));
         assert_eq!(geometry(&a), geometry(&b), "{family}: coloured harakat changed the glyphs");
         let red_glyphs = painted(&coloured, &b, &red());
+        assert!(red_glyphs > 0, "{family}: the harakat take their colour");
+        // No letter takes the harakat's colour: no red glyph is one the text sets without harakat.
+        let letters: Vec<u32> = layout(&db, &text_with_harakat(&bare, &face.family, None)).glyphs.iter().map(|g| g.gid).collect();
+        let red_letters: Vec<(u32, usize)> =
+            b.glyphs.iter().filter(|g| coloured.runs[g.run].style.fill == red() && letters.contains(&g.gid)).map(|g| (g.gid, g.byte)).collect();
+        assert!(red_letters.is_empty(), "{family}: letters in the harakat colour {red_letters:?}");
         rows.push(format!("{family}: {} glyphs identical; {red_glyphs} glyphs in the harakat colour ({harakat} harakat)", b.glyphs.len()));
     }
     eprintln!("{rows:#?}");

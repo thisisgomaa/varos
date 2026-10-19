@@ -147,3 +147,79 @@ LEFT OUT / RISKS
   happened in the 18 installed fonts.
 - PDF: the Allah-ligature reversal (above). Copy-back from external PDF viewers is not verified.
 - Translations are mine (23 languages); a native-speaker review is welcome.
+
+REVIEW FIXES (2026-10-19, independent review: fix-first, no BLOCK)
+1. Character-level pass (text/shape.rs, logic in text/harakat.rs `own_chars`)
+   - The second pass is kept only when every glyph matches: glyph id, x advance, x and y offsets.
+   - Each glyph may take only a character inside its own cluster of the first pass. Otherwise it
+     keeps its cluster's run. The first pass's clusters never change.
+   - Found while fixing: morx fonts gave letters a mark's character from the next cluster. Before
+     the fix, some letters were drawn in the harakat colour (two ح in Geeza Pro, three letters in
+     Baghdad). That is why the earlier table counted 13-15.
+   - New per-font counts (glyphs in the harakat colour, out of 15 harakat):
+       Geeza Pro 11, SF Arabic 12, Al Nile 11, Baghdad 12, Damascus 12, KufiStandardGK 12,
+       DecoType Naskh 12, Diwan Thuluth 9, Farah 11, Noto Nastaliq Urdu 15, Arial 12,
+       Times New Roman 12, Tahoma 12, Noto Naskh Arabic 15, Noto Kufi Arabic 15, Amiri 15,
+       Aref Ruqaa 15, IBM Plex Sans Arabic 12.
+   - The test now asserts that every installed font colours at least one glyph. It also asserts
+     that no glyph in the harakat colour is a glyph the same text sets without harakat (a letter).
+   - Known gap: in Geeza Pro's Allah ligature, one mark glyph names a lam at character level, so
+     it keeps the letter colour. This never colours a letter.
+   - Tests:
+     - harakat::tests::own_chars_need_the_same_setting_and_each_character_in_its_cluster
+       (synthetic بَبَب with repeated ids, swapped, moved or wider)
+     - harakat::tests::repeated_glyphs_take_their_own_harakat_colour (بَبَب, Noto Sans Arabic,
+       each fatha in its own colour)
+     - harakat::tests::installed_fonts_keep_their_glyphs_with_coloured_harakat (strengthened)
+2. Kashida keeps harakat colour (text/kashida.rs)
+   - `same_setting` and `morx_trial_ok` now compare each glyph's run.
+   - Words drawn in several paint-only runs are checked on every trial, morx or not. Each
+     cluster's authored glyphs must keep the same runs (`same_paint`). A trial that fails this is
+     rejected.
+   - Tests:
+     - harakat::tests::coloured_harakat_keep_kashida: harakat on every word; stretched words with
+       harakat > 0; every mark red and nothing else red, tatweels included.
+     - kashida::tests::the_morx_path_keeps_the_colour_of_harakat (forced morx on Noto)
+     - kashida::tests::morx_trials_are_verified: a glyph in another run is rejected by all three
+       checks.
+3. "inherit" from the second mark (engine/cmd/varos_arabic.rs)
+   - Walks back over the harakat before choosing the source, so the source is the base letter.
+   - Test: cmd::varos_arabic::tests::inherit_from_the_second_mark_takes_the_letters_fill
+4. 150 % leading only for type made in this session
+   - Session.varos_new_type (engine/lib.rs, 2 hook lines; not saved) holds (document uid, object).
+   - It is set by text.create and text.createInPath when they make empty type (placeholder text
+     does not count).
+   - text.editRange applies the leading only when the object is in the set and was empty. Any
+     edit that starts from non-empty text removes it.
+   - Typing-session previews start from the empty snapshot, so they keep 150 % across keystrokes.
+   - Tests:
+     - cmd::varos_arabic::tests::an_emptied_object_keeps_its_leading (Latin type emptied; new
+       type typed Latin, emptied, then Arabic; Arabic type emptied at 120 %)
+     - cmd::varos_arabic::tests::new_type_typed_in_one_session_takes_the_arabic_leading
+       (preview keystrokes, commit, area type from a path)
+   - Limit: text that reaches the object through another command (text.setText) does not clear
+     the mark. Only text.editRange, which the Type tool uses, does.
+5. Range normalisation (text/harakat.rs `harakat_ranges`)
+   - The range is normalised as edit::style_range does it: clamped, each end moved back to its
+     character's start, put in order.
+   - Negative offsets were already an error (TextRange::parse). TextRange itself is unchanged
+     (upstream).
+   - Tests:
+     - harakat::tests::harakat_ranges_normalise_their_range
+     - cmd::varos_arabic::tests::style_harakat_normalises_its_range (reversed, past the end, inside
+       a character, negative start and end)
+NITs
+   - The installed-font test asserts coloured glyphs > 0 for every font present.
+   - Comments now say "once per saved UI profile" (ui-egui state.rs and middle_eastern_ui.rs).
+     Section A above should read the same: once per saved UI profile, not once per install.
+Gates (all --offline -j 4, tests --test-threads=4)
+   - cargo test, text + text-arabic + doc + engine + ui-egui: 0 failed (11m01s).
+     - text 326 passed, 2 ignored
+     - text-arabic 5 passed
+     - doc 238 passed
+     - engine lib 2569 passed, 2 ignored; integration targets all ok
+     - ui-egui 1704 passed, 2 ignored
+   - After two lint-only edits: text lib 326 passed and engine lib 2569 passed again.
+   - clippy --all-targets -D warnings on the same five crates: clean (44s).
+   - cargo check -p vectorcraft-text --target wasm32-unknown-unknown: ok.
+   - cargo fmt --all -- --check: clean. git diff --check: clean.

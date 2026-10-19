@@ -494,6 +494,7 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
     let x = f64_req(p, "x", "text.create")?;
     let y = f64_req(p, "y", "text.create")?;
     let text = str_param(p, "text").unwrap_or("");
+    let empty = text.is_empty(); // Varos
     let mut t = TextObject::point(Point::new(x, y), text, new_type_style(s, p));
     t.vertical = p.get("vertical").and_then(Value::as_bool).unwrap_or(false);
     t.para = new_type_para();
@@ -510,8 +511,10 @@ fn text_create(s: &mut Session, p: &Value) -> Result<Value> {
         // Lays the text out (and sizes an Auto Size frame).
         super::typecmd::refresh_bounds(&mut t);
     }
+    let empty = empty && t.runs.iter().all(|r| r.text.is_empty()); // Varos: not placeholder text
     let made = add_node(s, "Type", NodeKind::Text(Box::new(t)), Appearance::default(), None)?;
     let id = made.get("id").and_then(Value::as_u64).map(NodeId);
+    super::varos_arabic::note_new_type(s, id.filter(|_| empty)); // Varos: new type, empty
     let made = super::typecmd::with_bounds(s, id, made);
     Ok(super::typecmd::with_overflow(s, id.as_slice(), made))
 }

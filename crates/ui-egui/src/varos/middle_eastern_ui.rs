@@ -21,9 +21,9 @@ use vectorcraft_doc::{CharStyle, ParaDirection, ParaStyle};
 use crate::VectorcraftApp;
 use crate::theme::Tokens;
 
-/// Turn the Middle Eastern (Indic) options on once, the fork's default for an Arabic-first tool:
-/// a fresh install and an upgraded one alike. Afterwards the user's own choice in Preferences
-/// stands (remembered in [`crate::state::UiState::varos_middle_eastern`]).
+/// Turn the Middle Eastern (Indic) options on once per saved UI profile, the fork's default for an
+/// Arabic-first tool: a fresh profile and an upgraded one alike. Afterwards the user's own choice
+/// in Preferences stands (remembered in [`crate::state::UiState::varos_middle_eastern`]).
 pub(crate) fn default_on(app: &mut VectorcraftApp, prefs: &mut vectorcraft_engine::Prefs) {
     if !app.ui.varos_middle_eastern {
         prefs.show_indic_options = true;

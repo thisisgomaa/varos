@@ -699,15 +699,13 @@ fn shape_segment(text: &str, context: &Range<usize>, seg: &Segment, feats: &OtFe
             *tatweel = flags;
             let raw = &*raw;
             let same_glyphs = |v: &[(u32, u32, i32, i32, i32, i32)]| v.len() == raw.len() && v.iter().zip(raw).all(|(a, b)| a.0 == b.0);
-            // Varos: the same shaping at character level names each glyph's own character
-            // (positions and glyphs as above; kept only when the glyphs are the same).
+            // Varos: the same shaping at character level names each glyph's own character (kept
+            // only when it sets the same glyphs alike, each character in its glyph's cluster).
             if styled_marks {
                 char_level.set(true);
                 let by_char = shape(&feats.resolve(st), along).0;
                 char_level.set(false);
-                if same_glyphs(&by_char) {
-                    *chars = by_char.iter().map(|g| g.1).collect();
-                }
+                *chars = crate::harakat::own_chars(raw, &by_char, range.end);
             }
             if feats.proportional(st) {
                 // `palt` is positioning only: the same glyphs set on their full widths tell which

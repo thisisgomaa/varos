@@ -136,6 +136,9 @@ struct Word {
     /// HarfRust shapes the face with `morx` ([`morx_shaped`]): its slots come from the joining
     /// rules and each trial is verified ([`morx_trial_ok`]).
     morx: bool,
+    /// Varos: its glyphs are drawn in several runs that differ only in paint (harakat coloured
+    /// apart, `crate::harakat`): each trial must keep every glyph's run ([`same_paint`]).
+    painted: bool,
 }
 
 /// Does HarfRust shape `face` with its `morx` (or older `mort`) tables, joining its letters?
@@ -185,7 +188,8 @@ fn joins_letters(face: &crate::fontdb::FontFace) -> bool {
 /// (a) it has exactly one more glyph per tatweel, and each tatweel is a glyph of its own (zero
 ///     source length, U+0640);
 /// (b) every authored glyph is unchanged: same glyph id (the letters beside each tatweel kept
-///     their joining forms), same cluster and the same offsets (marks stay where they were);
+///     their joining forms), same cluster, the same offsets (marks stay where they were) and the
+///     same run (a harakat coloured apart keeps its colour);
 /// (c) no glyph is `.notdef`;
 /// (d) every authored glyph keeps its advance (within a font unit), and the word grew by the
 ///     tatweels' advances, within a font unit each.
@@ -213,6 +217,7 @@ pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usiz
             a.gid == b.gid
                 && a.byte == b.byte
                 && a.len == b.len
+                && a.run == b.run
                 && (a.dx - b.dx).abs() < EPS
                 && (a.dy - b.dy).abs() < EPS
                 && (a.adv - b.adv).abs() <= unit_of(b)
@@ -223,18 +228,33 @@ pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usiz
     same && (grown - added).abs() <= unit + EPS
 }
 
-/// The same glyphs set the same way (re-shaping a word apart must reproduce the paragraph's).
+/// The same glyphs set the same way, each in the same run (re-shaping a word apart must
+/// reproduce the paragraph's, harakat coloured apart included).
 fn same_setting(a: &[SGlyph], b: &[SGlyph]) -> bool {
     a.len() == b.len()
         && a.iter().zip(b).all(|(a, b)| {
             a.gid == b.gid
                 && a.byte == b.byte
                 && a.len == b.len
+                && a.run == b.run
                 && a.face.id() == b.face.id()
                 && (a.adv - b.adv).abs() < EPS
                 && (a.dx - b.dx).abs() < EPS
                 && (a.dy - b.dy).abs() < EPS
         })
+}
+
+/// Varos: the authored glyphs (tatweels aside) of a word re-shaped with tatweels, `trial`, are
+/// drawn in the runs the paragraph drew them in (`original`): each cluster's glyphs in the same
+/// runs. A trial whose character-level pass fell back would draw a coloured harakat in its
+/// letter's run (`crate::harakat`).
+fn same_paint(original: &[SGlyph], trial: &[SGlyph]) -> bool {
+    let runs = |v: &[SGlyph]| {
+        let mut r: Vec<(usize, usize)> = v.iter().filter(|g| g.len > 0).map(|g| (g.byte, g.run)).collect();
+        r.sort_unstable();
+        r
+    };
+    runs(original) == runs(trial)
 }
 
 /// A word's glyphs re-shaped with `slots`, at the paragraph's Desired justification values,
@@ -319,7 +339,14 @@ pub(crate) fn stretch_line(
         if !ok {
             continue;
         }
-        let word = Word { glyphs: a..j, bytes, width: glyphs.iter().map(|g| g.adv).sum(), face: first.face.id(), morx: morx_shaped(&first.face) };
+        let word = Word {
+            glyphs: a..j,
+            bytes,
+            width: glyphs.iter().map(|g| g.adv).sum(),
+            face: first.face.id(),
+            morx: morx_shaped(&first.face),
+            painted: glyphs.iter().any(|g| g.run != first.run),
+        };
         let same = reshaped(sh, &word, &[], options, first.leading).is_some_and(|(again, _)| same_setting(&again, glyphs));
         if same {
             words.push(word);
@@ -332,7 +359,7 @@ pub(crate) fn stretch_line(
     // A morx-only face's boundaries: the joining rules', each trial verified below.
     let joining = |w: &Word| arabic::candidates(sh.text, w.bytes.clone()).map(|c| c.into_iter().map(|c| c.byte).collect()).unwrap_or_default();
     let native_safe: Vec<Vec<usize>> = words.iter().map(|w| if w.morx { joining(w) } else { safe(&sg[w.glyphs.clone()]) }).collect();
-    let originals: Vec<Vec<SGlyph>> = words.iter().map(|w| if w.morx { sg[w.glyphs.clone()].to_vec() } else { vec![] }).collect();
+    let originals: Vec<Vec<SGlyph>> = words.iter().map(|w| if w.morx || w.painted { sg[w.glyphs.clone()].to_vec() } else { vec![] }).collect();
     let leading: Vec<f64> = words.iter().map(|w| sg[w.glyphs.start].leading).collect();
     let line_bytes = words[0].bytes.start.min(sg[i].byte)..words.iter().map(|w| w.bytes.end).max().unwrap_or(0);
     let mut cache: HashMap<(usize, Vec<usize>), Option<Setting>> = HashMap::new();
@@ -349,6 +376,10 @@ pub(crate) fn stretch_line(
             }
             let set = cache.entry((k, mine.clone())).or_insert_with(|| reshaped(sh, word, &mine, options, leading[k])).clone()?;
             if word.morx && !morx_trial_ok(&originals[k], &set.0, &mine) {
+                return None;
+            }
+            // Varos: a coloured harakat keeps its colour in the stretched word.
+            if word.painted && !same_paint(&originals[k], &set.0) {
                 return None;
             }
             width += set.0.iter().map(|g| g.adv).sum::<f64>() - word.width;

@@ -1356,6 +1356,9 @@ pub struct Session {
     pub link_stamps: std::collections::HashMap<(u64, String), link_watch::Stamp>,
     /// The stamps being taken on a worker thread ([`Session::start_link_scan`]).
     pub link_scan: Option<link_watch::LinkScan>,
+    /// Varos: type created empty in this session, until text first reaches it (document uid,
+    /// object): [`cmd::varos_arabic::arabic_new_type_leading`]. Not saved.
+    pub(crate) varos_new_type: std::collections::HashSet<(u64, NodeId)>,
 }
 
 impl Default for Session {
@@ -1419,6 +1422,7 @@ impl Session {
             search_threads: None,
             link_stamps: Default::default(),
             link_scan: None,
+            varos_new_type: Default::default(), // Varos
         }
     }
 
