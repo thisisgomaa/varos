@@ -5057,3 +5057,17 @@ mark-style	Japanese	Japońskie
 	Minimum must not exceed Desired, nor Desired Maximum.	Minimum nie może przekraczać wartości optymalnej, a wartość optymalna maksimum.
 	Justification	Justowanie
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	zmienne i zestawy danych pliku nie zostały wczytane (zmienne: {variables}, zestawy danych: {data_sets}): panel Zmienne ich nie wyświetla
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Fonty arabskie
+	Arabic Samples	Próbki arabskie
+	Show an Arabic line in each Arabic font	Pokaż arabski wiersz w każdym arabskim foncie
+	Only fonts whose Arabic letters join	Tylko fonty, których arabskie litery się łączą
+	All Arabic	Całe arabskie
+	Naskh	Naskh
+	Kufi	Kufi
+	Ruq’ah	Ruq’ah
+	Diwani	Diwani
+	Thuluth	Thuluth
+	Modern Sans	Nowoczesny bezszeryfowy
+	Guessed from the font's name; fonts it can't place are under All Arabic	Odgadnięte z nazwy fontu; fonty bez grupy są w Całe arabskie
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Kształtowanie AAT: ten font jest składany własnymi tabelami morx, a nie regułami OpenType dla arabskiego

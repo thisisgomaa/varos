@@ -4815,3 +4815,17 @@ lighting	Light	Свет
 	Minimum	Минимум
 	Justification	Выключка
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	переменные и наборы данных файла не прочитаны (переменных: {variables}, наборов данных: {data_sets}): панель «Переменные» их не показывает
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Арабские шрифты
+	Arabic Samples	Арабские образцы
+	Show an Arabic line in each Arabic font	Показывать арабскую строку в каждом арабском шрифте
+	Only fonts whose Arabic letters join	Только шрифты, в которых арабские буквы соединяются
+	All Arabic	Все арабские
+	Naskh	Насх
+	Kufi	Куфи
+	Ruq’ah	Рукаа
+	Diwani	Дивани
+	Thuluth	Сульс
+	Modern Sans	Современный гротеск
+	Guessed from the font's name; fonts it can't place are under All Arabic	Определено по названию шрифта; шрифты без группы находятся в разделе «Все арабские»
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Формирование AAT: этот шрифт набирается собственными таблицами morx, а не правилами OpenType для арабского

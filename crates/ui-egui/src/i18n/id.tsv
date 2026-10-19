@@ -5188,3 +5188,17 @@ swatch	Bright Violet	Violet cerah
 	Full Justify	Rata Penuh
 	Minimum must not exceed Desired, nor Desired Maximum.	Minimum tidak boleh melebihi Diinginkan, dan Diinginkan tidak boleh melebihi Maksimum.
 	Justification	Justifikasi
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Font Arab
+	Arabic Samples	Contoh Arab
+	Show an Arabic line in each Arabic font	Tampilkan satu baris Arab di setiap font Arab
+	Only fonts whose Arabic letters join	Hanya font yang huruf Arabnya bersambung
+	All Arabic	Semua Arab
+	Naskh	Naskhi
+	Kufi	Kufi
+	Ruq’ah	Riq'ah
+	Diwani	Diwani
+	Thuluth	Tsuluts
+	Modern Sans	Sans modern
+	Guessed from the font's name; fonts it can't place are under All Arabic	Ditebak dari nama font; font yang tidak dapat digolongkan ada di Semua Arab
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Pembentukan AAT: font ini disusun dengan tabel morx miliknya sendiri, bukan aturan OpenType untuk bahasa Arab

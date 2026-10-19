@@ -4782,3 +4782,17 @@ lighting	Light	광원
 	Minimum	최소
 	Justification	양끝 맞춤
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	파일의 변수와 데이터 세트를 읽지 않았습니다(변수: {variables}, 데이터 세트: {data_sets}). 변수 패널에 표시되지 않습니다
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	아랍어 글꼴
+	Arabic Samples	아랍어 샘플
+	Show an Arabic line in each Arabic font	각 아랍어 글꼴에 아랍어 한 줄 표시
+	Only fonts whose Arabic letters join	아랍 문자가 이어지는 글꼴만
+	All Arabic	모든 아랍어
+	Naskh	나스흐
+	Kufi	쿠피
+	Ruq’ah	루카
+	Diwani	디와니
+	Thuluth	술루스
+	Modern Sans	모던 산세리프
+	Guessed from the font's name; fonts it can't place are under All Arabic	글꼴 이름으로 추정합니다. 분류할 수 없는 글꼴은 '모든 아랍어'에 있습니다
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT 셰이핑: 이 글꼴은 OpenType 아랍어 규칙이 아니라 자체 morx 표로 조판됩니다

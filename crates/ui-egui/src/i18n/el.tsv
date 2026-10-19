@@ -5157,3 +5157,17 @@ effect	Points	Σημεία
 	Minimum must not exceed Desired, nor Desired Maximum.	Το ελάχιστο δεν πρέπει να υπερβαίνει το επιθυμητό, ούτε το επιθυμητό το μέγιστο.
 	Justification	Πλήρης στοίχιση
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	οι μεταβλητές και τα σύνολα δεδομένων του αρχείου δεν διαβάστηκαν (μεταβλητές: {variables}, σύνολα δεδομένων: {data_sets}): ο πίνακας Μεταβλητές δεν τα εμφανίζει
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	Αραβικές γραμματοσειρές
+	Arabic Samples	Αραβικά δείγματα
+	Show an Arabic line in each Arabic font	Εμφάνιση αραβικής γραμμής σε κάθε αραβική γραμματοσειρά
+	Only fonts whose Arabic letters join	Μόνο γραμματοσειρές των οποίων τα αραβικά γράμματα ενώνονται
+	All Arabic	Όλα τα αραβικά
+	Naskh	Νασχ
+	Kufi	Κούφι
+	Ruq’ah	Ρούκαα
+	Diwani	Ντιβανί
+	Thuluth	Θουλούθ
+	Modern Sans	Σύγχρονη sans
+	Guessed from the font's name; fonts it can't place are under All Arabic	Εκτίμηση από το όνομα της γραμματοσειράς· όσες δεν κατατάσσονται βρίσκονται στο «Όλα τα αραβικά»
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	Μορφοποίηση AAT: η γραμματοσειρά στοιχειοθετείται με τους δικούς της πίνακες morx, όχι με τους κανόνες OpenType για τα αραβικά

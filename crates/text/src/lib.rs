@@ -10,6 +10,8 @@
 //! Frames (`TextKind::Area`) and paths (`TextKind::OnPath`) are interpreted in text space.
 #![forbid(unsafe_code)]
 
+// Varos: Arabic facts about fonts for the font menus (filter, samples, markers).
+pub mod arabic_fonts;
 mod composer;
 pub mod craft_fonts;
 pub mod edit;

@@ -152,7 +152,7 @@ fn remap_highlight(before: &[Row], selected: Option<usize>, after: &[Row]) -> Op
 
 /// What the rows were listed for: the query, the script, kind and favourites filters, Show Font
 /// Names in English, the expanded families, the favourites and the font list's generation.
-type RowsKey = (String, usize, Option<FontClass>, bool, bool, Vec<String>, Vec<String>, u64);
+type RowsKey = (String, usize, Option<FontClass>, bool, bool, Vec<String>, Vec<String>, u64, crate::varos::arabic_fonts::FilterKey); // Varos: + Arabic filter
 
 /// The menu's state between frames.
 #[derive(Clone, Default)]
@@ -181,6 +181,8 @@ struct MenuState {
     rows_key: Option<RowsKey>,
     /// The list's scroll offset last frame.
     scrolled: f32,
+    /// Varos: the Arabic filter and samples.
+    arabic: crate::varos::arabic_fonts::ArabicMenu,
 }
 
 /// The font family menu showing `current`, `width` points wide, rows sampling `sample` (the
@@ -272,6 +274,7 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
             }
         }
     });
+    refilter |= st.arabic.chips(ui); // Varos
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
     let db = vectorcraft_text::FontDb::global();
     // The current family by its own name (a document may name it in Japanese: ヒラギノ角ゴシック),
@@ -280,8 +283,17 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
     let current = current.as_str();
     let favorite = |f: &str| look.favorites.iter().any(|x| x.eq_ignore_ascii_case(f));
     // The generation is read first: fonts that load meanwhile make the next frame list them.
-    let key: RowsKey =
-        (query.clone(), st.script, st.class, st.favorites_only, look.english_names, st.expanded.clone(), look.favorites.to_vec(), db.generation());
+    let key: RowsKey = (
+        query.clone(),
+        st.script,
+        st.class,
+        st.favorites_only,
+        look.english_names,
+        st.expanded.clone(),
+        look.favorites.to_vec(),
+        db.generation(),
+        st.arabic.key(), // Varos
+    );
     if st.rows_key.as_ref() != Some(&key) {
         let wanted = |f: &str| {
             let label = db.family_display_name(f, look.english_names);
@@ -290,6 +302,9 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
             }
             if st.favorites_only && !favorite(f) {
                 return false;
+            }
+            if !st.arabic.wanted(db, f) {
+                return false; // Varos
             }
             if st.script == 0 && st.class.is_none() {
                 return true;
@@ -424,11 +439,20 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
                 Row::Style(_, style) => style.clone(),
                 Row::Family(f) => db.family_display_name(f, look.english_names),
             };
-            ui.painter_at(name_rect).text(name_rect.left_center(), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(12.0), t.text);
+            // Varos: Arabic names set by the text pipeline; a family's Arabic name and AAT marker.
+            let family_row = matches!(row, Row::Family(_)).then(|| row.family());
+            let named = |text: &str, h: f32| sample_texture(ui.ctx(), row.family(), None, Some(text), h);
+            crate::varos::arabic_fonts::paint_name(ui, name_rect, &name, family_row, st.arabic.only, &named);
             let sample_rect = egui::Rect::from_min_max(rect.min + vec2(name_w, 2.0), rect.max - vec2(STAR + 2.0, 2.0));
             if !look.samples {
-            } else if let Some(tex) = sample_texture(ui.ctx(), row.family(), row.style(), sample, sample_rect.height()) {
-                paint_sample(ui, sample_rect, &tex, t.text);
+            } else if let Some((text, rtl)) = st.arabic.row_sample(db, row.family(), sample) // Varos: Arabic samples
+                && let Some(tex) = sample_texture(ui.ctx(), row.family(), row.style(), text.as_deref(), sample_rect.height())
+            {
+                if rtl {
+                    crate::varos::arabic_fonts::paint_rtl(ui, sample_rect, &tex, t.text);
+                } else {
+                    paint_sample(ui, sample_rect, &tex, t.text);
+                }
             }
             if resp.clicked() && !on_triangle && !on_star {
                 chosen = Some(row.pick());
@@ -597,6 +621,10 @@ const MAX_ASPECT: f32 = 10.0;
 /// `text` (or [`FALLBACK_SAMPLE`] when the font lacks some of its characters) set in `family`,
 /// `px` pixels high: a coverage mask as white with alpha.
 fn render_sample(family: &str, style: &str, text: &str, px: u32) -> Option<egui::ColorImage> {
+    // Varos: Arabic is set right to left in the face itself, never replaced by a Latin "Sample".
+    if vectorcraft_text::arabic_fonts::is_arabic_text(text) {
+        return crate::varos::arabic_fonts::render(family, style, text, px);
+    }
     let db = vectorcraft_text::FontDb::global();
     let face: Arc<vectorcraft_text::FontFace> = db.face(family, style)?;
     let covers = |s: &str| !s.trim().is_empty() && s.chars().filter(|c| !c.is_whitespace()).all(|c| face.covers(c));

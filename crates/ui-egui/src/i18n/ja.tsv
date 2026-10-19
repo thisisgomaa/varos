@@ -4859,3 +4859,17 @@ lighting	Light	ライト
 	Minimum	最小
 	Justification	文字組み
 @msg	the file's variables and data sets weren't read (variables: {variables}, data sets: {data_sets}): the Variables panel doesn't list them	ファイルの変数とデータセットは読み込まれませんでした (変数: {variables}、データセット: {data_sets})。変数パネルには表示されません
+# Varos: Arabic font menu (chips, style groups, AAT shaping marker).
+	Arabic Fonts	アラビア語フォント
+	Arabic Samples	アラビア語サンプル
+	Show an Arabic line in each Arabic font	各アラビア語フォントにアラビア語の行を表示
+	Only fonts whose Arabic letters join	アラビア文字がつながるフォントのみ
+	All Arabic	すべてのアラビア語
+	Naskh	ナスフ体
+	Kufi	クーフィー体
+	Ruq’ah	ルクア体
+	Diwani	ディーワーニー体
+	Thuluth	スルス体
+	Modern Sans	モダンサンセリフ
+	Guessed from the font's name; fonts it can't place are under All Arabic	フォント名から推定。分類できないフォントは「すべてのアラビア語」にあります
+	AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules	AAT シェーピング：このフォントは OpenType のアラビア語ルールではなく、独自の morx テーブルで組版されます
