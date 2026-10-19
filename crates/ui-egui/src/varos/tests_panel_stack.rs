@@ -14,22 +14,27 @@ struct Harness {
     app: VectorcraftApp,
     ctx: egui::Context,
     time: f64,
+    screen: egui::Vec2,
 }
 
 impl Harness {
     fn new() -> Self {
+        Self::sized(SCREEN)
+    }
+
+    fn sized(screen: egui::Vec2) -> Self {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
         app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let mut h = Self { app, ctx, time: 0.0 };
+        let mut h = Self { app, ctx, time: 0.0, screen };
         h.settle();
         h
     }
 
     fn frame(&mut self, events: Vec<egui::Event>) {
         self.time += 0.05;
-        let screen = Rect::from_min_size(egui::Pos2::ZERO, SCREEN);
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, self.screen);
         let input = egui::RawInput { time: Some(self.time), events, screen_rect: Some(screen), ..Default::default() };
         let app = &mut self.app;
         self.ctx
@@ -85,6 +90,12 @@ impl Harness {
 
     fn stack_rect(&self) -> Option<Rect> {
         self.ctx.memory(|m| m.area_rect(egui::Id::new("varos-panel-stack")))
+    }
+
+    /// The stack was drawn in the last frame.
+    fn stack_drawn(&self) -> bool {
+        let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("varos-panel-stack"));
+        self.ctx.memory(|m| m.areas().visible_last_frame(&layer))
     }
 }
 
@@ -180,4 +191,92 @@ fn floating_or_a_workspace_takes_panels_out_of_the_stack() {
     h.app.run("window.workspace", json!({"name": crate::workspaces::ESSENTIALS})).unwrap();
     h.settle();
     assert!(h.open().len() <= 1, "the workspace's own panel at most: {:?}", h.open());
+}
+
+/// Tab (`window.dock`) and Shift+Tab (`window.panels`) hide the whole stack, not just its newest
+/// card; showing the panels again brings every card back.
+#[test]
+fn hiding_the_panels_hides_the_whole_stack_and_brings_it_back() {
+    for command in ["window.dock", "window.panels"] {
+        let mut h = Harness::new();
+        h.tap("character");
+        h.tap("paragraph");
+        assert!(h.stack_drawn());
+        h.app.run(command, json!({})).unwrap();
+        h.settle();
+        assert!(!h.app.ui.dock, "{command} hid the panels");
+        assert!(h.open().is_empty() && h.app.ui.open_panel.is_none() && !h.stack_drawn(), "{command}: nothing visible");
+        assert_eq!(h.app.ui.varos_panel_stack.open, ["character", "paragraph"], "{command}: the stack waits");
+        h.app.run(command, json!({})).unwrap();
+        h.settle();
+        assert_eq!(h.open(), ["character", "paragraph"], "{command}: both back");
+        assert_eq!(h.app.ui.open_panel.as_deref(), Some("paragraph"));
+        assert!(h.stack_drawn(), "{command}: the stack shows again");
+    }
+}
+
+/// A layout change of a card that isn't the newest (here floating Character) takes only that
+/// panel out; the newer cards stay open.
+#[test]
+fn floating_an_older_card_keeps_the_others_open() {
+    let mut h = Harness::new();
+    for id in ["character", "paragraph", "glyphs"] {
+        h.tap(id);
+    }
+    h.app.run("window.panel.float", json!({"panel": "character"})).unwrap();
+    h.settle();
+    assert_eq!(h.open(), ["paragraph", "glyphs"]);
+    assert_eq!(h.app.ui.open_panel.as_deref(), Some("glyphs"));
+    // Docked back to its icon, it pops out again as the newest.
+    h.app.run("window.panel.dock", json!({"panel": "character", "group": true})).unwrap();
+    h.settle();
+    assert_eq!(h.open(), ["paragraph", "glyphs", "character"]);
+}
+
+/// A saved profile goes through `sanitized` (which drops upstream's open flyout): the stack
+/// comes back at the next launch without ids that are no panel any more.
+#[test]
+fn a_saved_stack_survives_sanitizing_and_drops_unknown_panels() {
+    let mut h = Harness::new();
+    h.app.ui.varos_panel_stack.open = vec!["character".into(), "noSuchPanel".into(), "paragraph".into()];
+    h.app.ui.open_panel = Some("paragraph".into());
+    let saved = serde_json::to_vec(&h.app.ui).unwrap();
+    let restored: crate::state::UiState = serde_json::from_slice(&saved).unwrap();
+    let restored = restored.sanitized();
+    assert!(restored.open_panel.is_none(), "upstream drops its flyout on load");
+    let mut h2 = Harness::new();
+    h2.app.ui = restored;
+    h2.settle();
+    assert_eq!(h2.open(), ["character", "paragraph"]);
+    assert_eq!(h2.app.ui.open_panel.as_deref(), Some("paragraph"));
+    assert!(!h2.app.ui.varos_panel_stack.open.iter().any(|p| p == "noSuchPanel"));
+    drop(h);
+}
+
+/// In a short window a tall stack stays on screen (it scrolls) and its icons still answer.
+#[test]
+fn a_tall_stack_stays_in_a_short_window() {
+    let mut h = Harness::sized(vec2(1600.0, 900.0));
+    for id in ["character", "paragraph", "glyphs"] {
+        h.tap(id);
+    }
+    assert_eq!(h.open(), ["character", "paragraph", "glyphs"]);
+    let stack = h.stack_rect().unwrap();
+    assert!(stack.top() >= 0.0 && stack.bottom() <= 900.0, "on screen: {stack:?}");
+    // Scrolled by the wheel over it, the stack keeps its place on screen.
+    let at = stack.center();
+    h.frame(vec![
+        egui::Event::PointerMoved(at),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        },
+    ]);
+    h.settle();
+    let after = h.stack_rect().unwrap();
+    assert!(after.bottom() <= 900.0 && (after.top() - stack.top()).abs() < 1.0, "{stack:?} -> {after:?}");
+    h.tap("glyphs");
+    assert_eq!(h.open(), ["character", "paragraph"]);
 }

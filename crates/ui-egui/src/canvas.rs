@@ -699,7 +699,7 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
         (factor, scroll)
     } else {
         let alt = turn.alt;
-        ui.input(|i| crate::varos::zoom::instant(i, wheel_zooms, alt, &mut turn.glide, line, rect.height(), WHEEL_ZOOM, (factor, scroll)))
+        crate::varos::zoom::instant(ui, wheel_zooms, alt, &mut turn.glide, line, rect.height(), WHEEL_ZOOM, (factor, scroll))
     };
     if turn != turn_before {
         ui.data_mut(|d| d.insert_temp(turn_id, turn));

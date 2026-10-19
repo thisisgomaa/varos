@@ -315,7 +315,7 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         icons.insert(panel.to_string());
     }
     if operation == "activate" && icon_panel && !layout.contains(&panel.to_string()) {
-        app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(panel) { None } else { Some(panel.into()) };
+        crate::varos::panel_stack::toggle(app, panel); // Varos: keep-open toggles this panel only
         return Ok(json!({"panel": panel, "open": app.ui.open_panel}));
     }
     if operation == "dock" && params.get("anchor").or_else(|| params.get("onto")).is_none() {
@@ -358,6 +358,7 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         }
         app.ui.docking_hidden = hidden;
         sync_legacy(app);
+        crate::varos::panel_stack::layout_changed(app, &members); // Varos: the others stay open
         app.ui.open_panel = open;
         return Ok(json!({"panel": panel, "floating": false, "layout": app.ui.docking}));
     }
@@ -489,6 +490,7 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         }
     }
     sync_legacy(app);
+    crate::varos::panel_stack::layout_changed(app, &members); // Varos: the others stay open
     app.ui.open_panel = None;
     app.ui.dock = true;
     if matches!(operation, "activate" | "move" | "dock") {

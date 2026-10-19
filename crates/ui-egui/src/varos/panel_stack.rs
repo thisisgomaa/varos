@@ -99,6 +99,16 @@ pub(crate) fn reconcile(app: &mut VectorcraftApp) {
         stack.seen = None;
     }
     stack.generation = Some(generation);
+    if !ui.dock {
+        // The panels are hidden (Tab, Shift+Tab, Window › Hide Panels), which also put upstream's
+        // flyout away: the whole stack waits, unchanged, and comes back with the panels.
+        if let Some(now) = &ui.open_panel {
+            stack.open.retain(|p| p != now);
+            stack.open.push(now.clone());
+        }
+        stack.seen = ui.open_panel.clone();
+        return;
+    }
     if ui.open_panel != stack.seen {
         match (&ui.open_panel, &stack.seen) {
             (Some(now), _) => {
@@ -133,8 +143,15 @@ pub(crate) fn toggle(app: &mut VectorcraftApp, id: &str) {
         return;
     }
     reconcile(app);
+    let hidden = !app.ui.dock;
     let stack = &mut app.ui.varos_panel_stack;
-    if stack.open.iter().any(|p| p == id) {
+    if hidden {
+        // Asked for while the panels are hidden (Window › that panel shows them): it opens, the
+        // newest, with the rest of the stack.
+        stack.open.retain(|p| p != id);
+        stack.open.push(id.to_string());
+        app.ui.open_panel = Some(id.to_string());
+    } else if stack.open.iter().any(|p| p == id) {
         stack.open.retain(|p| p != id);
         if app.ui.open_panel.as_deref() == Some(id) {
             app.ui.open_panel = stack.open.last().cloned();
@@ -146,9 +163,22 @@ pub(crate) fn toggle(app: &mut VectorcraftApp, id: &str) {
     app.ui.varos_panel_stack.seen = app.ui.open_panel.clone();
 }
 
-/// The panels the stack shows now, oldest first.
-pub(crate) fn shown(app: &VectorcraftApp) -> Vec<&'static str> {
+/// A panel-layout change (float, dock, move, close) of `moved` is about to put upstream's flyout
+/// away (`open_panel = None`): those panels leave the stack, the others stay open, and that `None`
+/// is not read as the newest panel being closed.
+pub(crate) fn layout_changed(app: &mut VectorcraftApp, moved: &[String]) {
     if !active(app) {
+        return;
+    }
+    reconcile(app);
+    let stack = &mut app.ui.varos_panel_stack;
+    stack.open.retain(|p| !moved.contains(p));
+    stack.seen = None;
+}
+
+/// The panels the stack shows now, oldest first (none while the panels are hidden).
+pub(crate) fn shown(app: &VectorcraftApp) -> Vec<&'static str> {
+    if !active(app) || !app.ui.dock {
         return Vec::new();
     }
     app.ui.varos_panel_stack.open.iter().filter(|p| pops_out(app, p)).filter_map(|p| intern(p)).collect()

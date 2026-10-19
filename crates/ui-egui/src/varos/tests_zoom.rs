@@ -102,3 +102,50 @@ fn pinch_and_zoom_in_land_at_once() {
     app.run("view.zoomIn", json!({})).unwrap();
     assert!(app.view().unwrap().zoom > before);
 }
+
+/// A Cmd (or Alt) trackpad gesture keeps zooming after the key is let go mid-gesture, as egui
+/// counts it: its momentum events carry no modifier but belong to the gesture that began with
+/// one. Each such frame zooms about the pointer and scrolls nothing; a gesture begun without a
+/// modifier scrolls.
+#[test]
+fn a_gesture_keeps_zooming_after_its_modifier_is_let_go() {
+    for (key, zooms) in [("cmd", true), ("alt", true), ("", false)] {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        run(&mut app, &ctx);
+        let rect = app.canvas_rect.unwrap();
+        let at = rect.center() + vec2(30.0, 20.0);
+        app.synthetic.push(egui::Event::PointerMoved(at));
+        run(&mut app, &ctx);
+        let held = match key {
+            "cmd" => egui::Modifiers::COMMAND,
+            "alt" => egui::Modifiers::ALT,
+            _ => egui::Modifiers::NONE,
+        };
+        let wheel = |phase, modifiers| egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(0.0, 4.0), phase, modifiers };
+        let steps = [
+            (egui::TouchPhase::Start, held),
+            (egui::TouchPhase::Move, held),
+            // The key is let go: momentum events come without it.
+            (egui::TouchPhase::Move, egui::Modifiers::NONE),
+            (egui::TouchPhase::Move, egui::Modifiers::NONE),
+            (egui::TouchPhase::End, egui::Modifiers::NONE),
+        ];
+        for (k, (phase, mods)) in steps.into_iter().enumerate() {
+            let before = *app.view().unwrap();
+            app.synthetic.push(wheel(phase, mods));
+            run(&mut app, &ctx);
+            let after = *app.view().unwrap();
+            if phase != egui::TouchPhase::Move {
+                continue;
+            }
+            let ratio = after.zoom / before.zoom;
+            let moved = crate::canvas::Xf::new(rect, &after).to_doc(at).distance(crate::canvas::Xf::new(rect, &before).to_doc(at));
+            if zooms {
+                assert!(ratio > 1.001 && moved < 1e-6, "{key} step {k}: zooms about the pointer ({ratio}, {moved})");
+            } else {
+                assert!((ratio - 1.0).abs() < 1e-12 && moved > 0.5, "{key} step {k}: scrolls ({ratio}, {moved})");
+            }
+        }
+    }
+}

@@ -130,3 +130,62 @@ fn only_area_type_has_outer_handles() {
     assert_ne!(app.session.cursor(outer, Mods::default(), view()), vectorcraft_tools::Cursor::ResizeNwSe, "a rectangle's corner rotates there");
     let _ = id;
 }
+
+/// The type's leading as seen on the page, in points.
+fn leading(t: &TextObject) -> f64 {
+    let l = t.runs[0].style.leading.expect("an explicit leading");
+    (t.xf * Point::new(0.0, l) - t.xf * Point::ZERO).hypot()
+}
+
+/// An explicit leading scales with the type and the frame.
+#[test]
+fn an_outer_handle_scales_an_explicit_leading_too() {
+    let (mut app, id) = app();
+    app.run("text.setStyle", json!({"leading": 20})).unwrap();
+    let before = text(&app, id);
+    assert!((leading(&before) - 20.0).abs() < 1e-9);
+    let f0 = frame(&before);
+    let outer = corner(&mut app) + Vec2::new(10.0, 10.0);
+    drag(&mut app, outer, Vec2::new(60.0, 60.0), Mods::default());
+    let after = text(&app, id);
+    let k = frame(&after).width() / f0.width();
+    assert!(k > 1.2);
+    assert!((leading(&after) - 20.0 * k).abs() < 1e-6, "leading {} for ×{k}", leading(&after));
+    assert!((size(&after) - 12.0 * k).abs() < 1e-6);
+}
+
+/// Rotated area type: the outer handles sit off the turned box's corners, and dragging one
+/// scales along the type's own axes, in proportion, keeping the angle.
+#[test]
+fn rotated_area_type_scales_along_its_own_axes() {
+    let (mut app, id) = app();
+    app.run("object.rotate", json!({"angle": 30})).unwrap();
+    let b0 = app.selection_box().unwrap();
+    assert!((b0.angle.abs() - 30.0).abs() < 1e-6, "{b0:?}");
+    let st = app.session.active().unwrap();
+    let (handle, outer) = vectorcraft_tools::varos_text_scale::handles(&st.doc, &st.selection, &b0, 1.0)[2];
+    assert_eq!(handle, vectorcraft_tools::bbox::Handle::BottomRight);
+    // 10 points out along each of the box's own axes.
+    let corner = b0.to_doc() * Point::new(b0.rect.x1, b0.rect.y1);
+    assert!(((outer - corner).hypot() - 10.0 * std::f64::consts::SQRT_2).abs() < 1e-9);
+    let cursor = app.session.cursor(outer, Mods::default(), view());
+    assert!(
+        matches!(
+            cursor,
+            vectorcraft_tools::Cursor::ResizeH
+                | vectorcraft_tools::Cursor::ResizeV
+                | vectorcraft_tools::Cursor::ResizeNwSe
+                | vectorcraft_tools::Cursor::ResizeNeSw
+        ),
+        "a scale cursor, not the rotate one: {cursor:?}"
+    );
+    // Out along the box's diagonal.
+    let out = b0.to_doc() * Point::new(b0.rect.x1 + 50.0, b0.rect.y1 + 50.0) - b0.to_doc() * Point::new(b0.rect.x1, b0.rect.y1);
+    drag(&mut app, outer, out, Mods::default());
+    let b1 = app.selection_box().unwrap();
+    let k = b1.rect.width() / b0.rect.width();
+    assert!(k > 1.2, "{b0:?} -> {b1:?}");
+    assert!((b1.rect.height() / b0.rect.height() - k).abs() < 1e-6, "in proportion: {b0:?} -> {b1:?}");
+    assert!((b1.angle - b0.angle).abs() < 1e-6, "the angle stays: {}", b1.angle);
+    assert!((size(&text(&app, id)) - 12.0 * k).abs() < 1e-6, "the type grew with it");
+}
