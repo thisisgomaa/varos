@@ -675,6 +675,9 @@ pub struct FontTraits {
     /// Its character map has Thai (ก and า).
     pub thai: bool,
     pub class: FontClass,
+    /// Varos: its character map has Arabic (`crate::arabic_fonts::arabic_hint`; for a cataloged
+    /// face whose `cmap` is past the scan's size cap, the OS/2 ranges and names stand in).
+    pub arabic: bool,
 }
 
 impl FontTraits {
@@ -789,7 +792,8 @@ impl FontTraits {
         } else {
             FontClass::Other
         };
-        FontTraits { japanese, thai, class }
+        let arabic = crate::arabic_fonts::arabic_hint(font, &names); // Varos
+        FontTraits { japanese, thai, class, arabic }
     }
 }
 
@@ -1109,6 +1113,13 @@ fn reader_face_names_within(mut file: impl std::io::Read + std::io::Seek, max_fa
             }
             if let Some(os2) = &os2 {
                 tables.push((b"OS/2", os2));
+            }
+            // Varos: for the catalog scan (unbounded reads), its character map too, so the menus'
+            // script filters (Arabic, and upstream's Thai, which tests the character map) know
+            // installed fonts before they are loaded. Searches (bounded reads) need names only.
+            let cmap = if max_read == u64::MAX { table(b"cmap") } else { None };
+            if let Some(cmap) = &cmap {
+                tables.push((b"cmap", cmap));
             }
             let font = sfnt_of(&tables)?;
             Some(face_styles(&skrifa::FontRef::new(&font).ok()?))
@@ -1911,7 +1922,9 @@ impl FontDb {
                     postscript.insert(ps.clone(), (family.clone(), style.clone()));
                 }
                 let entry = catalog.entry(family.to_ascii_lowercase()).or_default();
-                entry.traits.get_or_insert(traits);
+                // Varos: a family may set Arabic when any of its faces does (Courier New Italic has
+                // no Arabic, its upright faces do).
+                entry.traits.get_or_insert(traits).arabic |= traits.arabic;
                 if entry.name.is_empty() {
                     entry.name = family;
                 }
