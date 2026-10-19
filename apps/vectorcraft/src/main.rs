@@ -966,8 +966,9 @@ fn main() -> std::process::ExitCode {
                 } else if let Some(dir) = varos_agents::endpoint::dir()
                     && let Some(rx) = control_server::varos_control::start_default(&dir, cc.egui_ctx.clone())
                 {
-                    // Varos: agents always welcome, behind the per-launch token in a private file.
-                    app = app.with_control(rx);
+                    // Varos: agents always welcome, behind the per-launch secrets in a private file, with
+                    // the mistake guards at every file their requests write.
+                    app = app.with_control(rx).with_agent_guards();
                 }
                 #[cfg(target_os = "macos")]
                 {

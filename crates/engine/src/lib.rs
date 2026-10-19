@@ -328,6 +328,9 @@ pub struct UndoGroup {
     journal: usize,
     /// The undo step's name; else the first edit's.
     label: Option<String>,
+    /// Varos: whose group it is ([`History::actor`] when it began). Another actor's edit is never
+    /// absorbed into it: it gets a step of its own, and the group's owner continues in a new step.
+    actor: Option<u64>,
 }
 
 /// Per-document editing state.
@@ -631,7 +634,10 @@ impl DocState {
     /// the one after it). In an undo group only the group's first edit records one: the edits
     /// after it extend that step.
     fn push_undo(&mut self, mut label: String, doc: Arc<Document>, selection: Arc<Selection>) {
-        if let Some(g) = &mut self.undo_group {
+        // Varos: only the edits of the group's own actor join it (`UndoGroup::actor`).
+        if let Some(g) = &mut self.undo_group
+            && g.actor == self.history.actor
+        {
             let recorded = |first: &Arc<Document>| self.history.undo.last().is_some_and(|l| Arc::ptr_eq(&l.doc, first));
             if g.first.as_ref().is_some_and(recorded) {
                 self.history.recost_last(&self.doc);
@@ -1364,6 +1370,9 @@ pub struct Session {
     pub link_stamps: std::collections::HashMap<(u64, String), link_watch::Stamp>,
     /// The stamps being taken on a worker thread ([`Session::start_link_scan`]).
     pub link_scan: Option<link_watch::LinkScan>,
+    /// Varos: the agent whose request is running ([`Session::set_actor`]), which every open
+    /// document's [`History::actor`] follows, and a document opened or made meanwhile starts with.
+    actor: Option<u64>,
 }
 
 impl Default for Session {
@@ -1427,7 +1436,26 @@ impl Session {
             search_threads: None,
             link_stamps: Default::default(),
             link_scan: None,
+            actor: None, // Varos
         }
+    }
+
+    /// Varos: the agent whose request runs from now (`None`: the person at the keyboard again).
+    /// The steps recorded in any open document meanwhile, and in documents opened or made
+    /// meanwhile, carry it ([`HistoryEntry::actor`]).
+    pub fn set_actor(&mut self, actor: Option<u64>) {
+        self.actor = actor;
+        for st in &mut self.docs {
+            st.history.actor = actor;
+        }
+        for st in self.batch_stash.iter_mut().flatten() {
+            st.history.actor = actor;
+        }
+    }
+
+    /// Varos: the agent whose request is running ([`Session::set_actor`]).
+    pub fn actor(&self) -> Option<u64> {
+        self.actor
     }
 
     pub fn documents(&self) -> &[DocState] {
@@ -1515,6 +1543,7 @@ impl Session {
         self.reset_tool_for_doc_switch();
         let mut st = DocState::new(doc, path);
         st.history.limit = self.prefs.history_states as usize;
+        st.history.actor = self.actor; // Varos: made or opened by the agent whose request runs
         self.docs.push(st);
         let i = self.docs.len() - 1;
         self.active = Some(i);
@@ -1536,6 +1565,7 @@ impl Session {
         let old = &self.docs[index];
         let mut st = DocState::new(doc, old.path.clone());
         st.history.limit = old.history.limit;
+        st.history.actor = self.actor; // Varos
         // Same open document (caches keyed by uid stay valid); a new revision redraws it.
         st.uid = old.uid;
         st.revision = old.revision + 1;
@@ -1994,7 +2024,8 @@ impl Session {
         if let Some(st) = self.active_mut()
             && st.undo_group.is_none()
         {
-            st.undo_group = Some(UndoGroup { first: None, journal, label });
+            let actor = st.history.actor; // Varos: whose group it is
+            st.undo_group = Some(UndoGroup { first: None, journal, label, actor });
         }
     }
 
@@ -2359,6 +2390,8 @@ mod tests_typescale;
 mod tests_units;
 #[cfg(test)]
 mod tests_variables;
+#[cfg(test)]
+mod tests_varos_actor; // Varos
 #[cfg(test)]
 mod tests_webexport;
 #[cfg(test)]

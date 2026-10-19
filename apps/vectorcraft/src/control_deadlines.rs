@@ -28,6 +28,13 @@ impl DeadlineReader {
         Self { stream, idle, line, until: None, waiting_for_first_byte: false }
     }
 
+    /// Varos: change the budgets of the lines that follow (an agents-port connection gets short ones
+    /// until it shows its token).
+    pub(super) fn set_budgets(&mut self, idle: Duration, line: Duration) {
+        self.idle = idle;
+        self.line = line;
+    }
+
     pub(super) fn begin_line(&mut self, buffered: bool) -> io::Result<()> {
         // A partial next request already in BufReader must not get an idle budget too.
         self.waiting_for_first_byte = !buffered;

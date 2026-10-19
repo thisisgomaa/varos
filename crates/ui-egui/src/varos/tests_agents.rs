@@ -13,7 +13,7 @@ use crate::{Services, VectorcraftApp};
 
 fn app() -> (VectorcraftApp, Sender<ControlRequest>) {
     let (tx, rx) = std::sync::mpsc::channel();
-    let app = VectorcraftApp::new(Session::new(), Services::default()).with_control(rx);
+    let app = VectorcraftApp::new(Session::new(), Services::default()).with_control(rx).with_agent_guards();
     (app, tx)
 }
 
@@ -262,4 +262,179 @@ fn upstreams_control_port_is_not_guarded() {
         let error = r["error"].as_str().unwrap_or("");
         assert!(!error.contains("never overwrite") && !error.contains("home folder"), "{r}");
     }
+}
+
+/// A home folder of the test's own (with a Desktop), as the guards' home.
+fn test_home(app: &mut VectorcraftApp, tag: &str) -> std::path::PathBuf {
+    let home = std::env::temp_dir().join(format!("varos-ui-home-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join("Desktop")).unwrap();
+    let home = std::fs::canonicalize(home).unwrap();
+    app.agents.places = Some(varos_agents::guard::Places { home: home.clone(), app: None });
+    home
+}
+
+fn s(p: &std::path::Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
+/// A save hidden inside a batch is checked like one sent alone.
+#[test]
+fn the_steps_of_a_batch_are_guarded_too() {
+    let (mut app, tx) = app();
+    new_doc(&mut app);
+    let home = test_home(&mut app, "batch");
+    let taken = home.join("Desktop/taken.vectorcraft");
+    std::fs::write(&taken, b"keep me").unwrap();
+    let batch = json!({"command": "command.batch", "params": {"commands": [
+        {"command": "shape.rectangle", "params": {"x": 0, "y": 0, "width": 5, "height": 5}},
+        {"command": "file.saveCopy", "params": {"path": s(&taken)}},
+    ]}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", batch);
+    assert!(r["error"].as_str().unwrap().contains("never overwrite"), "{r}");
+    assert_eq!(std::fs::read(&taken).unwrap(), b"keep me");
+    // Nested one more level, and through action.batch's steps.
+    let nested = json!({"command": "command.batch", "params": {"commands": [
+        {"command": "command.batch", "params": {"commands": [{"command": "file.print", "params": {"path": "/etc/varos.pdf"}}]}},
+    ]}});
+    assert!(request(&mut app, &tx, guarded(), "engine.execute", nested)["error"].as_str().unwrap().contains("home folder"));
+    let action = |destination: &str, step: Value| json!({"command": "action.batch", "params": {"source": "datasets", "destination": destination, "commands": [step]}});
+    let plain = json!({"command": "select.all", "params": {}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", action("saveAndClose", plain.clone()));
+    assert!(r["error"].as_str().unwrap().contains("destination `none`"), "{r}");
+    let save = json!({"command": "document.export", "params": {"path": s(&home.join("Desktop/out.png"))}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", action("none", save));
+    assert!(r["error"].as_str().unwrap().contains("once per file"), "{r}");
+}
+
+/// Export for Screens names its files and subfolders itself: only into an empty folder.
+#[test]
+fn a_set_of_files_goes_only_into_an_empty_folder() {
+    let (mut app, tx) = app();
+    new_doc(&mut app);
+    let home = test_home(&mut app, "screens");
+    let out = home.join("Desktop/out");
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(out.join("Artboard 1.png"), b"keep me").unwrap();
+    let screens = json!({"command": "document.exportForScreens", "params": {"folder": s(&out)}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", screens);
+    assert!(r["error"].as_str().unwrap().contains("not empty"), "{r}");
+    assert_eq!(std::fs::read(out.join("Artboard 1.png")).unwrap(), b"keep me");
+    // Into an empty one it runs, subfolders and all.
+    let empty = home.join("Desktop/empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let screens = json!({"command": "document.exportForScreens", "params": {"folder": s(&empty)}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", screens);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(std::fs::read_dir(&empty).unwrap().next().is_some(), "the files were written");
+}
+
+/// The name a command really writes is checked where it writes it: Save as Template puts its own
+/// extension on the path it is given, and a file already there under that name is never replaced.
+#[test]
+fn the_written_name_is_checked_after_the_command_renames_it() {
+    // The desktop's file writer, through which the app's own Save and Export write.
+    let services = Services { write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))), ..Services::default() };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut app = VectorcraftApp::new(Session::new(), services).with_control(rx).with_agent_guards();
+    new_doc(&mut app);
+    let home = test_home(&mut app, "template");
+    let given = home.join("Desktop/poster.png");
+    let written = home.join("Desktop/poster.vctemplate");
+    std::fs::write(&written, b"keep me").unwrap();
+    let template = json!({"command": "file.saveAsTemplate", "params": {"path": s(&given)}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", template.clone());
+    assert!(r["error"].as_str().unwrap().contains("never overwrite"), "{r}");
+    assert_eq!(std::fs::read(&written).unwrap(), b"keep me");
+    // Once that name is free the same request writes it, and the person may still write anywhere.
+    std::fs::remove_file(&written).unwrap();
+    let r = request(&mut app, &tx, guarded(), "engine.execute", template);
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(written.exists());
+    app.run("file.saveAsTemplate", json!({"path": s(&given)})).unwrap();
+}
+
+/// Every command of the registry that takes a file or folder parameter is either known to only
+/// read there, or guarded: a path outside home is refused for it before anything runs. A command
+/// upstream adds later is guarded until someone lists it as a reader.
+#[test]
+fn every_command_that_takes_a_path_is_guarded_or_only_reads() {
+    use crate::varos::agents::{PATH_KEYS, READS, check_command, param_keys, writes_files};
+    let home = std::env::temp_dir().join(format!("varos-ui-registry-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let places = varos_agents::guard::Places { home: std::fs::canonicalize(&home).unwrap(), app: None };
+    let mut guarded = vec![];
+    for spec in vectorcraft_engine::command_specs() {
+        let keys: Vec<&str> = param_keys(spec.params, 0).into_iter().filter(|k| PATH_KEYS.contains(k)).collect();
+        let Some(key) = keys.first() else { continue };
+        if READS.contains(&spec.id) {
+            continue;
+        }
+        assert!(writes_files(spec.id), "{} takes `{key}` but is not guarded", spec.id);
+        let outside = if key.ends_with('s') { json!(["/etc/varos-guard-test"]) } else { json!("/etc/varos-guard-test") };
+        let params = match spec.id {
+            // Its own refusal comes first; its steps are checked as commands of their own.
+            "action.batch" => json!({"destination": "folder", "destinationFolder": outside}),
+            _ => json!({ *key: outside }),
+        };
+        assert!(check_command(spec.id, &params, Some(&places), None, 0).is_err(), "{} lets an agent write to {params}", spec.id);
+        guarded.push(spec.id);
+    }
+    // The writers the review named are among them.
+    for id in ["file.print", "links.unembed", "file.saveAs", "file.saveAsTemplate", "document.export", "document.exportForScreens", "file.package"] {
+        assert!(guarded.contains(&id), "{id} is not guarded");
+    }
+    // Every listed reader is a command that takes a path: the list holds nothing stale.
+    let stale: Vec<&str> = READS
+        .iter()
+        .copied()
+        .filter(|id| vectorcraft_engine::find_command(id).is_none_or(|spec| !param_keys(spec.params, 0).iter().any(|k| PATH_KEYS.contains(k))))
+        .collect();
+    assert!(stale.is_empty(), "not commands that take a path: drop them from READS: {stale:?}");
+}
+
+/// A request that makes a new document and draws in it: the steps and the activity are the
+/// agent's in the new document, and the canvas shows the work there.
+#[test]
+fn a_request_that_makes_a_document_tags_that_document() {
+    let (mut app, tx) = app();
+    new_doc(&mut app);
+    let first = uid(&app);
+    let batch = json!({"command": "command.batch", "params": {"commands": [
+        {"command": "file.new", "params": {"width": 300, "height": 300}},
+        {"command": "shape.rectangle", "params": {"x": 10, "y": 10, "width": 20, "height": 20}},
+    ]}});
+    let r = request(&mut app, &tx, claude("s1"), "engine.execute", batch);
+    assert_eq!(r["ok"], true, "{r}");
+    let made = uid(&app);
+    assert_ne!(made, first, "the new document is in front");
+    let key = last_actor(&app).expect("the new document's step names the agent");
+    assert_eq!(app.agents.registry.label(ActorKey(key)), "Claude Code");
+    assert!(app.session.documents().iter().all(|d| d.history.actor.is_none()), "no document records for the agent afterwards");
+    let entries: Vec<_> = app.agents.activity.entries(made).collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].actor, Some(ActorKey(key)));
+    assert!(!entries[0].change.created.is_empty());
+    let now = app.session.active().unwrap().revision;
+    assert!(matches!(app.agents.activity.since(made, 0, now), Since::Changes(_)), "describe since 0 works for the new document");
+    // The person's next step there is theirs.
+    app.run("shape.rectangle", json!({"x": 50, "y": 50, "width": 10, "height": 10})).unwrap();
+    assert_eq!(last_actor(&app), None);
+    app.run("select.none", json!({})).unwrap();
+    let f = presence(&mut app, std::time::Instant::now());
+    assert_eq!(f.pages.len(), 1, "the new document's artboard lights up: {f:?}");
+}
+
+/// Restacking reaches the activity log, though nothing lights up for it.
+#[test]
+fn a_restack_is_logged() {
+    let (mut app, tx) = app();
+    new_doc(&mut app);
+    app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 10, "height": 10})).unwrap();
+    app.run("shape.rectangle", json!({"x": 30, "y": 10, "width": 10, "height": 10})).unwrap();
+    let doc = uid(&app);
+    let r = request(&mut app, &tx, claude("s1"), "engine.execute", json!({"command": "object.arrange.sendToBack", "params": {}}));
+    assert_eq!(r["ok"], true, "{r}");
+    let entry = app.agents.activity.entries(doc).last().unwrap();
+    assert!(!entry.change.reordered.is_empty(), "{:?}", entry.change);
 }

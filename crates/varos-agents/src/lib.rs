@@ -13,15 +13,19 @@
 //! - [`activity`]: a bounded per-document log of changes by revision, for `describe since` and for
 //!   reviewing what each agent did.
 //! - [`receipts`]: idempotent request ids per agent, so a retried edit is never applied twice.
-//! - [`endpoint`]: where a running Varos listens and the per-launch token in a private file that
-//!   lets the user's own agents in, without any prompt.
-//! - [`guard`]: the mistake guards on files agents write (never overwrite, never system folders).
+//! - [`endpoint`]: where a running Varos listens and the per-launch secrets in a private file that
+//!   let the user's own agents in, without any prompt.
+//! - [`auth`]: how the proxy and the app prove they know those secrets (the app answers a hello
+//!   before the proxy sends anything; the proxy's token is checked before a line is parsed).
+//! - [`guard`]: the mistake guards on files agents write (never overwrite, never system folders),
+//!   checked on a request's parameters and again at every file it writes.
 //!
 //! The desktop glue (control-channel hooks, painting, history rows) lives in
 //! `crates/ui-egui/src/varos/`.
 
 pub mod activity;
 pub mod actor;
+pub mod auth;
 pub mod diff;
 pub mod endpoint;
 pub mod guard;
@@ -30,7 +34,7 @@ pub mod receipts;
 
 pub use activity::{Activity, Since};
 pub use actor::{ActorKey, Registry, sanitize_label};
-pub use diff::{Change, diff};
+pub use diff::{Change, diff, diff_counted};
 pub use presence::{Frame, Presence};
 pub use receipts::{Admission, ReceiptError, Receipts};
 

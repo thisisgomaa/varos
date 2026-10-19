@@ -151,12 +151,96 @@ fn diff_counts_a_move_to_another_parent_as_changed() {
 }
 
 #[test]
-fn diff_reorder_within_a_parent_changes_nothing_of_its_own() {
-    // Z-order is the parent's list order; the objects themselves are untouched.
+fn diff_reorder_reports_the_restacked_parent_not_its_objects() {
+    // Z-order is the parent's list order; the objects themselves are untouched, so presence has
+    // nothing to show, but the change is not empty: the activity log sees the restack.
     let fx = fixture();
     let after = edit(&fx.doc, |d| layer_children(d).swap(0, 1));
     let c = diff(&fx.doc, &after);
     assert!(c.created.is_empty() && c.removed.is_empty() && c.changed.is_empty(), "{c:?}");
+    assert_eq!(c.reordered, vec![fx.layer]);
+    assert!(!c.layers_reordered);
+    assert!(!c.is_empty());
+    assert!(c.touched().is_empty(), "no object lights up");
+    // Inside a group, and Bring to Front of the group's bottom child.
+    let after = edit(&fx.doc, |d| {
+        let ch = group_children(d);
+        let c1 = ch.remove(0);
+        ch.push(c1);
+    });
+    assert_eq!(diff(&fx.doc, &after).reordered, vec![fx.g]);
+    // A child removed or added leaves the others' order alone: no restack.
+    let after = edit(&fx.doc, |d| {
+        layer_children(d).remove(1);
+    });
+    assert!(diff(&fx.doc, &after).reordered.is_empty());
+}
+
+#[test]
+fn diff_reports_the_layers_own_order() {
+    let mut fx = fixture();
+    let second = Arc::make_mut(&mut fx.doc).alloc_id();
+    let two_layers = edit(&fx.doc, |d| d.layers.push(Arc::new(Node::layer(second, "Layer 2", LayerColor::Preset(1)))));
+    let swapped = edit(&two_layers, |d| d.layers.swap(0, 1));
+    let c = diff(&two_layers, &swapped);
+    assert!(c.layers_reordered && c.reordered.is_empty(), "{c:?}");
+    assert_eq!(diff(&fx.doc, &two_layers).created, vec![second]);
+}
+
+/// The owner's compound path of ~13,900 parts: one part edited, one added, one removed or two
+/// swapped costs a handful of node visits, not thousands (pointer comparisons aside). Counted, not
+/// timed, so the test is the same on any machine.
+#[test]
+fn diff_work_follows_the_edit_not_the_list() {
+    const N: usize = 13_900;
+    let mut d = Document::new(100.0, 100.0);
+    let layer = d.alloc_id();
+    let compound = d.alloc_id();
+    let parts: Vec<Arc<Node>> = (0..N).map(|i| rect(d.alloc_id(), i as f64, 0.0)).collect();
+    let ids: Vec<NodeId> = parts.iter().map(|p| p.id).collect();
+    let mut l = Node::layer(layer, "Layer 1", LayerColor::Preset(0));
+    let mut c = Node::group(compound, parts);
+    c.kind = vectorcraft_doc::NodeKind::Compound { children: std::mem::take(c.children_mut().unwrap()), rule: Default::default() };
+    l.children_mut().unwrap().push(Arc::new(c));
+    d.layers = vec![Arc::new(l)];
+    let doc = Arc::new(d);
+    fn parts_of(d: &mut Document) -> &mut Vec<Arc<Node>> {
+        let c = Arc::make_mut(&mut d.layers[0]).children_mut().unwrap();
+        Arc::make_mut(&mut c[0]).children_mut().unwrap()
+    }
+    let mut doc2 = doc.clone();
+    let extra = Arc::make_mut(&mut doc2).alloc_id();
+    let cases: Vec<(&str, Arc<Document>)> = vec![
+        ("edit one part", edit(&doc, |d| Arc::make_mut(&mut parts_of(d)[N / 2]).visible = false)),
+        ("add one part", edit(&doc2, |d| parts_of(d).insert(N / 3, rect(extra, -5.0, 0.0)))),
+        (
+            "remove one part",
+            edit(&doc, |d| {
+                parts_of(d).remove(N / 4);
+            }),
+        ),
+        ("swap two neighbours", edit(&doc, |d| parts_of(d).swap(N / 2, N / 2 + 1))),
+    ];
+    for (what, after) in cases {
+        let before = if what == "add one part" { &doc2 } else { &doc };
+        let (change, visited) = crate::diff_counted(before, &after);
+        assert!(visited <= 8, "{what}: {visited} nodes visited");
+        match what {
+            "edit one part" => assert_eq!(change.changed, vec![ids[N / 2]]),
+            "add one part" => assert_eq!(change.created, vec![extra]),
+            "remove one part" => assert_eq!(change.removed, vec![ids[N / 4]]),
+            _ => assert_eq!(change.reordered, vec![compound]),
+        }
+    }
+    // Everything replaced (every part a new Arc, the same ids) is still matched pairwise: no index.
+    let all = edit(&doc, |d| {
+        for p in parts_of(d).iter_mut() {
+            Arc::make_mut(p).locked = true;
+        }
+    });
+    let (change, visited) = crate::diff_counted(&doc, &all);
+    assert_eq!(change.changed.len(), N);
+    assert!(visited <= N + 4, "{visited}");
 }
 
 #[test]
@@ -555,6 +639,19 @@ fn undo_of_a_delete_reads_as_changed() {
     let Since::Changes(c) = a.since(BOARD, 1, 3) else { panic!("resync") };
     assert_eq!(c.changed, vec![x]);
     assert!(c.created.is_empty() && c.removed.is_empty());
+}
+
+#[test]
+fn since_keeps_restacks() {
+    let (g, h) = (NodeId(5), NodeId(6));
+    let mut a = Activity::new();
+    a.record(BOARD, entry(1, 2, Some(AGENT), Change { reordered: vec![g], ..Change::default() }));
+    a.record(BOARD, entry(2, 3, None, Change { layers_reordered: true, ..Change::default() }));
+    a.record(BOARD, entry(3, 4, None, Change { created: vec![h], reordered: vec![h], ..Change::default() }));
+    let Since::Changes(c) = a.since(BOARD, 1, 4) else { panic!("resync") };
+    assert_eq!(c.reordered, vec![g], "a container made in between is reported as made");
+    assert!(c.layers_reordered);
+    assert_eq!(c.created, vec![h]);
 }
 
 // ---------------------------------------------------------------- receipts

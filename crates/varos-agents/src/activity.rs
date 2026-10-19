@@ -32,7 +32,7 @@ pub struct Entry {
 impl Entry {
     fn bytes(&self) -> usize {
         let c = &self.change;
-        let ids = c.created.len() + c.changed.len() + c.removed.len();
+        let ids = c.created.len() + c.changed.len() + c.removed.len() + c.reordered.len();
         let boards = c.artboards_created.len() + c.artboards_changed.len() + c.artboards_removed.len();
         std::mem::size_of::<Self>() + ids * std::mem::size_of::<NodeId>() + boards * 4 + self.label.len() + self.step.len()
     }
@@ -133,12 +133,16 @@ impl Activity {
 }
 
 /// Several changes folded into one: created then removed is nothing, created then changed is
-/// created, changed then removed is removed.
+/// created, changed then removed is removed. A restack is kept unless its container was created or
+/// removed in between (restacking back to the first order still counts: the log has ids, not the
+/// orders themselves).
 #[derive(Default)]
 struct Net {
     created: BTreeSet<NodeId>,
     changed: BTreeSet<NodeId>,
     removed: BTreeSet<NodeId>,
+    reordered: BTreeSet<NodeId>,
+    layers_reordered: bool,
     boards_created: BTreeSet<u32>,
     boards_changed: BTreeSet<u32>,
     boards_removed: BTreeSet<u32>,
@@ -147,6 +151,8 @@ struct Net {
 impl Net {
     fn add(&mut self, c: &Change) {
         fold(&mut self.created, &mut self.changed, &mut self.removed, &c.created, &c.changed, &c.removed);
+        self.reordered.extend(&c.reordered);
+        self.layers_reordered |= c.layers_reordered;
         fold(
             &mut self.boards_created,
             &mut self.boards_changed,
@@ -158,7 +164,11 @@ impl Net {
     }
 
     fn finish(self) -> Change {
+        // A container made or removed in between is reported as that, not as restacked.
+        let reordered = self.reordered.iter().copied().filter(|id| !self.created.contains(id) && !self.removed.contains(id)).collect();
         Change {
+            reordered,
+            layers_reordered: self.layers_reordered,
             created: self.created.into_iter().collect(),
             changed: self.changed.into_iter().collect(),
             removed: self.removed.into_iter().collect(),
