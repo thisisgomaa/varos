@@ -26,6 +26,8 @@ vectorcraft-pdf = { workspace = true }
 vectorcraft-cad = { workspace = true }
 vectorcraft-eps = { workspace = true }
 vectorcraft-format = { workspace = true }
+# Varos: agents on the same document (pure logic; the glue is src/varos/agents.rs).
+varos-agents = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
 image = { workspace = true }

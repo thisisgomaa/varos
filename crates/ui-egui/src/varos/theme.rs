@@ -8,6 +8,21 @@ const fn rgb(hex: u32) -> Color32 {
 }
 
 pub const ACCENT: Color32 = rgb(0x0c8ce9);
+/// Owner 2026-10-08: azure is the person's selection and focus; AGENT (burnt orange) is anything an
+/// agent is doing: the artboard it works on, the objects it adds, its rows in the History panel.
+pub const AGENT: Color32 = rgb(0xc76a20);
+/// Width of the outline around the artboard an agent works on.
+pub const AGENT_PAGE_STROKE: f32 = 1.5;
+/// Width of the outline of an object an agent created or changed (it fades out).
+pub const AGENT_OBJECT_STROKE: f32 = 1.0;
+/// An artboard narrower than this on screen gets its outline but no name chips.
+pub const AGENT_LABEL_MIN_PAGE_W: f32 = 160.0;
+/// Height of an agent's name chip above its artboard, the gap around it and its inner padding.
+pub const AGENT_LABEL_H: f32 = 18.0;
+pub const AGENT_LABEL_GAP: f32 = 4.0;
+pub const AGENT_LABEL_PAD: f32 = 4.0;
+/// Size of the agent name text (chips and History rows).
+pub const AGENT_LABEL_TEXT: f32 = 11.0;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Palette {

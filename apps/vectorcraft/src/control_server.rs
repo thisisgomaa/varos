@@ -19,6 +19,8 @@ use vectorcraft_ui_egui::ControlRequest;
 
 #[path = "control_deadlines.rs"]
 mod deadlines;
+#[path = "varos_control.rs"]
+pub(crate) mod varos_control; // Varos: the always-on agents listener, its token, who sent each request
 use deadlines::{DeadlineReader, DeadlineWriter};
 
 /// Longest accepted request line (bytes, without the newline). Requests are small JSON objects;
@@ -119,8 +121,14 @@ fn spawn_connection(
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new().name("vectorcraft-control".into()).spawn(move || {
         let _slot = slot;
+        let link = varos_control::Link::new(&stream); // Varos
         serve_socket(stream, timeouts, |method, params| {
+            let actor = match link.admit() {
+                Ok(actor) => actor,
+                Err(refused) => return Some(refused),
+            }; // Varos: the token of the always-on port; who sent it
             let (req, rrx) = ControlRequest::new(method, params);
+            let req = req.with_actor(Some(actor)); // Varos
             let ticket = req.ticket();
             tx.send(req).ok()?;
             ctx.request_repaint();
@@ -153,6 +161,8 @@ enum Line {
         id: Value,
         method: String,
         params: Value,
+        /// Varos: who sent it and the token it shows (`varos_control`).
+        varos: varos_control::Extras,
     },
     Blank,
     /// Not a request: reply with this error and close the connection.
@@ -181,6 +191,7 @@ fn parse_line(bytes: &[u8]) -> Line {
         id: obj.get("id").cloned().unwrap_or(Value::Null),
         method: method.to_string(),
         params: obj.get("params").cloned().unwrap_or(json!({})),
+        varos: varos_control::extras(obj), // Varos
     }
 }
 
@@ -249,7 +260,8 @@ fn serve_lines_with<R: Read, W: Write>(
             Ok(true) => match parse_line(&buf) {
                 Line::Blank => continue,
                 Line::Reject(e) => e,
-                Line::Request { id, method, params } => {
+                Line::Request { id, method, params, varos } => {
+                    varos_control::set_line(varos); // Varos
                     let Some(mut r) = handle(method, params) else { return };
                     if let Some(o) = r.as_object_mut() {
                         o.insert("id".into(), id);

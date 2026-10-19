@@ -409,6 +409,7 @@ impl Server {
                 let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION);
                 let version = if SUPPORTED_VERSIONS.contains(&asked) { asked } else { PROTOCOL_VERSION };
                 self.modern.store(version == MODERN_VERSION, Ordering::Relaxed);
+                self.backend.set_client(params.get("clientInfo").unwrap_or(&Value::Null)); // Varos: name the agent
                 Ok(json!({
                     "protocolVersion": version,
                     "capabilities": {

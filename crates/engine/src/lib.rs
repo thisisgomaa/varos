@@ -93,6 +93,9 @@ pub struct HistoryEntry {
     next: usize,
     /// The template and name `label` was made from ([`Session::edit_named`]).
     named: Option<NamedStep>,
+    /// Varos: the agent that made this step (its frontend's actor key), `None` for the person at
+    /// the keyboard; recorded from [`History::actor`] and kept through undo and redo.
+    pub actor: Option<u64>,
 }
 
 /// A step name made by filling the `{name}` placeholder of a template with a name
@@ -119,7 +122,7 @@ impl HistoryEntry {
     pub(crate) fn kept(label: String, doc: Arc<Document>, selection: Arc<Selection>, next: &Document) -> Self {
         doc.drop_lookup_cache();
         let (bytes, next_bytes) = doc.retained_bytes_each(next);
-        HistoryEntry { label, doc, selection, bytes, next_bytes, next: std::ptr::from_ref(next) as usize, named: None }
+        HistoryEntry { label, doc, selection, bytes, next_bytes, next: std::ptr::from_ref(next) as usize, named: None, actor: None } // Varos: actor
     }
 
     /// The template and name the step's label was made from, while the label is still the one
@@ -140,7 +143,8 @@ impl HistoryEntry {
             return Self::kept(label, doc, selection, now);
         }
         doc.drop_lookup_cache();
-        HistoryEntry { label, doc, selection, bytes: costs.next_bytes, next_bytes: costs.bytes, next: Arc::as_ptr(now) as usize, named: None }
+        let actor = None; // Varos: the caller copies the step's own
+        HistoryEntry { label, doc, selection, bytes: costs.next_bytes, next_bytes: costs.bytes, next: Arc::as_ptr(now) as usize, named: None, actor }
     }
 
     /// The figures [`HistoryEntry::turned`] reuses.
@@ -168,11 +172,14 @@ pub struct History {
     /// About the most memory the steps may keep ([`HistoryEntry::bytes`]): past it the oldest
     /// steps go, but never the last [`History::MIN_STEPS`] undo (and redo) steps.
     pub byte_budget: usize,
+    /// Varos: the agent whose command is running, which the steps recorded meanwhile carry
+    /// ([`HistoryEntry::actor`]); the frontend sets it around an agent's request.
+    pub actor: Option<u64>,
 }
 
 impl Default for History {
     fn default() -> Self {
-        History { undo: vec![], redo: vec![], limit: 0, byte_budget: default_history_budget() }
+        History { undo: vec![], redo: vec![], limit: 0, byte_budget: default_history_budget(), actor: None } // Varos: actor
     }
 }
 
@@ -636,7 +643,8 @@ impl DocState {
                 label = l.clone();
             }
         }
-        let e = HistoryEntry::kept(label, doc, selection, &self.doc);
+        let mut e = HistoryEntry::kept(label, doc, selection, &self.doc);
+        e.actor = self.history.actor; // Varos: who made the step
         self.history.undo.push(e);
         self.history.redo.clear();
         self.history.trim();

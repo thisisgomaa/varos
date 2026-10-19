@@ -1,0 +1,17 @@
+[package]
+name = "varos-agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Varos: agent identity, document diffs, on-canvas presence, activity log and request receipts (pure logic, no UI)"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# Only the document model: no engine, renderer, window or UI. The desktop glue lives in
+# crates/ui-egui/src/varos/ (see docs/varos/FORK.md).
+vectorcraft-doc = { workspace = true }
+vectorcraft-geom = { workspace = true }
+serde_json = { workspace = true }

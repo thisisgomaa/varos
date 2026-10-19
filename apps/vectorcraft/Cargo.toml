@@ -19,6 +19,8 @@ windows7 = ["eframe/glow"]
 [dependencies]
 vectorcraft-engine = { workspace = true }
 vectorcraft-ui-egui = { workspace = true }
+# Varos: the agents endpoint file and its token (src/varos_control.rs).
+varos-agents = { workspace = true }
 vectorcraft-text = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wayland", "x11"] }
 egui = { workspace = true }

@@ -512,6 +512,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             hidden_chars_overlay(app, &painter, &xf);
         }
     }
+    crate::varos::agents::paint(app, &painter, &xf); // Varos: agents at work, in orange
     draw_overlays(&painter, &xf, &overlays, &t, HandleLook::of(&app.session.prefs));
     if !revolve_edit {
         shaper_widget_overlay(app, &painter, &xf);

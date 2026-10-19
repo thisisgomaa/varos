@@ -963,6 +963,11 @@ fn main() -> std::process::ExitCode {
                         file_access::confine_process(roots.clone());
                         log::info!("control channel confined to the automation roots: read {:?}, write {:?}", roots.read_root(), roots.write_root());
                     }
+                } else if let Some(dir) = varos_agents::endpoint::dir()
+                    && let Some(rx) = control_server::varos_control::start_default(&dir, cc.egui_ctx.clone())
+                {
+                    // Varos: agents always welcome, behind the per-launch token in a private file.
+                    app = app.with_control(rx);
                 }
                 #[cfg(target_os = "macos")]
                 {
@@ -988,6 +993,7 @@ fn main() -> std::process::ExitCode {
     let outcome = gpu::finish(outcome, &startup);
     #[cfg(not(feature = "wgpu"))]
     let outcome = outcome.and_then(|r| r.map_err(|e| e.to_string()));
+    control_server::varos_control::remove_endpoint(); // Varos: the agents endpoint goes with the app
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {

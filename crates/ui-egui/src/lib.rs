@@ -399,6 +399,8 @@ pub struct VectorcraftApp {
     /// moves ([`native_menu::sync`]).
     run_count: u64,
     control_rx: Option<Receiver<ControlRequest>>,
+    /// Varos: agents working on the documents (who, what they changed, their presence).
+    pub(crate) agents: varos::agents::Agents,
     /// Window captures asked for and not answered yet.
     pending_screenshots: Vec<PendingScreenshot>,
     queued_screenshots: Vec<(u64, f64, u32)>,
@@ -547,6 +549,7 @@ impl VectorcraftApp {
             clipboard_publishing: Default::default(),
             pending_url: None,
             control_rx: None,
+            agents: Default::default(), // Varos
             pending_screenshots: vec![],
             queued_screenshots: vec![],
             screenshot_token: 0,
@@ -869,6 +872,7 @@ impl VectorcraftApp {
 
     fn drain_control(&mut self, ctx: &egui::Context) {
         let Some(rx) = self.control_rx.take() else { return };
+        varos::agents::observe(self); // Varos: log the person's changes while agents are around
         let mut handled = 0;
         while handled < control::MAX_CONTROL_REQUESTS_PER_FRAME {
             let Ok(req) = rx.try_recv() else { break };
@@ -882,7 +886,9 @@ impl VectorcraftApp {
             // Guarded per request: a panic must not drop the channel (taken out of `self` above).
             let roots = self.automation_roots.clone();
             self.ui.answering_control = true;
+            let agent = varos::agents::before(self, &req); // Varos: who sent it, and what it changes
             let answer = file_access::confine(roots.as_ref(), || vectorcraft_engine::guard::catch_panic(|| control::handle(self, ctx, &req)));
+            varos::agents::after(self, agent); // Varos
             self.ui.answering_control = false;
             let outcome = match answer {
                 Ok(outcome) => outcome,

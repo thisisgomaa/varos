@@ -66,6 +66,8 @@ pub struct ControlRequest {
     pub params: Value,
     pub reply: Sender<ControlResponse>,
     state: Arc<AtomicU8>,
+    /// Varos: who sent it (`{session, profile, label}`, see `varos::agents`); `None` from tests.
+    pub actor: Option<Value>,
 }
 
 /// A request's state: waiting to run, taken by the app ([`ControlRequest::claim`]), or given up
@@ -89,7 +91,13 @@ impl Ticket {
 impl ControlRequest {
     pub fn new(method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<ControlResponse>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        (Self { method: method.into(), params, reply: tx, state: Arc::new(AtomicU8::new(QUEUED)) }, rx)
+        (Self { method: method.into(), params, reply: tx, state: Arc::new(AtomicU8::new(QUEUED)), actor: None }, rx) // Varos: actor
+    }
+
+    /// Varos: the request with the agent it came from.
+    pub fn with_actor(mut self, actor: Option<Value>) -> Self {
+        self.actor = actor;
+        self
     }
 
     /// The caller's handle on this request, to give it up with.
@@ -195,6 +203,9 @@ fn modifiers(p: &Value) -> egui::Modifiers {
 }
 
 pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
+    if let Some(refused) = crate::varos::agents::guard(app, req) {
+        return refused; // Varos: mistake guards on the files agents write
+    }
     let p = &req.params;
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     match req.method.as_str() {

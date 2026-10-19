@@ -15,6 +15,9 @@ pub trait Backend {
     fn has_ui(&self) -> bool;
     /// Short human description ("headless", "remote 127.0.0.1:7979").
     fn describe(&self) -> String;
+    /// Varos: the client introduced itself (`initialize`'s `clientInfo`); a backend that reaches
+    /// the desktop app names the agent to it.
+    fn set_client(&mut self, _client_info: &Value) {}
 }
 
 /// A running VectorCraft app, reached through its loopback control port.
@@ -22,6 +25,10 @@ pub struct Remote {
     addr: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
+    /// Varos: the agent this server speaks for, sent with every line (`varos_actor`).
+    actor: Value,
+    /// Varos: the token of Varos' always-on port, sent with every line (`varos_connect`).
+    token: Option<String>,
 }
 
 /// Longest accepted control-channel reply line (bytes, without the newline). The app answers
@@ -33,13 +40,19 @@ const MAX_REPLY_BYTES: usize = 256 * 1024 * 1024;
 impl Remote {
     /// Connect to `addr` (e.g. `127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, actor: Value::Null, token: None }; // Varos: actor, token
         r.reconnect()?;
         Ok(r)
     }
 
     pub fn addr(&self) -> &str {
         &self.addr
+    }
+
+    /// Varos: send `token` with every line (the always-on port's, from its endpoint file).
+    pub fn with_token(mut self, token: String) -> Self {
+        self.token = Some(token);
+        self
     }
 
     #[cfg(test)]
@@ -150,7 +163,14 @@ impl Backend for Remote {
         })?;
         let id = self.next_id;
         self.next_id += 1;
-        let line = json!({"id": id, "method": method, "params": params}).to_string();
+        let mut line = json!({"id": id, "method": method, "params": params});
+        if !self.actor.is_null() {
+            line["actor"] = self.actor.clone(); // Varos: who is asking
+        }
+        if let Some(token) = &self.token {
+            line["token"] = json!(token); // Varos: the endpoint file's token
+        }
+        let line = line.to_string();
         let v: Value = self
             .roundtrip(&line)
             .and_then(|reply| {
@@ -191,5 +211,9 @@ impl Backend for Remote {
 
     fn describe(&self) -> String {
         format!("remote {}", self.addr)
+    }
+
+    fn set_client(&mut self, client_info: &Value) {
+        self.actor = crate::varos_actor::actor(client_info); // Varos
     }
 }
