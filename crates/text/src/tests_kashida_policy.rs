@@ -241,6 +241,16 @@ fn force_elongates_lines_that_are_not_justified() {
     let plain = layout(&db, &point);
     let (w0, w1) = (plain.lines[0].x1 - plain.lines[0].x0, grown.lines[0].x1 - grown.lines[0].x0);
     assert!(w1 <= w0 * 1.5 + 0.01 && w1 > w0 * 1.5 - 2.0 * one.max(1.0), "point type: {w0} → {w1}");
+    // Point type justified with its last line aligned isn't justified at all: Force elongates it.
+    for justify in [Justify::JustifyLeft, Justify::JustifyCenter, Justify::JustifyRight, Justify::JustifyAll] {
+        let mut point = TextObject::point(Point::ZERO, BASMALA, st.clone());
+        point.para = ParaStyle { justify, kashida: opts(KashidaMode::Force, 50), ..Default::default() };
+        let grown = layout(&db, &point);
+        point.para.kashida = opts(KashidaMode::Off, 50);
+        let plain = layout(&db, &point);
+        let (w0, w1) = (plain.lines[0].x1 - plain.lines[0].x0, grown.lines[0].x1 - grown.lines[0].x0);
+        assert!(w1 <= w0 * 1.5 + 0.01 && w1 > w0 * 1.5 - 2.0 * one.max(1.0), "point type {justify:?}: {w0} → {w1}");
+    }
     // Strength 0: nothing.
     let none = layout(&db, &area(BASMALA, st, wide, Justify::Right, opts(KashidaMode::Force, 0)));
     assert_eq!(elongation(&none, tat), vec![0]);

@@ -522,6 +522,8 @@ fn file_save_over_an_existing_file_is_refused_up_front() {
         ("app.save", json!({"path": s(&taken)})),
         ("engine.execute", json!({"command": "file.exportAs", "params": {"path": s(&taken), "format": "svg"}})),
         ("engine.execute", json!({"command": "file.export.png", "params": {"path": s(&taken)}})),
+        ("engine.execute", json!({"command": "file.export.pdf", "params": {"path": s(&taken)}})),
+        ("engine.execute", json!({"command": "file.saveForWeb", "params": {"path": s(&taken), "format": "png"}})),
     ] {
         let r = request(&mut app, &tx, guarded(), method, params.clone());
         let error = r["error"].as_str().unwrap_or("");
@@ -531,6 +533,14 @@ fn file_save_over_an_existing_file_is_refused_up_front() {
         assert!(app.ui.dialog.is_none() && app.ui.told.is_empty(), "no dialog for an agent's refusal");
         assert!(app.background.jobs.is_empty(), "nothing was started");
     }
+    // Export for Screens writes a set: only into an empty folder.
+    let busy = home.join("Desktop/screens");
+    std::fs::create_dir_all(&busy).unwrap();
+    std::fs::write(busy.join("Artboard 1.png"), b"keep me").unwrap();
+    let r = request(&mut app, &tx, guarded(), "engine.execute", json!({"command": "file.exportForScreens", "params": {"folder": s(&busy)}}));
+    assert!(r.get("error").is_some(), "{r}");
+    assert_eq!(std::fs::read(busy.join("Artboard 1.png")).unwrap(), b"keep me");
+    assert!(app.ui.dialog.is_none() && app.background.jobs.is_empty());
     // A new name saves.
     let fresh = home.join("Desktop/fresh.vectorcraft");
     let r = request(&mut app, &tx, guarded(), "engine.execute", json!({"command": "file.save", "params": {"path": s(&fresh)}}));

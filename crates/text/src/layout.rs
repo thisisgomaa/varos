@@ -1855,7 +1855,11 @@ fn flow(cx: &mut Ctx<'_>, paras: &[Range<usize>], t: &TextObject, regions: Optio
             // and elongates a line that isn't justified at all (Left, Right, Center, point type) by
             // its strength in percent of the line's width, within the box (owner 2026-10-19).
             let force = para.kashida.mode == vectorcraft_doc::text::KashidaMode::Force;
-            let force_last = force && last_of_para && matches!(para.justify, Justify::JustifyLeft | Justify::JustifyCenter | Justify::JustifyRight);
+            // (Area type only: a point type line isn't justified at all, so Force elongates it.)
+            let force_last = force
+                && last_of_para
+                && regions.is_some()
+                && matches!(para.justify, Justify::JustifyLeft | Justify::JustifyCenter | Justify::JustifyRight);
             let justified_line = kashida::justified(para.justify, last_of_para) && regions.is_some();
             let grow = force && !justified_line && !force_last;
             if rtl

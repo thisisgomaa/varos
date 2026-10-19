@@ -96,6 +96,9 @@ pub fn policy(strength: u8, force: bool) -> Policy {
 /// trial are `plan`'s: it must widen the line, stay within the budget and the target, keep every
 /// glyph, and the safe boundaries are read again after each one kept.
 ///
+/// No word spends more than its share of the cap (the cap over the line's words, at least 8), so a
+/// word whose joins the face keeps refusing can't starve the words after it.
+///
 /// `per_word` is bounded to [`Policy::MAX_GROW_PER_WORD`] (8), and the re-shape cap is 32 per
 /// allowed tatweel per word, at least 64: 64 for Minimal and Balanced (as `plan`), 96 to 160 for 3
 /// to 5 per word (justified lines), 256 for the elongation of a line that isn't justified. A line
@@ -133,12 +136,16 @@ pub fn plan_with<T>(
     }
     // At most 32 × 8 = 256 (see above).
     let cap = 32 * per_word.max(2);
+    // No word may spend more than its share of the re-shapes (at least 8): one whose joins the
+    // face keeps refusing can't starve the words after it.
+    let share = (cap / words.len().max(1)).max(8);
+    let mut tried: BTreeMap<usize, usize> = BTreeMap::new();
     let mut inserted: Vec<usize> = Vec::new();
     let mut payload = None;
     let mut attempts = 0;
     'rounds: for _ in 0..per_word {
         let mut kept_any = false;
-        for slots in words.values() {
+        for (word, slots) in &words {
             for c in slots {
                 if attempts >= cap {
                     break 'rounds;
@@ -146,6 +153,11 @@ pub fn plan_with<T>(
                 if !safe.contains(&c.byte) {
                     continue;
                 }
+                let spent = tried.entry(*word).or_default();
+                if *spent >= share {
+                    break;
+                }
+                *spent += 1;
                 let mut trial = inserted.clone();
                 trial.push(c.byte);
                 trial.sort_unstable();
@@ -265,9 +277,9 @@ fn article_len(letters: &[char]) -> Option<usize> {
 }
 
 /// Where the name of God begins in `word` (a byte offset into it), which no tatweel may enter:
-/// `Some(0)` for a word that is the name (الله, لله, اللهم, with any of the proclitics و ف ب ت ك ل
-/// أ: والله، بالله، فلله، تالله، أبالله) or holds a sacred ligature (ﷲ U+FDF2 and the others of
-/// U+FDF0..U+FDFD); the offset of the name for a word that ends in it (عبدالله: of its الله).
+/// `Some(0)` for a word that is the name in one of its forms ([`NAME_FORMS`]: الله، لله، اللهم،
+/// والله، بالله، تالله، فالله، ولله، فلله…) or holds a sacred ligature (ﷲ U+FDF2 and the others of
+/// U+FDF0..U+FDFD); the offset of the name for a longer word that ends in الله (عبدالله).
 /// `None`: kashida may go anywhere the joining rules allow. Harakat, tatweels and punctuation are
 /// read through, and alef wasla (ٱ) is an alef.
 pub fn sacred_from(word: &str) -> Option<usize> {
@@ -276,21 +288,36 @@ pub fn sacred_from(word: &str) -> Option<usize> {
     }
     let letters = arabic_letters(word);
     let chars: Vec<char> = letters.iter().map(|l| l.1).collect();
-    let name = if chars.ends_with(&['ل', 'ل', 'ه']) {
-        3
-    } else if chars.ends_with(&['ل', 'ل', 'ه', 'م']) {
-        4
-    } else {
-        return None;
-    };
-    let rest = &chars[..chars.len() - name];
-    if rest.len() <= 4 && rest.iter().all(|c| "وفبتكلأا".contains(*c)) {
+    let skeleton: String = chars.iter().collect();
+    if NAME_FORMS.contains(&skeleton.as_str()) {
         return Some(0);
     }
-    // A longer word ending in the name (عبدالله): from its alef.
-    let from = if rest.last() == Some(&'ا') { rest.len() - 1 } else { rest.len() };
-    Some(letters[from].0)
+    // A longer word ending in the name itself (عبدالله): from its alef. A word that merely ends in
+    // لله (علله، كلله) is not the name.
+    let n = chars.len();
+    (n > 4 && chars.ends_with(&['ا', 'ل', 'ل', 'ه'])).then(|| letters[n - 4].0)
 }
+
+/// The name of God as a whole word, with the proclitics it takes (letters only: harakat read
+/// through, alef wasla as alef): [`sacred_from`] protects the whole word.
+const NAME_FORMS: &[&str] = &[
+    "الله",
+    "والله",
+    "بالله",
+    "تالله",
+    "فالله",
+    "وبالله",
+    "فبالله",
+    "أبالله",
+    "أفبالله",
+    "لله",
+    "ولله",
+    "فلله",
+    "أفلله",
+    "اللهم",
+    "واللهم",
+    "فاللهم",
+];
 
 /// The virtual elongation character.
 pub const TATWEEL: char = '\u{0640}';
@@ -406,7 +433,8 @@ mod tests {
         {
             assert_eq!(sacred_from(w), Some(0), "{w}");
         }
-        for w in ["الرحمن", "بسم", "اللهو", "الحمد", "العالمين", "لهم", "إله"] {
+        for w in ["الرحمن", "بسم", "اللهو", "الحمد", "العالمين", "لهم", "إله", "الهم", "باللهو", "كلله", "علله"]
+        {
             assert_eq!(sacred_from(w), None, "{w}");
         }
         let w = "عبدالله";
@@ -481,6 +509,31 @@ mod tests {
             })
             .collect();
         assert_eq!(plan.slots, finals);
+    }
+
+    /// A word whose every join the face refuses spends at most its share of the re-shapes: the
+    /// words after it still take theirs.
+    #[test]
+    fn a_refused_word_cannot_starve_the_others() {
+        let long = "سم".repeat(150);
+        let text = format!("{long} الرحمن الرحيم");
+        let safe: HashSet<usize> = candidates(&text, 0..text.len()).unwrap().into_iter().map(|c| c.byte).collect();
+        let mut calls = 0;
+        let mut on_long = 0;
+        let p = plan_with(&text, 0..text.len(), 300.0, safe.clone(), 1000.0, growth_policy(), |slots: &[usize]| {
+            calls += 1;
+            if slots.iter().any(|s| *s < long.len()) {
+                on_long += 1;
+                return None;
+            }
+            Some(Measured { width: 300.0 + 3.0 * slots.len() as f64, safe: safe.clone(), missing_glyph: false, payload: () })
+        })
+        .unwrap();
+        let share = 256 / 3;
+        assert!(on_long <= share, "{on_long} re-shapes on the refused word");
+        assert!(calls <= 256);
+        let words = words_of(&text, &p.slots);
+        assert!(words.contains(&(long.len() + 1)) && words.contains(&text.rfind(' ').map(|i| i + 1).unwrap()), "{words:?}");
     }
 
     /// A line that isn't justified grows by its strength in percent, within its box.

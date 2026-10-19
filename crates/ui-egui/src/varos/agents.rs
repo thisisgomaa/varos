@@ -409,14 +409,25 @@ pub(crate) const READS: &[&str] = &[
 /// Control methods and UI commands outside the engine's command registry that write a file at
 /// their `path`: File › Save (`file.save`, which the registry doesn't hold: the app saves) and the
 /// app's own export commands are refused up front for an existing file, like the registry's.
-pub(crate) const UI_WRITERS: &[&str] =
-    &["app.save", "app.export", "ui.render", "ui.screenshot", "file.save", "file.exportAs", "file.export.svg", "file.export.png"];
+pub(crate) const UI_WRITERS: &[&str] = &[
+    "app.save",
+    "app.export",
+    "ui.render",
+    "ui.screenshot",
+    "file.save",
+    "file.exportAs",
+    "file.export.svg",
+    "file.export.png",
+    "file.export.pdf",
+    "file.exportForScreens",
+    "file.saveForWeb",
+];
 
 /// Commands that write over the document's own file when it is the path they are given.
 const SAVES_OWN_FILE: &[&str] = &["app.save", "document.save", "file.save"];
 
 /// Commands that write a set of files with names they make up into the `folder` they are given.
-const WRITES_A_SET: &[&str] = &["assets.export", "document.exportForScreens"];
+const WRITES_A_SET: &[&str] = &["assets.export", "document.exportForScreens", "file.exportForScreens"];
 
 /// Commands that give the path they are given an extension of their own.
 const RENAMES_ITS_FILE: &[&str] = &["file.saveAsTemplate"];
