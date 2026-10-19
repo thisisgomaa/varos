@@ -179,3 +179,29 @@ fn redo_during_an_interaction_keeps_the_history_and_the_document_in_step() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(first_x(&s), start);
 }
+
+/// On macOS the history keeps a thirty-second of the memory, from 64 MiB to 512 MiB, and 512 MiB
+/// when the memory is unknown.
+#[test]
+#[cfg(target_pointer_width = "64")] // the GiB literals overflow usize on 32-bit targets (review finding)
+fn mac_history_budget_is_a_thirty_second_of_memory_clamped() {
+    const MIB: usize = 1 << 20;
+    const GIB: usize = 1 << 30;
+    assert_eq!(mac_history_budget(Some(8 * GIB)), 256 * MIB);
+    assert_eq!(mac_history_budget(Some(16 * GIB)), 512 * MIB);
+    assert_eq!(mac_history_budget(Some(64 * GIB)), 512 * MIB, "at most 512 MiB");
+    assert_eq!(mac_history_budget(Some(GIB)), 64 * MIB, "at least 64 MiB");
+    assert_eq!(mac_history_budget(Some(0)), 64 * MIB);
+    assert_eq!(mac_history_budget(None), 512 * MIB, "memory unknown");
+    // Past the budget the last steps still stay.
+    assert_eq!(History::MIN_STEPS, 8);
+}
+
+/// On macOS the machine's memory is read (`sysctl hw.memsize`), and the default budget follows it.
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_reads_the_machine_memory() {
+    let memory = physical_memory();
+    assert!(memory.is_some_and(|m| m >= 1 << 30), "{memory:?}");
+    assert_eq!(default_history_budget(), mac_history_budget(memory));
+}

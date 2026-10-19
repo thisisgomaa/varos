@@ -220,19 +220,40 @@ impl History {
     }
 }
 
-/// The default [`History::byte_budget`]: an eighth of the machine's memory where it is known
-/// (Linux), at most 1 GiB (the figure elsewhere); 256 MiB on the web, whose memory is small.
+/// The default [`History::byte_budget`]: an eighth of the machine's memory on Linux, at most
+/// 1 GiB (the figure where the memory is unknown); on macOS [`mac_history_budget`]; 256 MiB on the
+/// web, whose memory is small.
 pub fn default_history_budget() -> usize {
     const MAX: usize = 1 << 30;
     if cfg!(target_arch = "wasm32") {
         return 256 << 20;
     }
     static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *BUDGET.get_or_init(|| physical_memory().map_or(MAX, |m| (m / 8).clamp(64 << 20, MAX)))
+    *BUDGET.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return mac_history_budget(physical_memory());
+        }
+        physical_memory().map_or(MAX, |m| (m / 8).clamp(64 << 20, MAX))
+    })
 }
 
-/// The machine's memory, where cheap to learn without platform calls.
+/// The undo history's memory budget on macOS, for a machine with `memory` bytes: a thirty-second
+/// of it, from 64 MiB to 512 MiB (512 MiB when the memory is unknown). A step that moves a large
+/// object keeps a copy of it (22–30 MB a step for a compound path of 350,000 anchors), and a Mac
+/// shares its memory with the GPU and the other apps. The last [`History::MIN_STEPS`] steps stay
+/// whatever they take.
+fn mac_history_budget(memory: Option<usize>) -> usize {
+    const MAC_MAX: usize = 512 << 20;
+    memory.map_or(MAC_MAX, |m| (m / 32).clamp(64 << 20, MAC_MAX))
+}
+
+/// The machine's memory, where cheap to learn: `/proc/meminfo` on Linux, `sysctl hw.memsize` on
+/// macOS (read once, see [`default_history_budget`]).
 fn physical_memory() -> Option<usize> {
+    if cfg!(target_os = "macos") {
+        let out = std::process::Command::new("/usr/sbin/sysctl").args(["-n", "hw.memsize"]).output().ok().filter(|o| o.status.success())?;
+        return String::from_utf8_lossy(&out.stdout).trim().parse().ok();
+    }
     if !cfg!(target_os = "linux") {
         return None;
     }
