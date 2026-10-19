@@ -188,10 +188,11 @@ fn diff_reports_the_layers_own_order() {
 }
 
 /// The owner's compound path of ~13,900 parts: one part edited, one added, one removed or two
-/// swapped costs a handful of node visits, not thousands (pointer comparisons aside). Counted, not
-/// timed, so the test is the same on any machine.
+/// swapped costs a handful of node visits (compared or indexed by id), not thousands. The pointer
+/// comparisons over the siblings are still one per part (O(siblings)); they are not counted here.
+/// Counted, not timed, so the test is the same on any machine.
 #[test]
-fn diff_work_follows_the_edit_not_the_list() {
+fn diff_visits_a_handful_of_nodes_on_a_long_list() {
     const N: usize = 13_900;
     let mut d = Document::new(100.0, 100.0);
     let layer = d.alloc_id();
@@ -639,6 +640,21 @@ fn undo_of_a_delete_reads_as_changed() {
     let Since::Changes(c) = a.since(BOARD, 1, 3) else { panic!("resync") };
     assert_eq!(c.changed, vec![x]);
     assert!(c.created.is_empty() && c.removed.is_empty());
+}
+
+/// A change too large for the log's budget by itself is dropped: asking across it resyncs, and the
+/// revisions after it are answered as usual.
+#[test]
+fn an_entry_over_the_budget_is_dropped_and_resyncs() {
+    let mut a = Activity::new();
+    a.record(BOARD, entry(1, 2, None, change(&[NodeId(1)], &[], &[])));
+    let huge: Vec<NodeId> = (0..(Activity::MAX_BYTES / std::mem::size_of::<NodeId>() + 1) as u64).map(NodeId).collect();
+    a.record(BOARD, entry(2, 3, Some(AGENT), change(&huge, &[], &[])));
+    a.record(BOARD, entry(3, 4, None, change(&[NodeId(2)], &[], &[])));
+    assert_eq!(a.entries(BOARD).count(), 2, "the oversized entry is not kept");
+    assert_eq!(a.since(BOARD, 1, 4), Since::ResyncRequired);
+    assert_eq!(a.since(BOARD, 2, 4), Since::ResyncRequired);
+    assert!(matches!(a.since(BOARD, 3, 4), Since::Changes(_)));
 }
 
 #[test]

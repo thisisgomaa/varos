@@ -331,6 +331,10 @@ pub struct UndoGroup {
     /// Varos: whose group it is ([`History::actor`] when it began). Another actor's edit is never
     /// absorbed into it: it gets a step of its own, and the group's owner continues in a new step.
     actor: Option<u64>,
+    /// Varos: the owner's edits went on in a new step after another actor's: `journal` moves to
+    /// where that step's entries start ([`Session::settle_undo_groups`]), so a cancel takes back
+    /// that step and its entries only.
+    resumed: bool,
 }
 
 /// Per-document editing state.
@@ -644,6 +648,7 @@ impl DocState {
                 self.history.trim();
                 return;
             }
+            g.resumed = g.first.is_some(); // Varos: a new step after another actor's
             g.first = Some(doc.clone());
             if let Some(l) = &g.label {
                 label = l.clone();
@@ -1439,7 +1444,7 @@ impl Session {
             search_threads: None,
             link_stamps: Default::default(),
             link_scan: None,
-            actor: None, // Varos
+            actor: None,                        // Varos
             varos_new_type: Default::default(), // Varos
         }
     }
@@ -1460,6 +1465,17 @@ impl Session {
     /// Varos: the agent whose request is running ([`Session::set_actor`]).
     pub fn actor(&self) -> Option<u64> {
         self.actor
+    }
+
+    /// Varos: an undo group whose owner went on in a new step after another actor's step starts
+    /// its journal here, before the entry of the edit that began that step: a cancel then takes
+    /// back that step and its entries, and leaves the other actor's.
+    fn settle_undo_groups(&mut self) {
+        let len = self.journal.len();
+        for g in self.docs.iter_mut().filter_map(|d| d.undo_group.as_mut()).filter(|g| g.resumed) {
+            g.journal = len;
+            g.resumed = false;
+        }
     }
 
     pub fn documents(&self) -> &[DocState] {
@@ -1653,6 +1669,9 @@ impl Session {
         let r = r?;
         if self.depth == 0 {
             self.inherit_new_art();
+        }
+        if self.depth == 0 {
+            self.settle_undo_groups(); // Varos
         }
         if spec.journal && self.depth == 0 && self.active().is_none_or(|d| d.interaction.is_none()) {
             let p = self.noted(params);
@@ -1985,6 +2004,7 @@ impl Session {
         if perspective_again.is_some() {
             st.last_perspective = perspective_again;
         }
+        self.settle_undo_groups(); // Varos
         self.journal.push(preview);
         Ok(())
     }
@@ -2029,7 +2049,7 @@ impl Session {
             && st.undo_group.is_none()
         {
             let actor = st.history.actor; // Varos: whose group it is
-            st.undo_group = Some(UndoGroup { first: None, journal, label, actor });
+            st.undo_group = Some(UndoGroup { first: None, journal, label, actor, resumed: false });
         }
     }
 

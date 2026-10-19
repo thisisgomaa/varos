@@ -2,10 +2,11 @@
 //!
 //! An edit copies only what it changes: every node it leaves alone is the same `Arc` in the
 //! document before and after, and so is every subtree with nothing changed inside. The diff skips
-//! those by pointer and compares only along the changed branches, so its cost follows the size of
-//! the edit, not of the document. In a long sibling list (a compound path of thousands of parts)
-//! the children are walked pairwise from both ends, skipping shared `Arc`s by pointer; only the
-//! stretch in between where the lists really differ is indexed by id. A node is matched by its id
+//! those by pointer and descends only along the changed branches. Along such a branch each sibling
+//! list costs one pointer comparison per sibling (O(siblings), not O(changed)), walked pairwise from
+//! both ends without hashing, copying or allocating; only the stretch in between where the lists
+//! really differ is indexed by id. On a compound path of ~13,900 parts that is ~13,900 pointer
+//! comparisons and a handful of node visits for a one-part edit. A node is matched by its id
 //! (ids are never reused), so a node moved to another parent counts as changed, not as removed and
 //! created.
 
@@ -70,7 +71,7 @@ pub fn diff(before: &Document, after: &Document) -> Change {
 }
 
 /// [`diff`], and how many nodes it looked at beyond a pointer comparison (compared with their old
-/// selves, or indexed by id): the work it did, which tests hold to the size of the edit.
+/// selves, or indexed by id). Pointer comparisons of shared siblings are not counted.
 pub fn diff_counted(before: &Document, after: &Document) -> (Change, usize) {
     let mut w = Walk::default();
     w.lists(&before.layers, &after.layers, None, None);
@@ -107,7 +108,7 @@ impl<'a> Walk<'a> {
     /// Compare two sibling lists, matched by id: pairwise from the front, then from the back, both
     /// skipping shared `Arc`s by pointer and stopping where the ids part; the stretch left between
     /// is matched through an index of its ids. One edited child of a long list costs one pointer
-    /// comparison per sibling and nothing else.
+    /// comparison per sibling (linear in the list) and no hashing or allocation.
     fn lists(&mut self, before: &'a [Arc<Node>], after: &'a [Arc<Node>], before_parent: Option<NodeId>, after_parent: Option<NodeId>) {
         let mut start = 0;
         while let (Some(b), Some(a)) = (before.get(start), after.get(start)) {

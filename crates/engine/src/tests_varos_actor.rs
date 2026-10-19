@@ -90,3 +90,35 @@ fn the_actor_follows_the_document_a_request_makes() {
     rect(&mut s, 40);
     assert_eq!(actors(&s).last(), Some(&None));
 }
+
+fn documents(s: &Session) -> Vec<serde_json::Value> {
+    s.documents().iter().map(|d| serde_json::to_value(&*d.doc).unwrap()).collect()
+}
+
+/// Person → agent → person in one undo group, then Escape: only the person's step after the
+/// agent's is taken back, with its journal entries; the agent's edit and the person's first step
+/// stay, and replaying the journal gives the same documents.
+#[test]
+fn cancelling_a_split_group_takes_back_only_its_last_step_and_its_journal() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({"width": 400, "height": 300, "created": null})).unwrap();
+    rect(&mut s, 10);
+    let base = s.doc().unwrap().history.undo.len();
+    s.begin_undo_group();
+    s.execute("object.setBounds", &json!({"width": 30})).unwrap();
+    s.set_actor(Some(7));
+    rect(&mut s, 100);
+    s.set_actor(None);
+    let (journal, kept) = (s.journal.len(), documents(&s));
+    s.execute("object.setBounds", &json!({"width": 50})).unwrap();
+    s.execute("object.setBounds", &json!({"width": 60})).unwrap();
+    s.end_undo_group(true);
+    assert_eq!(actors(&s)[base..], [None, Some(7)]);
+    assert_eq!(s.journal.len(), journal, "the cancelled step's entries are gone, the agent's stay");
+    assert_eq!(documents(&s), kept);
+    let mut replay = Session::new();
+    for (id, p) in &s.journal {
+        replay.execute(id, p).unwrap();
+    }
+    assert_eq!(documents(&replay), documents(&s), "the journal replays to the same documents");
+}

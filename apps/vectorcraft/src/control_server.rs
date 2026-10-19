@@ -164,8 +164,7 @@ fn serve_socket(stream: TcpStream, link: &varos_control::Link, timeouts: Connect
         handle,
         |reader| {
             let buffered = !reader.buffer().is_empty();
-            let (idle, line) = link.budgets(timeouts.idle, timeouts.line); // Varos: short until it shows its token
-            reader.get_mut().set_budgets(idle, line);
+            reader.get_mut().set_cap(link.cap()); // Varos: an absolute window until it shows its token
             reader.get_mut().begin_line(buffered)
         },
         DeadlineWriter::begin_reply,

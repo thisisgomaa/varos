@@ -18,9 +18,7 @@
 //! A path is checked, then written: another program swapping in a link between the two can still
 //! win that race. The person at the keyboard is never guarded.
 
-use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
 
 /// Where the guard draws its lines; [`Places::current`] for the running process.
 #[derive(Clone, Debug)]
@@ -115,21 +113,21 @@ pub fn check_empty_folder(path: &str, places: &Places) -> Result<(), String> {
 }
 
 /// The check on every file one agent request actually writes (see the module notes): what
-/// [`check_new_file`] says for a new file, an existing folder only where agents may write, and the
-/// files and folders this request made itself may be written again (a batch writing over its own
-/// output, a folder a command made for its files).
+/// [`check_new_file`] says for a new file, and an existing folder only where agents may write (a
+/// folder a command made for its files, making it again). A file is never written twice: a path
+/// checked earlier (a check before a capture, a step before) may have been filled by anyone since,
+/// so it is looked at again each time.
 #[derive(Debug)]
 pub struct Writes {
     places: Places,
     own_file: Option<String>,
-    made: Mutex<HashSet<PathBuf>>,
 }
 
 impl Writes {
     /// The check for one request; `own_file`: the document's own file, which a plain Save may write
     /// over.
     pub fn new(places: Places, own_file: Option<String>) -> Self {
-        Self { places, own_file, made: Mutex::default() }
+        Self { places, own_file }
     }
 
     /// May the request write (a file or a new folder) at `path` now? `Err` says why not.
@@ -139,10 +137,6 @@ impl Writes {
             return Err(format!("give an absolute path (agents' files are never relative): {path}"));
         }
         plain_components(p, path)?;
-        let mut made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
-        if made.contains(p) {
-            return Ok(());
-        }
         // Links followed: a link to a folder is checked as that folder.
         if let Ok(m) = std::fs::metadata(p)
             && m.is_dir()
@@ -150,9 +144,7 @@ impl Writes {
             // An existing folder (making it again changes nothing; writing a file onto it fails).
             return check_folder(path, &self.places);
         }
-        check_new_file(path, &self.places, self.own_file.as_deref())?;
-        made.insert(p.to_path_buf());
-        Ok(())
+        check_new_file(path, &self.places, self.own_file.as_deref())
     }
 }
 
@@ -318,8 +310,8 @@ mod tests {
         assert!(check_empty_folder(&s(&home.join("Desktop/missing")), &places).is_err());
     }
 
-    /// The check at the files a request really writes: new files and one new folder level, again
-    /// what it made itself, never something that was there, never a folder tree.
+    /// The check at the files a request really writes: new files and one new folder level, a
+    /// folder again, never a file that is there (its own earlier one included), never a folder tree.
     #[test]
     fn writes_are_checked_where_they_happen() {
         let home = temp_home("writes");
@@ -337,13 +329,14 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         assert_eq!(w.check(&s(&sub.join("a.png"))), Ok(()));
         std::fs::write(sub.join("a.png"), b"x").unwrap();
-        assert_eq!(w.check(&s(&sub.join("a.png"))), Ok(()), "its own new file again");
+        assert!(w.check(&s(&sub.join("a.png"))).unwrap_err().contains("never overwrite"), "a file is never written twice");
         assert_eq!(w.check(&s(&desk)), Ok(()), "an existing folder (create_dir_all of it is a no-op)");
         assert!(w.check(&s(&desk.join("a/b"))).unwrap_err().contains("doesn't exist"), "no folder trees");
         assert!(w.check("relative.png").unwrap_err().contains("absolute"));
         assert!(w.check(&s(&home.join("Library/Application Support/x.png"))).is_err());
-        // Another request starts afresh: the file it didn't make is there now.
-        let next = Writes::new(Places { home: home.clone(), app: None }, None);
-        assert!(next.check(&s(&sub.join("a.png"))).unwrap_err().contains("never overwrite"));
+        // A check that wrote nothing changes nothing: the path is looked at again next time.
+        let fresh = desk.join("b.png");
+        assert_eq!(w.check(&s(&fresh)), Ok(()));
+        assert_eq!(w.check(&s(&fresh)), Ok(()));
     }
 }

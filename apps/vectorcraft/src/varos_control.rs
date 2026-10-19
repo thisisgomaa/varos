@@ -141,15 +141,14 @@ impl Link {
         self
     }
 
-    /// The idle and line budgets for the next line: until the token is shown, what is left of
-    /// [`AUTH_WINDOW`] since the connection opened (hellos and blank lines don't restart it; none
-    /// left closes the connection).
-    pub(super) fn budgets(&self, idle: Duration, line: Duration) -> (Duration, Duration) {
-        if self.authenticated.get() {
-            return (idle, line);
-        }
-        let left = AUTH_WINDOW.saturating_sub(self.opened.elapsed());
-        (left.min(idle), left.min(line))
+    /// Until the token is shown: the time no read may go past, [`AUTH_WINDOW`] after the
+    /// connection opened (hellos, blank lines and trickled bytes don't move it).
+    pub(super) fn cap(&self) -> Option<Instant> {
+        (!self.authenticated.get()).then(|| self.window_end())
+    }
+
+    fn window_end(&self) -> Instant {
+        self.opened + AUTH_WINDOW
     }
 
     /// A line just read, before anything parses it. On the agents port: a line whose tail carries
@@ -157,6 +156,10 @@ impl Link {
     /// answered with the server's proof; anything else is refused and closes the connection.
     pub(super) fn screen(&self, line: &[u8]) -> Screen {
         let Some(secrets) = &self.secrets else { return Screen::Pass };
+        // A line already buffered when the window ended is not admitted either.
+        if !self.authenticated.get() && Instant::now() >= self.window_end() {
+            return Screen::Refuse(json!({"ok": false, "error": "unauthorized: the time to show the token ran out; closing the connection"}));
+        }
         if auth::has_token(line, &secrets.token) {
             if !self.authenticated.get() {
                 if let Some(main) = &self.main {
@@ -169,6 +172,9 @@ impl Link {
                 self.authenticated.set(true);
             }
             return Screen::Pass;
+        }
+        if line.len() > auth::MAX_HELLO {
+            return Screen::Refuse(json!({"ok": false, "error": UNAUTHORIZED}));
         }
         if line.trim_ascii().is_empty() {
             return Screen::Pass;
@@ -367,12 +373,46 @@ mod tests {
     fn the_unauthenticated_window_is_one_window() {
         let (token, key) = ("ab".repeat(32), "cd".repeat(32));
         let mut l = open_link(Some((&token, &key)));
-        let long = Duration::from_secs(300);
-        assert!(l.budgets(long, long).0 <= AUTH_WINDOW);
+        assert!(l.cap().is_some_and(|cap| cap <= Instant::now() + AUTH_WINDOW));
         l.opened = Instant::now() - AUTH_WINDOW;
-        assert_eq!(l.budgets(long, long), (Duration::ZERO, Duration::ZERO), "used up: the next read fails at once");
+        // Ended: even a token line already read is not admitted, nor is a hello.
+        assert!(matches!(l.screen(auth::hello_line(&key).as_bytes()), Screen::Refuse(_)));
+        assert!(matches!(l.screen(auth::with_token("{}".into(), &token).as_bytes()), Screen::Refuse(_)));
+        let l = open_link(Some((&token, &key)));
         assert!(matches!(l.screen(auth::with_token("{}".into(), &token).as_bytes()), Screen::Pass));
-        assert_eq!(l.budgets(long, long), (long, long), "the token lifts it");
+        assert_eq!(l.cap(), None, "the token lifts it");
+        // A hello padded past the hello limit is refused before anything trims it.
+        let padded = format!("{}{}", auth::hello_line(&key), " ".repeat(auth::MAX_HELLO));
+        assert!(matches!(open_link(Some((&token, &key))).screen(padded.as_bytes()), Screen::Refuse(_)));
+    }
+
+    /// A peer that waits, then drips a line one byte at a time, is dropped when the window that
+    /// began at connect ends (2 s), not a line budget after its first byte.
+    #[test]
+    fn a_slow_drip_is_dropped_at_the_window() {
+        let (ep, _rx) = agents_port();
+        let (mut s, _r) = connect(ep.port);
+        let started = Instant::now();
+        std::thread::sleep(AUTH_WINDOW * 3 / 4);
+        let mut dropped = None;
+        while started.elapsed() < AUTH_WINDOW * 3 {
+            // A refusal line or a reset ends it; a write to a closed socket fails soon after.
+            if s.write_all(b" ").is_err() {
+                dropped = Some(started.elapsed());
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            let mut probe = [0u8; 256];
+            s.set_nonblocking(true).unwrap();
+            let read = std::io::Read::read(&mut s, &mut probe);
+            s.set_nonblocking(false).unwrap();
+            if read.is_ok() || read.as_ref().is_err_and(|e| e.kind() != std::io::ErrorKind::WouldBlock) {
+                dropped = Some(started.elapsed());
+                break;
+            }
+        }
+        let at = dropped.expect("the peer was never dropped");
+        assert!(at >= AUTH_WINDOW - Duration::from_millis(100) && at < AUTH_WINDOW + Duration::from_millis(700), "dropped after {at:?}");
     }
 
     /// An agents port on a fresh port with fresh secrets, as [`start_default`] makes one (without
@@ -468,8 +508,16 @@ mod tests {
             e.pid = pid;
             endpoint::publish(&dir, &e).unwrap();
         };
-        let dead = TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
-        publish_as(1, dead);
+        // A crashed launch's port, held by this test until the pruning is over (so no other test
+        // can take it meanwhile): whatever connects is closed without a word.
+        let dead = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        publish_as(1, dead.local_addr().unwrap().port());
+        let closer = dead.try_clone().unwrap();
+        std::thread::spawn(move || {
+            for stream in closer.incoming() {
+                drop(stream);
+            }
+        });
         let other = impostor();
         publish_as(2, other.local_addr().unwrap().port());
         // Accepts (the listen backlog) and never answers: maybe a stopped Varos. Kept.
@@ -512,7 +560,7 @@ mod tests {
         assert_eq!(actor["label"], "Claude Code");
         remove_endpoint();
         assert!(!file.exists());
-        drop(silent);
+        drop((silent, dead, other));
     }
 
     /// The real MCP proxy against the real listener: it finds this launch through the endpoint

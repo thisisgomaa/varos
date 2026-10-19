@@ -438,3 +438,58 @@ fn a_restack_is_logged() {
     let entry = app.agents.activity.entries(doc).last().unwrap();
     assert!(!entry.change.reordered.is_empty(), "{:?}", entry.change);
 }
+
+/// An app whose Save, Export and captures write real files (through the guards).
+fn app_with_writer() -> (VectorcraftApp, Sender<ControlRequest>) {
+    let services = Services { write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))), ..Services::default() };
+    let (tx, rx) = std::sync::mpsc::channel();
+    (VectorcraftApp::new(Session::new(), services).with_control(rx).with_agent_guards(), tx)
+}
+
+/// The document's own file may be written over only by a save of the document: a template whose
+/// renamed path lands on that file is refused.
+#[test]
+fn only_a_save_writes_over_the_documents_own_file() {
+    let (mut app, tx) = app_with_writer();
+    new_doc(&mut app);
+    let home = test_home(&mut app, "own");
+    let own = home.join("Desktop/poster.vctemplate");
+    std::fs::write(&own, b"keep me").unwrap();
+    app.session.active_mut().unwrap().path = Some(s(&own));
+    let template = json!({"command": "file.saveAsTemplate", "params": {"path": s(&home.join("Desktop/poster.png"))}});
+    let r = request(&mut app, &tx, guarded(), "engine.execute", template);
+    assert!(r["error"].as_str().unwrap_or("").contains("never overwrite"), "{r}");
+    assert_eq!(std::fs::read(&own).unwrap(), b"keep me");
+}
+
+/// A window capture is written frames after its request: it is still held to that request's
+/// guards, so two captures asked for at the same new path don't both write it.
+#[test]
+fn a_capture_written_later_keeps_its_requests_guard() {
+    let (mut app, tx) = app_with_writer();
+    new_doc(&mut app);
+    let home = test_home(&mut app, "capture");
+    let shot = home.join("Desktop/shot.png");
+    let mut replies = vec![];
+    for _ in 0..2 {
+        let (req, reply) = ControlRequest::new("ui.screenshot", json!({"path": s(&shot), "focus": false}));
+        tx.send(req.with_actor(guarded())).unwrap();
+        replies.push(reply);
+    }
+    app.drain_control(&egui::Context::default());
+    assert!(replies.iter().all(|r| r.try_recv().is_err()), "both wait for a frame");
+    let first = app.screenshot_token;
+    let image = std::sync::Arc::new(egui::ColorImage::new([2, 2], vec![egui::Color32::WHITE; 4]));
+    let events = [first - 1, first]
+        .into_iter()
+        .map(|token| egui::Event::Screenshot { viewport_id: egui::ViewportId::ROOT, user_data: egui::UserData::new(token), image: image.clone() })
+        .collect();
+    let ctx = egui::Context::default();
+    ctx.begin_pass(egui::RawInput { events, ..Default::default() });
+    app.collect_screenshots(&ctx);
+    ctx.end_pass().textures_delta.clear();
+    let answers: Vec<Value> = replies.iter().map(|r| r.try_recv().unwrap()).collect();
+    assert_eq!(answers[0]["ok"], true, "{}", answers[0]);
+    assert!(answers[1]["error"].as_str().unwrap_or("").contains("never overwrite"), "{}", answers[1]);
+    assert!(shot.exists());
+}

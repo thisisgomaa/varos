@@ -134,10 +134,28 @@ pub(crate) fn before(app: &mut VectorcraftApp, req: &ControlRequest) -> Option<P
     let docs = app.session.documents().iter().map(|st| (st.uid, st.revision, st.doc.clone())).collect();
     let token = app.session.active().map(|st| st.uid).map(|uid| (uid, app.agents.presence.begin(actor, &label, &profile, uid, artboard, now)));
     let writes = is_guarded(req).then(|| {
-        let own = app.session.active().and_then(|d| d.path.clone());
+        // Only an actual save of the active document may write over its own file: never a
+        // template, an export or a print that lands on the same name.
+        let saves = command_of(req).is_some_and(|(command, _)| SAVES_OWN_FILE.contains(&command));
+        let own = app.session.active().and_then(|d| d.path.clone()).filter(|_| saves);
         file_access::begin_write_guard(write_guard(places(app), own))
     });
     Some(Pending { actor, label, profile, docs, token, writes })
+}
+
+/// Run `f` (writing a file a guarded request asked for, later than the request: a window
+/// capture) under that request's write guard ([`file_access::write_guard`] while it ran).
+pub(crate) fn with_request_guard<T>(guard: Option<file_access::WriteGuard>, f: impl FnOnce() -> T) -> T {
+    struct End(Option<file_access::WriteGuardScope>);
+    impl Drop for End {
+        fn drop(&mut self) {
+            if let Some(scope) = self.0.take() {
+                file_access::end_write_guard(scope);
+            }
+        }
+    }
+    let _end = End(guard.map(file_access::begin_write_guard));
+    f()
 }
 
 /// The check at every file a guarded request writes (`varos_agents::guard::Writes`).
@@ -310,15 +328,20 @@ pub(crate) fn guard(app: &VectorcraftApp, req: &ControlRequest) -> Option<crate:
     if !is_guarded(req) {
         return None;
     }
+    let (command, params) = command_of(req)?;
+    let own = app.session.active().and_then(|d| d.path.clone());
+    check_command(command, params, places(app).as_ref(), own.as_deref(), 0).err().map(crate::control::err)
+}
+
+/// The command a request runs and its params (a control method stands for itself).
+fn command_of(req: &ControlRequest) -> Option<(&str, &Value)> {
     let p = &req.params;
-    let (command, params) = match req.method.as_str() {
+    Some(match req.method.as_str() {
         "engine.execute" | "ui.menu.invoke" | "command" => {
             (p.get("command").or_else(|| p.get("id")).and_then(Value::as_str)?, p.get("params").unwrap_or(&Value::Null))
         }
         method => (method, p),
-    };
-    let own = app.session.active().and_then(|d| d.path.clone());
-    check_command(command, params, places(app).as_ref(), own.as_deref(), 0).err().map(crate::control::err)
+    })
 }
 
 /// Where the guards draw their lines.

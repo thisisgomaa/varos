@@ -70,9 +70,13 @@ impl Activity {
     }
 
     /// Record that document `doc` went from revision `entry.from` to `entry.to`. An entry that
-    /// doesn't advance the revision is ignored.
+    /// doesn't advance the revision is ignored. One larger than [`Activity::MAX_BYTES`] by itself
+    /// is not kept: the gap it leaves makes every `since` across it [`Since::ResyncRequired`].
     pub fn record(&mut self, doc: u64, entry: Entry) {
         if entry.to <= entry.from {
+            return;
+        }
+        if entry.bytes() > Self::MAX_BYTES {
             return;
         }
         let log = self.docs.entry(doc).or_default();

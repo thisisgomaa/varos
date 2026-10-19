@@ -19,11 +19,12 @@ WHAT THE LAYER DOES
 - Presence: the artboard an agent works on gets an orange outline with the agent's name, and the
   objects it creates or changes appear one by one, then fade. It is derived from the diff, so the
   agent sends nothing for it and spends no tokens. Restacking alone lights nothing.
-- Diff cost follows the edit: shared Arcs are skipped by pointer. Long sibling lists (a compound
-  of ~13,900 parts) are walked pairwise from both ends, and only the stretch that really differs
-  is indexed. There is no cloning of child lists. A counted (not timed) test holds one edit of a
-  13,900-part compound to at most 8 node visits. Pointer comparisons over the siblings remain
-  linear, but they are cheap.
+- Diff cost: unchanged subtrees are skipped by pointer, and the diff descends only along changed
+  branches. Each sibling list on such a branch costs O(siblings) pointer comparisons, walked
+  pairwise from both ends with no hashing, cloning or allocation; only the stretch that really
+  differs is indexed by id. It is not O(changed): a one-part edit of a 13,900-part compound does
+  ~13,900 pointer comparisons. A counted (not timed) test holds the node visits (compared or
+  indexed) for that edit to at most 8.
 
 HOW TO CONNECT
 - Open Varos (no flag). Every launch listens on a fresh loopback port and writes
@@ -77,8 +78,12 @@ SECURITY MODEL
     renaming, so this covers generated names (Export for Screens subfolders and numbered files,
     multi-artboard exports, the template's real extension). It applies to engine writes and, through
     VectorcraftApp::with_agent_guards, to the host's write services. It is carried to background
-    save/export threads (ScopeHandle). Files and folders the same request created may be written
-    again.
+    save/export threads (ScopeHandle) and to window captures written frames later
+    (PendingScreenshot keeps the asking request's guard). An existing folder may be "made" again;
+    a file is never written twice, not even one the same request wrote (a pre-check through
+    check_write must not vouch for a later write). Only an actual save of the active document
+    (app.save, document.save, file.save) may write over the document's own file; a template,
+    export or print landing on that name is refused.
   * Which commands are guarded is built from the registry: any command whose params description
     names path/paths/file/files/folder/folders/destinationFolder/linksFolder/userFolder/location/
     dir/directory, except an explicit READS list (open, place, import, relink, load, find...).

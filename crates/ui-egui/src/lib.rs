@@ -501,6 +501,8 @@ struct PendingScreenshot {
     reply: Sender<ControlResponse>,
     /// When to give up (ms, as [`now_ms`]).
     deadline: f64,
+    /// Varos: the write guard of the agent request that asked for it, applied when it is written.
+    guard: Option<file_access::WriteGuard>,
 }
 
 /// Seconds between two looks at the system clipboard for [`VectorcraftApp::system_paste`].
@@ -888,6 +890,7 @@ impl VectorcraftApp {
             self.ui.answering_control = true;
             let agent = varos::agents::before(self, &req); // Varos: who sent it, and what it changes
             let answer = file_access::confine(roots.as_ref(), || vectorcraft_engine::guard::catch_panic(|| control::handle(self, ctx, &req)));
+            let guard = file_access::write_guard(); // Varos: a capture written later keeps the request's guard
             varos::agents::after(self, agent); // Varos
             self.ui.answering_control = false;
             let outcome = match answer {
@@ -906,7 +909,7 @@ impl VectorcraftApp {
                     let token = self.screenshot_token;
                     let settle = ctx.global_style().animation_time as f64 * 2000.0 + 80.0;
                     self.queued_screenshots.push((token, now_ms() + settle, 0));
-                    self.pending_screenshots.push(PendingScreenshot { token, path, data, reply, deadline: now_ms() + settle + 8000.0 });
+                    self.pending_screenshots.push(PendingScreenshot { token, path, data, reply, deadline: now_ms() + settle + 8000.0, guard }); // Varos: guard
                 }
             }
         }
@@ -954,7 +957,10 @@ impl VectorcraftApp {
             if let Some(i) = self.pending_screenshots.iter().position(|p| p.token == token) {
                 let p = self.pending_screenshots.remove(i);
                 let roots = self.automation_roots.clone();
-                let _ = p.reply.send(file_access::confine(roots.as_ref(), || control::save_screenshot(self, &image, p.path.as_deref(), p.data)));
+                let guard = p.guard.clone(); // Varos: the asking request's write guard
+                let _ = p.reply.send(file_access::confine(roots.as_ref(), || {
+                    varos::agents::with_request_guard(guard, || control::save_screenshot(self, &image, p.path.as_deref(), p.data))
+                }));
             }
         }
         let now = now_ms();
