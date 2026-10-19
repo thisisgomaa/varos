@@ -1,6 +1,6 @@
 # Varos fork: state
 
-The one truth table for what exists today. Updated: 2026-10-19, at `main` = `3e81fe83`
+The one truth table for what exists today. Updated: 2026-10-19, at `main` = `31de359c`
 (upstream `cdba0aac` + Varos lanes). If anything else disagrees with this file, this file wins
 until it is corrected.
 
@@ -31,10 +31,10 @@ Status values:
 | Arabic font menu | provisional (awaits owner) | Font menu detects Arabic support, shows Arabic samples, has an Arabic filter and style chips, and an AAT/morx marker that follows HarfRust. | commits `48877d95`, `3ba3df36`, merge `bc47c4b3` (no lane report in `lanes/`; see `arabic-report.txt` for the stage-0 spike only) |
 | Arabic Type Essentials | provisional (awaits owner) | Middle Eastern options on by default (once per saved UI profile); Paragraph panel Direction row Auto/RTL/LTR; Character panel Digits dropdown and Harakat row (four swatches, Hide, As Letters) that colours/hides harakat without breaking joins or kashida; 150% auto leading for Arabic type created in the session; Glyphs panel Arabic subsets. Swatches show no current state; Direction shows the first paragraph (no mixed state). | `lanes/arabic-essentials-report.txt`; commits `90fc2f70`, `c69178ce`, merge `3f665588` |
 | PDF copy-back of ligature words | known-broken | A word set with a multi-letter ligature glyph (the Allah ligature) reads back reversed from our PDF export/import round trip. Arabic letters and Hindi digits are fine. Ignored test `a_word_with_a_ligature_reads_back_in_order` in `crates/pdf/tests/arabic_copy_back.rs`. External PDF viewers not checked. | `lanes/arabic-essentials-report.txt` (E) |
-| Agent-native layer | not merged | In `lane-agents` (`~/Documents/AI workspace/lanes/lane-agents`, commit `0d83c322`): `varos-agents` crate, orange presence, always-on token listener, VarosAttach MCP. Security re-review pending; S4 verbs and S6 review UI not built. | `BACKLOG.md` items 8, 11 |
-| Bundle for hand test | done | `Varos.app` v6, built on `main` (release build 6m56s), at `~/Documents/AI workspace/reference/artcraft/spikes/Varos.app`. The log does not record the commit it was built from (built from `3e81fe83` (lanes/gates-v6-3e81fe83.log)). | `/private/tmp/.../spikes/main-gates6.log` (moderator scratch) |
+| Agent-native layer | provisional (awaits owner) | Merged 31de359c: actor-tagged history, orange presence, always-on loopback listener with 0600 token + server proof, attach-only MCP proxy (`vectorcraft-cli mcp`), write guards; two security reviews, findings fixed. S4 verbs + S6 review UI later. | `lanes/agents-report.txt`; gates-v7 log |
+| Bundle for hand test | done | `Varos.app` v7, built on `main` (release build 6m56s), at `~/Documents/AI workspace/reference/artcraft/spikes/Varos.app`. The log does not record the commit it was built from (built from `31de359c` (lanes/gates-v7-3e81fe83.log)). | `/private/tmp/.../spikes/main-gates6.log` (moderator scratch) |
 | `varos-text` dependency | done | Pinned git rev `5936eaf` over SSH (`github.com/thisisgomaa/varos`), `default-features = false` (policy only, no second shaper). The comment in `crates/text-arabic/Cargo.toml` still says "path to the Varos worktree" and is stale. | `crates/text-arabic/Cargo.toml` |
-| Gates | done (v6 run) | Release build ok; app-bin 142 passed; ui 1704 passed (2 ignored); core 2569 passed (2 ignored) plus 11 more integration/doc result lines, all ok; fmt ok. The two old app-bin test failures (`portal_save` brand name, `mac_menu` model) are fixed (`bdb58743`). | scratch log `main-gates6.log` (moderator's, not in the repo); older repo log `lanes/gates-2026-10-19.log` is v1 (ui 1684, text 300) |
+| Gates | done (v7 run) | Release build ok; app-bin 142 passed; ui 1704 passed (2 ignored); core 2569 passed (2 ignored) plus 11 more integration/doc result lines, all ok; fmt ok. The two old app-bin test failures (`portal_save` brand name, `mac_menu` model) are fixed (`bdb58743`). | scratch log `main-gates6.log` (moderator's, not in the repo); older repo log `lanes/gates-2026-10-19.log` is v1 (ui 1684, text 300) |
 
 ## Build, run, hand-test (macOS)
 
