@@ -5288,3 +5288,8 @@ swatch	Bright Violet	Violet cerah
 # Select by Color (select.color)
 	Select by Color	Pilih berdasarkan warna
 	Move Anchor Point	Pindahkan titik jangkar
+# Varos: colour picker v3 (tabs and harmony rules).
+	Wheel	Roda
+	Sliders	Penggeser
+	Harmony	Harmoni
+	Gradient (coming soon)	Gradien (segera hadir)

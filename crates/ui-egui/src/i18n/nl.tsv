@@ -5330,3 +5330,8 @@ swatch	Bright Violet	Felviolet
 # Select by Color (select.color)
 	Select by Color	Selecteren op kleur
 	Move Anchor Point	Ankerpunt verplaatsen
+# Varos: colour picker v3 (tabs and harmony rules).
+	Wheel	Wiel
+	Sliders	Schuifregelaars
+	Harmony	Harmonie
+	Gradient (coming soon)	Verloop (binnenkort)

@@ -5288,3 +5288,8 @@ swatch	Bright Violet	Kraftig violet
 # Select by Color (select.color)
 	Select by Color	Markér efter farve
 	Move Anchor Point	Flyt ankerpunkt
+# Varos: colour picker v3 (tabs and harmony rules).
+	Wheel	Hjul
+	Sliders	Skydere
+	Harmony	Harmoni
+	Gradient (coming soon)	Gradient (kommer snart)
