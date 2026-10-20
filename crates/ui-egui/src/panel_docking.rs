@@ -358,7 +358,6 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         }
         app.ui.docking_hidden = hidden;
         sync_legacy(app);
-        crate::varos::panel_stack::layout_changed(app, &members); // Varos: the others stay open
         app.ui.open_panel = open;
         return Ok(json!({"panel": panel, "floating": false, "layout": app.ui.docking}));
     }
@@ -490,7 +489,6 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
         }
     }
     sync_legacy(app);
-    crate::varos::panel_stack::layout_changed(app, &members); // Varos: the others stay open
     app.ui.open_panel = None;
     app.ui.dock = true;
     if matches!(operation, "activate" | "move" | "dock") {
@@ -516,10 +514,11 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
         if crate::state::DockTab::from_id(panel).is_some() {
             crate::dock::panel_body(self.app, ui, panel, width, height);
         } else {
-            egui::ScrollArea::vertical()
+            let out = egui::ScrollArea::vertical()
                 .id_salt(("shared-panel-body", panel))
                 .auto_shrink([false, false])
                 .show(ui, |ui| crate::dock::panel_body(self.app, ui, panel, width, height));
+            crate::varos::panel_stack::note_body(ui.ctx(), panel, out.content_size, out.inner_rect.size()); // Varos: cards fit their panel
         }
     }
 
@@ -830,8 +829,10 @@ fn icon_rail(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                         .flat_map(|group| group.iter())
                         .filter_map(|id| crate::state::ICON_PANELS.iter().find(|entry| entry.0 == *id))
                     {
-                        if app.ui.docking.as_ref().is_some_and(|layout| layout.contains(&id.to_string())) {
-                            continue;
+                        if app.ui.docking.as_ref().is_some_and(|layout| layout.contains(&id.to_string()))
+                            && !crate::varos::panel_stack::keeps_icon(app, id)
+                        {
+                            continue; // Varos: a card keeps its icon
                         }
                         let (_, rect) = ui.allocate_space(egui::vec2(30.0, 30.0));
                         let response = ui.interact(rect, ui.id().with(("panel-icon", id)), egui::Sense::click_and_drag());

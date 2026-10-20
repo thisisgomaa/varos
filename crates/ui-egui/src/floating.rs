@@ -1347,6 +1347,7 @@ mod tests {
     #[test]
     fn a_popped_out_panel_dragged_by_its_title_floats() {
         let mut h = Harness::new();
+        h.app.ui.varos_panel_stack.keep_open = false; // Varos: tests upstream's pop-out (icon panels open as cards by default)
         h.app.run("window.panel", json!({"panel": "swatches"})).unwrap();
         h.settle();
         let flyout = h.ctx.memory(|m| m.area_rect(Id::new("icon-panel"))).unwrap();
@@ -1363,6 +1364,7 @@ mod tests {
     fn popped_out_title_drag_cancels_on_escape_focus_loss_and_workspace_change() {
         for reason in ["escape", "focus", "workspace"] {
             let mut h = Harness::new();
+            h.app.ui.varos_panel_stack.keep_open = false; // Varos: tests upstream's pop-out (icon panels open as cards by default)
             h.app.run("window.panel", json!({"panel":"swatches"})).unwrap();
             h.settle();
             let original = h.app.ui.clone();
