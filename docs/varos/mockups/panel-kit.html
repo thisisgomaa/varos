@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Varos Panel Kit</title>
+<style>
+:root{--bg:#121418;--panel:#1a1d23;--surf:#22262e;--hov:#2a2f38;--line:#30363f;--tx:#eceef2;--mu:#a2a8b3;--dis:#6f7580;--ac:#0c8ce9;--ag:#c76a20;--well:#0f1115;--spec:#e45f9a}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:12px/1.4 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;padding:32px 40px 64px}
+[lang=ar]{font-family:"Geeza Pro",system-ui,sans-serif}
+header h1{font-size:18px;font-weight:600}
+header p{color:var(--mu);margin-top:4px;max-width:900px}
+section.blk{margin-top:40px;padding-top:24px;border-top:1px solid var(--line)}
+.blk>h2{font-size:13px;font-weight:600}
+.blk>h2 b{color:var(--mu);font-weight:500;margin-right:6px}
+.arc{direction:rtl;width:fit-content;max-width:820px;font:13px/1.6 "Geeza Pro",system-ui,sans-serif;color:var(--mu);margin:6px 0 20px}
+.row-v{display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start}
+.cap{color:var(--mu);font-size:11px;margin-bottom:8px;max-width:300px}
+.cap b{color:var(--tx);font-weight:500}
+.cap[lang=ar]{direction:rtl;font-size:12.5px;line-height:1.6;width:fit-content;max-width:280px}
+.note{color:var(--mu);font-size:11px;margin-top:8px;max-width:300px}
+/* ---------- icons ---------- */
+svg.g{width:16px;height:16px;flex:none;display:block;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+svg.g.w24{width:24px}
+svg.g.r24{width:24px;height:24px}
+svg.g.s12{width:12px;height:12px}
+/* ---------- card ---------- */
+.cd{width:260px;background:var(--panel);border:1px solid var(--line);border-radius:8px;position:relative;flex:none}
+.ch{display:flex;align-items:center;gap:2px;height:32px;padding:0 4px;border-bottom:1px solid var(--line)}
+.tab{height:24px;display:flex;align-items:center;padding:0 6px;border-radius:3px;color:var(--mu);font-size:11px;white-space:nowrap}
+.tab.on{background:var(--surf);color:var(--tx)}
+.hb{width:20px;height:24px;display:grid;place-items:center;color:var(--mu);border-radius:3px;flex:none}
+.fl{flex:1}
+.cb{padding:6px 10px;position:relative}
+/* ---------- rows & controls ---------- */
+.r{display:flex;align-items:center;gap:8px;height:32px}
+.c{flex:1 1 0;min-width:0;display:flex;align-items:center;gap:4px}
+.pair{display:flex;align-items:center;gap:4px;flex:none}
+.gi{width:20px;height:24px;flex:none;display:grid;place-items:center;color:var(--mu)}
+.bx{flex:1;min-width:0;height:24px;display:flex;align-items:center;background:var(--surf);border:1px solid var(--line);border-radius:3px;font-size:11px;white-space:nowrap}
+.bx.fo{border-color:var(--ac)}
+.bx.n48{flex:none;width:48px}
+.sp{width:12px;align-self:stretch;flex:none;border-right:1px solid var(--line);position:relative}
+.sp::before,.sp::after{content:"";position:absolute;left:4px;width:3px;height:3px;border:solid var(--mu);border-width:1px 0 0 1px;transform:rotate(45deg)}
+.sp::before{top:6px}.sp::after{bottom:6px;transform:rotate(225deg)}
+.v{flex:1;min-width:0;padding:0 6px;overflow:hidden;text-overflow:ellipsis}
+.v .u,.u{color:var(--mu)}
+.f12{font-size:12px}
+.ca{width:16px;align-self:stretch;flex:none;position:relative}
+.ca::after{content:"";position:absolute;left:5px;top:7px;width:4px;height:4px;border:solid var(--mu);border-width:0 1px 1px 0;transform:rotate(45deg)}
+.arn{font:13px/1 "DecoType Naskh","Geeza Pro",sans-serif;color:var(--mu);padding:0 2px}
+.ad{font:13px/1 "Geeza Pro",sans-serif}
+.ds{opacity:.4}
+/* toggles */
+.tgs{display:flex;justify-content:space-between;align-items:center;height:32px}
+.ibs{display:flex;gap:2px;flex:none}
+.tb{width:28px;height:24px;display:grid;place-items:center;border-radius:3px;color:var(--mu);border:1px solid transparent;flex:none}
+.tb.w32{width:32px}
+.tb.on{background:var(--well);border-color:var(--line);color:var(--tx)}
+.tb.hv{background:var(--surf);color:var(--tx)}
+.tb.mx{background:var(--hov);color:var(--tx)}
+.seg{display:flex;gap:1px;padding:1px;height:24px;background:var(--surf);border:1px solid var(--line);border-radius:3px;flex:1;min-width:0}
+.seg .tb{flex:1;width:auto;height:20px;border:0;border-radius:2px}
+.seg .tb.on{background:var(--well)}
+.seg.fx{flex:none}.seg.fx .tb{flex:none;width:28px}
+.gho{outline:1px dashed var(--dis);outline-offset:-3px}
+/* slider, swatches, well */
+.sl{flex:1;height:14px;position:relative}
+.sl::before{content:"";position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:var(--line)}
+.sl .fi{position:absolute;left:0;top:6px;height:2px;border-radius:1px;background:var(--mu)}
+.sl .th{position:absolute;top:2px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:var(--tx)}
+.sw{width:14px;height:14px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.12)}
+.sw.cur{outline:1px solid var(--ac);outline-offset:1px}
+.pre{display:flex;gap:4px;flex:none}
+.wl{height:24px;width:36px;flex:none;display:flex;align-items:center;padding-left:4px;background:var(--surf);border:1px solid var(--line);border-radius:3px}
+.wl .ca{width:14px}.wl .ca::after{left:4px}
+/* section divider & title */
+.dv{height:1px;background:var(--line);margin:6px -10px}
+.sh{display:flex;align-items:center;gap:6px;height:28px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu)}
+.sh svg{margin-left:auto}
+.sh .hint{margin-left:auto;text-transform:none;letter-spacing:0;font-size:10.5px;color:var(--dis)}
+.sh .hint+svg{margin-left:0}
+.tag{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--dis);border:1px solid var(--line);border-radius:3px;padding:0 4px;line-height:14px}
+/* menus & tooltips */
+.pop{position:absolute;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;z-index:2}
+.mi{display:flex;align-items:center;gap:8px;height:24px;padding:0 8px;border-radius:3px;font-size:11px}
+.mi .ck{width:10px}
+.mi .d{margin-left:auto;color:var(--mu);font-size:10px}
+.mi.hv{background:var(--hov)}
+.tt{position:absolute;background:var(--surf);border:1px solid var(--line);border-radius:3px;padding:2px 7px;font-size:10.5px;white-space:nowrap;color:var(--tx);z-index:3}
+.tt .k{color:var(--mu);margin-left:8px}
+/* variant B labels */
+.r.tall{height:44px}
+.lbl{display:flex;flex-direction:column;align-items:center;gap:2px;flex:none;color:var(--mu)}
+.lbl small{font-size:9px;line-height:10px;color:var(--mu);white-space:nowrap}
+.lbl.tb{width:auto;min-width:28px;height:auto;padding:3px 3px 2px}
+.seg.lb{height:40px}.seg.lb .tb{height:36px;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.seg.lb .tb small{font-size:9px;line-height:10px}
+/* ---------- kit tiles & spec overlay ---------- */
+.kit{display:flex;flex-wrap:wrap;gap:36px 48px;align-items:flex-start}
+.tile .tl{font-size:11px;font-weight:600;margin-bottom:2px}
+.tile .ms{font-size:10.5px;color:var(--mu);margin-bottom:12px;max-width:340px}
+.tile .ms b{color:var(--spec);font-weight:600}
+.stage{position:relative}
+.vd{position:absolute;width:5px;border:1px solid var(--spec);border-left:0}
+.vd::after{content:attr(data-v);position:absolute;left:9px;top:50%;transform:translateY(-50%);font:600 9px/1 Inter,system-ui,sans-serif;color:var(--spec);white-space:nowrap}
+.vd.l{border-left:1px solid var(--spec);border-right:0}
+.vd.l::after{left:auto;right:9px}
+.hd{position:absolute;height:5px;border:1px solid var(--spec);border-top:0}
+.hd::after{content:attr(data-v);position:absolute;top:8px;left:50%;transform:translateX(-50%);font:600 9px/1 Inter,system-ui,sans-serif;color:var(--spec);white-space:nowrap}
+.pin{position:absolute;font:600 9px/1 Inter,system-ui,sans-serif;color:var(--spec);white-space:nowrap}
+.num{position:absolute;top:-22px;width:16px;height:16px;margin-left:-8px;border-radius:50%;border:1px solid var(--spec);color:var(--spec);font:600 9px/14px Inter,system-ui,sans-serif;text-align:center}
+.zoom{width:232px;height:48px;position:relative;margin-top:24px}
+.zoom .c{width:116px;transform:scale(2);transform-origin:0 0;position:absolute;left:0;top:0}
+.leg2{display:grid;grid-template-columns:18px 1fr;gap:3px 6px;font-size:10.5px;color:var(--mu);margin-top:16px;max-width:300px}
+.leg2 b{color:var(--spec);font-weight:600}
+.leg2 i{font-style:normal;color:var(--tx)}
+.states{display:flex;gap:14px;align-items:flex-start}
+.states figure{display:flex;flex-direction:column;align-items:center;gap:6px;margin:0}
+.states figcaption{font-size:10px;color:var(--mu)}
+.rules{padding:0;color:var(--mu);font-size:11px;margin-top:28px;max-width:1100px;columns:2;column-gap:40px}
+.rules li{margin-bottom:5px;list-style:none;break-inside:avoid}
+.rules b{color:var(--tx);font-weight:500}
+/* icon key */
+.key{display:grid;grid-template-columns:20px 112px 1fr;gap:4px 8px;align-items:center;font-size:11px;color:var(--tx)}
+.key svg{color:var(--mu)}
+.key span[lang=ar]{color:var(--mu);direction:rtl;text-align:right;font-size:12px}
+.key .kh{grid-column:1/-1;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--mu);margin-top:6px}
+/* rail */
+.rail{width:40px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:0 3px 3px;display:flex;flex-direction:column;align-items:center;flex:none;position:relative}
+.grip{width:32px;height:12px;display:grid;place-items:center;flex:none}
+.grip::before{content:"";width:16px;height:4px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.rail .grip~.grip{margin-top:4px}
+.rb{width:32px;height:32px;display:grid;place-items:center;border-radius:3px;color:var(--mu);border:1px solid transparent;position:relative;flex:none}
+.rb.on{background:var(--well);border-color:var(--line);color:var(--tx)}
+.rb.hv{background:var(--hov);color:var(--tx)}
+.rb .tt{left:42px;top:5px}
+.ws{display:flex;gap:8px;align-items:flex-start;padding:16px;border:1px solid var(--line);border-radius:8px;background:#0f1114;width:fit-content}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+ <!-- 16 px panel glyphs · stroke 1.6 · round caps (stroke style comes from svg.g) -->
+ <symbol id="i-size" viewBox="0 0 16 16"><path d="M1.5 3.5h7M5 3.5V13M10 7.5h4.5M12.25 7.5V13"/></symbol>
+ <symbol id="i-lead" viewBox="0 0 16 16"><path d="M1.5 7 4 2l2.5 5M1.5 14 4 9l2.5 5M12 2v12M10.3 3.7 12 2l1.7 1.7M10.3 12.3 12 14l1.7-1.7"/></symbol>
+ <symbol id="i-kern" viewBox="0 0 16 16"><path d="M2.5 2.5 5 9l2.5-6.5M8 9l2.5-6.5L13 9M8.9 6.8h3.2M5.8 13h4.4M7.3 11.5 5.8 13l1.5 1.5M8.7 11.5l1.5 1.5-1.5 1.5"/></symbol>
+ <symbol id="i-trk" viewBox="0 0 16 16"><path d="M1.5 2.5 3.75 9 6 2.5M10 9l2.25-6.5L14.5 9M10.8 6.9h2.9M1.5 13h13M3 11.5 1.5 13 3 14.5M13 11.5l1.5 1.5-1.5 1.5"/></symbol>
+ <symbol id="i-vs" viewBox="0 0 16 16"><path d="M1.5 3h7M5 3v10.5M12.5 2v12M10.8 3.7 12.5 2l1.7 1.7M10.8 12.3l1.7 1.7 1.7-1.7"/></symbol>
+ <symbol id="i-hs" viewBox="0 0 16 16"><path d="M4 2h8M8 2v7.5M2 13.5h12M3.7 11.8 2 13.5l1.7 1.7M12.3 11.8l1.7 1.7-1.7 1.7"/></symbol>
+ <symbol id="i-bl" viewBox="0 0 16 16"><path d="M1.5 11.5 4.5 3l3 8.5M2.6 8.6h3.8M11.5 10.5V3M9.8 4.7 11.5 3l1.7 1.7M1.5 14.2h13"/></symbol>
+ <symbol id="i-rot" viewBox="0 0 16 16"><path d="M1.5 5h7M5 5v8.5M10.8 2.4a6 6 0 0 1 3.4 5.8M12.5 7.3l1.7.9.9-1.7"/></symbol>
+ <symbol id="i-caps" viewBox="0 0 16 16"><path d="M1.5 4h6M4.5 4v9M8.5 4h6M11.5 4v9"/></symbol>
+ <symbol id="i-sc" viewBox="0 0 16 16"><path d="M1.5 4h6M4.5 4v9M9.5 7.5h5M12 7.5V13"/></symbol>
+ <symbol id="i-sup" viewBox="0 0 16 16"><path d="M1.5 5h7.5M5.25 5v8.5M11.2 3.7l1.3-1.2v5"/></symbol>
+ <symbol id="i-sub" viewBox="0 0 16 16"><path d="M1.5 3h7.5M5.25 3v8.5M11.2 9.7l1.3-1.2v5.5"/></symbol>
+ <symbol id="i-ul" viewBox="0 0 16 16"><path d="M4.5 2.5v5a3.5 3.5 0 0 0 7 0v-5M3 14h10"/></symbol>
+ <symbol id="i-st" viewBox="0 0 16 16"><path d="M3.5 3h9M8 3v10.5M2 8.5h12"/></symbol>
+ <symbol id="i-lang" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c-2.2 2.4-2.2 10 0 12.4M8 1.8c2.2 2.4 2.2 10 0 12.4"/></symbol>
+ <symbol id="i-aa" viewBox="0 0 16 16"><circle cx="6.5" cy="9.7" r="3.3"/><path d="M9.8 6.2v7.3M11.8 13.5h1.4v-1.7h1.4v-1.7"/></symbol>
+ <symbol id="i-dig" viewBox="0 0 16 16"><path d="M2.6 4v8.5M6.2 12.5 6.6 4c.6 1.1 1.8 1.2 2.6 0M10.8 12.5 11.2 4c.4.9 1 1 1.5 0 .4.9 1 1 1.6 0"/></symbol>
+ <symbol id="i-hrk" viewBox="0 0 16 16"><circle cx="8" cy="10" r="3.8" stroke-dasharray="0.1 2.4"/><path d="M5.2 4.6 10.8 2.4"/></symbol>
+ <symbol id="i-hide" viewBox="0 0 16 16"><path d="M1.5 8S3.8 4 8 4s6.5 4 6.5 4-2.3 4-6.5 4S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.8"/><path d="M2.5 13.5 13.5 2.5"/></symbol>
+ <symbol id="i-asl" viewBox="0 0 16 16"><path d="M1.8 7.5c0 2.6 1.4 3.3 3.7 3.3s3.6-.6 3.6-3.3M11.4 10.4l3-1.7"/><path d="M10.2 3v10" stroke-dasharray="0.1 2.3"/><circle cx="5.4" cy="13.5" r=".9" fill="currentColor" stroke="none"/></symbol>
+ <symbol id="i-kstr" viewBox="0 0 16 16"><path d="M2 5v5h12V5M5 13h6M6.2 11.8 5 13l1.2 1.2M9.8 11.8 11 13l-1.2 1.2"/></symbol>
+ <symbol id="k0" viewBox="0 0 24 16"><path d="M8 6.5c0 3 1.2 4.5 3.5 4.5H16V6.5"/><g fill="currentColor" stroke="none"><circle cx="11" cy="13.7" r=".9"/><circle cx="15" cy="13.7" r=".9"/></g></symbol>
+ <symbol id="k1" viewBox="0 0 24 16"><path d="M4 6.5c0 3 1.2 4.5 3.5 4.5H20V6.5"/><g fill="currentColor" stroke="none"><circle cx="7" cy="13.7" r=".9"/><circle cx="19" cy="13.7" r=".9"/></g></symbol>
+ <symbol id="k2" viewBox="0 0 24 16"><path d="M1.8 6.5c0 3 1.2 4.5 3.5 4.5h16.9V6.5" stroke-width="2.3"/><g fill="currentColor" stroke="none"><circle cx="5" cy="13.9" r="1"/><circle cx="21.2" cy="13.9" r="1"/></g></symbol>
+ <symbol id="al" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.5h8M2 9.5h12M2 12.5h7"/></symbol>
+ <symbol id="ac" viewBox="0 0 16 16"><path d="M2 3.5h12M4 6.5h8M2 9.5h12M4.5 12.5h7"/></symbol>
+ <symbol id="ar" viewBox="0 0 16 16"><path d="M2 3.5h12M6 6.5h8M2 9.5h12M7 12.5h7"/></symbol>
+ <symbol id="jl" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.5h12M2 9.5h12M2 12.5h6"/></symbol>
+ <symbol id="jc" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.5h12M2 9.5h12M5 12.5h6"/></symbol>
+ <symbol id="jr" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.5h12M2 9.5h12M8 12.5h6"/></symbol>
+ <symbol id="ja" viewBox="0 0 16 16"><path d="M2 3.5h12M2 6.5h12M2 9.5h12M2 12.5h12"/></symbol>
+ <symbol id="dauto" viewBox="0 0 16 16"><path d="M4.8 9.2 7.8 2l3 7.2M5.9 6.6h3.8M3 13h10M4.6 11.4 3 13l1.6 1.6M11.4 11.4 13 13l-1.6 1.6"/></symbol>
+ <symbol id="drtl" viewBox="0 0 16 16"><path d="M9 2.5v7M11.5 2.5v7M12.5 2.5H8a2 2 0 0 0 0 4h1M13 13H3M4.6 11.4 3 13l1.6 1.6"/></symbol>
+ <symbol id="dltr" viewBox="0 0 16 16"><path d="M6 2.5v7M8.5 2.5v7M9.5 2.5H5a2 2 0 0 0 0 4h1M3 13h10M11.4 11.4 13 13l-1.6 1.6"/></symbol>
+ <symbol id="indl" viewBox="0 0 16 16"><path d="M8 3.5h6M8 8h6M8 12.5h6M2 5.5 4.5 8 2 10.5"/></symbol>
+ <symbol id="indr" viewBox="0 0 16 16"><path d="M2 3.5h6M2 8h6M2 12.5h6M14 5.5 11.5 8l2.5 2.5"/></symbol>
+ <symbol id="indf" viewBox="0 0 16 16"><path d="M7 3.5h7M2 8h12M2 12.5h12M2 1.8l2.2 1.7L2 5.2"/></symbol>
+ <symbol id="spb" viewBox="0 0 16 16"><path d="M2 9h12M2 13h12M8 1.5V6M6.2 4.2 8 6l1.8-1.8"/></symbol>
+ <symbol id="spa" viewBox="0 0 16 16"><path d="M2 3h12M2 7h12M8 14.5V10M6.2 11.8 8 10l1.8 1.8"/></symbol>
+ <symbol id="a-l" viewBox="0 0 16 16"><path d="M2 1.5v13M4.5 3h8v4h-8zM4.5 9h5v4h-5z"/></symbol>
+ <symbol id="a-hc" viewBox="0 0 16 16"><path d="M8 1v2M8 7v2M8 13v2M3 3h10v4H3zM5 9h6v4H5z"/></symbol>
+ <symbol id="a-r" viewBox="0 0 16 16"><path d="M14 1.5v13M3.5 3h8v4h-8zM6.5 9h5v4h-5z"/></symbol>
+ <symbol id="a-t" viewBox="0 0 16 16"><path d="M1.5 2h13M3 4.5h4v8H3zM9 4.5h4v5H9z"/></symbol>
+ <symbol id="a-vc" viewBox="0 0 16 16"><path d="M1 8h2M7 8h2M13 8h2M3 3h4v10H3zM9 5h4v6H9z"/></symbol>
+ <symbol id="a-b" viewBox="0 0 16 16"><path d="M1.5 14h13M3 3.5h4v8H3zM9 6.5h4v5H9z"/></symbol>
+ <symbol id="d-t" viewBox="0 0 16 16"><path d="M1.5 2h13M1.5 8h13M4 2h3v4H4zM9 8h3v5H9z"/></symbol>
+ <symbol id="d-vc" viewBox="0 0 16 16"><path d="M1.5 4h13M1.5 11h13M4 2h3v4H4zM9 8.5h3v5H9z"/></symbol>
+ <symbol id="d-b" viewBox="0 0 16 16"><path d="M1.5 6h13M1.5 14h13M4 2h3v4H4zM9 9h3v5H9z"/></symbol>
+ <symbol id="d-l" viewBox="0 0 16 16"><path d="M2 1.5v13M8 1.5v13M2 4h4v3H2zM8 9h5v3H8z"/></symbol>
+ <symbol id="d-hc" viewBox="0 0 16 16"><path d="M4 1.5v13M10.5 1.5v13M2 4h4v3H2zM8 9h5v3H8z"/></symbol>
+ <symbol id="d-r" viewBox="0 0 16 16"><path d="M6 1.5v13M13 1.5v13M2 4h4v3H2zM8 9h5v3H8z"/></symbol>
+ <symbol id="ds-v" viewBox="0 0 16 16"><path d="M2 2h12M2 14h12M5 6h6v4H5z"/></symbol>
+ <symbol id="ds-h" viewBox="0 0 16 16"><path d="M2 2v12M14 2v12M6 5h4v6H6z"/></symbol>
+ <symbol id="i-to" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="1" stroke-dasharray="2 2.2"/><path d="M5.5 6.5h5M5.5 9.5h3"/></symbol>
+ <symbol id="h-col" viewBox="0 0 16 16"><path d="M3.5 4.5 7 8l-3.5 3.5M9 4.5 12.5 8 9 11.5"/></symbol>
+ <symbol id="h-menu" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10"/></symbol>
+ <symbol id="h-x" viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></symbol>
+ <symbol id="ch-d" viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></symbol>
+ <symbol id="ch-r" viewBox="0 0 16 16"><path d="M6.5 4.5 10 8l-3.5 3.5"/></symbol>
+ <!-- 24 px rail glyphs · stroke 1.6 -->
+ <symbol id="r-prop" viewBox="0 0 24 24"><path d="M4 7.5h7M17 7.5h3M4 16.5h3M13 16.5h7"/><circle cx="14" cy="7.5" r="2.5"/><circle cx="10" cy="16.5" r="2.5"/></symbol>
+ <symbol id="r-lay" viewBox="0 0 24 24"><path d="M12 3.5 20.5 7.8 12 12.1 3.5 7.8zM3.5 12 12 16.3l8.5-4.3M3.5 16.2 12 20.5l8.5-4.3"/></symbol>
+ <symbol id="r-lib" viewBox="0 0 24 24"><path d="M4.5 4h3.5v16H4.5zM10 4h3.5v16H10zM15.4 4.9l3-.8 3.4 15.2-3 .8z"/></symbol>
+ <symbol id="r-col" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.4 0 2-1 1.5-2.2-.5-1.1.2-2.3 1.5-2.3h2a3.5 3.5 0 0 0 3.5-3.5C20.5 7.3 16.7 3.5 12 3.5z"/><g fill="currentColor" stroke="none"><circle cx="8" cy="11" r="1.2"/><circle cx="10.5" cy="7.3" r="1.2"/><circle cx="15" cy="8" r="1.2"/></g></symbol>
+ <symbol id="r-cg" viewBox="0 0 24 24"><circle cx="9.5" cy="9.5" r="5"/><circle cx="14.5" cy="9.5" r="5"/><circle cx="12" cy="14.5" r="5"/></symbol>
+ <symbol id="r-sw" viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></symbol>
+ <symbol id="r-gr" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M8 4v16"/><path d="M11.5 4v16" opacity=".7"/><path d="M14.7 4v16" opacity=".45"/><path d="M17.5 4v16" opacity=".25"/></symbol>
+ <symbol id="r-stk" viewBox="0 0 24 24"><path d="M4 6h16" stroke-width="1.2"/><path d="M4 12h16" stroke-width="2.2"/><path d="M4 18h16" stroke-width="3.4"/></symbol>
+ <symbol id="r-tr" viewBox="0 0 24 24"><path d="M4 4h11v11H4z"/><path d="M9 9h11v11H9z" stroke-dasharray="2 2.4"/></symbol>
+ <symbol id="r-chr" viewBox="0 0 24 24"><path d="M3 19.5 8.5 5l5.5 14.5M5.2 14.5h6.6M20.5 12.5v7"/><circle cx="17.7" cy="16.4" r="2.8"/></symbol>
+ <symbol id="r-par" viewBox="0 0 24 24"><path d="M11 12H9.5a4 4 0 0 1 0-8H18M11 4v16M15 4v16"/></symbol>
+ <symbol id="r-ot" viewBox="0 0 24 24"><circle cx="10" cy="13.5" r="6"/><path d="M16.5 4h5M19 4v6"/></symbol>
+ <symbol id="r-gly" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M8.5 16.5 12 7.5l3.5 9M9.6 13.6h4.8"/></symbol>
+ <symbol id="r-al" viewBox="0 0 24 24"><path d="M4 3v18M7 6h12v4.5H7zM7 13.5h7.5V18H7z"/></symbol>
+ <symbol id="r-tf" viewBox="0 0 24 24"><path d="M7 7h10v10H7z"/><path d="M4.5 4.5h3v3h-3zM16.5 4.5h3v3h-3zM4.5 16.5h3v3h-3zM16.5 16.5h3v3h-3z" fill="var(--panel)"/></symbol>
+ <symbol id="r-pf" viewBox="0 0 24 24"><path d="M4 4h10v6h6v10H10v-6H4z"/></symbol>
+ <symbol id="r-his" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.7M4 4.5v4.2h4.2M12 8v4.3l2.8 1.7"/></symbol>
+ <symbol id="r-act" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M10 8.5v7l5.5-3.5z"/></symbol>
+</svg>
+
+<header>
+  <h1>Varos panel kit · Character, Paragraph, rail</h1>
+  <p>One system for every panel, Illustrator-structured. Same tokens as panels.html (approved): Inter UI, Geeza Pro for Arabic, 8 px card corners, 3 px control corners, no shadows, azure only for focus and selection. Pink lines are measurements for this page only; they are not a UI colour.</p>
+</header>
+
+<!-- ================= 1. THE KIT ================= -->
+<section class="blk">
+  <h2><b>1</b>The kit · rules every panel follows</h2>
+  <p class="arc" lang="ar">القواعد اللي كل البانلز هتمشي عليها: الصف ٣٢، الخانة ٢٤، مسافات ٨ و١٠، وأيقونة صغيرة على شمال كل خانة بتقول هي إيه.</p>
+  <div class="kit">
+
+    <div class="tile">
+      <p class="tl">Row and paddings</p>
+      <p class="ms">Header <b>32</b> · row <b>32</b> · control <b>24</b> (4 px air above and below) · side padding <b>10</b> · gap between the two controls <b>8</b> · two equal columns of 115.</p>
+      <div class="stage" style="margin:0 70px 30px 34px">
+        <div class="cd">
+          <div class="ch"><span class="tab on">Character</span><span class="tab">Paragraph</span><span class="tab">OpenType</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-col"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+          <div class="cb">
+            <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-size"/></svg></i><span class="bx"><b class="sp"></b><span class="v">24 pt</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-lead"/></svg></i><span class="bx"><b class="sp"></b><span class="v u">(28.8 pt)</span><b class="ca"></b></span></div></div>
+            <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-kern"/></svg></i><span class="bx"><b class="sp"></b><span class="v">Metrics</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0</span><b class="ca"></b></span></div></div>
+          </div>
+          <span class="vd" style="left:262px;top:0;height:32px" data-v="header 32"></span>
+          <span class="vd" style="left:262px;top:38px;height:32px" data-v="row 32"></span>
+          <span class="vd l" style="left:-9px;top:42px;height:24px" data-v="24"></span>
+          <span class="hd" style="left:0;top:112px;width:10px" data-v="10"></span>
+          <span class="hd" style="left:125px;top:112px;width:8px" data-v="8"></span>
+          <span class="hd" style="left:248px;top:112px;width:10px" data-v="10"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tile">
+      <p class="tl">Control anatomy (shown 2×)</p>
+      <p class="ms">Icon <b>20</b> slot, gap <b>4</b>, box <b>92 × 24</b>. The caret only appears where the field has presets.</p>
+      <div class="zoom">
+        <div class="c"><i class="gi"><svg class="g"><use href="#i-size"/></svg></i><span class="bx"><b class="sp"></b><span class="v">24 pt</span><b class="ca"></b></span></div>
+        <span class="num" style="left:20px">1</span><span class="num" style="left:62px">2</span><span class="num" style="left:136px">3</span><span class="num" style="left:214px">4</span>
+      </div>
+      <div class="leg2">
+        <b>1</b><span><i>Glyph</i> · 16 px line icon, muted. Says what the field is; the tooltip carries the name.</span>
+        <b>2</b><span><i>Stepper</i> · 12 px ▲▼. Click to nudge; ↑↓ keys in the field do the same.</span>
+        <b>3</b><span><i>Value</i> · 11 px, left aligned. Auto values sit in (brackets), muted.</span>
+        <b>4</b><span><i>Preset caret</i> · 16 px. Opens the list of common values.</span>
+      </div>
+    </div>
+
+    <div class="tile">
+      <p class="tl">Section divider and section title</p>
+      <p class="ms">Divider: <b>1 px</b> line, edge to edge, <b>10</b> px air to the controls. Title: 10 px caps, muted, <b>28</b> tall; chevron only when the section folds.</p>
+      <div class="stage" style="margin:0 110px 0 34px">
+        <div class="cd"><div class="cb">
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-lang"/></svg></i><span class="bx"><span class="v">Arabic</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-aa"/></svg></i><span class="bx"><span class="v">Sharp</span><b class="ca"></b></span></div></div>
+          <div class="dv"></div>
+          <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-dig"/></svg></i><span class="bx"><span class="v"><span class="ad" lang="ar">٤٥٦</span>&nbsp; <span class="u">Hindi</span></span><b class="ca"></b></span></div><div class="c"><div class="seg"><span class="tb"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div></div>
+        </div>
+        <span class="vd l" style="left:-9px;top:34px;height:10px" data-v="10"></span>
+        <span class="vd" style="left:262px;top:51px;height:28px" data-v="title 28"></span>
+        <span class="pin" style="left:262px;top:40px">← 1 px, edge to edge</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tile">
+      <p class="tl">Toggle glyph states</p>
+      <p class="ms">28 × 24 (32 in the Character style row). ON = lit dark well, bright icon, hairline. <b>No azure bar</b>, no underline.</p>
+      <div class="states cd" style="width:fit-content;padding:12px 14px 10px">
+        <figure><span class="tb"><svg class="g"><use href="#i-ul"/></svg></span><figcaption>Off</figcaption></figure>
+        <figure><span class="tb hv"><svg class="g"><use href="#i-ul"/></svg></span><figcaption>Hover</figcaption></figure>
+        <figure><span class="tb on"><svg class="g"><use href="#i-ul"/></svg></span><figcaption>On</figcaption></figure>
+        <figure><span class="tb mx"><svg class="g"><use href="#i-ul"/></svg></span><figcaption>Mixed</figcaption></figure>
+        <figure><span class="tb ds"><svg class="g"><use href="#i-ul"/></svg></span><figcaption>Disabled</figcaption></figure>
+      </div>
+      <p class="ms" style="margin:16px 0 8px">Choice groups (one of several) sit in a 24 px track, same lit well:</p>
+      <div style="width:116px"><div class="seg"><span class="tb"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div>
+    </div>
+
+    <div class="tile">
+      <p class="tl">Dropdown</p>
+      <p class="ms">Same 24 px box, text then caret. Open list: 8 px card, 24 px items, ✓ on the current one, hover tint. Focus = azure border.</p>
+      <div class="states" style="align-items:center">
+        <div style="width:112px"><div class="c"><i class="gi"><svg class="g"><use href="#i-aa"/></svg></i><span class="bx"><span class="v">Sharp</span><b class="ca"></b></span></div></div>
+        <div style="width:112px"><div class="c"><i class="gi"><svg class="g"><use href="#i-aa"/></svg></i><span class="bx fo"><span class="v">Sharp</span><b class="ca"></b></span></div></div>
+      </div>
+      <div class="stage" style="height:118px;width:250px">
+        <div class="pop" style="left:24px;top:6px;width:150px">
+          <div class="mi"><span class="ck"></span>None</div>
+          <div class="mi"><span class="ck">✓</span>Sharp</div>
+          <div class="mi hv"><span class="ck"></span>Crisp</div>
+          <div class="mi"><span class="ck"></span>Strong</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tile">
+      <p class="tl">Number field states</p>
+      <p class="ms">Mixed selection reads <b>–</b> (nothing lit, value unknown). Disabled = <b>40%</b> and keeps its value for when it comes back.</p>
+      <div class="states cd" style="flex-direction:column;gap:8px;width:fit-content;padding:10px">
+        <div class="c" style="width:116px"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0</span><b class="ca"></b></span></div>
+        <div class="c" style="width:116px"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx fo"><b class="sp"></b><span class="v">25</span><b class="ca"></b></span></div>
+        <div class="c" style="width:116px"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx"><b class="sp"></b><span class="v">–</span><b class="ca"></b></span></div>
+        <div class="c ds" style="width:116px"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx"><b class="sp"></b><span class="v">25</span><b class="ca"></b></span></div>
+      </div>
+      <p class="ms" style="margin-top:8px">Normal · Focus · Mixed · Disabled</p>
+    </div>
+
+    <div class="tile">
+      <p class="tl">Card header · slider row</p>
+      <p class="ms">Tabbed header when panels are grouped; single title with × when a card floats alone. Slider row: glyph, track, 48 px field.</p>
+      <div class="cd" style="margin-bottom:10px"><div class="ch"><span class="tab on">Align</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-x"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+        <div class="cb"><div class="r"><i class="gi"><svg class="g"><use href="#i-kstr"/></svg></i><div class="sl"><span class="fi" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="bx n48"><b class="sp"></b><span class="v">60</span></span></div></div></div>
+    </div>
+  </div>
+
+  <ul class="rules">
+    <li><b>Row 32, control 24.</b> Every row in every panel is 32 tall; fields, dropdowns, toggles and tracks are 24 inside it.</li>
+    <li><b>Padding 10 / gap 8 / 4.</b> 10 px from the card edge; 8 px between controls on a row; 4 px between a glyph and its box.</li>
+    <li><b>Two columns.</b> Number rows hold two controls of equal width (115 px in a 260 px card), so glyphs line up down the panel.</li>
+    <li><b>Glyph first.</b> Every field has a 16 px glyph on its left that says what it is; the tooltip carries the words.</li>
+    <li><b>Anatomy.</b> glyph · stepper ▲▼ · value · preset caret. Steppers on numbers only; caret only where presets exist.</li>
+    <li><b>Sections.</b> 1 px full-bleed divider with 10 px air; foldable sections get a 10 px caps title and a chevron.</li>
+    <li><b>Toggles light up.</b> ON = dark well + bright icon + hairline. Never an azure bar or underline.</li>
+    <li><b>Azure is a scalpel.</b> Only a focused field border and the current swatch ring use it.</li>
+    <li><b>Mixed and disabled.</b> Mixed reads "–" and lights nothing; disabled is 40% and keeps its value.</li>
+    <li><b>Cards.</b> 8 px corners, 1 px line, no shadow, 32 px header; controls 3 px corners.</li>
+  </ul>
+</section>
+
+<!-- ================= 2. CHARACTER ================= -->
+<section class="blk">
+  <h2><b>2</b>Character panel · on the kit</h2>
+  <p class="arc" lang="ar">بانل الحروف كله على نفس القواعد. الأول بخط لاتيني (Inter): قسم العربي بيتقفل لوحده لأن مفيش عربي في التحديد. التاني بخط عربي: اسم الخط بالعربي جنب اللاتيني، وقسم العربي مفتوح.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>Latin font (Inter).</b> Underline is on (lit). Middle Eastern folds itself because nothing selected is Arabic.</p>
+      <div class="cd">
+        <div class="ch"><span class="tab on">Character</span><span class="tab">Paragraph</span><span class="tab">OpenType</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-col"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+        <div class="cb">
+          <div class="r"><span class="bx"><span class="v f12">Inter</span><b class="ca"></b></span></div>
+          <div class="r"><span class="bx"><span class="v">Regular</span><b class="ca"></b></span></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-size"/></svg></i><span class="bx"><b class="sp"></b><span class="v">24 pt</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-lead"/></svg></i><span class="bx"><b class="sp"></b><span class="v u">(28.8 pt)</span><b class="ca"></b></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-kern"/></svg></i><span class="bx"><b class="sp"></b><span class="v">Metrics</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0</span><b class="ca"></b></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-vs"/></svg></i><span class="bx"><b class="sp"></b><span class="v">100%</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-hs"/></svg></i><span class="bx"><b class="sp"></b><span class="v">100%</span><b class="ca"></b></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-bl"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-rot"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0°</span><b class="ca"></b></span></div></div>
+          <div class="tgs"><span class="tb w32"><svg class="g"><use href="#i-caps"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sc"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sup"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sub"/></svg></span><span class="tb w32 on"><svg class="g"><use href="#i-ul"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-st"/></svg></span></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-lang"/></svg></i><span class="bx"><span class="v">English</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-aa"/></svg></i><span class="bx"><span class="v">Sharp</span><b class="ca"></b></span></div></div>
+          <div class="dv"></div>
+          <div class="sh">Middle Eastern<span class="hint">no Arabic selected</span><svg class="g s12"><use href="#ch-r"/></svg></div>
+          <div class="dv"></div>
+          <div class="sh">Snap to glyph<span class="tag">later</span><svg class="g s12"><use href="#ch-r"/></svg></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <p class="cap"><b>Arabic font (DecoType Naskh).</b> Size field has focus (azure border). Hindi digits, red harakat shown as letters, Kashida Auto at 60.</p>
+      <div class="cd">
+        <div class="ch"><span class="tab on">Character</span><span class="tab">Paragraph</span><span class="tab">OpenType</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-col"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+        <div class="cb">
+          <div class="r"><span class="bx"><span class="v f12">DecoType Naskh</span><span class="arn" lang="ar" dir="rtl">ديكوتايب نسخ</span><b class="ca"></b></span></div>
+          <div class="r"><span class="bx"><span class="v">Regular</span><b class="ca"></b></span></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-size"/></svg></i><span class="bx fo"><b class="sp"></b><span class="v">36 pt</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-lead"/></svg></i><span class="bx"><b class="sp"></b><span class="v u">(43.2 pt)</span><b class="ca"></b></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-kern"/></svg></i><span class="bx"><b class="sp"></b><span class="v">Metrics</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0</span><b class="ca"></b></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-vs"/></svg></i><span class="bx"><b class="sp"></b><span class="v">100%</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-hs"/></svg></i><span class="bx"><b class="sp"></b><span class="v">100%</span><b class="ca"></b></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-bl"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-rot"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0°</span><b class="ca"></b></span></div></div>
+          <div class="tgs"><span class="tb w32"><svg class="g"><use href="#i-caps"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sc"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sup"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sub"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-ul"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-st"/></svg></span></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-lang"/></svg></i><span class="bx"><span class="v">Arabic</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-aa"/></svg></i><span class="bx"><span class="v">Sharp</span><b class="ca"></b></span></div></div>
+          <div class="dv"></div>
+          <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+          <div class="r"><span class="pair"><i class="gi"><svg class="g"><use href="#i-hrk"/></svg></i><span class="wl"><span class="sw" style="background:#d63b3b"></span><b class="ca"></b></span></span><span class="pre"><span class="sw cur" style="background:#d63b3b"></span><span class="sw" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span></span><i class="fl"></i><span class="ibs"><span class="tb"><svg class="g"><use href="#i-hide"/></svg></span><span class="tb on"><svg class="g"><use href="#i-asl"/></svg></span></span></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-dig"/></svg></i><span class="bx"><span class="v"><span class="ad" lang="ar">٤٥٦</span>&nbsp; <span class="u">Hindi</span></span><b class="ca"></b></span></div><div class="c"><div class="seg"><span class="tb"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div></div>
+          <div class="r"><i class="gi"><svg class="g"><use href="#i-kstr"/></svg></i><div class="sl"><span class="fi" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="bx n48"><b class="sp"></b><span class="v">60</span></span></div>
+          <div class="dv"></div>
+          <div class="sh">Snap to glyph<span class="tag">later</span><svg class="g s12"><use href="#ch-r"/></svg></div>
+        </div>
+      </div>
+      <p class="note">Digits menu (Default · Arabic 456 · Hindi ٤٥٦ · Farsi ۴۵۶) and the harakat colour well open exactly as approved in panels.html.</p>
+    </div>
+
+    <div>
+      <p class="cap"><b>Glyph key</b>: what each icon means (tooltip text).</p>
+      <div class="key">
+        <span class="kh">Type</span>
+        <svg class="g"><use href="#i-size"/></svg><span>Font size</span><span lang="ar">حجم الخط</span>
+        <svg class="g"><use href="#i-lead"/></svg><span>Leading</span><span lang="ar">المسافة بين السطور</span>
+        <svg class="g"><use href="#i-kern"/></svg><span>Kerning</span><span lang="ar">المسافة بين حرفين</span>
+        <svg class="g"><use href="#i-trk"/></svg><span>Tracking</span><span lang="ar">تباعد الحروف</span>
+        <svg class="g"><use href="#i-vs"/></svg><span>Vertical scale</span><span lang="ar">مط رأسي</span>
+        <svg class="g"><use href="#i-hs"/></svg><span>Horizontal scale</span><span lang="ar">مط أفقي</span>
+        <svg class="g"><use href="#i-bl"/></svg><span>Baseline shift</span><span lang="ar">رفع عن السطر</span>
+        <svg class="g"><use href="#i-rot"/></svg><span>Character rotation</span><span lang="ar">لف الحرف</span>
+        <span class="kh">Style toggles</span>
+        <svg class="g"><use href="#i-caps"/></svg><span>All caps</span><span lang="ar">كله كابيتال</span>
+        <svg class="g"><use href="#i-sc"/></svg><span>Small caps</span><span lang="ar">كابيتال صغير</span>
+        <svg class="g"><use href="#i-sup"/></svg><span>Superscript</span><span lang="ar">أُس فوق</span>
+        <svg class="g"><use href="#i-sub"/></svg><span>Subscript</span><span lang="ar">تحت السطر</span>
+        <svg class="g"><use href="#i-ul"/></svg><span>Underline</span><span lang="ar">خط تحت</span>
+        <svg class="g"><use href="#i-st"/></svg><span>Strikethrough</span><span lang="ar">خط في النص</span>
+        <svg class="g"><use href="#i-lang"/></svg><span>Language</span><span lang="ar">اللغة</span>
+        <svg class="g"><use href="#i-aa"/></svg><span>Anti-aliasing</span><span lang="ar">نعومة الحواف</span>
+        <span class="kh">Middle Eastern</span>
+        <svg class="g"><use href="#i-hrk"/></svg><span>Harakat colour</span><span lang="ar">لون التشكيل</span>
+        <svg class="g"><use href="#i-hide"/></svg><span>Hide harakat</span><span lang="ar">إخفاء التشكيل</span>
+        <svg class="g"><use href="#i-asl"/></svg><span>Harakat as letters</span><span lang="ar">التشكيل كحروف</span>
+        <svg class="g"><use href="#i-dig"/></svg><span>Digits</span><span lang="ar">شكل الأرقام</span>
+        <svg class="g w24" style="width:20px"><use href="#k1"/></svg><span>Kashida mode</span><span lang="ar">الكشيدة</span>
+        <svg class="g"><use href="#i-kstr"/></svg><span>Kashida strength</span><span lang="ar">قوة الكشيدة</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 3. PARAGRAPH ================= -->
+<section class="blk">
+  <h2><b>3</b>Paragraph panel · approved design, aligned to the kit</h2>
+  <p class="arc" lang="ar">نفس بانل الفقرة اللي وافقت عليه، من غير تغيير في الفكرة. اتظبط بس على القواعد: صفوف ٣٢، خانات ٢٤ بأيقونة، وفواصل من الحافة للحافة.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>Arabic paragraph.</b> Justify-last-right is lit; Direction Auto resolves to RTL (dashed ring); Kashida Auto at 60.</p>
+      <div class="cd">
+        <div class="ch"><span class="tab">Character</span><span class="tab on">Paragraph</span><span class="tab">OpenType</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-col"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+        <div class="cb">
+          <div class="tgs"><span class="tb"><svg class="g"><use href="#al"/></svg></span><span class="tb"><svg class="g"><use href="#ac"/></svg></span><span class="tb"><svg class="g"><use href="#ar"/></svg></span><span class="tb"><svg class="g"><use href="#jl"/></svg></span><span class="tb"><svg class="g"><use href="#jc"/></svg></span><span class="tb on"><svg class="g"><use href="#jr"/></svg></span><span class="tb"><svg class="g"><use href="#ja"/></svg></span></div>
+          <div class="dv"></div>
+          <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+          <div class="r"><div class="seg fx"><span class="tb on"><svg class="g"><use href="#dauto"/></svg></span><span class="tb gho"><svg class="g"><use href="#drtl"/></svg></span><span class="tb"><svg class="g"><use href="#dltr"/></svg></span></div><i class="fl"></i><div class="seg" style="flex:none;width:116px"><span class="tb"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div>
+          <div class="r"><i class="gi"><svg class="g"><use href="#i-kstr"/></svg></i><div class="sl"><span class="fi" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="bx n48"><b class="sp"></b><span class="v">60</span></span></div>
+          <div class="dv"></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#indl"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div><div class="c"><i class="gi"><svg class="g"><use href="#indr"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#indf"/></svg></i><span class="bx"><b class="sp"></b><span class="v">12 pt</span></span></div><div class="c"></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#spb"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div><div class="c"><i class="gi"><svg class="g"><use href="#spa"/></svg></i><span class="bx"><b class="sp"></b><span class="v">6 pt</span></span></div></div>
+          <span class="tt" style="left:10px;top:112px">Auto · resolves to right-to-left</span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>Mixed selection.</b> One RTL and one LTR paragraph: nothing lit, present values tinted, numbers read "–".</p>
+      <div class="cd">
+        <div class="ch"><span class="tab">Character</span><span class="tab on">Paragraph</span><span class="tab">OpenType</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-col"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+        <div class="cb">
+          <div class="tgs"><span class="tb mx"><svg class="g"><use href="#al"/></svg></span><span class="tb"><svg class="g"><use href="#ac"/></svg></span><span class="tb"><svg class="g"><use href="#ar"/></svg></span><span class="tb"><svg class="g"><use href="#jl"/></svg></span><span class="tb"><svg class="g"><use href="#jc"/></svg></span><span class="tb mx"><svg class="g"><use href="#jr"/></svg></span><span class="tb"><svg class="g"><use href="#ja"/></svg></span></div>
+          <div class="dv"></div>
+          <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+          <div class="r"><div class="seg fx"><span class="tb"><svg class="g"><use href="#dauto"/></svg></span><span class="tb mx"><svg class="g"><use href="#drtl"/></svg></span><span class="tb mx"><svg class="g"><use href="#dltr"/></svg></span></div><i class="fl"></i><div class="seg" style="flex:none;width:116px"><span class="tb mx"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb mx"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div>
+          <div class="r"><i class="gi"><svg class="g"><use href="#i-kstr"/></svg></i><div class="sl"></div><span class="bx n48"><b class="sp"></b><span class="v">–</span></span></div>
+          <div class="dv"></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#indl"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div><div class="c"><i class="gi"><svg class="g"><use href="#indr"/></svg></i><span class="bx"><b class="sp"></b><span class="v">–</span></span></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#indf"/></svg></i><span class="bx"><b class="sp"></b><span class="v">–</span></span></div><div class="c"></div></div>
+          <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#spb"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div><div class="c"><i class="gi"><svg class="g"><use href="#spa"/></svg></i><span class="bx"><b class="sp"></b><span class="v">6 pt</span></span></div></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p class="cap"><b>What changed from the approved version</b></p>
+      <ul class="note" style="padding-left:14px;max-width:280px">
+        <li>Rows 24 → 32, fields 20 → 24.</li>
+        <li>Every indent and spacing field gets a glyph and a stepper (no caret: no presets).</li>
+        <li>Group heads become the kit's section title; dividers run edge to edge.</li>
+        <li>Indents and spacing are no longer greyed; first-line indent sits alone on its row, as in Illustrator.</li>
+        <li>Unchanged: order, icons, lit wells, the dashed "Auto picked this" ring, Kashida Off/Auto/Force + strength.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 4. ICON RAIL ================= -->
+<section class="blk">
+  <h2><b>4</b>Icon rail</h2>
+  <p class="arc" lang="ar">شريط الأيقونات: عرضه ٤٠، الأيقونات ٢٤، مجموعات بينها فاصل رفيع زي Illustrator. الأيقونة اللي الكارت بتاعها مفتوح منورة، والاسم بيظهر لما تقف عليها.</p>
+  <div class="row-v">
+    <div style="display:flex;gap:16px;align-items:flex-start">
+      <div class="rail">
+        <span class="grip"></span>
+        <span class="rb"><svg class="g r24"><use href="#r-prop"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-lay"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-lib"/></svg></span>
+        <span class="grip"></span>
+        <span class="rb"><svg class="g r24"><use href="#r-col"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-cg"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-sw"/></svg></span>
+        <span class="rb hv"><svg class="g r24"><use href="#r-gr"/></svg><span class="tt">Gradient<span class="k">⌘F9</span></span></span>
+        <span class="rb"><svg class="g r24"><use href="#r-stk"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-tr"/></svg></span>
+        <span class="grip"></span>
+        <span class="rb on"><svg class="g r24"><use href="#r-chr"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-par"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-ot"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-gly"/></svg></span>
+        <span class="grip"></span>
+        <span class="rb"><svg class="g r24"><use href="#r-al"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-tf"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-pf"/></svg></span>
+        <span class="grip"></span>
+        <span class="rb"><svg class="g r24"><use href="#r-his"/></svg></span>
+        <span class="rb"><svg class="g r24"><use href="#r-act"/></svg></span>
+      </div>
+      <div style="width:110px"></div>
+    </div>
+    <div>
+      <p class="cap"><b>Rail rules</b></p>
+      <ul class="note" style="padding-left:14px;max-width:300px">
+        <li>Rail 40 wide, buttons 32 × 32, glyphs drawn on a 24 grid, stroke 1.6.</li>
+        <li>Groups are split by a thin double-line grip (16 px wide, 12 tall); drag the grip to move the group.</li>
+        <li>Lit (dark well, bright glyph) = that card is open. Hover = grey tint.</li>
+        <li>Tooltip = name + Illustrator shortcut, after a short hover; no labels on the rail itself.</li>
+      </ul>
+      <div class="key" style="margin-top:12px">
+        <span class="kh">Workspace</span>
+        <svg class="g"><use href="#r-prop"/></svg><span>Properties</span><span lang="ar">الخصائص</span>
+        <svg class="g"><use href="#r-lay"/></svg><span>Layers</span><span lang="ar">الطبقات</span>
+        <svg class="g"><use href="#r-lib"/></svg><span>Libraries</span><span lang="ar">المكتبات</span>
+        <span class="kh">Colour and paint</span>
+        <svg class="g"><use href="#r-col"/></svg><span>Color</span><span lang="ar">اللون</span>
+        <svg class="g"><use href="#r-cg"/></svg><span>Color Guide</span><span lang="ar">دليل الألوان</span>
+        <svg class="g"><use href="#r-sw"/></svg><span>Swatches</span><span lang="ar">العينات</span>
+        <svg class="g"><use href="#r-gr"/></svg><span>Gradient</span><span lang="ar">التدرج</span>
+        <svg class="g"><use href="#r-stk"/></svg><span>Stroke</span><span lang="ar">الحد</span>
+        <svg class="g"><use href="#r-tr"/></svg><span>Transparency</span><span lang="ar">الشفافية</span>
+      </div>
+    </div>
+    <div>
+      <div class="key" style="margin-top:22px">
+        <span class="kh">Type</span>
+        <svg class="g"><use href="#r-chr"/></svg><span>Character</span><span lang="ar">الحروف</span>
+        <svg class="g"><use href="#r-par"/></svg><span>Paragraph</span><span lang="ar">الفقرة</span>
+        <svg class="g"><use href="#r-ot"/></svg><span>OpenType</span><span lang="ar">خصائص الخط</span>
+        <svg class="g"><use href="#r-gly"/></svg><span>Glyphs</span><span lang="ar">الأشكال</span>
+        <span class="kh">Arrange</span>
+        <svg class="g"><use href="#r-al"/></svg><span>Align</span><span lang="ar">المحاذاة</span>
+        <svg class="g"><use href="#r-tf"/></svg><span>Transform</span><span lang="ar">التحويل</span>
+        <svg class="g"><use href="#r-pf"/></svg><span>Pathfinder</span><span lang="ar">دمج الأشكال</span>
+        <span class="kh">Time</span>
+        <svg class="g"><use href="#r-his"/></svg><span>History</span><span lang="ar">السجل</span>
+        <svg class="g"><use href="#r-act"/></svg><span>Actions</span><span lang="ar">الأوامر المسجلة</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 5. THREE CARDS ================= -->
+<section class="blk">
+  <h2><b>5</b>Three cards open together</h2>
+  <p class="arc" lang="ar">كده هيبان لما تفتح تلات بانلز مع بعض: كل واحد كارت لوحده جنب الشريط، حواف ٨، خط ١ بكسل، من غير ظل. الأيقونات بتاعتهم في الشريط منورة.</p>
+  <div class="ws">
+    <div class="cd">
+      <div class="ch"><span class="tab on">Character</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-x"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+      <div class="cb">
+        <div class="r"><span class="bx"><span class="v f12">DecoType Naskh</span><span class="arn" lang="ar" dir="rtl">ديكوتايب نسخ</span><b class="ca"></b></span></div>
+        <div class="r"><span class="bx"><span class="v">Regular</span><b class="ca"></b></span></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-size"/></svg></i><span class="bx"><b class="sp"></b><span class="v">36 pt</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-lead"/></svg></i><span class="bx"><b class="sp"></b><span class="v u">(43.2 pt)</span><b class="ca"></b></span></div></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-kern"/></svg></i><span class="bx"><b class="sp"></b><span class="v">Metrics</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-trk"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0</span><b class="ca"></b></span></div></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-vs"/></svg></i><span class="bx"><b class="sp"></b><span class="v">100%</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-hs"/></svg></i><span class="bx"><b class="sp"></b><span class="v">100%</span><b class="ca"></b></span></div></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-bl"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-rot"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0°</span><b class="ca"></b></span></div></div>
+        <div class="tgs"><span class="tb w32"><svg class="g"><use href="#i-caps"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sc"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sup"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-sub"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-ul"/></svg></span><span class="tb w32"><svg class="g"><use href="#i-st"/></svg></span></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-lang"/></svg></i><span class="bx"><span class="v">Arabic</span><b class="ca"></b></span></div><div class="c"><i class="gi"><svg class="g"><use href="#i-aa"/></svg></i><span class="bx"><span class="v">Sharp</span><b class="ca"></b></span></div></div>
+        <div class="dv"></div>
+        <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+        <div class="r"><span class="pair"><i class="gi"><svg class="g"><use href="#i-hrk"/></svg></i><span class="wl"><span class="sw" style="background:#d63b3b"></span><b class="ca"></b></span></span><span class="pre"><span class="sw cur" style="background:#d63b3b"></span><span class="sw" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span></span><i class="fl"></i><span class="ibs"><span class="tb"><svg class="g"><use href="#i-hide"/></svg></span><span class="tb on"><svg class="g"><use href="#i-asl"/></svg></span></span></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-dig"/></svg></i><span class="bx"><span class="v"><span class="ad" lang="ar">٤٥٦</span>&nbsp; <span class="u">Hindi</span></span><b class="ca"></b></span></div><div class="c"><div class="seg"><span class="tb"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div></div>
+        <div class="r"><i class="gi"><svg class="g"><use href="#i-kstr"/></svg></i><div class="sl"><span class="fi" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="bx n48"><b class="sp"></b><span class="v">60</span></span></div>
+      </div>
+    </div>
+    <div class="cd">
+      <div class="ch"><span class="tab on">Paragraph</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-x"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+      <div class="cb">
+        <div class="tgs"><span class="tb"><svg class="g"><use href="#al"/></svg></span><span class="tb"><svg class="g"><use href="#ac"/></svg></span><span class="tb"><svg class="g"><use href="#ar"/></svg></span><span class="tb"><svg class="g"><use href="#jl"/></svg></span><span class="tb"><svg class="g"><use href="#jc"/></svg></span><span class="tb on"><svg class="g"><use href="#jr"/></svg></span><span class="tb"><svg class="g"><use href="#ja"/></svg></span></div>
+        <div class="dv"></div>
+        <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+        <div class="r"><div class="seg fx"><span class="tb on"><svg class="g"><use href="#dauto"/></svg></span><span class="tb gho"><svg class="g"><use href="#drtl"/></svg></span><span class="tb"><svg class="g"><use href="#dltr"/></svg></span></div><i class="fl"></i><div class="seg" style="flex:none;width:116px"><span class="tb"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div>
+        <div class="r"><i class="gi"><svg class="g"><use href="#i-kstr"/></svg></i><div class="sl"><span class="fi" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="bx n48"><b class="sp"></b><span class="v">60</span></span></div>
+        <div class="dv"></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#indl"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div><div class="c"><i class="gi"><svg class="g"><use href="#indr"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#indf"/></svg></i><span class="bx"><b class="sp"></b><span class="v">12 pt</span></span></div><div class="c"></div></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#spb"/></svg></i><span class="bx"><b class="sp"></b><span class="v">0 pt</span></span></div><div class="c"><i class="gi"><svg class="g"><use href="#spa"/></svg></i><span class="bx"><b class="sp"></b><span class="v">6 pt</span></span></div></div>
+      </div>
+    </div>
+    <div class="cd">
+      <div class="ch"><span class="tab on">Align</span><i class="fl"></i><span class="hb"><svg class="g"><use href="#h-x"/></svg></span><span class="hb"><svg class="g"><use href="#h-menu"/></svg></span></div>
+      <div class="cb">
+        <div class="sh">Align objects</div>
+        <div class="tgs"><span class="tb w32"><svg class="g"><use href="#a-l"/></svg></span><span class="tb w32"><svg class="g"><use href="#a-hc"/></svg></span><span class="tb w32"><svg class="g"><use href="#a-r"/></svg></span><span class="tb w32"><svg class="g"><use href="#a-t"/></svg></span><span class="tb w32"><svg class="g"><use href="#a-vc"/></svg></span><span class="tb w32"><svg class="g"><use href="#a-b"/></svg></span></div>
+        <div class="sh">Distribute objects</div>
+        <div class="tgs"><span class="tb w32"><svg class="g"><use href="#d-t"/></svg></span><span class="tb w32"><svg class="g"><use href="#d-vc"/></svg></span><span class="tb w32"><svg class="g"><use href="#d-b"/></svg></span><span class="tb w32"><svg class="g"><use href="#d-l"/></svg></span><span class="tb w32"><svg class="g"><use href="#d-hc"/></svg></span><span class="tb w32"><svg class="g"><use href="#d-r"/></svg></span></div>
+        <div class="dv"></div>
+        <div class="sh">Distribute spacing</div>
+        <div class="r"><span class="ibs"><span class="tb w32"><svg class="g"><use href="#ds-v"/></svg></span><span class="tb w32"><svg class="g"><use href="#ds-h"/></svg></span></span><i class="fl"></i><span class="bx" style="flex:none;width:92px"><b class="sp"></b><span class="v">12 px</span></span></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-to"/></svg></i><span class="bx"><span class="v">Align to selection</span><b class="ca"></b></span></div></div>
+      </div>
+    </div>
+    <div class="rail" style="margin-left:8px">
+      <span class="grip"></span>
+      <span class="rb"><svg class="g r24"><use href="#r-prop"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-lay"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-lib"/></svg></span>
+      <span class="grip"></span>
+      <span class="rb"><svg class="g r24"><use href="#r-col"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-cg"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-sw"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-gr"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-stk"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-tr"/></svg></span>
+      <span class="grip"></span>
+      <span class="rb on"><svg class="g r24"><use href="#r-chr"/></svg></span>
+      <span class="rb on"><svg class="g r24"><use href="#r-par"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-ot"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-gly"/></svg></span>
+      <span class="grip"></span>
+      <span class="rb on"><svg class="g r24"><use href="#r-al"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-tf"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-pf"/></svg></span>
+      <span class="grip"></span>
+      <span class="rb"><svg class="g r24"><use href="#r-his"/></svg></span>
+      <span class="rb"><svg class="g r24"><use href="#r-act"/></svg></span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 6. VARIANT ================= -->
+<section class="blk">
+  <h2><b>6</b>Choose: how the Arabic controls are labelled</h2>
+  <p class="arc" lang="ar">اختار واحد: (أ) أيقونات بس، والاسم بيظهر في التلميح لما تقف عليها، زي Illustrator — ده الافتراضي. (ب) أيقونة وتحتها كلمة صغيرة، للأدوات العربية بس، والباقي يفضل أيقونات.</p>
+  <div class="row-v">
+    <div>
+      <p class="cap"><b>A · Icons only (default)</b>. Same rows as the Character panel; the tooltip names the control.</p>
+      <div class="cd"><div class="cb">
+        <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+        <div class="r"><span class="pair"><i class="gi"><svg class="g"><use href="#i-hrk"/></svg></i><span class="wl"><span class="sw" style="background:#d63b3b"></span><b class="ca"></b></span></span><span class="pre"><span class="sw cur" style="background:#d63b3b"></span><span class="sw" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span></span><i class="fl"></i><span class="ibs"><span class="tb"><svg class="g"><use href="#i-hide"/></svg></span><span class="tb on"><svg class="g"><use href="#i-asl"/></svg></span></span></div>
+        <div class="r"><div class="c"><i class="gi"><svg class="g"><use href="#i-dig"/></svg></i><span class="bx"><span class="v"><span class="ad" lang="ar">٤٥٦</span>&nbsp; <span class="u">Hindi</span></span><b class="ca"></b></span></div><div class="c"><div class="seg"><span class="tb"><svg class="g w24"><use href="#k0"/></svg></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg></span></div></div></div>
+        <div class="r"><i class="gi"><svg class="g"><use href="#i-kstr"/></svg></i><div class="sl"><span class="fi" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="bx n48"><b class="sp"></b><span class="v">60</span></span></div>
+        <span class="tt" style="left:96px;top:98px">Kashida · Auto</span>
+      </div></div>
+      <p class="note">Calm and compact; you learn the icons once. Matches every other row in every panel.</p>
+    </div>
+    <div>
+      <p class="cap"><b>B · Icon + tiny label</b> on the Arabic controls only. Rows grow to 44 here.</p>
+      <div class="cd"><div class="cb">
+        <div class="sh">Middle Eastern<svg class="g s12"><use href="#ch-d"/></svg></div>
+        <div class="r tall"><span class="pair"><span class="lbl"><svg class="g"><use href="#i-hrk"/></svg><small>Harakat</small></span><span class="wl"><span class="sw" style="background:#d63b3b"></span><b class="ca"></b></span></span><span class="pre"><span class="sw cur" style="background:#d63b3b"></span><span class="sw" style="background:#2f9e5b"></span><span class="sw" style="background:#c9a227"></span><span class="sw" style="background:#000"></span></span><i class="fl"></i><span class="ibs"><span class="tb lbl"><svg class="g"><use href="#i-hide"/></svg><small>Hide</small></span><span class="tb lbl on"><svg class="g"><use href="#i-asl"/></svg><small>As letters</small></span></span></div>
+        <div class="r tall"><div class="c"><span class="lbl"><svg class="g"><use href="#i-dig"/></svg><small>Digits</small></span><span class="bx"><span class="v"><span class="ad" lang="ar">٤٥٦</span>&nbsp; <span class="u">Hindi</span></span><b class="ca"></b></span></div><div class="c"><div class="seg lb"><span class="tb"><svg class="g w24"><use href="#k0"/></svg><small>Off</small></span><span class="tb on"><svg class="g w24"><use href="#k1"/></svg><small>Auto</small></span><span class="tb"><svg class="g w24"><use href="#k2"/></svg><small>Force</small></span></div></div></div>
+        <div class="r tall"><span class="lbl"><svg class="g"><use href="#i-kstr"/></svg><small>Strength</small></span><div class="sl"><span class="fi" style="width:60%"></span><span class="th" style="left:60%"></span></div><span class="bx n48"><b class="sp"></b><span class="v">60</span></span></div>
+      </div></div>
+      <p class="note">Easier the first week, but taller rows and labels break the "glyph + field" rhythm the rest of the panel uses.</p>
+    </div>
+  </div>
+</section>
+</body>
+</html>
