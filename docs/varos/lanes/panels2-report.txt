@@ -157,3 +157,24 @@ LEFT / RISKS
   height (sections opening) re-fits; a card the user resized never re-fits.
 - Dropping a card on the icon column closes it (upstream would pop it out of its icon).
 - No UI switch for keep_open (as in lane-ux1).
+
+FOLLOW-UP after ee5881b7 (two Codex reviews, 6 items; on top of the commit, not committed)
+  Files: crates/ui-egui/src/varos/panel_stack.rs, crates/ui-egui/src/varos/tests_panel_stack.rs
+  1 Card size bounded by the room left of the dock (bounded()): reopened, fitted (width cap =
+    room width, not screen) and existing cards (keep_in_room shrinks too); excess scrolls.
+    Test a_card_is_never_larger_than_the_room_left_of_the_dock (900-wide card, 1000 pt window).
+  2 Room enforced also when a pointer is released (a card moved or resized over the dock goes
+    back); moves made by Varos update `fitted`, so they are never read as hand resizes.
+    Test a_card_dragged_or_resized_over_the_dock_moves_back.
+  3 place(): each cascade step is clamped into the room before the corner check; the search
+    continues over clamped steps. Unit test cascade_steps_moved_into_the_room_stay_distinct
+    (256-wide room, five 256x300 cards, no two on one corner).
+  4 A workspace applied re-enrols its floating icon panels as cards (workspaces keep floating
+    groups, not card membership). Test a_workspace_restores_its_cards.
+  5 Leaving card mode (Auto-Collapse on, or keep_open off) closes the cards and pops the newest
+    out of its icon as upstream's transient pop-out. Test auto_collapse_turns_the_cards_into_one_pop_out.
+  6 measure() updates the native-set bounds cache in place (no clear/rebuild, no String clones
+    once known; pruned only when non-empty).
+  Gates (-j 4, --test-threads=4, one at a time): build -p vectorcraft Finished in 1m 12s;
+    test -p vectorcraft-ui-egui 1848 passed, 0 failed, 7 ignored; clippy --lib -D warnings clean;
+    clippy --all-targets -D warnings clean; fmt --check OK; git diff --check OK.
