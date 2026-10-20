@@ -566,3 +566,215 @@ fn a_harmony_chip_and_a_recent_chip_set_the_target_in_one_step() {
     assert_eq!(fill_hex(&app), "#cc9933", "the second recent colour");
     assert_eq!(undo_len(&app), undo + 1);
 }
+
+// ---------- review fixes (2026-10-20) ----------
+
+fn stroke_hex(app: &VectorcraftApp) -> String {
+    crate::panels::current_paints(app).1.color().map(|c| c.to_hex()).unwrap_or_default()
+}
+
+fn esc() -> Event {
+    Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }
+}
+
+/// Fix 1: Escape mid-drag commits what the drag previewed (one step) and leaves no interaction
+/// open; so does putting the panel away mid-drag (the picker not drawn).
+#[test]
+fn escape_or_hiding_mid_drag_commits_the_gesture_and_closes_the_interaction() {
+    for hide in [false, true] {
+        let mut app = app();
+        app.run("window.panel", json!({"panel": "color"})).unwrap();
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut app, vec![]);
+        frame(&ctx, &mut app, vec![]);
+        let (undo, before) = (undo_len(&app), fill_hex(&app));
+        let c = centre(&ctx);
+        let at = |h: f32| ring_pos(c, RING_R - RING_BAND / 2.0, h);
+        frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.1)), button(at(0.1), true)]);
+        frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.3))]);
+        let previewed = fill_hex(&app);
+        assert_ne!(previewed, before);
+        assert!(app.session.in_interaction(), "the drag previews in an interaction");
+        if hide {
+            // Two frames without the picker (the panel put away), the button still held.
+            for _ in 0..2 {
+                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    escape(&mut app, ui.ctx());
+                });
+            }
+        } else {
+            let _ = ctx.run_ui(egui::RawInput { events: vec![esc()], ..Default::default() }, |ui| {
+                assert!(escape(&mut app, ui.ctx()));
+            });
+            assert_ne!(crate::menus::checked(&app, "window.panel", &json!({"panel": "color"})), Some(true), "closed");
+        }
+        assert!(!app.session.in_interaction(), "hide {hide}: no interaction left open");
+        assert_eq!((undo_len(&app), fill_hex(&app)), (undo + 1, previewed.clone()), "hide {hide}: one step, the previewed colour");
+        // A later edit elsewhere doesn't replace it.
+        app.run("shape.rectangle", json!({"x": 100, "y": 100, "width": 20, "height": 20})).unwrap();
+        app.run("edit.undo", json!({})).unwrap();
+        app.run("select.all", json!({})).unwrap();
+        assert_eq!(fill_hex(&app), previewed, "hide {hide}");
+    }
+}
+
+/// Fix 2: X pressed during a drag on the Fill: the drag keeps previewing and commits on the Fill;
+/// the Stroke is untouched and stays in front as asked.
+#[test]
+fn a_focus_change_mid_drag_keeps_the_target_the_drag_began_on() {
+    let mut app = app();
+    app.run("paint.setStroke", json!({"color": "#000000", "focus": false})).unwrap();
+    let ctx = egui::Context::default();
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let undo = undo_len(&app);
+    let c = centre(&ctx);
+    let at = |h: f32| ring_pos(c, RING_R - RING_BAND / 2.0, h);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.1)), button(at(0.1), true)]);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.2))]);
+    app.run("paint.toggleActive", json!({})).unwrap();
+    assert!(!app.session.fill_active);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.5))]);
+    let live = fill_hex(&app);
+    assert_eq!(stroke_hex(&app), "#000000", "the stroke isn't previewed");
+    frame(&ctx, &mut app, vec![button(at(0.5), false)]);
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(fill_hex(&app), live, "committed on the fill");
+    assert_ne!(live, "#3366cc");
+    assert_eq!(stroke_hex(&app), "#000000", "the stroke untouched");
+    assert_eq!(undo_len(&app), undo + 1);
+    assert!(!app.session.fill_active, "the stroke stays in front");
+    let hue = Color::from_hex(live.trim_start_matches('#')).unwrap().to_hsb()[0];
+    assert!((hue - 180.0).abs() < 2.0, "{hue}");
+}
+
+/// Fix 3: on a mixed selection, pressing the shown marker without moving writes nothing.
+#[test]
+fn pressing_the_marker_of_a_mixed_selection_writes_nothing() {
+    let mut app = app();
+    let b = app.run("shape.rectangle", json!({"x": 80, "y": 10, "width": 50, "height": 50})).unwrap()["id"].clone();
+    app.run("select.all", json!({})).unwrap();
+    app.run("paint.setFill", json!({"color": "#00ff00", "ids": [b]})).unwrap();
+    let ctx = egui::Context::default();
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let undo = undo_len(&app);
+    let c = centre(&ctx);
+    let st: State = ctx.data(|d| d.get_temp(state_id())).unwrap();
+    for at in [c + sv_pos(st.hsva[0], TRIANGLE_R, st.hsva[1], st.hsva[2]).to_vec2(), ring_pos(c, RING_R - RING_BAND / 2.0, st.hsva[0])] {
+        click(&ctx, &mut app, at);
+        assert_eq!(undo_len(&app), undo, "no step");
+        assert_eq!(crate::panels::mixed_paints(&app, &ctx), (true, false), "still mixed");
+        assert!(!app.session.in_interaction());
+    }
+}
+
+/// Fix 4: × and Escape close the Color panel wherever it shows: a floating group (not just
+/// activated), its card, and upstream's pop-out.
+#[test]
+fn close_puts_the_panel_away_from_a_floating_group_a_card_and_a_pop_out() {
+    let shown = |app: &VectorcraftApp| crate::menus::checked(app, "window.panel", &json!({"panel": "color"})) == Some(true);
+    // Floating.
+    let mut app = app();
+    app.run("window.panel.float", json!({"panel": "color"})).unwrap();
+    assert!(crate::floating::group_of(&app.ui, "color").is_some() || app.ui.docking.is_some());
+    assert!(shown(&app));
+    let ctx = egui::Context::default();
+    frame(&ctx, &mut app, vec![]);
+    let r = picker_rect(&ctx);
+    let x = pos2(r.left() + W - PAD - TAB_W / 2.0, r.top() + HEADER_H / 2.0);
+    click(&ctx, &mut app, x);
+    assert!(!shown(&app), "× closes the floating Color panel");
+    // Its card (the icon's default).
+    let mut app = self::app();
+    app.run("window.panel", json!({"panel": "color"})).unwrap();
+    assert!(shown(&app));
+    close(&mut app);
+    assert!(!shown(&app), "card closed");
+    // Upstream's pop-out.
+    let mut app = self::app();
+    app.ui.open_panel = Some("color".into());
+    if shown(&app) {
+        close(&mut app);
+        assert!(!shown(&app), "pop-out closed");
+    }
+}
+
+/// Fix 5: an alpha drag over objects whose fills sit at different places in their stacks
+/// previews on all of them and commits one step.
+#[test]
+fn an_alpha_drag_previews_every_object_whatever_its_stack() {
+    let mut app = app();
+    let b = app.run("shape.rectangle", json!({"x": 80, "y": 10, "width": 50, "height": 50})).unwrap()["id"].as_u64().unwrap();
+    app.run("paint.setFill", json!({"color": "#3366cc", "ids": [b]})).unwrap();
+    app.run("appearance.addFill", json!({"ids": [b]})).unwrap();
+    app.run("select.all", json!({})).unwrap();
+    assert_eq!(alpha_groups(&app, true).len(), 2, "two stack positions");
+    let ctx = egui::Context::default();
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let undo = undo_len(&app);
+    let r = picker_rect(&ctx);
+    let y = r.top() + HEADER_H + wheel::BODY_H + fields::ROW_H / 2.0;
+    let track = ctx
+        .viewport(|vp| {
+            vp.prev_pass
+                .widgets
+                .layers()
+                .flat_map(|(_, w)| w.iter())
+                .find(|w| w.rect.width() == 80.0 && (w.rect.center().y - y).abs() < 4.0)
+                .map(|w| w.rect)
+        })
+        .expect("the alpha slider");
+    let at = |a: f32| pos2(track.left() + 7.0 + a * (track.width() - 14.0), y);
+    let opacities = |app: &VectorcraftApp| {
+        alpha_groups(app, true)
+            .into_iter()
+            .map(|(i, ids)| {
+                let st = app.session.active().unwrap();
+                st.doc.node(vectorcraft_doc::NodeId(ids[0])).unwrap().appearance.items[i].opacity()
+            })
+            .collect::<Vec<_>>()
+    };
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.9)), button(at(0.9), true)]);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.5))]);
+    let live = opacities(&app);
+    assert!(live.iter().all(|o| (o - 0.5).abs() < 0.02), "live on every object: {live:?}");
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.3))]);
+    frame(&ctx, &mut app, vec![button(at(0.3), false)]);
+    frame(&ctx, &mut app, vec![]);
+    let done = opacities(&app);
+    assert!(done.iter().all(|o| (o - 0.3).abs() < 0.02), "{done:?}");
+    assert_eq!(undo_len(&app), undo + 1, "one step");
+    app.run("edit.undo", json!({})).unwrap();
+    assert!(opacities(&app).iter().all(|o| (o - 1.0).abs() < 1e-6));
+}
+
+/// Fix 6: movement delivered in the release frame is where the commit lands (ring, channel, alpha).
+#[test]
+fn the_release_frames_movement_is_committed() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    frame(&ctx, &mut app, vec![]);
+    frame(&ctx, &mut app, vec![]);
+    let c = centre(&ctx);
+    let at = |h: f32| ring_pos(c, RING_R - RING_BAND / 2.0, h);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.1)), button(at(0.1), true)]);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.3))]);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(at(0.5)), button(at(0.5), false)]);
+    frame(&ctx, &mut app, vec![]);
+    let hue = Color::from_hex(fill_hex(&app).trim_start_matches('#')).unwrap().to_hsb()[0];
+    assert!((hue - 180.0).abs() < 2.0, "ring: {hue}");
+    // A channel of the Sliders tab.
+    app.ui.varos_picker.tab = Tab::Sliders;
+    app.ui.varos_picker.mode = Mode::Rgb;
+    frame(&ctx, &mut app, vec![]);
+    let o = picker_rect(&ctx).min + vec2(0.0, HEADER_H);
+    let y = o.y + sliders::HEADER_H + sliders::ROW_H / 2.0;
+    let left = o.x + PAD + 18.0;
+    frame(&ctx, &mut app, vec![Event::PointerMoved(pos2(left + 20.0, y)), button(pos2(left + 20.0, y), true)]);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(pos2(left + 60.0, y))]);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(pos2(left + sliders::SLIDER_W, y)), button(pos2(left + sliders::SLIDER_W, y), false)]);
+    frame(&ctx, &mut app, vec![]);
+    assert!(fill_hex(&app).starts_with("#ff"), "R at the release point: {}", fill_hex(&app));
+}

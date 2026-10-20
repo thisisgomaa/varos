@@ -227,7 +227,9 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, prefs: &
         ui.painter().text(row.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::monospace(11.0), t.text_dim);
         let track = Rect::from_min_size(egui::pos2(row.left() + LABEL_W, row.center().y - TRACK_H / 2.0), vec2(SLIDER_W, TRACK_H));
         let hit = ui.interact(track.expand(KNOB_R), ui.id().with(("varos-picker-channel", index)), Sense::click_and_drag());
-        if (hit.is_pointer_button_down_on() || hit.clicked()) && st.gesture.is_none_or(|g| g == Gesture::Channel(index)) {
+        // The release frame's own movement counts too (`drag_stopped`), for this channel's gesture.
+        let this = st.gesture == Some(Gesture::Channel(index));
+        if ((hit.is_pointer_button_down_on() || hit.clicked()) && (st.gesture.is_none() || this)) || (hit.drag_stopped() && this) {
             st.start(Gesture::Channel(index));
             if let Some(p) = hit.interact_pointer_pos() {
                 adopt_channel(st, mode, index, lo + (hi - lo) * ((p.x - track.left()) / track.width()).clamp(0., 1.));

@@ -336,7 +336,8 @@ fn to32(c: &Color) -> Color32 {
 }
 
 /// The global or spot swatch a colour is a tint of (Tint mode).
-// Varos: crate-visible with `Target`.
+// Varos: crate-visible with `Target` (and cloned with it).
+#[derive(Clone)]
 pub(crate) struct Tint {
     swatch: String,
     spot: bool,
@@ -358,7 +359,9 @@ impl Tint {
 
 /// What the panel is editing: the active proxy's solid colour or a selected gradient stop (with
 /// the global swatch it is a tint of), or a selected freeform point.
-// Varos: crate-visible so the colour picker v3 (`crate::varos::picker`) edits the same target.
+// Varos: crate-visible so the colour picker v3 (`crate::varos::picker`) edits the same target;
+// cloned so a gesture keeps the target it began on.
+#[derive(Clone)]
 pub(crate) enum Target {
     Paint(Option<Color>, Option<Tint>),
     Stop { paint: Paint, index: usize, color: Color, tint: Option<Tint> },

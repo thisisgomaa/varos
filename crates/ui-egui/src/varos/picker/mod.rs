@@ -99,6 +99,13 @@ pub(crate) enum Gesture {
     Alpha,
 }
 
+/// The target a gesture began on and which proxy (Fill or Stroke) was in front.
+#[derive(Clone)]
+struct Origin {
+    target: Target,
+    fill: bool,
+}
+
 /// What the picker last took from the document.
 #[derive(Clone, Debug, PartialEq)]
 struct Seen {
@@ -126,6 +133,12 @@ pub(crate) struct State {
     alpha_sent: Option<f32>,
     /// The values the sliders show while the colour is the one they made.
     pub(crate) channels: Option<(Mode, [f32; 3], [f32; 4])>,
+    /// The picker's colour and alpha when the gesture began: a change is measured from them when
+    /// nothing was read (a mixed selection, None).
+    start_rgb: [f32; 3],
+    start_alpha: f32,
+    /// What the gesture began on: it previews and commits there whatever happens meanwhile (X).
+    origin: Option<Origin>,
     pub(crate) wheel: wheel::Cache,
     pub(crate) tracks: sliders::Cache,
 }
@@ -143,6 +156,9 @@ impl Default for State {
             sent: None,
             alpha_sent: None,
             channels: None,
+            start_rgb: [1.0, 0.0, 0.0],
+            start_alpha: 1.0,
+            origin: None,
             wheel: Default::default(),
             tracks: Default::default(),
         }
@@ -159,6 +175,9 @@ impl State {
         if self.gesture.is_none() {
             self.gesture = Some(g);
             self.edited = false;
+            self.start_rgb = self.rgb();
+            self.start_alpha = self.hsva[3];
+            self.origin = None;
         }
     }
 
@@ -421,39 +440,79 @@ fn settle(app: &mut VectorcraftApp, ctx: &egui::Context, st: &mut State, v: &Vie
                 let _ = app.run("paint.none", json!({}));
             }
             Action::Eyedropper => app.select_tool("eyedropper"),
-            Action::Close => close(app),
+            Action::Close => {
+                finish(app, st);
+                close(app);
+            }
         }
     }
     let down = ctx.input(|i| i.pointer.primary_down());
+    if st.gesture.is_some() && st.origin.is_none() {
+        // The gesture's first frame: it keeps this target to its end.
+        st.origin = Some(Origin { target: v.target.clone(), fill: v.fill_active });
+    }
+    let Some(origin) = st.origin.clone() else { return };
     let colour_gesture = matches!(st.gesture, Some(Gesture::Ring | Gesture::Triangle | Gesture::Channel(_)));
     if std::mem::take(&mut st.change) && colour_gesture {
+        // Measured from what was read, else (mixed, None) from the picker's own colour at the
+        // press: pressing the shown marker without moving writes nothing.
         let rgb = st.rgb();
-        if v.mixed || st.sent.is_none_or(|s| !same(s, rgb)) {
+        if !same(st.sent.unwrap_or(st.start_rgb), rgb) {
             st.sent = Some(rgb);
             st.edited = true;
-            crate::panels::color::apply(app, &v.target, st.out_color(), Live::Dragging, false);
+            let c = st.out_color();
+            on_origin(app, &origin, |app| crate::panels::color::apply(app, &origin.target, c, Live::Dragging, false));
         }
     }
     if std::mem::take(&mut st.alpha_change) && st.gesture == Some(Gesture::Alpha) {
         let a = st.hsva[3];
-        if st.alpha_sent.is_none_or(|s| (s - a).abs() > SAME) {
+        if (st.alpha_sent.unwrap_or(st.start_alpha) - a).abs() > SAME {
             st.alpha_sent = Some(a);
             st.edited = true;
-            apply_alpha(app, v.fill_active, a, Live::Dragging);
+            apply_alpha(app, origin.fill, a, Live::Dragging);
         }
     }
-    if let Some(g) = st.gesture
-        && !down
-    {
-        if st.edited {
-            match g {
-                Gesture::Alpha => apply_alpha(app, v.fill_active, st.hsva[3], Live::Released),
-                _ => crate::panels::color::apply(app, &v.target, st.out_color(), Live::Released, false),
+    if st.gesture.is_some() && !down {
+        finish(app, st);
+    }
+}
+
+/// End the gesture: commit what it previewed (one undo step) on the target it began on, and
+/// clear it. Called on release, and before the picker is hidden mid-gesture (Escape, ×, the panel
+/// put away), so no live interaction is left open.
+fn finish(app: &mut VectorcraftApp, st: &mut State) {
+    if let (Some(g), true, Some(origin)) = (st.gesture, st.edited, st.origin.clone()) {
+        match g {
+            Gesture::Alpha => apply_alpha(app, origin.fill, st.hsva[3], Live::Released),
+            _ => {
+                let c = st.out_color();
+                on_origin(app, &origin, |app| crate::panels::color::apply(app, &origin.target, c, Live::Released, false));
             }
         }
-        st.gesture = None;
-        st.edited = false;
     }
+    st.gesture = None;
+    st.edited = false;
+    st.origin = None;
+    st.change = false;
+    st.alpha_change = false;
+}
+
+/// Run `f` with the gesture's own proxy in front (the paint commands write the proxy in front),
+/// then put back the one the person brought forward meanwhile.
+fn on_origin(app: &mut VectorcraftApp, origin: &Origin, f: impl FnOnce(&mut VectorcraftApp)) {
+    let now = app.session.fill_active;
+    app.session.fill_active = origin.fill;
+    f(app);
+    app.session.fill_active = now;
+}
+
+/// Finish the stored gesture, if any (the picker is going away or was not drawn).
+fn finish_pending(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    let Some(mut st) = ctx.data_mut(|d| d.remove_temp::<State>(state_id())) else { return };
+    if st.gesture.is_some() {
+        finish(app, &mut st);
+    }
+    ctx.data_mut(|d| d.insert_temp(state_id(), st));
 }
 
 /// Write colour `c` to the target as one step, unless it is the colour there already.
@@ -513,15 +572,25 @@ fn apply_alpha(app: &mut VectorcraftApp, fill: bool, a: f32, phase: Live) {
     match groups.as_slice() {
         [] => {}
         [one] => crate::panels::live_run(app, "Opacity", "appearance.setItem", params(one), phase),
-        many if phase == Live::Released => {
-            let calls: Vec<Value> = many.iter().map(params).collect();
-            app.session.begin_undo_group();
-            for p in calls {
-                let _ = app.run("appearance.setItem", p);
+        [first, rest @ ..] => {
+            // Items at different places in the objects' stacks: one interaction previews every
+            // update (the others on top of the first preview), and the release commits them as one
+            // step.
+            if app.session.begin_interaction("Opacity").is_ok() {
+                match app.session.preview("appearance.setItem", &params(first)) {
+                    Ok(_) => {
+                        for p in rest {
+                            let _ = app.session.execute("appearance.setItem", &params(p));
+                        }
+                    }
+                    Err(e) => app.ui.status = e.to_string(),
+                }
+                if phase == Live::Released {
+                    let _ = app.session.commit_interaction();
+                }
+                app.sync_views();
             }
-            app.session.end_undo_group(false);
         }
-        _ => {}
     }
 }
 
@@ -536,26 +605,42 @@ pub(crate) fn open_for(app: &mut VectorcraftApp, stroke: bool) {
     }
 }
 
-/// Put the Color panel away (× and Escape). It never undoes anything.
+/// Put the Color panel away (× and Escape), from wherever it shows: its card, a floating group,
+/// the docked layout or upstream's pop-out. It never undoes anything.
 pub(crate) fn close(app: &mut VectorcraftApp) {
-    if crate::menus::checked(app, "window.panel", &json!({ "panel": PANEL })) == Some(true) {
-        let _ = app.run("window.panel", json!({ "panel": PANEL, "toggle": true }));
-        // The panel stack follows at once (else on its next frame).
-        crate::varos::panel_stack::reconcile(app);
+    if crate::menus::checked(app, "window.panel", &json!({ "panel": PANEL })) != Some(true) {
+        return;
+    }
+    if crate::varos::panel_stack::keeps_icon(app, PANEL) {
+        // Its card closes (the panel only, when others share it).
+        crate::varos::panel_stack::toggle(app, PANEL);
+    } else if app.ui.open_panel.as_deref() == Some(PANEL) {
+        app.ui.open_panel = None;
+    } else if let Err(e) = app.run("window.panel.close", json!({ "panel": PANEL })) {
+        // A floating group or the docked layout: upstream's removal for its place.
+        app.ui.status = e;
     }
 }
 
-/// Escape with the pointer over the picker (drawn last frame) and no field or popup taking it
-/// closes the Color panel; true when it did. Called before the shortcuts and the tools see Escape.
+/// Called every frame before the shortcuts and the tools. A gesture whose picker was not drawn
+/// last frame (the panel was put away mid-drag) is finished, so no interaction stays open. Escape
+/// with the pointer over the picker (drawn last frame) and no field or popup taking it finishes
+/// any gesture and closes the Color panel; true when it did.
 pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
-    let Some((rect, frame)) = ctx.data(|d| d.get_temp::<(Rect, u64)>(rect_id())) else { return false };
-    if frame + 1 < ctx.cumulative_frame_nr() || ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
+    let now = ctx.cumulative_frame_nr();
+    let drawn = ctx.data(|d| d.get_temp::<(Rect, u64)>(rect_id())).filter(|(_, frame)| frame + 1 >= now);
+    let Some((rect, _)) = drawn else {
+        finish_pending(app, ctx);
+        return false;
+    };
+    if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
         return false;
     }
     let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| rect.contains(p));
     if !over || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         return false;
     }
+    finish_pending(app, ctx);
     close(app);
     true
 }

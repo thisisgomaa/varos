@@ -59,3 +59,42 @@ WHAT IS LEFT / DROPPED (and why)
 - Translations of the new strings (23 languages) were written by me, not reviewed by native speakers.
 - Concurrency note: lane-panels2 was editing crates/ui-egui/src/dock.rs at the same time; my dock.rs change is 4 lines in panel_width() — possible merge conflict.
 - Pre-existing clippy failure in varos/home_capture.rs (see above) blocks the strict clippy gate on this toolchain regardless of this lane.
+
+=====================================================================
+FIX-FIRST ROUND (2026-10-20, after commit 95adabd3 + merge b11c96d5; two Codex reviews)
+Not amended, not committed. One test per item, all in crates/ui-egui/src/varos/picker/tests.rs.
+Also: the merge left picker::close() calling panel_stack::reconcile(), which the merged panel
+stack (lane-panels2 cards) no longer has; close() is rewritten (fix 4), so HEAD compiles again.
+
+1. P1 Escape mid-gesture: escape() (called every frame before shortcuts/tools) now finishes the
+   stored gesture — commits what it previewed on its own target, one step — before closing the
+   panel; it also finishes a gesture whose picker was not drawn last frame (panel put away
+   mid-drag), and × does the same. Test: escape_or_hiding_mid_drag_commits_the_gesture_and_closes_the_interaction
+   (no interaction left open, +1 undo step, previewed colour kept, for Escape and for hiding).
+2. P1 target at release: a gesture captures its Target (now Clone) and Fill/Stroke identity on its
+   first frame; previews and the commit run on it with that proxy in front (put back after), so X
+   mid-drag no longer moves the write to the Stroke. Test: a_focus_change_mid_drag_keeps_the_target_the_drag_began_on.
+3. P1 mixed placeholder write: the change check no longer bypasses on mixed; a change is measured
+   from what was read, else from the picker's own colour/alpha at the press. Test:
+   pressing_the_marker_of_a_mixed_selection_writes_nothing (marker and ring marker: 0 steps, still mixed).
+4. P2 close from a floating group: close() now removes the panel from where it shows — its card
+   (panel_stack::toggle), upstream's pop-out (open_panel = None), else `window.panel.close` (floating
+   group / docked layout) — instead of `window.panel` toggle. Test:
+   close_puts_the_panel_away_from_a_floating_group_a_card_and_a_pop_out.
+5. P2 alpha preview with different stack indices: one "Opacity" interaction previews the first
+   group and executes the others on top (execute inside an interaction records no step), commit
+   once on release; others only run if the first preview succeeded. Test:
+   an_alpha_drag_previews_every_object_whatever_its_stack (live 50% on both, final 30%, +1 step, undo restores).
+6. P2 release-frame movement: wheel, channel and alpha widgets also update on drag_stopped() (for
+   their own gesture), so the commit uses where the pointer let go. Test:
+   the_release_frames_movement_is_committed (ring and an RGB channel moved and released in one frame).
+
+Gates (fix round, -j 4, --test-threads=4, one cargo at a time):
+- cargo test -j 4 --offline --release -p vectorcraft-ui-egui -- --test-threads=4:
+  "test result: ok. 1868 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 15.08s"
+- cargo clippy -j 4 --offline --release -p vectorcraft-ui-egui --all-targets -- -D warnings:
+  "Finished `release` profile [optimized] target(s) in 21.03s" (no warnings; the home_capture lint is fixed on main)
+- cargo build -j 4 --offline --release -p vectorcraft: "Finished `release` profile [optimized] target(s) in 3m 34s"
+- cargo fmt --all --check: clean; git diff --check: clean.
+Not done: no mutation runs proving each new test fails without its fix (each recompile is ~7 min on
+a hot Mac); the tests were written against the reported scenarios.

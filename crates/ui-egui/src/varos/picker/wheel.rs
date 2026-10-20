@@ -182,7 +182,8 @@ pub(super) fn wheel(ui: &mut Ui, rect: Rect, st: &mut State, harmony: Option<sup
             st.start(Gesture::Triangle);
         }
     }
-    if (hit.is_pointer_button_down_on() || hit.clicked())
+    // The release frame's own movement counts too: the commit uses where the pointer let go.
+    if (hit.is_pointer_button_down_on() || hit.clicked() || hit.drag_stopped())
         && let Some(p) = pos
     {
         match st.gesture {

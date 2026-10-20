@@ -113,7 +113,9 @@ fn alpha_slider(ui: &mut Ui, st: &mut State, v: &View, width: f32) {
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(1, 3, 2);
     ui.painter().add(egui::Shape::mesh(mesh));
-    if enabled && (resp.is_pointer_button_down_on() || resp.clicked()) && st.gesture.is_none_or(|g| g == Gesture::Alpha) {
+    // The release frame's own movement counts too (`drag_stopped`), for the alpha gesture.
+    let this = st.gesture == Some(Gesture::Alpha);
+    if enabled && (((resp.is_pointer_button_down_on() || resp.clicked()) && (st.gesture.is_none() || this)) || (resp.drag_stopped() && this)) {
         st.start(Gesture::Alpha);
         if let Some(p) = resp.interact_pointer_pos() {
             st.hsva[3] = ((p.x - track.left()) / track.width()).clamp(0.0, 1.0);
