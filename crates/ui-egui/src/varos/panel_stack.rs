@@ -159,6 +159,12 @@ impl View {
     }
 }
 
+/// `size` made to fit in `room` (a card never larger than the room left of the dock; what doesn't
+/// fit scrolls), at least [`MIN_TALL`] high when the room allows.
+fn bounded(size: Vec2, room: Rect) -> Vec2 {
+    vec2(size.x.clamp(1.0, room.width().max(1.0)), size.y.clamp(MIN_TALL.min(room.height()), room.height().max(1.0)))
+}
+
 /// Is the card mode on: keep-open, and pop-outs not made transient by Auto-Collapse.
 fn active(app: &VectorcraftApp) -> bool {
     app.ui.varos_panel_stack.keep_open && !app.session.prefs.auto_collapse_icon_panels
@@ -263,7 +269,7 @@ fn spot(app: &VectorcraftApp, id: &str) -> Rect {
     let saved = stack.places.get(id).filter(|p| p.pos.iter().chain(&p.size).all(|v| v.is_finite()) && p.size.iter().all(|v| *v > 0.0));
     let tallest = (v.screen.bottom() - v.top - MARGIN).max(MIN_TALL);
     let size = saved.map_or(vec2(crate::dock::panel_width(id), START_TALL), |p| vec2(p.size[0], p.size[1]));
-    let size = vec2(size.x.max(1.0), size.y.clamp(MIN_TALL, tallest));
+    let size = bounded(vec2(size.x, size.y.min(tallest)), room);
     let taken = taken(app);
     let back = saved.map(|p| Rect::from_min_size(floating::clamp(p.pos, size, room), size)).filter(|r| taken.iter().all(|t| overlap(*r, *t) < 0.5));
     back.unwrap_or_else(|| Rect::from_min_size(place(size, &taken, room, v.right, v.top), size))
@@ -319,9 +325,12 @@ pub(crate) fn place(size: Vec2, taken: &[Rect], screen: Rect, right: f32, top: f
             }
         }
     }
+    // Each step as it would land (moved into the room), so two steps clamped onto the same corner
+    // don't both count as free.
     let near = |p: Pos2| taken.iter().any(|t| (t.min - p).length() < CASCADE / 2.0);
-    let step = (1..=taken.len() + 1).map(|k| pos2(x - CASCADE * k as f32, top + CASCADE * k as f32)).find(|p| !near(*p));
-    floating::clamp(step.map_or([x, top], |p| [p.x, p.y]), size, screen)
+    let steps = 1..=(taken.len() + 1).max(2) * 2;
+    let step = steps.map(|k| floating::clamp([x - CASCADE * k as f32, top + CASCADE * k as f32], size, screen)).find(|p| !near(*p));
+    step.unwrap_or_else(|| floating::clamp([x, top], size, screen))
 }
 
 /// Keep where each card is (and its size) as the place it opens at next time.
@@ -365,20 +374,30 @@ pub(crate) fn frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
             stack.cards.retain(|p| rail_panel(p).is_some());
             stack.places.retain(|p, _| rail_panel(p).is_some());
         }
-        // A workspace was applied: it brings its own panels.
+        // A workspace was applied: it brings its own panels. Its floating icon panels are cards
+        // (workspaces keep the floating groups, not which of them were cards).
         Some(g) if g != generation => {
             stack.cards.clear();
             stack.seen.clear();
             stack.fitted.clear();
             stack.flyout = None;
+            let ui = &mut app.ui;
+            let groups: Vec<&String> = match &ui.docking {
+                Some(l) => l.floating.iter().flat_map(|g| g.panels.iter()).collect(),
+                None => ui.floating_panels.iter().flat_map(|g| g.panels.iter()).collect(),
+            };
+            ui.varos_panel_stack.cards = groups.into_iter().filter(|p| rail_panel(p).is_some()).cloned().collect();
         }
         Some(_) => {}
     }
-    stack.generation = Some(generation);
+    app.ui.varos_panel_stack.generation = Some(generation);
     let screen = ctx.content_rect();
-    if !active(app) || !(screen.width() > 1.0 && screen.height() > 1.0) {
-        // Not in card mode (or a minimized window): nothing to follow.
-        app.ui.varos_panel_stack.seen.clear();
+    if !active(app) {
+        leave(app);
+        return;
+    }
+    if !(screen.width() > 1.0 && screen.height() > 1.0) {
+        // A minimized window: nothing to follow.
         return;
     }
     let moved = measure(app, ctx);
@@ -427,7 +446,8 @@ pub(crate) fn frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
         }
         app.ui.varos_panel_stack.cards = cards;
         let mut moves = Vec::new();
-        if moved {
+        // The window or dock changed, or a card's move or resize was let go: back into the room.
+        if moved || ctx.input(|i| i.pointer.any_released()) {
             keep_in_room(app, &mut moves);
         }
         fit(app, ctx, &mut moves);
@@ -441,6 +461,24 @@ pub(crate) fn frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
     if repaint {
         ctx.request_repaint();
     }
+}
+
+/// Card mode was left (Auto-Collapse Iconic Panels on, or keep-open off): the cards close and the
+/// newest pops out of its icon instead, as upstream's single transient pop-out.
+fn leave(app: &mut VectorcraftApp) {
+    app.ui.varos_panel_stack.seen.clear();
+    if app.ui.varos_panel_stack.cards.is_empty() {
+        return;
+    }
+    remember(app);
+    let mut cards = std::mem::take(&mut app.ui.varos_panel_stack.cards);
+    cards.retain(|p| floating(app, p));
+    for p in &cards {
+        if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.close", &json!({ "panel": p })) {
+            app.ui.status = error;
+        }
+    }
+    app.ui.open_panel = cards.last().cloned();
 }
 
 /// Keep the window, the dock and the native sets as drawn this frame. True when the window or
@@ -463,12 +501,20 @@ fn measure(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     let top = column.filter(|_| shown).map_or(TOP, |c| c.top());
     let ui = &mut app.ui;
     let stack = &mut ui.varos_panel_stack;
-    stack.drawn.clear();
+    // Native sets' bounds, updated in place (no allocation once a set is known).
+    if !stack.drawn.is_empty() {
+        stack.drawn.retain(|first, _| ui.floating_panels.iter().any(|g| crate::panel_docking::decorated(g) && g.panels.first() == Some(first)));
+    }
     for g in ui.floating_panels.iter().filter(|g| crate::panel_docking::decorated(g)) {
         if let Some(first) = g.panels.first()
             && let Some(r) = ctx.data(|d| d.get_temp::<Rect>(floating::group_rect_id(first))).filter(|r| r.is_finite())
         {
-            stack.drawn.insert(first.clone(), r);
+            match stack.drawn.get_mut(first) {
+                Some(kept) => *kept = r,
+                None => {
+                    stack.drawn.insert(first.clone(), r);
+                }
+            }
         }
     }
     let view = View { screen, right, top };
@@ -490,19 +536,21 @@ fn shared_cards<'a>(
     })
 }
 
-/// The window or the dock changed: cards reaching over the dock (or out of the window) move back
-/// into the room left of it, keeping their size.
+/// Cards reaching over the dock (or out of the window) move back into the room left of it, made
+/// smaller only when larger than the room.
 fn keep_in_room(app: &VectorcraftApp, moves: &mut Vec<craft_ui::docking::Action<String>>) {
     let (Some(layout), Some(v)) = (&app.ui.docking, app.ui.varos_panel_stack.view) else { return };
     let room = v.room();
     for (g, _) in shared_cards(app, layout) {
         let [x, y, w, h] = g.rect;
         // A point or two over (a dock edge that moved by a rounding) is left alone.
-        let to = floating::clamp([x, y], vec2(w, h), room.expand(SLACK));
-        if (to - pos2(x, y)).length() > 0.5
+        let room = room.expand(SLACK);
+        let size = bounded(vec2(w, h), room);
+        let to = floating::clamp([x, y], size, room);
+        if ((to - pos2(x, y)).length() > 0.5 || (size - vec2(w, h)).length() > 0.5)
             && let Some(first) = g.panels.first()
         {
-            moves.push(craft_ui::docking::Action::MoveFloating { panel: first.clone(), rect: [to.x, to.y, w, h] });
+            moves.push(craft_ui::docking::Action::MoveFloating { panel: first.clone(), rect: [to.x, to.y, size.x, size.y] });
         }
     }
 }
@@ -522,7 +570,6 @@ fn fit(app: &mut VectorcraftApp, ctx: &egui::Context, moves: &mut Vec<craft_ui::
         let before = stack.fitted.get(first).filter(|f| f.panels == g.panels.len());
         if let Some(f) = before
             && ((h - f.size.y).abs() > 0.5 || (w - f.size.x).abs() > 0.5)
-            && !moves.iter().any(|m| matches!(m, craft_ui::docking::Action::MoveFloating { panel, .. } if panel == first))
         {
             // Resized by hand: it keeps that size from now on.
             resized.push(first.clone());
@@ -538,13 +585,14 @@ fn fit(app: &mut VectorcraftApp, ctx: &egui::Context, moves: &mut Vec<craft_ui::
         // As tall as the contents (within the window); wider only when a row doesn't fit.
         let tallest = (v.screen.bottom() - y.max(v.screen.top()) - MARGIN).max(MIN_TALL);
         let tall = (h + content.y - viewport.y).clamp(MIN_TALL, tallest).round();
-        let wide = if content.x > viewport.x + 0.5 { (w + content.x - viewport.x).min(v.screen.width() - 16.0).max(w).ceil() } else { w };
+        let widest = v.room().width().max(1.0);
+        let wide = if content.x > viewport.x + 0.5 { (w + content.x - viewport.x).ceil().max(w).min(widest) } else { w.min(widest) };
         let changed = (tall - h).abs() > 1.0 || (wide - w).abs() > 0.5;
         let size = if changed { vec2(wide, tall) } else { vec2(w, h) };
         fitted.push((first.clone(), Fitted { size, content, panels: g.panels.len() }));
         if changed {
             // Widened leftwards: its right edge stays (beside the dock).
-            let x = (x - (size.x - w)).max(v.screen.left());
+            let x = (x - (size.x - w)).max(v.screen.left()).min(v.room().right() - size.x).max(v.screen.left());
             moves.retain(|m| !matches!(m, craft_ui::docking::Action::MoveFloating { panel, .. } if panel == first));
             moves.push(craft_ui::docking::Action::MoveFloating { panel: first.clone(), rect: [x, y, size.x, size.y] });
         }
@@ -576,6 +624,12 @@ fn apply(app: &mut VectorcraftApp, moves: Vec<craft_ui::docking::Action<String>>
     // Fitting a card is no layout change of upstream's: its pop-out (the newest card) stays.
     let open = app.ui.open_panel.clone();
     for action in moves {
+        // A size set here is no hand resize.
+        if let craft_ui::docking::Action::MoveFloating { panel, rect } = &action
+            && let Some(f) = app.ui.varos_panel_stack.fitted.get_mut(panel)
+        {
+            f.size = vec2(rect[2], rect[3]);
+        }
         let Ok(action) = serde_json::to_value(action) else { continue };
         if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action })) {
             app.ui.status = error;

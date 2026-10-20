@@ -472,6 +472,86 @@ fn a_panels_key_toggles_its_card() {
     assert_eq!(h.cards(), ["paragraph"], "Cmd+T again closed it, Paragraph stayed");
 }
 
+/// A card remembered larger than the room left of the dock (here 900 wide, opened again in a
+/// narrow window) is made to fit that room; it never covers the dock.
+#[test]
+fn a_card_is_never_larger_than_the_room_left_of_the_dock() {
+    let mut h = Harness::sized(vec2(1000.0, 1000.0));
+    h.tap("character");
+    h.tap("character");
+    let place = h.app.ui.varos_panel_stack.places.get_mut("character").unwrap();
+    place.size = [900.0, 300.0];
+    place.fit = false;
+    h.tap("character");
+    let card = h.card("character");
+    let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
+    assert!(card.left() >= 0.0 && card.right() <= h.column() && card.right() <= dock.left(), "{card:?}, dock {dock:?}");
+}
+
+/// A card dragged over the dock, or resized across it, goes back left of it once let go.
+#[test]
+fn a_card_dragged_or_resized_over_the_dock_moves_back() {
+    let mut h = Harness::new();
+    h.tap("character");
+    let card = h.card("character");
+    h.drag(card.left_top() + vec2(6.0, 16.0), card.left_top() + vec2(206.0, 316.0));
+    let moved = h.card("character");
+    assert!(moved.right() <= h.column() + 0.5, "moved back left of the column: {moved:?}, column {}", h.column());
+    assert!(moved.top() > card.top() + 200.0, "it kept the drag's height: {moved:?}");
+    let corner = moved.right_bottom() - vec2(4.0, 4.0);
+    h.drag(corner, corner + vec2(300.0, 0.0));
+    let resized = h.card("character");
+    assert!(resized.right() <= h.column() + 0.5, "resized back left of the column: {resized:?}");
+}
+
+/// The cascade never lands two cards on one corner, also when its steps are pushed back into a
+/// narrow room.
+#[test]
+fn cascade_steps_moved_into_the_room_stay_distinct() {
+    let screen = Rect::from_min_size(Pos2::ZERO, vec2(256.0, 800.0));
+    let size = vec2(256.0, 300.0);
+    let mut taken = Vec::new();
+    for _ in 0..5 {
+        let p = panel_stack::place(size, &taken, screen, 256.0, 100.0);
+        assert!(screen.contains_rect(Rect::from_min_size(p, size).shrink(0.5)), "{p:?} in the room");
+        assert!(taken.iter().all(|t: &Rect| (t.min - p).length() >= 12.0), "{p:?} isn't on another card's corner: {taken:?}");
+        taken.push(Rect::from_min_size(p, size));
+    }
+}
+
+/// A workspace saved with cards open brings them back as cards (icons kept and lit).
+#[test]
+fn a_workspace_restores_its_cards() {
+    let mut h = Harness::new();
+    h.tap("character");
+    h.tap("paragraph");
+    let saved = crate::workspaces::capture(&h.app.ui, "Cards");
+    crate::workspaces::apply(&mut h.app.ui, &crate::workspaces::Workspace::default());
+    h.settle();
+    assert!(h.cards().is_empty());
+    crate::workspaces::apply(&mut h.app.ui, &saved);
+    h.settle();
+    assert_eq!(h.cards(), ["character", "paragraph"]);
+    for id in ["character", "paragraph"] {
+        assert!(panel_stack::is_open(&h.app, id) && h.card_drawn(id), "{id}: a card again, its icon lit");
+        h.icon(id);
+    }
+}
+
+/// Turning Auto-Collapse Iconic Panels on with cards open closes them; the newest pops out of its
+/// icon as upstream's single transient pop-out.
+#[test]
+fn auto_collapse_turns_the_cards_into_one_pop_out() {
+    let mut h = Harness::new();
+    h.tap("character");
+    h.tap("paragraph");
+    h.app.session.execute("prefs.set", &json!({"key": "autoCollapseIconPanels", "value": true})).unwrap();
+    h.settle();
+    assert!(h.groups().is_empty() && h.cards().is_empty(), "no unmanaged floating cards left: {:?}", h.groups());
+    assert_eq!(h.app.ui.open_panel.as_deref(), Some("paragraph"));
+    assert!(h.ctx.memory(|m| m.area_rect(egui::Id::new("icon-panel"))).is_some(), "the pop-out shows");
+}
+
 /// Optional software capture of the real window with three cards open; set
 /// `VAROS_PANELS_CAPTURE_DIR` to write `panels-3-cards.png` there.
 #[test]
