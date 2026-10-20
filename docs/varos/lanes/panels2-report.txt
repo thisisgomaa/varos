@@ -1,0 +1,159 @@
+lane-panels2 report — 2026-10-20 — implementer: Opus 5.5 — base 19b4c45a (varos-next main). Not committed.
+
+Owner feedback on v8: several open panels were drawn inside ONE scrolling column beside the icon
+rail ("a fake side list you scroll in"). He wants Illustrator: each panel an independent card.
+
+BEHAVIOUR (keep-open mode, on by default)
+- A click on an icon of the right icon column opens that panel as its own card: upstream's
+  floating panel group (window.panel.float), placed beside the column and kept open. Each card
+  has its own position and size, moves by its tab or the grip at the left of its tab strip,
+  resizes by its bottom-right corner, and closes on its own (its x, its icon again, or
+  Window > that panel, or its key: Cmd+T, F6... toggle their card as in Illustrator). An agent's
+  plain window.panel on a card already open only shows it, never closes it (review fix 1).
+- The scroll column is gone. No shared container: N panels = N floating groups.
+- The icon stays in the column and stays lit while its card is open (cards are kept in the
+  column even though they float; a panel DRAGGED out of the column still leaves it, as upstream
+  and as Illustrator do).
+- Docking and grouping are upstream's own: drop a card on another card's tabs and it becomes a
+  tab of that card (each icon still closes its own tab); drop it on the left edge of the dock and
+  it docks as a dock column; drop it on the icon column and it closes (it goes back to its icon
+  instead of popping out of it).
+- A card fits its panel: as tall as the contents (capped by the window, the rest scrolls), and
+  wider (leftwards, so it never covers the icon column) only when a row of the panel doesn't fit
+  the 256 pt default. Once the user resizes a card by hand, it keeps that size.
+- A card closed and opened again comes back where it was left, at its size (per panel,
+  ui.json: UiState.varos_panel_stack.places), unless half of it or more would lie on another
+  card (then it takes a new free place), and always left of the icon column and the dock. When
+  the window or the dock changes size (and on the first frame, so cards restored from ui.json
+  too) cards reaching over the dock move back left of it, keeping their size. The open cards themselves survive a restart (they
+  are upstream floating groups in ui.json; varos_panel_stack.cards remembers which ones are
+  cards).
+- Tab / Shift+Tab hide every card with the rest of the panels and bring them all back where they
+  were (upstream hides floating groups with the dock).
+- Panels opened another way (a Properties button such as Align, a workspace that opens a panel,
+  F-key shortcuts) open as cards too. UiState.open_panel names the newest card, so upstream
+  code/agents that read "the open panel" keep working.
+- Unchanged upstream pop-outs: the tabbed group's panels (Properties/Layers/Libraries) in a
+  collapsed dock still pop out one at a time; a panel dragged out of the column and dropped back
+  pops out of its icon once. keep_open=false or Preferences > User Interface > Auto-Collapse
+  Iconic Panels = upstream's one-pop-out-at-a-time behaviour (no cards).
+
+PLACEMENT ALGORITHM (panel_stack::place, pure, unit-tested)
+- New card size: remembered size, else 256 x 360 (then fitted to its contents next frame);
+  height capped to the window.
+- Remembered place exists -> that place, moved into the window if the window got smaller.
+- Remembered place lying >= 50 % on another card (overlap area / smaller card's area) -> ignored.
+- Everything is clamped into the "room": the window left of min(icon column left, docked columns
+  left, dock rect left) - 6 pt.
+- Else: right edge 6 pt left of the dock (left of the icon column, docked columns and dock rect),
+  top aligned with the icon column's top. Walk down: while the candidate overlaps a floating
+  group, jump to just below it (+6 pt). If it fits above the window bottom (8 pt margin) -> there.
+  A card taller than the window still opens at the first slot.
+- Column full -> cascade from the column's top: step k = (x - 24k, top + 24k), the first step
+  whose corner isn't within 12 pt of an existing card's corner; clamped on screen.
+- Existing card rects = the shared-layout windows' own rects (clamped like craft_ui draws them);
+  native sets use their last drawn bounds; docked columns are ignored.
+
+FILES
+  ~ crates/ui-egui/src/varos/panel_stack.rs  (rewritten: cards on upstream floating groups,
+      place(), remember, fit, frame(); the scroll column and its drawing code removed)
+  ~ crates/ui-egui/src/varos/tests_panel_stack.rs (rewritten, 11 tests + 1 ignored capture)
+  ~ crates/ui-egui/src/varos/mod.rs (comment)
+  ~ crates/ui-egui/src/varos/home.rs, home_capture.rs (capture helper `raster` made pub(crate)
+      for the panels capture; its `chunks_exact(3)` -> `as_chunks::<3>()` for the current clippy
+      lint chunks_exact_to_as_chunks, which failed --all-targets)
+  Upstream hook lines (all marked Varos):
+  ~ dock.rs: icon column keeps a card's icon (1 condition); floating_panel hook now
+      `panel_stack::frame(app, ctx)` (was the stack's show()); 1 upstream test line (below)
+  ~ panel_docking.rs: shared icon rail keeps a card's icon (1 condition); the panel body reports
+      its content size (note_body, +1 line, ScrollArea output bound to `out`); the two
+      lane-ux1 `layout_changed` hook lines REMOVED (upstream lines restored)
+  ~ menus.rs: +4 — Window > panel (toggle) on an open card closes the card
+  ~ floating.rs: 2 upstream test lines (below)
+  ~ shortcuts.rs: icon panels' key entries send toggle:true (Varos hook)
+  ~ tests_paintchips.rs: the F6 table entry expects toggle:true (1 line)
+  Upstream tests adapted (one line each: `varos_panel_stack.keep_open = false`, because they
+  test upstream's pop-out, which icon panels no longer use in keep-open mode):
+    dock::tests::every_flyout_stays_left_of_the_icon_column
+    floating::tests::a_popped_out_panel_dragged_by_its_title_floats
+    floating::tests::popped_out_title_drag_cancels_on_escape_focus_loss_and_workspace_change
+    menus::tests::panel_ids_are_case_insensitive_and_labels_work (opening Swatches as a card
+      switches upstream to its shared docking layout, where a collapsed dock's Layers is
+      activated instead of popped out — upstream behaviour in that mode)
+
+REVIEW FIXES (independent review: FIX-FIRST, 7 items + minors)
+  1 window.panel without toggle on an open card no longer closes it: the activate hook in
+    panel_docking.rs is back to upstream's condition (only a panel not in the layout toggles).
+    Test showing_an_open_card_again_keeps_it_open.
+  Shortcut decision (moderator, Illustrator parity): shortcuts.rs builds the icon panels' key
+    entries with toggle:true (Varos hook, +3/-1; the dock's tabbed-group keys like F7 Layers keep
+    show-only, else F7 would close Layers out of the dock). Cmd+T on an open Character card closes
+    it. tests_paintchips::the_window_menu_panel_keys runs with the default keep_open=true again
+    and passes as a real toggle test; tests_paintchips::the_shortcut_table_maps_f6_to_color
+    expects {"panel":"color","toggle":true} (1 line). Test a_panels_key_toggles_its_card.
+  2 spot() ignores a remembered place lying >= 50 % on another card and places afresh. Test
+    a_card_reopened_where_another_now_is_takes_a_free_place (the reviewer's scenario).
+  3 Remembered and restored cards are clamped into the room left of the dock (View::room), on
+    reopen and whenever the window/dock geometry changes, including the first frame after a
+    ui.json load (2 pt slack for rounding). Test a_card_never_opens_over_the_dock (reopen in a
+    narrower window + a profile saved wide, loaded narrow).
+  4 Per-frame cost: no deep clone of the docking layout (fit/keep_in_room borrow it), seen is a
+    reused Vec<&'static str>, cards retained in place, drawn only holds native sets (cleared and
+    reused), fit/remember/clamp skipped entirely when there are no cards.
+  5 frame() calls ctx.request_repaint() after opening a card outside the input frame and after
+    any fit/clamp move; idle-safe (fitted stops it). a_card_is_as_tall_as_its_panel now asserts
+    the repaint requests and that the window goes idle (3 frames without a repaint request).
+  6 Right edge = min(icon column, dock_left_id, dock_rect_id) - 6. Test
+    cards_open_left_of_the_expanded_dock.
+  7 fitted is keyed by first panel AND the group's panel count; a mismatch with a different
+    panel count re-fits instead of marking fit=false; a move made by frame itself isn't read as a
+    hand resize; fitted entries of gone groups are pruned each frame; cards/places of ids that
+    are not icon panels are pruned on the first frame after load.
+  Minors: frame skips everything for a zero-size (minimized) window; a refused open from
+    frame() clears open_panel so it isn't retried every frame; places are written only when no
+    pointer button is down (on release); seen is cleared while card mode is off.
+  Rounded corners: craft_ui's DockStyle has no rounding/frame field and its floating window
+    strokes a square rect itself (surface.rs rect_stroke(rect, 0.0, ...)); 8 pt corners need a
+    craft-ui source change. Not done.
+
+TESTS (varos::tests_panel_stack, real clicks/drags on the full app UI)
+  each_icon_opens_its_own_card_and_the_others_stay_open, a_cards_close_button_closes_only_that_card
+  (clicks the card's x; no pop-out; reopens at the same place), without_keep_open_an_icon_swaps_the_flyout,
+  new_cards_stack_down_the_column_then_cascade (pure placement), three_cards_in_a_short_window_stay_on_screen,
+  a_card_is_as_tall_as_its_panel (fit + width fit + hand resize stops fitting),
+  cards_and_their_places_are_saved_with_the_ui_state (+ old profiles, lane-ux1 `open` ignored),
+  a_card_opens_again_where_it_was_left (moved by its grip), hiding_the_panels_hides_every_card_and_brings_them_back
+  (window.dock and window.panels), the_window_menu_and_other_ways_in_open_cards,
+  a_card_dropped_on_another_groups_with_it, a_card_reopened_where_another_now_is_takes_a_free_place,
+  a_card_never_opens_over_the_dock, cards_open_left_of_the_expanded_dock,
+  showing_an_open_card_again_keeps_it_open, a_panels_key_toggles_its_card; ignored: capture_three_cards
+  (VAROS_PANELS_CAPTURE_DIR=... writes panels-3-cards.png).
+  Removed with the scroll column: a_tall_stack_stays_in_a_short_window, the stack-specific
+  floating/workspace/sanitize stack tests (their still-valid parts are in the tests above).
+
+GATES (after the review fixes, run in this worktree one at a time, all --offline -j 4)
+  cargo build -p vectorcraft: Finished `dev` profile [optimized + debuginfo] target(s) in 54.44s
+  cargo test -p vectorcraft-ui-egui -- --test-threads=4: 1843 passed, 0 failed, 7 ignored
+  cargo clippy -p vectorcraft-ui-egui --lib -- -D warnings: clean
+  cargo clippy -p vectorcraft-ui-egui --all-targets -- -D warnings: clean
+  cargo fmt --all -- --check: OK; git diff --check: OK
+  Capture (software raster of the real egui output, 1440x900, three cards Character /
+  Paragraph / Align): viewed — three separate cards stacked under each other left of the lit
+  icons, each fitted to its contents, Align widened leftwards so its last row fits.
+
+REUSED FROM UPSTREAM
+  window.panel.float / window.panel.close / window.panel.layout (MoveFloating) and the shared
+  docking layout (craft_ui DockArea floating windows: move, resize, tabs, x, panel menu, drop
+  targets, grouping, dock columns), floating::clamp, dock::panel_width, upstream ui.json
+  persistence of floating groups, upstream hide-with-dock.
+
+LEFT / RISKS
+- Look: the cards are upstream's shared floating windows: square corners with a 1 pt border and
+  craft_ui's egui "x" button, not the 8 pt rounded Varos card of the v8 flyout. Rounding them
+  needs a change in craft-ui (external git dependency) or Varos-drawn cards; not done. Owner
+  should judge in the real window.
+- First frame of a brand-new card is 360 pt tall, fitted on the next frame (one-frame jump).
+- Fitting follows the contents once per contents size; a panel whose contents keep changing
+  height (sections opening) re-fits; a card the user resized never re-fits.
+- Dropping a card on the icon column closes it (upstream would pop it out of its icon).
+- No UI switch for keep_open (as in lane-ux1).

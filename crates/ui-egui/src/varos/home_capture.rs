@@ -61,12 +61,12 @@ fn home_capture_at_desktop_and_compact_widths() {
     }
 }
 
-fn raster(meshes: &[egui::ClippedPrimitive], textures: &HashMap<egui::TextureId, egui::ColorImage>, w: u32, h: u32) -> Vec<u8> {
+pub(crate) fn raster(meshes: &[egui::ClippedPrimitive], textures: &HashMap<egui::TextureId, egui::ColorImage>, w: u32, h: u32) -> Vec<u8> {
     let mut pixels = vec![[0.0_f32; 4]; (w * h) as usize];
     for primitive in meshes {
         let egui::epaint::Primitive::Mesh(mesh) = &primitive.primitive else { continue };
         let Some(texture) = textures.get(&mesh.texture_id) else { continue };
-        for triangle in mesh.indices.chunks_exact(3) {
+        for triangle in mesh.indices.as_chunks::<3>().0 {
             let [a, b, c] = [mesh.vertices[triangle[0] as usize], mesh.vertices[triangle[1] as usize], mesh.vertices[triangle[2] as usize]];
             let edge = |u: egui::Pos2, v: egui::Pos2, p: egui::Pos2| (v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x);
             let area = edge(a.pos, b.pos, c.pos);

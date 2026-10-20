@@ -585,4 +585,4 @@ mod board_tests {
 
 #[cfg(test)]
 #[path = "home_capture.rs"]
-mod capture;
+pub(crate) mod capture;
