@@ -540,6 +540,10 @@ pub struct UiState {
     /// (`crate::varos::middle_eastern_ui::group_head`).
     #[serde(default)]
     pub varos_me_folded: crate::varos::middle_eastern_ui::Folded,
+    /// Varos: the colour picker v3's tab, slider mode, harmony rule, drawer and recent colours
+    /// (`crate::varos::picker::Prefs`); a missing or malformed value reads as the defaults.
+    #[serde(default, deserialize_with = "crate::varos::picker::lenient")]
+    pub varos_picker: crate::varos::picker::Prefs,
 }
 
 /// The desktop window's geometry, kept across launches.
@@ -856,6 +860,7 @@ impl Default for UiState {
             varos_middle_eastern: false,
             varos_panel_stack: Default::default(),
             varos_me_folded: Default::default(),
+            varos_picker: Default::default(),
         }
     }
 }

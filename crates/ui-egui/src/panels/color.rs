@@ -336,7 +336,8 @@ fn to32(c: &Color) -> Color32 {
 }
 
 /// The global or spot swatch a colour is a tint of (Tint mode).
-struct Tint {
+// Varos: crate-visible with `Target`.
+pub(crate) struct Tint {
     swatch: String,
     spot: bool,
     /// 0..1.
@@ -357,14 +358,15 @@ impl Tint {
 
 /// What the panel is editing: the active proxy's solid colour or a selected gradient stop (with
 /// the global swatch it is a tint of), or a selected freeform point.
-enum Target {
+// Varos: crate-visible so the colour picker v3 (`crate::varos::picker`) edits the same target.
+pub(crate) enum Target {
     Paint(Option<Color>, Option<Tint>),
     Stop { paint: Paint, index: usize, color: Color, tint: Option<Tint> },
     Point { index: usize, color: Color },
 }
 
 impl Target {
-    fn color(&self) -> Option<Color> {
+    pub(crate) fn color(&self) -> Option<Color> {
         match self {
             Target::Paint(c, _) => *c,
             Target::Stop { color, .. } | Target::Point { color, .. } => Some(*color),
@@ -385,7 +387,7 @@ fn target(app: &VectorcraftApp, ui: &Ui) -> Target {
 
 /// [`target`] with `mixed` for a "?" active proxy: the panel reads it from its per-frame cache,
 /// `ui.colorPanel` from the session.
-fn target_with(app: &VectorcraftApp, mixed: bool) -> Target {
+pub(crate) fn target_with(app: &VectorcraftApp, mixed: bool) -> Target {
     if mixed {
         return Target::Paint(None, None);
     }
@@ -409,7 +411,7 @@ fn target_with(app: &VectorcraftApp, mixed: bool) -> Target {
 
 /// Apply `c` to the target, or with `behind` (an Alt-click) to the inactive proxy as a solid
 /// colour, keeping the active proxy in front.
-fn apply(app: &mut VectorcraftApp, tgt: &Target, c: Color, phase: Live, behind: bool) {
+pub(crate) fn apply(app: &mut VectorcraftApp, tgt: &Target, c: Color, phase: Live, behind: bool) {
     match tgt {
         Target::Stop { paint: Paint::Gradient(g), index, .. } if !behind => {
             let mut stops = g.gradient.stops.clone();
@@ -536,6 +538,10 @@ fn spectrum(ui: &mut Ui, mode: Mode, size: egui::Vec2) -> Option<SpectrumHit> {
 }
 
 pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
+    // Varos: the colour picker v3 is the panel's body; panel menu › Classic brings this one back.
+    if !app.ui.varos_picker.classic {
+        return crate::varos::picker::show(app, ui);
+    }
     let t = Tokens::get(ui.ctx());
     let tgt = target(app, ui);
     let color = tgt.color();
@@ -699,6 +705,12 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
 }
 
 pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
+    // Varos: Classic swaps the colour picker v3 for upstream's sliders and spectrum.
+    let classic = app.ui.varos_picker.classic;
+    if menu_item(ui, tl!("Classic"), true, classic) {
+        app.ui.varos_picker.classic = !classic;
+    }
+    ui.separator();
     let hidden = app.ui.color_hide_options;
     if menu_item(ui, if hidden { tl!("Show Options") } else { tl!("Hide Options") }, true, false) {
         command(app, &json!({ "options": hidden })).ok();
@@ -755,6 +767,8 @@ mod tests {
 
     fn app() -> VectorcraftApp {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        // Varos: these tests are of upstream's body, which panel menu › Classic shows.
+        app.ui.varos_picker.classic = true;
         app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
         app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
         app
@@ -1060,9 +1074,11 @@ mod tests {
         assert!(app.ui.dialog.is_none());
         run(&mut app, 0.2, vec![button(true)]);
         run(&mut app, 0.25, vec![button(false)]);
-        let d = app.ui.dialog.as_ref().expect("a double-click opens the Color Picker");
-        assert_eq!(d.kind, "colorPicker");
-        assert!(d.bool("stroke"));
+        // Varos: a double-click shows the Color panel (the colour picker v3) for the stroke, never
+        // the modal Color Picker.
+        assert!(app.ui.dialog.is_none(), "no modal");
+        assert!(!app.session.fill_active, "the stroke is the target");
+        assert_eq!(crate::menus::checked(&app, "window.panel", &json!({"panel": "color"})), Some(true), "the Color panel shows");
     }
 
     #[test]

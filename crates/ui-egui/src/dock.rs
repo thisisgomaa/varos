@@ -449,6 +449,10 @@ pub fn floating_panel(app: &mut VectorcraftApp, ctx: &egui::Context) {
 /// The width of a popped-out or floating panel: the tabbed group's panels keep the width the dock
 /// gives them; icon panels are 256 points.
 pub(crate) fn panel_width(id: &str) -> f32 {
+    // Varos: the Color panel is the 240 pt colour picker v3 and the panel's 10 pt margins.
+    if id == crate::varos::picker::PANEL {
+        return crate::varos::picker::W + 20.0;
+    }
     if DockTab::from_id(id).is_some() { DOCK_WIDTH } else { 256.0 }
 }
 

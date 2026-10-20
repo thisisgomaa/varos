@@ -4925,3 +4925,14 @@ varos-home	Web	Web
 	Select by Color	Seleziona per colore
 	Move Anchor Point	Sposta punto di ancoraggio
 @msg	{label} keeps 1 of the document's {n} artboards: the file reopens with one. Turn on Preserve Editing Capabilities to keep them all.	{label} mantiene 1 delle {n} tavole da disegno del documento: il file si riapre con una sola. Attiva Mantieni possibilità di modifica per mantenerle tutte.
+# Varos: colour picker v3 (tabs and harmony rules).
+	Wheel	Ruota
+	Sliders	Cursori
+	Harmony	Armonia
+	Gradient (coming soon)	Sfumatura (in arrivo)
+	Complementary	Complementare
+	Analogous	Analoghi
+	Split Complementary	Complementari divisi
+	Triad	Triade
+	Tetrad	Tetrade
+	Monochromatic	Monocromatico

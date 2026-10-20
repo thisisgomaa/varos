@@ -380,7 +380,9 @@ pub(crate) fn proxy(app: &mut VectorcraftApp, ui: &mut Ui, size: f32) {
         app.run("paint.default", json!({})).ok();
     }
     if let Some(stroke) = c.pick {
-        app.run("ui.colorPicker", json!({ "stroke": stroke })).ok();
+        // Varos: a double-click shows the colour picker v3 (the Color panel) for that proxy, not
+        // upstream's modal Color Picker (`ui.colorPicker` stays for agents and scripts).
+        crate::varos::picker::open_for(app, stroke);
     }
 }
 

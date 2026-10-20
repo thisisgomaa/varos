@@ -124,7 +124,8 @@ fn a_popover_tile_click_sets_the_fill() {
         }
         t
     };
-    assert!(text.contains("Recent Colors"), "the Color panel's body: {text}");
+    // Varos: the Color panel's body is the colour picker v3 (its readout shows H, S and B).
+    assert!(text.contains("H:") && text.contains("S:"), "the Color panel's body: {text}");
 }
 
 /// The Properties panel has the Control bar's Fill and Stroke chips and stroke weight, with

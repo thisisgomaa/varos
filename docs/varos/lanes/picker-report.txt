@@ -1,0 +1,61 @@
+Lane: picker — Varos colour picker v3 as the Color panel's body (2026-10-20)
+Worktree: lanes/lane-picker, branch lane-picker, base 19b4c45a. Not committed (moderator lands it).
+
+WHAT CHANGED (files, +/-)
+New code (crates/ui-egui/src/varos/picker/, each file headed "Varos colour picker v3 — ported from thisisgomaa/varos (MIT OR Apache-2.0)."):
+- mod.rs (+611): prefs (persisted), live state, View (target/mixed/alpha read once per frame), header tabs, gesture state machine (preview on change, commit on release), set colour/alpha, alpha via appearance.setItem, open_for / close / escape, HSV helpers.
+- wheel.rs (+250): ring + rotating HSV triangle maths copied as-is (ring_pos/ring_hue/ring_hit/vertices/sv_pos/pos_sv/barycentric), mesh cache (ring per radius, triangle per hue+radius), Default button, live readout, markers.
+- sliders.rs (+255): modes HSB/HSL/RGB/CMYK/Lab/Web (old picker's naive maths), track mesh cache, values kept while the colour is unchanged, channel drag + typed values.
+- harmony.rs (+173): 8 rules (old varos_core::colour_guide maths copied as-is), rule strip, 6 chips + variation rows.
+- cluster.rs (+119): frameless Fill/Stroke cluster, focused target in accent 1.5 pt, swap, none, mixed stripes, hit test.
+- fields.rs (+175): hex field (mono, 3/6/8 digits; 8 sets alpha too), alpha slider over checker, alpha % field.
+- drawer.rs (+138): 9 recent swatches + drawer (Recent · Document swatches), recent colours kept in prefs.
+- icons.rs (+84): picker glyph table (me_icons pattern) for Sliders + 8 harmony glyphs; other glyphs are existing catalogue overrides (palette, dc-color-guide, dc-gradient, dc-swap, dc-fill-none, pipette, x, chevron-down).
+- tests.rs (+568): 16 headless tests (see below).
+Assets: crates/ui-egui/assets/varos/icons/varos-picker-sliders.svg and varos-harmony-{complementary,analogous,split,triad,tetradic,square,mono,none}.svg, copied byte-for-byte from the old repo (original Varos glyphs with their provenance comment).
+Upstream hooks (all marked // Varos):
+- panels/color.rs (+29/-3): `Target`, `Tint`, `Target::color`, `target_with`, `apply` made pub(crate); top of `show` returns the Varos picker unless prefs.classic; panel menu gets a "Classic" check item; test helper app() sets classic=true (those tests are of upstream's body); the double-click test now asserts no modal + Color panel shown for the stroke.
+- panels/mod.rs (+3/-1): proxy double-click calls varos::picker::open_for instead of `ui.colorPicker`.
+- dock.rs (+4): panel_width("color") = 240 + 20 margins.
+- shortcuts.rs (+2): Escape over the picker closes the Color panel before tools/shortcuts see it.
+- state.rs (+5): UiState.varos_picker (serde default + lenient reader).
+- varos/mod.rs (+2): `pub(crate) mod picker`.
+- tests_paintchips.rs (+2/-1): Shift-click chip popover now shows the picker; assertion checks its readout ("H:", "S:") instead of "Recent Colors".
+- i18n/*.tsv (23 files, +4..+10 each): Wheel, Sliders, Harmony, "Gradient (coming soon)" for every language; Complementary/Analogous/Split Complementary/Triad/Tetrad/Monochromatic for the 8 languages that lacked them (de it ja ko ru uk vi zh-hant). Written by me (Opus), not by a native speaker.
+Total: 48 files, +2731 / -10.
+
+WHAT THE PERSON WILL SEE
+- The Color panel (icon column, stack, floating or docked) is the 240 pt Varos picker: header with Wheel · Sliders · Harmony · Gradient (dimmed, tooltip "Gradient (coming soon)") on the left, eyedropper and × on the right.
+- Wheel: hue ring with the HSV triangle turning with the hue; markers; Default squares top right (white|black, = Default Fill and Stroke, D); readout bottom left in the slider mode (H/S/B by default, mono font); Fill/Stroke cluster bottom right (click circle = focus, arrow = swap, ⌀ = None). Then "# RRGGBB", alpha slider, "100%". Then 9 recent colours and ▾ for the drawer.
+- Sliders: mode menu (HSB HSL RGB CMYK Lab Web) + hex at left, cluster top right, one row per channel (track, knob, editable value), an "A" alpha row.
+- Harmony: 8 rule buttons, the wheel with linked hue markers, 6 chips and variation rows; a click on a chip sets the focused target.
+- Double-click on the toolbar Fill/Stroke proxy: focuses that proxy and shows the Color panel (no modal). Escape with the pointer over the picker closes the panel (never undoes). X / Shift+X / D / / / I are upstream's existing shortcuts; the picker follows them.
+- Panel menu › Classic brings back upstream's sliders/spectrum body (kept, persisted).
+- Each drag (ring, triangle, slider, alpha) = one undo step; typing hex/values or clicking a chip = one step; nothing is written without a visible change; a mixed selection stays untouched until the first change.
+- Tab, slider mode, harmony rule, drawer open/tab, recent colours (up to 18) and Classic are saved in ui.json under "varos_picker".
+
+HOW I VERIFIED (gate result lines, -j 4, --test-threads=4, one cargo at a time; df / free 206 GB before, 177 GB after)
+- cargo test -j 4 --offline --release -p vectorcraft-ui-egui -- --test-threads=4
+  "test result: ok. 1855 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 17.28s" (doc-tests: 0 passed)
+- cargo clippy -j 4 --offline --release -p vectorcraft-ui-egui --all-targets -- -D warnings
+  FAILS on one PRE-EXISTING lint not in this lane: "error: using `chunks_exact` with a constant chunk size --> crates/ui-egui/src/varos/home_capture.rs:69:38" (file untouched: `git diff --quiet HEAD -- .../home_capture.rs` is clean; it is the newer clippy's chunks_exact_to_as_chunks lint).
+  Same command with `-A clippy::chunks_exact_to_as_chunks`: "Finished `release` profile [optimized] target(s) in 41.92s" (no other warning).
+- cargo build -j 4 --offline --release -p vectorcraft: "Finished `release` profile [optimized] target(s) in 11m 06s"
+- cargo fmt --all, then `cargo fmt --all --check` clean, `git diff --check` clean.
+New picker tests (all pass): triangle↔HSV round trip at 24 hues incl. vertices, rotation and edge clamping; ring angle/hit maths; harmony rule outputs; every mode round trip; hex parse/format; mesh caches rebuild only on size/hue (triangle rebuild < 1 ms); drag on triangle = 1 undo step, press on own marker / dead zone = 0 steps, ring drag = 1 step; mixed selection untouched until a change, then 1 step for both; hex commit = 1 step, same hex = 0, 8 digits = colour+alpha in 1 step (undo restores both); alpha drag = 1 step setting the fill item's opacity; cluster focus/swap/none; Escape over the picker closes the panel without undo, away from it leaves Escape alone; double-click path opens the panel for the target, no modal; prefs persist through ui.json round trip, old profiles and junk values load with defaults (per field); idle frames (all three tabs) leave ctx.has_requested_repaint() false; kittest harness renders Wheel/Sliders/Harmony (+drawer) at 240 pt with the right height; Sliders channel drag = 1 step and typed value = 1 step; harmony chip and recent chip = 1 step each.
+Existing tests that also exercise the picker unchanged: tests_freeform::the_color_panel_recolours_the_selected_point (types hex into the picker's field), tests_selectall::the_clipboard_keys_in_a_focused_field_edit_its_text (Copy/Cut/Paste in the picker's hex field).
+Bug found and fixed during verification: calling ctx.cumulative_frame_nr() inside ctx.data_mut deadlocked the egui context (the test binary hung at 0% CPU); now read before the lock.
+Not done: no run of the real app window (per the "no OS automation / no screenshots" rule); Ahmed's hand test is the visual check.
+
+WHAT IS LEFT / DROPPED (and why)
+- Mini config (192 pt popover on the page-colour chip): not built; not in this lane's definition of done.
+- Drawer "Board" tab (colours used on the active artboard): dropped; varos-next has no cheap per-artboard colour scan. Drawer has Recent · Document (document solid swatches).
+- Gradient tab body: disabled by design (tooltip only).
+- CMYK and Lab sliders are the old picker's naive (not colour-managed) maths and write sRGB, as the work order says. A CMYK object edited in the picker becomes RGB (upstream's RGB/HSB modes do the same with keepModel). For colour-managed CMYK that keeps the model, panel menu › Classic. I first tried upstream's colour engine for CMYK: its RGB→CMYK→RGB is not a round trip for dark colours (black drifted 0 → 0.165 → 0.279 per trip), so I reverted to the naive maths.
+- Alpha = opacity of the targeted fill/stroke appearance item (Appearance panel's active item of that kind, else the topmost). With objects whose item sits at different stack positions, alpha is written on release only (no live preview), as one undo group. Nothing selected: alpha controls are disabled. Gradient stops: alpha still targets the layer opacity, not the stop's opacity.
+- The eyedropper button selects upstream's Eyedropper tool (I); the old picker's canvas sampling inside the panel was not ported.
+- Tint of a global/spot swatch: editing in the picker writes a process colour (link dropped); Classic still shows Tint mode.
+- `ui.colorPicker` (modal) still exists for agents/CLI/MCP and is still listed in the command palette as "Color Picker…"; a person running that palette entry still gets the modal. The proxy double-click (the UI path) no longer opens it. Moderator's call whether to reroute or hide the palette entry.
+- Translations of the new strings (23 languages) were written by me, not reviewed by native speakers.
+- Concurrency note: lane-panels2 was editing crates/ui-egui/src/dock.rs at the same time; my dock.rs change is 4 lines in panel_width() — possible merge conflict.
+- Pre-existing clippy failure in varos/home_capture.rs (see above) blocks the strict clippy gate on this toolchain regardless of this lane.

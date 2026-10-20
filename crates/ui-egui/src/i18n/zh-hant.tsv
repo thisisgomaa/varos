@@ -4942,3 +4942,14 @@ lighting	Light	光源
 @msg	no such object id {value}	沒有 id 為 {value} 的物件
 	Move Anchor Point	移動錨點
 @msg	{label} keeps 1 of the document's {n} artboards: the file reopens with one. Turn on Preserve Editing Capabilities to keep them all.	{label} 只保留文件 {n} 個工作區域中的 1 個：檔案重新開啟時只有一個。開啟「保留編輯功能」可全部保留。
+# Varos: colour picker v3 (tabs and harmony rules).
+	Wheel	色輪
+	Sliders	滑桿
+	Harmony	和諧
+	Gradient (coming soon)	漸層（即將推出）
+	Complementary	互補色
+	Analogous	類似色
+	Split Complementary	分裂互補色
+	Triad	三色組
+	Tetrad	四色組
+	Monochromatic	單色

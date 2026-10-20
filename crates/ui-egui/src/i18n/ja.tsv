@@ -4965,3 +4965,14 @@ varos-home	Web	Web
 	Select by Color	カラーで選択
 	Move Anchor Point	アンカーポイントを移動
 @msg	{label} keeps 1 of the document's {n} artboards: the file reopens with one. Turn on Preserve Editing Capabilities to keep them all.	{label} ではドキュメントの {n} 個のアートボードのうち 1 個だけが保持され、ファイルは 1 個で開き直されます。すべて保持するには「編集機能を保持」をオンにしてください。
+# Varos: colour picker v3 (tabs and harmony rules).
+	Wheel	ホイール
+	Sliders	スライダー
+	Harmony	ハーモニー
+	Gradient (coming soon)	グラデーション（近日対応）
+	Complementary	補色
+	Analogous	類似色
+	Split Complementary	分裂補色
+	Triad	トライアド
+	Tetrad	テトラード
+	Monochromatic	モノクロマティック
