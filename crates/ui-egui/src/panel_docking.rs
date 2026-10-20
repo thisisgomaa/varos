@@ -497,6 +497,26 @@ fn change(app: &mut VectorcraftApp, operation: &str, params: &Value) -> Result<V
     Ok(result)
 }
 
+/// A panel's body in the shared layout's panes and floating groups (and the Varos cards).
+pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut egui::Ui, panel: &str) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let back = ui.max_rect();
+    if back.is_positive() {
+        ui.painter().rect_filled(back, 0.0, t.panel);
+    }
+    let width = ui.available_width();
+    let height = (ui.available_height() - 20.0).max(0.0);
+    if crate::state::DockTab::from_id(panel).is_some() {
+        crate::dock::panel_body(app, ui, panel, width, height);
+    } else {
+        let out = egui::ScrollArea::vertical()
+            .id_salt(("shared-panel-body", panel))
+            .auto_shrink([false, false])
+            .show(ui, |ui| crate::dock::panel_body(app, ui, panel, width, height));
+        crate::varos::panel_stack::note_body(ui.ctx(), panel, out.content_size, out.inner_rect.size()); // Varos: cards fit their panel
+    }
+}
+
 struct PanelContent<'a> {
     app: &'a mut VectorcraftApp,
     commands: Vec<(&'static str, Value)>,
@@ -504,22 +524,7 @@ struct PanelContent<'a> {
 
 impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     fn body(&mut self, ui: &mut egui::Ui, panel: &String) {
-        let t = crate::theme::Tokens::get(ui.ctx());
-        let back = ui.max_rect();
-        if back.is_positive() {
-            ui.painter().rect_filled(back, 0.0, t.panel);
-        }
-        let width = ui.available_width();
-        let height = (ui.available_height() - 20.0).max(0.0);
-        if crate::state::DockTab::from_id(panel).is_some() {
-            crate::dock::panel_body(self.app, ui, panel, width, height);
-        } else {
-            let out = egui::ScrollArea::vertical()
-                .id_salt(("shared-panel-body", panel))
-                .auto_shrink([false, false])
-                .show(ui, |ui| crate::dock::panel_body(self.app, ui, panel, width, height));
-            crate::varos::panel_stack::note_body(ui.ctx(), panel, out.content_size, out.inner_rect.size()); // Varos: cards fit their panel
-        }
+        panel_body(self.app, ui, panel); // Varos: shared with the Varos cards (panel_stack)
     }
 
     fn panel_menu(&mut self, ui: &mut egui::Ui, panel: &String) {
@@ -631,6 +636,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> bool {
     display
         .floating
         .retain(|group| !app.ui.floating_panels.iter().any(|native| decorated(native) && native.panels.iter().any(|id| group.panels.contains(id))));
+    display.floating.retain(|group| !crate::varos::panel_stack::owns(app, group)); // Varos: cards are drawn by panel_stack
     // Library panels are titled by their libraries' names.
     let library_labels: Vec<(String, String)> = layout
         .panels()
@@ -835,6 +841,7 @@ fn icon_rail(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                             continue; // Varos: a card keeps its icon
                         }
                         let (_, rect) = ui.allocate_space(egui::vec2(30.0, 30.0));
+                        crate::varos::panel_stack::note_icon(app, id, rect.top()); // Varos: a card opens beside its icon
                         let response = ui.interact(rect, ui.id().with(("panel-icon", id)), egui::Sense::click_and_drag());
                         let lit = crate::varos::panel_stack::is_open(app, id); // Varos
                         let response = crate::widgets::paint_icon_button(ui, response, icon, tl!(label), lit);

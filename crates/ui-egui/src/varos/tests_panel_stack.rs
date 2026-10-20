@@ -124,6 +124,30 @@ impl Harness {
         self.ctx.memory(|m| m.areas().visible_last_frame(&egui::LayerId::new(egui::Order::Middle, id)))
     }
 
+    /// Panel `p`'s tab in its card's header, as drawn last.
+    fn tab(&self, p: &str) -> Rect {
+        self.ctx.read_response(egui::Id::new("varos-card-tab").with(p)).unwrap_or_else(|| panic!("{p}'s tab is drawn")).rect
+    }
+
+    /// A point of the empty part of card `first`'s header (between its tabs and its ×).
+    fn header(&self, first: &str) -> Pos2 {
+        let card = self.card(first);
+        pos2(card.right() - 60.0, card.top() + 16.0)
+    }
+
+    /// Press at `from`, then move the pointer through `path` (one frame each), calling `each` after
+    /// every move; let go at the last point.
+    fn drag_through(&mut self, from: Pos2, path: &[Pos2], mut each: impl FnMut(&Self, Pos2)) {
+        self.frame(vec![egui::Event::PointerMoved(from)]);
+        self.frame(vec![button(from, true)]);
+        for &p in path {
+            self.frame(vec![egui::Event::PointerMoved(p)]);
+            each(self, p);
+        }
+        let last = path.last().copied().unwrap_or(from);
+        self.frame(vec![button(last, false)]);
+    }
+
     /// The floating groups' panels.
     fn groups(&self) -> Vec<Vec<&str>> {
         self.app.ui.floating_panels.iter().map(|g| g.panels.iter().map(String::as_str).collect()).collect()
@@ -221,6 +245,21 @@ fn new_cards_stack_down_the_column_then_cascade() {
     // A card taller than the window still opens at the column's top, on screen.
     let tall = panel_stack::place(vec2(256.0, 2000.0), &[], screen, right, top);
     assert!(tall.y >= screen.top() && tall.x == right - 256.0, "{tall:?}");
+}
+
+/// A card whose icon is low in the column, with no room under the cards in its way, goes right
+/// above them (as near its icon as it can), before cascading.
+#[test]
+fn a_card_with_no_room_below_goes_above() {
+    let screen = Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 900.0));
+    let (right, size) = (1100.0, vec2(256.0, 250.0));
+    let below = Rect::from_min_size(pos2(right - 256.0, 540.0), vec2(256.0, 340.0));
+    let p = panel_stack::place(size, &[below], screen, right, 500.0);
+    assert_eq!(p, pos2(right - 256.0, below.top() - 6.0 - 250.0), "right above the card in its way");
+    // No room above either: the cascade.
+    let above = Rect::from_min_size(pos2(right - 256.0, 0.0), vec2(256.0, 300.0));
+    let p = panel_stack::place(size, &[below, above], screen, right, 500.0);
+    assert_eq!(p, pos2(right - 256.0 - 24.0, 524.0));
 }
 
 /// Three cards in a short window: all open at once, on screen, none on top of another's corner.
@@ -364,16 +403,15 @@ fn the_window_menu_and_other_ways_in_open_cards() {
     assert!(h.card_drawn("align"));
 }
 
-/// A card dragged by its tab onto another card's tabs joins it as a tab (upstream's grouping);
-/// the group's panels stay open with their icons lit, and each icon closes its own tab.
+/// A card dragged by its tab onto another card's tabs joins it as a tab; the group's panels stay
+/// open with their icons lit, and each icon closes its own tab.
 #[test]
 fn a_card_dropped_on_another_groups_with_it() {
     let mut h = Harness::new();
     h.tap("character");
     h.tap("paragraph");
-    let tab = |h: &Harness, p: &str| h.ctx.read_response(egui::Id::new("vectorcraft-panel-docking").with(("tab", &p.to_string()))).unwrap().rect;
-    let onto = tab(&h, "character").right_center() - vec2(3.0, 0.0);
-    h.drag(tab(&h, "paragraph").center(), onto);
+    let onto = h.tab("character").right_center() - vec2(3.0, 0.0);
+    h.drag(h.tab("paragraph").center(), onto);
     assert_eq!(h.groups(), [["character", "paragraph"]], "one card, two tabs");
     assert!(panel_stack::is_open(&h.app, "character") && panel_stack::is_open(&h.app, "paragraph"));
     h.tap("paragraph");
@@ -389,7 +427,10 @@ fn a_card_reopened_where_another_now_is_takes_a_free_place() {
     let first = h.card("character");
     h.tap("character");
     h.tap("paragraph");
-    assert!((h.card("paragraph").min - first.min).length() <= 2.0, "Paragraph took the column's first place");
+    // Paragraph moved by its header onto the place Character had.
+    let card = h.card("paragraph");
+    h.drag(h.header("paragraph"), h.header("paragraph") + (first.min - card.min));
+    assert!((h.card("paragraph").min - first.min).length() <= 2.0, "Paragraph lies where Character was");
     h.tap("character");
     let (a, b) = (h.card("character"), h.card("paragraph"));
     assert!(!a.intersects(b), "Character isn't hidden under Paragraph: {a:?} {b:?}");
@@ -552,8 +593,351 @@ fn auto_collapse_turns_the_cards_into_one_pop_out() {
     assert!(h.ctx.memory(|m| m.area_rect(egui::Id::new("icon-panel"))).is_some(), "the pop-out shows");
 }
 
-/// Optional software capture of the real window with three cards open; set
-/// `VAROS_PANELS_CAPTURE_DIR` to write `panels-3-cards.png` there.
+/// A card moves with the pointer from anywhere on its header (its empty part or its tab), in the
+/// same frame as the pointer (no outline that follows and a jump on release), and ends exactly
+/// where it was let go. Escape puts it back. The card work of a drag frame stays under 1 ms.
+#[test]
+fn a_card_moves_live_from_its_header() {
+    let mut h = Harness::new();
+    h.tap("character");
+    for grab_at in ["header", "tab"] {
+        let card = h.card("character");
+        let from = if grab_at == "header" { h.header("character") } else { h.tab("character").center() };
+        let grab = from - card.min;
+        let path: Vec<Pos2> = (1..=10).map(|k| from + vec2(-30.0 * k as f32, 24.0 * k as f32)).collect();
+        let mut costs = Vec::new();
+        h.drag_through(from, &path, |h, p| {
+            let now = h.card("character");
+            assert!((now.min - (p - grab)).length() < 1.0, "{grab_at}: the card is under the pointer this frame: {now:?}, pointer {p:?}");
+            assert_eq!(now.size(), card.size(), "{grab_at}: moving doesn't resize");
+            costs.push(h.app.ui.varos_panel_stack.cost_ms);
+        });
+        h.settle();
+        let end = *path.last().unwrap();
+        let moved = h.card("character");
+        assert!((moved.min - (end - grab)).length() < 1.0, "{grab_at}: let go where the pointer was: {moved:?}, pointer {end:?}");
+        assert_eq!(h.cards(), ["character"], "{grab_at}: still one card");
+        costs.sort_by(f64::total_cmp);
+        let median = costs[costs.len() / 2];
+        eprintln!("{grab_at} drag: card work per frame median {median:.3} ms, max {:.3} ms", costs[costs.len() - 1]);
+        assert!(median < 1.0, "{grab_at}: a drag frame's card work (move + draw) takes {median:.3} ms");
+    }
+    // Escape while moving puts the card back.
+    let card = h.card("character");
+    let from = h.header("character");
+    h.frame(vec![egui::Event::PointerMoved(from)]);
+    h.frame(vec![button(from, true)]);
+    h.frame(vec![egui::Event::PointerMoved(from + vec2(-120.0, 80.0))]);
+    assert!((h.card("character").min - card.min).length() > 100.0);
+    h.frame(vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
+    h.frame(vec![button(from + vec2(-120.0, 80.0), false)]);
+    h.settle();
+    assert_eq!(h.card("character").min, card.min, "Escape put it back");
+}
+
+/// A card resizes live by its bottom-right corner, and by its right or bottom edge alone.
+#[test]
+fn a_card_resizes_live_by_its_corner_and_edges() {
+    let mut h = Harness::new();
+    h.tap("character");
+    let card = h.card("character");
+    // Moved left first, so that it can grow rightwards without reaching the dock.
+    h.drag(h.header("character"), h.header("character") - vec2(300.0, 0.0));
+    let card = Rect::from_min_size(card.min - vec2(300.0, 0.0), card.size());
+    assert_eq!(h.card("character"), card);
+    let from = card.right_bottom() - vec2(4.0, 4.0);
+    let path: Vec<Pos2> = (1..=6).map(|k| from + vec2(20.0 * k as f32, 15.0 * k as f32)).collect();
+    h.drag_through(from, &path, |h, p| {
+        let now = h.card("character");
+        assert_eq!(now.min, card.min, "the corner moves, not the card");
+        assert!((now.max - (p + vec2(4.0, 4.0))).length() < 1.0, "the corner is under the pointer this frame: {now:?}, {p:?}");
+    });
+    h.settle();
+    let resized = h.card("character");
+    assert!((resized.max - (*path.last().unwrap() + vec2(4.0, 4.0))).length() < 1.0, "{resized:?}");
+    assert!(!h.app.ui.varos_panel_stack.places["character"].fit, "resized by hand: it isn't fitted any more");
+    // Its right edge: wider only.
+    let from = pos2(resized.right() - 2.0, resized.center().y);
+    h.drag(from, from + vec2(-40.0, 30.0));
+    let narrower = h.card("character");
+    assert!((narrower.width() - (resized.width() - 40.0)).abs() < 1.0 && narrower.height() == resized.height(), "{narrower:?}");
+    // Its bottom edge: taller only.
+    let from = pos2(narrower.center().x, narrower.bottom() - 2.0);
+    h.drag(from, from + vec2(25.0, 50.0));
+    let taller = h.card("character");
+    assert!((taller.height() - (narrower.height() + 50.0)).abs() < 1.0 && taller.width() == narrower.width(), "{taller:?}");
+}
+
+/// A new card opens beside its own icon: its top level with the icon's, its right edge 6 points
+/// left of the dock; one whose icon is low in a short window still fits in the window.
+#[test]
+fn a_card_opens_beside_its_icon() {
+    let mut h = Harness::new();
+    for id in ["paragraph", "align", "glyphs"] {
+        h.tap(id);
+        let (card, icon) = (h.card(id), h.icon(id));
+        assert!((card.top() - icon.top()).abs() <= 1.0, "{id}: top {} beside its icon's {}", card.top(), icon.top());
+        let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
+        assert!((card.right() - (dock.left().min(h.column()) - 6.0)).abs() <= 1.0, "{id}: {card:?}, dock {dock:?}");
+        h.tap(id);
+    }
+    // A short window: History's icon is near its bottom; the card goes up to fit.
+    let mut h = Harness::sized(vec2(1600.0, 760.0));
+    h.tap("history");
+    let card = h.card("history");
+    assert!(card.bottom() <= 760.0 - 8.0 + 0.5 && card.top() >= 0.0, "{card:?}");
+    assert!(card.top() <= h.icon("history").top() + 0.5, "{card:?}");
+}
+
+/// Panels grouped as tabs of one card and closed by its × come back together: any of them opens
+/// the whole card again, same tabs, same tab in front, same place and size. The grouping is saved
+/// with the UI state; a tab closed alone by its icon opens again in its card.
+#[test]
+fn a_closed_group_opens_again_as_it_was() {
+    let mut h = Harness::new();
+    h.tap("character");
+    h.tap("paragraph");
+    h.drag(h.tab("paragraph").center(), h.tab("character").right_center() - vec2(3.0, 0.0));
+    assert_eq!(h.groups(), [["character", "paragraph"]]);
+    // Character in front, the card moved and made taller.
+    h.click(h.tab("character").center());
+    h.drag(h.header("character"), h.header("character") + vec2(-260.0, 40.0));
+    let corner = h.card("character").right_bottom() - vec2(4.0, 4.0);
+    h.drag(corner, corner + vec2(0.0, 60.0));
+    let card = h.card("character");
+    let front = |h: &Harness| h.app.ui.floating_panels[0].panels[h.app.ui.floating_panels[0].active].clone();
+    assert_eq!(front(&h), "character");
+    h.click(pos2(card.right() - 36.0, card.top() + 16.0));
+    assert!(h.groups().is_empty() && h.cards().is_empty(), "its × closed the whole card");
+    let saved = serde_json::to_value(&h.app.ui).unwrap();
+    assert_eq!(saved["varos_panel_stack"]["groups"], json!([{"panels": ["character", "paragraph"], "active": "character"}]));
+    // Paragraph's icon brings the whole card back, as it was.
+    h.tap("paragraph");
+    assert_eq!(h.groups(), [["character", "paragraph"]], "the same tabs");
+    assert_eq!(front(&h), "character", "the same tab in front");
+    assert_eq!(h.card("character"), card, "the same place and size");
+    assert!(panel_stack::is_open(&h.app, "character") && panel_stack::is_open(&h.app, "paragraph"), "both icons lit");
+    // A tab closed by its icon opens again in its card.
+    h.tap("paragraph");
+    assert_eq!(h.groups(), [["character"]]);
+    h.tap("paragraph");
+    assert_eq!(h.groups(), [["character", "paragraph"]], "back in its card");
+    // Restored from ui.json (also after a restart).
+    h.click(pos2(card.right() - 36.0, card.top() + 16.0));
+    let restored: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
+    let mut h2 = Harness::new();
+    h2.app.ui = restored.sanitized();
+    h2.settle();
+    h2.tap("character");
+    assert_eq!(h2.groups(), [["character", "paragraph"]]);
+    // Older profiles have no groups.
+    let mut old = serde_json::to_value(crate::state::UiState::default()).unwrap();
+    old["varos_panel_stack"] = json!({"keep_open": true, "cards": [], "places": {}});
+    let restored: crate::state::UiState = serde_json::from_value(old).unwrap();
+    assert!(restored.varos_panel_stack.groups.is_empty());
+}
+
+/// Tabs move between cards: a tab dragged out of a card with several tabs becomes a card of its
+/// own that follows the pointer at once; a card let go on another card's header joins it; a card
+/// let go on the icon column goes back to its icon (it closes).
+#[test]
+fn tabs_move_between_cards_and_to_the_dock() {
+    let mut h = Harness::new();
+    for id in ["character", "paragraph", "glyphs"] {
+        h.tap(id);
+    }
+    h.drag(h.tab("paragraph").center(), h.tab("character").right_center() - vec2(3.0, 0.0));
+    assert_eq!(h.groups(), [vec!["character", "paragraph"], vec!["glyphs"]]);
+    // Paragraph's tab dragged out of the card, down-left onto the canvas.
+    let from = h.tab("paragraph").center();
+    let path: Vec<Pos2> = (1..=10).map(|k| from + vec2(-40.0 * k as f32, 30.0 * k as f32)).collect();
+    let mut followed = 0;
+    h.drag_through(from, &path, |h, p| {
+        if h.app.ui.floating_panels.iter().any(|g| g.panels == ["paragraph"]) && h.card_drawn("paragraph") {
+            // Held by its tab: the pointer 16 points into the new card, on its tab.
+            let card = h.card("paragraph");
+            // (pushed left of the dock where the pointer would put it over it).
+            let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
+            let room_right = dock.left().min(h.column()) - 6.0;
+            let x_follows = (card.left() - (p.x - 16.0)).abs() < 1.0 || (card.right() - room_right).abs() < 1.5;
+            assert!(x_follows && (card.top() - (p.y - 16.0)).abs() < 1.0, "the torn card is under the pointer: {card:?}, {p:?}");
+            followed += 1;
+        }
+    });
+    h.settle();
+    assert!(followed >= 5, "the torn-out card followed the pointer while dragged ({followed} frames)");
+    assert_eq!(h.groups(), [vec!["character"], vec!["glyphs"], vec!["paragraph"]], "Paragraph is a card of its own");
+    assert!(h.card("paragraph").contains(*path.last().unwrap()), "where it was let go");
+    // Glyphs let go on Paragraph's header joins Paragraph.
+    h.drag(h.header("glyphs"), h.header("paragraph"));
+    assert_eq!(h.groups(), [vec!["character"], vec!["paragraph", "glyphs"]]);
+    assert_eq!(h.cards().len(), 3, "every panel is still a card's");
+    // Character's card let go on the icon column docks it: it goes back to its icon.
+    let icons = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::icons_rect_id())).unwrap();
+    h.drag(h.header("character"), icons.center());
+    assert_eq!(h.groups(), [vec!["paragraph", "glyphs"]]);
+    assert!(!panel_stack::is_open(&h.app, "character"), "Character closed");
+    assert!(h.app.ui.open_panel.as_deref() != Some("character"), "no pop-out instead");
+}
+
+/// The card is drawn as the kit's card: 8-point corners, a 1-point line, no shadow, a 32-point
+/// header whose tab in front is a dark well, no azure on an idle card.
+#[test]
+fn a_card_is_drawn_as_the_kit_card() {
+    let mut h = Harness::new();
+    h.tap("character");
+    let card = h.card("character");
+    let t = crate::theme::Tokens::get(&h.ctx);
+    let screen = Rect::from_min_size(Pos2::ZERO, h.screen);
+    h.time += 0.05;
+    let input = egui::RawInput { time: Some(h.time), screen_rect: Some(screen), ..Default::default() };
+    let app = &mut h.app;
+    let out = h.ctx.run_ui(input, |ui| {
+        app.logic(ui.ctx());
+        app.ui(ui);
+    });
+    let rects: Vec<&egui::epaint::RectShape> = out
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Rect(r) => Some(r),
+            _ => None,
+        })
+        .collect();
+    let same = |r: Rect| (r.min - card.min).length() < 0.6 && (r.max - card.max).length() < 0.6;
+    let fill = rects.iter().find(|r| same(r.rect) && r.fill == t.panel).expect("the card's fill");
+    assert_eq!(fill.corner_radius, egui::CornerRadius::same(8));
+    let line = rects.iter().find(|r| same(r.rect) && r.stroke.width > 0.0).expect("the card's line");
+    assert_eq!((line.stroke.width, line.stroke.color, line.corner_radius), (1.0, t.border, egui::CornerRadius::same(8)));
+    assert!(!rects.iter().any(|r| r.blur_width > 0.0 && r.rect.intersects(card.expand(24.0))), "no shadow around the card");
+    let tab = h.tab("character");
+    assert_eq!(tab.height(), 24.0);
+    assert!((tab.center().y - (card.top() + 16.0)).abs() < 0.6, "tabs centred in a 32-point header");
+    let well = rects.iter().find(|r| (r.rect.min - tab.min).length() < 0.6 && r.fill == t.input).expect("the tab in front is a dark well");
+    assert_eq!(well.corner_radius, egui::CornerRadius::same(3));
+    assert!(!rects.iter().any(|r| r.fill == t.accent && r.rect.intersects(card)), "no azure on an idle card");
+}
+
+/// Review fix 1: a press on a card's × or ≡ that then moves never moves the card (the header's drag
+/// area stops short of its buttons).
+#[test]
+fn the_close_and_menu_buttons_never_move_the_card() {
+    let mut h = Harness::new();
+    h.tap("character");
+    let card = h.card("character");
+    for at in [pos2(card.right() - 36.0, card.top() + 16.0), pos2(card.right() - 14.0, card.top() + 16.0)] {
+        h.drag(at, at + vec2(-80.0, 60.0));
+        assert_eq!(h.card("character"), card, "pressed at {at:?} and moved: the card stays");
+        assert_eq!(h.cards(), ["character"]);
+    }
+}
+
+/// Review fix 2: while held, a card stays in the room left of the dock and above the status bars
+/// (the pointer may go over the dock); no jump back on release.
+#[test]
+fn a_held_card_stays_in_the_room() {
+    let mut h = Harness::new();
+    h.tap("character");
+    let from = h.header("character");
+    let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
+    let icons = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::icons_rect_id())).unwrap();
+    let right = dock.left().min(h.column()) - 6.0;
+    let path: Vec<Pos2> = (1..=10).map(|k| from + vec2(40.0 * k as f32, 120.0 * k as f32)).collect();
+    h.drag_through(from, &path, |h, p| {
+        let c = h.card("character");
+        assert!(
+            c.right() <= right + 0.5 && c.bottom() <= icons.bottom() + 0.5,
+            "held at {p:?}: {c:?} stays in the room (right {right}, bottom {})",
+            icons.bottom()
+        );
+    });
+}
+
+/// Review fix 3: a card holding an icon panel and a dock tab (Character + Layers), closed by its ×,
+/// comes back whole: Layers waits in the dock meanwhile and returns into the card.
+#[test]
+fn a_card_with_a_dock_tab_comes_back_whole() {
+    let mut h = Harness::new();
+    h.tap("character");
+    h.app.run("window.panel.float", json!({"panel": "layers", "onto": "character"})).unwrap();
+    h.settle();
+    assert_eq!(h.groups(), [["character", "layers"]]);
+    let card = h.card("character");
+    h.click(pos2(card.right() - 36.0, card.top() + 16.0));
+    assert!(h.groups().is_empty(), "closed");
+    let layout = h.app.ui.docking.clone().unwrap();
+    assert!(layout.contains(&"layers".to_string()), "Layers went back to the dock");
+    assert_eq!(h.app.ui.varos_panel_stack.groups[0].parked, ["layers"]);
+    h.tap("character");
+    assert_eq!(h.groups(), [["character", "layers"]], "Layers came back into the card");
+    assert!(h.app.ui.varos_panel_stack.groups[0].parked.is_empty());
+}
+
+/// Review fix 4: a tab closed alone and opened again goes back to its place among its card's tabs,
+/// in front (it was asked for).
+#[test]
+fn a_tab_opens_again_at_its_place() {
+    let mut h = Harness::new();
+    for id in ["character", "paragraph", "glyphs"] {
+        h.tap(id);
+    }
+    h.drag(h.tab("paragraph").center(), h.tab("character").right_center() - vec2(3.0, 0.0));
+    h.drag(h.tab("glyphs").center(), h.tab("paragraph").right_center() - vec2(3.0, 0.0));
+    assert_eq!(h.groups(), [["character", "paragraph", "glyphs"]]);
+    h.tap("paragraph");
+    assert_eq!(h.groups(), [["character", "glyphs"]]);
+    h.tap("paragraph");
+    assert_eq!(h.groups(), [["character", "paragraph", "glyphs"]], "back between Character and Glyphs");
+    let g = &h.app.ui.floating_panels[0];
+    assert_eq!(g.panels[g.active], "paragraph", "in front");
+}
+
+/// Review fix 5: a tab dragged along its own header takes the place of the tabs it passes, live;
+/// the card doesn't move.
+#[test]
+fn a_tab_dragged_along_its_header_reorders_live() {
+    let mut h = Harness::new();
+    for id in ["character", "paragraph", "glyphs"] {
+        h.tap(id);
+    }
+    h.drag(h.tab("paragraph").center(), h.tab("character").right_center() - vec2(3.0, 0.0));
+    h.drag(h.tab("glyphs").center(), h.tab("paragraph").right_center() - vec2(3.0, 0.0));
+    let card = h.card("character");
+    let from = h.tab("glyphs").center();
+    let to = h.tab("character").left_center() + vec2(4.0, 0.0);
+    let path: Vec<Pos2> = (1..=8).map(|k| from + (to - from) * (k as f32 / 8.0)).collect();
+    let mut orders = Vec::new();
+    h.drag_through(from, &path, |h, _| orders.push(h.groups().concat().join(",")));
+    h.settle();
+    assert!(orders.contains(&"character,glyphs,paragraph".to_string()), "it passed Paragraph while held: {orders:?}");
+    assert_eq!(h.groups(), [["glyphs", "character", "paragraph"]], "then Character");
+    assert_eq!(h.card("glyphs"), card, "the card stayed where it was");
+}
+
+/// Review fix 6: a last move and the pointer leaving the window in the same frame still move the
+/// card there; it waits there and is let go there.
+#[test]
+fn a_move_then_the_pointer_leaving_still_counts() {
+    let mut h = Harness::new();
+    h.tap("character");
+    let card = h.card("character");
+    let from = h.header("character");
+    let grab = from - card.min;
+    h.frame(vec![egui::Event::PointerMoved(from)]);
+    h.frame(vec![button(from, true)]);
+    h.frame(vec![egui::Event::PointerMoved(from + vec2(-40.0, 20.0))]);
+    let last = from + vec2(-200.0, 90.0);
+    h.frame(vec![egui::Event::PointerMoved(last), egui::Event::PointerGone]);
+    assert!((h.card("character").min - (last - grab)).length() < 1.0, "the last move counted: {:?}", h.card("character"));
+    h.frame(vec![]);
+    assert!((h.card("character").min - (last - grab)).length() < 1.0, "it waits there");
+    h.frame(vec![button(last, false)]);
+    h.settle();
+    assert!((h.card("character").min - (last - grab)).length() < 1.0, "let go there");
+}
+
+/// Optional software capture of the real window with three cards open, one of them with two tabs
+/// (Paragraph and Glyphs); set `VAROS_PANELS_CAPTURE_DIR` to write `panels3-cards.png` there.
 #[test]
 #[ignore = "optional software visual capture; set VAROS_PANELS_CAPTURE_DIR"]
 fn capture_three_cards() {
@@ -561,9 +945,11 @@ fn capture_three_cards() {
     std::fs::create_dir_all(&root).unwrap();
     let (width, height) = (1440_u32, 900_u32);
     let mut h = Harness::sized(vec2(width as f32, height as f32));
-    for id in ["character", "paragraph", "align"] {
+    for id in ["character", "paragraph", "align", "glyphs"] {
         h.tap(id);
     }
+    h.drag(h.tab("glyphs").center(), h.tab("paragraph").right_center() - vec2(3.0, 0.0));
+    assert_eq!(h.groups().len(), 3, "three cards: {:?}", h.groups());
     // Drawn again in a fresh context, so that every texture (the font atlas first) is captured.
     let ctx = egui::Context::default();
     crate::theme::install_fonts(&ctx);
@@ -604,5 +990,5 @@ fn capture_three_cards() {
         shot = Some(ctx.tessellate(out.shapes, out.pixels_per_point));
     }
     let pixels = crate::varos::home::capture::raster(&shot.unwrap(), &textures, width, height);
-    image::save_buffer(root.join("panels-3-cards.png"), &pixels, width, height, image::ColorType::Rgba8).unwrap();
+    image::save_buffer(root.join("panels3-cards.png"), &pixels, width, height, image::ColorType::Rgba8).unwrap();
 }

@@ -1,0 +1,116 @@
+lane-panels3 report — 2026-10-20 — implementer: Opus 5.5 — branch lane-panels3, base main a0221122. Not committed.
+
+Owner feedback on panels2 cards: "they feel stuck"; grouped panels forget their group when closed;
+they move only from a small grip on the left; they should open beside their own icon; while moving
+only a blue outline follows the mouse and the card jumps on release. All of these came from
+upstream's floating window (craft_ui). The cards are now drawn and moved by Varos.
+
+WHAT THE PERSON WILL SEE
+- A card moves from anywhere on its header (tab, empty header), live under the pointer, every
+  frame. No outline, no jump on release. Escape while holding it puts it back.
+- Resize from the bottom-right corner, the right edge or the bottom edge, also live.
+- While held, a card stays left of the dock and above the status bars (the pointer may go over
+  the dock to dock it).
+- A new card opens beside its icon: its top level with the icon, its right edge 6 pt left of the
+  dock. If something is in the way it goes under the cards in its way; if there is no room under
+  them, right above them; if there is no room there either, it cascades (24 pt steps). A card
+  never goes below the bottom of the icon column (no longer over the status bars).
+- Grouping: drop a card on another card's header and it joins as tabs (the target header lights
+  up while you hold it there). Drag a tab out of a card with several tabs and it becomes its own
+  card that follows the pointer at once. Drag a tab along its own header to reorder the tabs, live.
+  Drop a card on the icon column or the dock and it docks (an icon panel goes back to its icon).
+- Group memory: close a card with several tabs by its × and open any of its panels again: the
+  whole card comes back with the same tabs, the same tab in front, the same place and size (also
+  after a restart; saved in ui.json varos_panel_stack.groups; old profiles load with none).
+  A tab closed alone by its icon opens again in its card, at its place among the tabs, in front.
+  A dock tab grouped into a card (e.g. Character + Layers) goes back to the dock when the card
+  closes and comes back into the card when it reopens.
+- Look (kit, panel-kit.html section 5): 8 pt corners, 1 pt line (theme border token), no shadow,
+  32 pt header with the tabs on the left and x then the panel menu on the right. Tab in front: dark
+  well (input token) with a 1 pt line and bright text, no azure. NOTE: the mockup's .tab.on uses
+  the surface colour; the brief said "dark well like the kit", so I used the well. One-line change
+  in panel_stack::card if the owner prefers the mockup.
+- Everything from panels2 is kept: cards never over the rail/dock, sizes bounded by the room,
+  places remembered, Tab/Shift+Tab hide and bring back, shortcuts toggle, an agent's window.panel
+  only shows, workspace restore re-enrols cards, Auto-Collapse transition, fit to contents.
+
+HOW
+- Cards are still upstream floating groups (model, ui.json, docking commands, drop targets), but
+  panel_docking::show no longer gives them to craft_ui's DockArea (panel_stack::owns filter);
+  panel_stack::draw paints each card in an egui Area with the same id upstream used, and
+  panel_stack::track moves/resizes it by writing the group's rect before it is drawn (same frame).
+- Drops go through upstream: a card header -> window.panel.float {group, onto}; dock/icon column/
+  dock column -> window.panel.dock (via floating::drop_target); tab reorder and tab placement ->
+  window.panel.layout Move.
+- Upstream bodies, panel menu (panels::panel_menu) and commands are reused unchanged; craft_ui is
+  not modified.
+
+FILES
+  ~ crates/ui-egui/src/varos/panel_stack.rs: Varos-drawn cards (draw/card), live gestures
+      (track/begin/reorder/let_go/target), icon-aligned placement (spot/place upward walk/
+      follow_icons/fresh re-place at first fit), group memory (Group, sync_groups, reopen,
+      close_card, parked dock tabs), room clamp while held.
+  ~ crates/ui-egui/src/varos/tests_panel_stack.rs: 2 tests adapted, 13 new tests, capture updated.
+  ~ crates/ui-egui/src/panel_docking.rs: body extracted to pub(crate) panel_body (shared with the
+      cards, same code); 1 filter line (cards are drawn by panel_stack); 1 note_icon line in the rail.
+  ~ crates/ui-egui/src/dock.rs: 1 note_icon line in the legacy rail.
+  + docs/varos/lanes/panels3-cards.png: software capture (1440x900), three cards, one with two
+      tabs (Paragraph + Glyphs). Viewed: rounded 8 pt cards with 1 pt line, kit header, cards left
+      of the dock, above the status bars.
+
+TESTS (new)
+  a_card_moves_live_from_its_header (header and tab; card under the pointer in the same frame; final
+    rect = release point - grab; Escape restores; prints and asserts card work < 1 ms per drag frame:
+    measured median 0.005 ms, max 0.008 ms in release — this is panel_stack's track+draw incl. the
+    panel body, timed inside frame()),
+  a_card_resizes_live_by_its_corner_and_edges, a_card_opens_beside_its_icon (incl. short window),
+  a_card_with_no_room_below_goes_above (pure place()), a_closed_group_opens_again_as_it_was
+  (tabs, front tab, place+size, ui.json, restart, old profile), tabs_move_between_cards_and_to_the_dock
+  (tear-out follows live, join by header, dock by icon column), a_card_is_drawn_as_the_kit_card
+  (shape check of the real output: fill+line radius 8, line 1 pt border colour, no blurred/shadow
+  rect near the card, 24 pt tab centred in a 32 pt header, well under the front tab, no azure).
+  Render check is a shape inspection of egui's output (plus the software capture), not kittest/wgpu:
+  no GPU renderer in tests.
+  Adapted: a_card_dropped_on_another_groups_with_it (Varos tab id), a_card_reopened_where_another_now_
+  is_takes_a_free_place (Paragraph is moved onto Character's old place instead of opening there).
+
+REVIEW FIXES (Codex review, 6 items, one test each)
+  1 Header drag area stops before x and the panel menu; pressing either and moving no longer moves
+    the card. Test the_close_and_menu_buttons_never_move_the_card.
+  2 While held (move, tear-out, resize) the card is clamped to the room left of the dock and above
+    the status bars every frame; drop targeting still uses the raw pointer. Test
+    a_held_card_stays_in_the_room.
+  3 A card's x marks its non-icon tabs (dock tabs) as parked in its group; reopening restores them
+    into the card; a parked tab floated elsewhere since leaves the group. Group.parked is saved
+    (serde default, omitted when empty). Test a_card_with_a_dock_tab_comes_back_whole.
+  4 A tab reopened into its open card goes back to its remembered place among the tabs (Move before
+    the next remembered tab), in front (it was asked for). Test a_tab_opens_again_at_its_place.
+  5 A tab dragged along its own header reorders live (window.panel.layout Move as it passes another
+    tab's middle); out of the header it is torn out as before. Test
+    a_tab_dragged_along_its_header_reorders_live.
+  6 Gestures use interact_pos() (kept on PointerGone for the frame), so a move and the pointer
+    leaving in one frame still counts; with no position a let-go ends the gesture without a drop.
+    Test a_move_then_the_pointer_leaving_still_counts.
+  Also: the group signature is reset on close, so a card reopened with the same tabs clears its
+  parked list.
+
+GATES (this worktree, one cargo at a time, -j 4, --test-threads=4, after the review fixes)
+  cargo build -j 4 --offline --release -p vectorcraft: Finished `release` profile [optimized] target(s) in 4m 31s
+  cargo test -j 4 --offline --release -p vectorcraft-ui-egui -- --test-threads=4: 1861 passed; 0 failed; 7 ignored
+  cargo clippy -j 4 --offline --release -p vectorcraft-ui-egui --all-targets -- -D warnings: clean
+  cargo fmt --all -- --check: OK; git diff --check: OK
+  capture: VAROS_PANELS_CAPTURE_DIR=docs/varos/lanes cargo test ... --ignored capture_three_cards: ok, viewed.
+
+LEFT / RISKS
+- A brand-new egui area is drawn once invisibly to measure itself: a card that has just been torn
+  out (and the rest of its card when its first tab was torn out) is invisible for one frame
+  (~8-16 ms). The first open of a card is also invisible for that frame (Varos uses it to fit and
+  place the card at its real size, so it appears once, in place). egui offers no public way to
+  pre-seed an area's size; not fixable without changing egui.
+- Upstream's dock tabs and rail icons dragged out still use upstream's outline preview (only cards
+  were in scope); dropping them on a card's header joins the card.
+- Drops between a card and native dock-column sets use upstream's drop targets; "above/below a
+  card" (upstream set stacking) is ignored for cards (the card stays where let go).
+- No reorder by keyboard; no animation on reorder (instant, as the toggle rule).
+- Not hand-tested in the real window (owner hand test needed for feel: drag smoothness, cursor on
+  the header is the normal arrow, resize cursors on the grips).
