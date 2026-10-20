@@ -118,6 +118,7 @@ fn panel_icon(app: &mut VectorcraftApp, ui: &mut Ui, id: &'static str, label: &s
     let open = crate::varos::panel_stack::is_open(app, id); // Varos: every open panel's icon is lit
     // Its own id: the icons below it move up when it floats, and mustn't take over its drag.
     let (_, rect) = ui.allocate_space(vec2(30.0, 30.0));
+    crate::varos::panel_stack::note_icon(app, id, rect.top()); // Varos: a card opens beside its icon
     let resp = widgets::paint_icon_button(ui, ui.interact(rect, ui.id().with(("panel-icon", id)), Sense::click_and_drag()), icon, label, open);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, ui.is_enabled(), open, tl!(label)));
     if resp.clicked() {
