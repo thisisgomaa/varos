@@ -20,7 +20,7 @@ mod perf_tests;
 pub(crate) mod profile;
 // Varos: the colour picker v3, the Color panel's body.
 pub(crate) mod picker;
-// Varos: several icon panels open at once, stacked beside the icon column.
+// Varos: icon panels open as independent cards beside the icon column.
 pub(crate) mod panel_stack;
 pub(crate) mod shortcuts;
 #[cfg(test)]

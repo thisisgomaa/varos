@@ -176,7 +176,7 @@ fn the_shortcut_table_maps_f6_to_color() {
     assert_eq!(shortcut_editor::panel_shortcut("transparency"), Some("Cmd+Shift+F10"));
     let all = shortcuts::all_shortcuts();
     let f6 = all.iter().find(|(sc, ..)| sc.logical_key == egui::Key::F6 && sc.modifiers == Modifiers::NONE).expect("F6");
-    assert_eq!((f6.1, &f6.2), ("window.panel", &json!({"panel": "color"})));
+    assert_eq!((f6.1, &f6.2), ("window.panel", &json!({"panel": "color", "toggle": true}))); // Varos: icon panel keys toggle
     // The keys toggle their panels; Shift+F6 isn't taken by F6.
     let mut app = app();
     let ctx = context();

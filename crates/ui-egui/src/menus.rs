@@ -1064,6 +1064,10 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
     // other ways in (shortcuts, Show Properties Panel, a tool's double-click) only show it.
     if id == "window.panel" && p.get("toggle").and_then(Value::as_bool) == Some(true) && checked(app, id, p) == Some(true) {
         let panel = p.get("panel").and_then(Value::as_str).and_then(normalize_panel).unwrap_or_default();
+        if crate::varos::panel_stack::keeps_icon(app, panel) {
+            crate::varos::panel_stack::toggle(app, panel); // Varos: a card closes on its own
+            return Some(Ok(json!({"open": app.ui.open_panel})));
+        }
         if app.ui.open_panel.as_deref() == Some(panel) {
             app.ui.open_panel = None;
             return Some(Ok(json!({"open": null})));
@@ -4317,6 +4321,7 @@ mod tests {
         assert_eq!(normalize_panel("nope"), None);
 
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+        app.ui.varos_panel_stack.keep_open = false; // Varos: tests upstream's pop-out (icon panels open as cards by default)
         app.run("file.new", json!({})).unwrap();
         app.run("window.panel", json!({"panel": "Layers"})).unwrap();
         assert_eq!(app.ui.dock_tab, crate::state::DockTab::Layers);

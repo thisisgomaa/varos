@@ -78,7 +78,9 @@ pub(crate) fn all_shortcuts() -> Vec<(KeyboardShortcut, &'static str, serde_json
     }
     for (panel, _) in crate::state::all_panels() {
         if let Some(sc) = crate::shortcut_editor::panel_shortcut(panel).and_then(parse) {
-            v.push((sc, "window.panel", json!({ "panel": panel })));
+            // Varos: an icon panel's key toggles it, as in Illustrator (the dock's tabs only show).
+            let toggle = crate::state::ICON_PANELS.iter().any(|e| e.0 == panel);
+            v.push((sc, "window.panel", if toggle { json!({ "panel": panel, "toggle": true }) } else { json!({ "panel": panel }) }));
         }
     }
     settings_chord(&mut v, cfg!(target_os = "macos"));

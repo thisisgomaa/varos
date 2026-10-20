@@ -194,8 +194,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                         let mut first = true;
                         for id in group.iter() {
                             let Some((_, label, icon)) = ICON_PANELS.iter().find(|p| p.0 == *id) else { continue };
-                            if floating::group_of(&app.ui, id).is_some() {
-                                continue;
+                            if floating::group_of(&app.ui, id).is_some() && !crate::varos::panel_stack::keeps_icon(app, id) {
+                                continue; // Varos: a card keeps its icon
                             }
                             if std::mem::take(&mut first) && std::mem::replace(&mut divider, true) {
                                 let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 7.0), Sense::hover());
@@ -357,10 +357,7 @@ pub(crate) fn panel_tabs(
 /// A panel popped out next to the icon column: an icon panel, or one of the tabbed group's panels
 /// while the dock is collapsed. Dragging its title floats it.
 pub fn floating_panel(app: &mut VectorcraftApp, ctx: &egui::Context) {
-    // Varos: two or more panels open at once stack beside the column instead.
-    if crate::varos::panel_stack::show(app, ctx) {
-        return;
-    }
+    crate::varos::panel_stack::frame(app, ctx); // Varos: icon panels open as cards
     let open = app.ui.open_panel.as_deref();
     let Some(id) =
         open.and_then(|p| crate::state::all_panels().map(|(q, _)| q).find(|q| *q == p).or_else(|| crate::panels::library_panel::intern(p)))
@@ -587,6 +584,7 @@ mod tests {
     #[test]
     fn every_flyout_stays_left_of_the_icon_column() {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.ui.varos_panel_stack.keep_open = false; // Varos: tests upstream's pop-out (icon panels open as cards by default)
         app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
         let id = app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 40})).unwrap()["id"].clone();
         app.run("select.set", json!({ "ids": [id] })).unwrap();
