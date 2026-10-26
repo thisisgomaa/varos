@@ -327,7 +327,11 @@ mod tests {
         let pick = FilePick {
             name: "Untitled-1.vectorcraft".into(),
             folder: Some("/home/me/Art".into()),
-            filters: vec![(APP_NAME, &["vectorcraft"]), ("SVG", &["svg"]), ("PDF-compatible .ai", &["ai"])],
+            filters: vec![
+                FilePick::filter(APP_NAME, &["vectorcraft"]), // Varos: brand
+                FilePick::filter("SVG", &["svg"]),
+                FilePick::filter("PDF-compatible .ai", &["ai"]),
+            ],
         };
         SaveRequest::new(&pick, "x11:3a0000f".into())
     }

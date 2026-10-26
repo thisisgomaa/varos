@@ -126,7 +126,7 @@ pub fn extend_catalog(plain: &mut std::collections::HashMap<String, String>) {
 
 /// Build Varos fonts independently, leaving upstream font-only consumers unchanged.
 fn install_fonts(ctx: &egui::Context) {
-    ctx.set_fonts(crate::theme::font_definitions());
+    ctx.set_fonts(crate::theme::interface_fonts());
 }
 
 /// One embedded face shared by egui and the shaped Arabic renderer.
@@ -172,7 +172,7 @@ pub fn register_fonts(fonts: &mut FontDefinitions) {
 
 /// Apply fonts and flat widget visuals to every built-in brightness.
 pub fn apply(ctx: &egui::Context, b: Brightness) {
-    let id = egui::Id::new("varos-fonts-installed");
+    let id = egui::Id::unique("varos-fonts-installed");
     let installed = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
     if !installed {
         install_fonts(ctx);

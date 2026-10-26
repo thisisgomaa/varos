@@ -205,6 +205,44 @@ fn a_group_selected_alone_is_combined_member_by_member() {
     assert_eq!((bounds.x0, bounds.x1), (0.0, 10.0), "the back member less the front one");
 }
 
+/// #2178: Unite on separated shapes is one compound path; Release releases each subpath (Illustrator parity).
+#[test]
+fn pathfinder_unite_non_overlapping_shapes_become_compound_path_releasable() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 20.0, 20.0);
+    let b = rect(&mut s, 30.0, 0.0, 20.0, 20.0);
+    let layer = s.doc().unwrap().doc.parent_of(a).unwrap();
+    s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+    s.execute("object.pathfinder.unite", &json!({})).unwrap();
+    let result = s.doc().unwrap().selection.objects[0];
+    let united = node(&s, result);
+    assert!(matches!(united.kind, NodeKind::Compound { .. }));
+    assert_eq!(united.children().unwrap().len(), 2);
+    s.execute("object.compoundPath.release", &json!({})).unwrap();
+    let d = &s.doc().unwrap().doc;
+    assert!(d.node(result).is_none());
+    assert_eq!(s.doc().unwrap().selection.len(), 2);
+    for id in &s.doc().unwrap().selection.objects {
+        assert_eq!(d.parent_of(*id), Some(layer));
+    }
+}
+
+/// #2178: Unite keeps disjoint geometry in one compound path (not a group of separate path objects).
+#[test]
+fn pathfinder_unite_disjoint_islands_stay_one_compound_path() {
+    let mut s = session();
+    let outer = rect(&mut s, 0.0, 0.0, 40.0, 40.0);
+    let hole = rect(&mut s, 10.0, 10.0, 10.0, 10.0);
+    s.execute("select.set", &json!({"ids": [outer.0, hole.0]})).unwrap();
+    let ring = NodeId(s.execute("object.compoundPath.make", &json!({})).unwrap()["id"].as_u64().unwrap());
+    let separate = rect(&mut s, 60.0, 0.0, 20.0, 20.0);
+    s.execute("select.set", &json!({"ids": [ring.0, separate.0]})).unwrap();
+    s.execute("object.pathfinder.unite", &json!({})).unwrap();
+    let result = s.doc().unwrap().selection.objects[0];
+    assert!(matches!(node(&s, result).kind, NodeKind::Compound { .. }));
+    assert_eq!(path_of(&s, result).0.subpaths.len(), 3);
+}
+
 #[test]
 fn unite_with_group() {
     let mut s = session();
@@ -483,6 +521,8 @@ fn simplify_level_moves_the_anchor_count_monotonically() {
 fn auto_simplify_keeps_the_shape_within_a_400th_of_its_size() {
     let (mut s, id) = dense_wave(100, 15.0, 8.0, 0.2);
     let original = path_of(&s, id).0.clone();
+    // The level the Simplify slider opens at for this selection is the one auto uses.
+    assert_eq!(crate::auto_simplify_level(&s).unwrap(), 70.0);
     let out = s.execute("object.path.simplify", &json!({"auto": true})).unwrap();
     // 100 pt across: 0.25 pt at most, level 70 (0.25 pt).
     assert_eq!(out["level"], json!(70.0));
@@ -812,6 +852,59 @@ fn create_outlines_matches_text_bounds() {
     assert!(s.doc().unwrap().doc.node(t).is_some());
 }
 
+/// Colour bitmap glyphs (emoji) become embedded images where they sat; glyphs showing one image
+/// share its pixels.
+#[test]
+fn create_outlines_turns_bitmap_glyphs_into_images() {
+    let _fonts = crate::adding_fonts();
+    use vectorcraft_text::test_fonts::{COLOUR_CHAR, colour_bitmap_family, colour_bitmap_font};
+    vectorcraft_text::FontDb::global().add_font(colour_bitmap_font(false).unwrap());
+    let mut s = session();
+    let r = s
+        .execute(
+            "text.create",
+            &json!({"x": 10, "y": 50, "text": format!("{COLOUR_CHAR}F{COLOUR_CHAR}"), "size": 32, "font": colour_bitmap_family(false)}),
+        )
+        .unwrap();
+    let t = NodeId(r["id"].as_u64().unwrap());
+    let tb = bounds(&s, t);
+    let r = ids(&s.execute("type.createOutlines", &json!({})).unwrap());
+    let g = node(&s, r[0]);
+    let ch = g.children().unwrap();
+    let images: Vec<_> = ch.iter().filter_map(|c| if let NodeKind::Image(im) = &c.kind { Some(im) } else { None }).collect();
+    assert_eq!(images.len(), 2, "{:?}", ch.iter().map(|c| c.kind_label()).collect::<Vec<_>>());
+    assert!(matches!(ch[1].kind, NodeKind::Path { .. } | NodeKind::Compound { .. }), "the outline between them");
+    assert_eq!(images[0].key, images[1].key, "one image");
+    let d = &s.doc().unwrap().doc;
+    assert!(d.images.contains_key(&images[0].key));
+    // The first one em (32 pt) square, from 2 px (4 pt) right of the origin and 12 px (24 pt)
+    // above the baseline; inside the type's bounds.
+    let b = ch[0].geometric_bounds().unwrap();
+    assert!((b.x0 - 14.0).abs() < 1e-6 && (b.y0 - 26.0).abs() < 1e-6 && (b.width() - 32.0).abs() < 1e-6, "{b:?}");
+    assert!(b.x0 >= tb.x0 && b.y0 >= tb.y0 - 1e-6 && b.y1 <= tb.y1 + 1e-6, "{b:?} in {tb:?}");
+}
+
+/// A glyph image whose key another image of the document holds gets a key of its own.
+#[test]
+fn create_outlines_keeps_an_image_already_under_a_glyph_images_key() {
+    let _fonts = crate::adding_fonts();
+    use vectorcraft_text::test_fonts::{COLOUR_CHAR, COLOUR_LARGE, COLOUR_PPEM, colour_bitmap_family, colour_bitmap_font, solid_png};
+    vectorcraft_text::FontDb::global().add_font(colour_bitmap_font(false).unwrap());
+    let mut s = session();
+    let glyph = vectorcraft_doc::ImageBlob::png(solid_png(COLOUR_PPEM.into(), COLOUR_LARGE));
+    let taken = glyph.content_key();
+    let other = vectorcraft_doc::ImageBlob::png(solid_png(4, [0, 255, 0, 255]));
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).images.insert(taken.clone(), other.clone());
+    s.execute("text.create", &json!({"x": 10, "y": 50, "text": COLOUR_CHAR.to_string(), "size": 32, "font": colour_bitmap_family(false)})).unwrap();
+    let r = ids(&s.execute("type.createOutlines", &json!({})).unwrap());
+    let g = node(&s, r[0]);
+    let Some(NodeKind::Image(im)) = g.children().unwrap().first().map(|c| &c.kind) else { panic!("an image") };
+    let d = &s.doc().unwrap().doc;
+    assert_ne!(im.key, taken);
+    assert_eq!(d.images[&im.key].bytes, glyph.bytes, "the glyph's own pixels");
+    assert_eq!(d.images[&taken].bytes, other.bytes, "the other image is kept");
+}
+
 #[test]
 fn set_style_size_changes_bounds() {
     let mut s = session();
@@ -981,4 +1074,211 @@ fn offset_path_that_leaves_nothing_says_so() {
     s.execute("select.set", &json!({"ids": [a.0]})).unwrap();
     let e = s.execute("object.path.offsetPath", &json!({"offset": -20})).unwrap_err().to_string();
     assert!(e.contains("leaves nothing") && !e.contains("select paths"), "{e}");
+}
+
+/// COLR glyphs become groups of their layers: real paths with their colours and gradients, the
+/// composite's blend mode kept, every node with an id of the document's.
+#[test]
+fn create_outlines_turns_colr_glyphs_into_layer_groups() {
+    let _fonts = crate::adding_fonts();
+    use vectorcraft_text::test_fonts::{COLOUR_CHAR, colr_family, colr_font};
+    vectorcraft_text::FontDb::global().add_font(colr_font(true).unwrap());
+    let mut s = session();
+    s.execute("text.create", &json!({"x": 10, "y": 50, "text": format!("{COLOUR_CHAR}F"), "size": 32, "font": colr_family(true)})).unwrap();
+    let r = ids(&s.execute("type.createOutlines", &json!({})).unwrap());
+    let g = node(&s, r[0]);
+    let ch = g.children().unwrap();
+    assert!(matches!(ch[0].kind, NodeKind::Group { .. }), "the glyph's group: {:?}", ch[0].kind_label());
+    assert!(matches!(ch[1].kind, NodeKind::Path { .. } | NodeKind::Compound { .. }), "the `F` an outline");
+    let mut nodes = vec![];
+    ch[0].walk(&mut |n| nodes.push((n.id, n.blend, n.appearance.fill_paint())));
+    assert!(nodes.iter().any(|(_, _, p)| matches!(p, vectorcraft_color::Paint::Gradient(_))), "its gradients");
+    assert!(nodes.iter().any(|(_, b, _)| *b == vectorcraft_color::BlendMode::Multiply), "its multiply");
+    let d = &s.doc().unwrap().doc;
+    let mut seen = std::collections::HashSet::new();
+    assert!(nodes.iter().all(|(id, ..)| d.node(*id).is_some() && seen.insert(*id)), "ids of the document's, each once");
+}
+
+/// Pathfinder panel › Pathfinder Options: `object.pathfinder.options` reads and sets the options
+/// (kept in the preferences as the `pathfinder` group) and refuses values out of range or of the
+/// wrong type, changing nothing.
+#[test]
+fn pathfinder_options_round_trip_and_refuse_bad_values() {
+    let mut s = session();
+    let defaults = json!({"precision": 0.01, "removeRedundantPoints": false, "removeUnpainted": false});
+    assert_eq!(s.execute("object.pathfinder.options", &json!({})).unwrap(), defaults);
+    let set = json!({"precision": 0.5, "removeRedundantPoints": true, "removeUnpainted": true});
+    assert_eq!(s.execute("object.pathfinder.options", &set).unwrap(), set);
+    assert_eq!(s.execute("prefs.get", &json!({"key": "pathfinder"})).unwrap(), set);
+    let mm = s.execute("object.pathfinder.options", &json!({"precision": "1 mm"})).unwrap()["precision"].as_f64().unwrap();
+    assert!((mm - 72.0 / 25.4).abs() < 1e-9, "a length with a unit: {mm}");
+    s.execute("object.pathfinder.options", &json!({"precision": 0.5})).unwrap();
+    for bad in [
+        json!({"precision": 0}),
+        json!({"precision": 11}),
+        json!({"precision": "x"}),
+        json!({"precision": -1}),
+        json!({"removeRedundantPoints": "yes"}),
+        json!({"removeUnpainted": 1}),
+        json!({"tolerance": 1}),
+    ] {
+        assert!(s.execute("object.pathfinder.options", &bad).is_err(), "{bad}");
+        assert!(s.execute("prefs.set", &json!({"key": "pathfinder", "value": bad})).is_err(), "prefs.set {bad}");
+        assert_eq!(s.execute("object.pathfinder.options", &json!({})).unwrap(), set, "{bad} changes nothing");
+    }
+    s.execute("prefs.set", &json!({"key": "pathfinder", "value": {"removeUnpainted": false}})).unwrap();
+    assert!(!s.prefs.pathfinder.remove_unpainted);
+    assert!(s.prefs.pathfinder.remove_redundant_points, "a partial object keeps the rest");
+    s.execute("prefs.reset", &json!({})).unwrap();
+    assert_eq!(s.execute("object.pathfinder.options", &json!({})).unwrap(), defaults);
+}
+
+/// A filled square and, crossing it, a rectangle with no fill, selected.
+fn filled_and_unfilled(s: &mut Session) {
+    let a = rect(s, 0.0, 0.0, 100.0, 100.0);
+    let b = rect(s, 50.0, 25.0, 100.0, 50.0);
+    set_fill(s, a, Color::rgb(1.0, 0.0, 0.0));
+    s.edit("t", |d, _| {
+        d.node_mut(b).unwrap().appearance.set_fill(Paint::None);
+        Ok(())
+    })
+    .unwrap();
+    s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+}
+
+/// The fill of each piece of the group `op` makes from [`filled_and_unfilled`], and of each
+/// piece's stroke.
+fn pieces(s: &mut Session, op: &str) -> Vec<(Paint, Paint)> {
+    let r = ids(&s.execute(op, &json!({})).unwrap());
+    node(s, r[0]).children().unwrap().iter().map(|c| (c.appearance.fill_paint(), c.appearance.stroke_paint())).collect()
+}
+
+/// Pathfinder Options › Divide and Outline Will Remove Unpainted Artwork: off, Divide and Outline
+/// keep the pieces of an object with no fill; on, they leave them out.
+#[test]
+fn divide_and_outline_remove_unpainted_artwork_when_asked() {
+    let red = Paint::solid(Color::rgb(1.0, 0.0, 0.0));
+    for on in [false, true] {
+        let mut s = session();
+        s.execute("object.pathfinder.options", &json!({"removeUnpainted": on})).unwrap();
+        filled_and_unfilled(&mut s);
+        let divided = pieces(&mut s, "object.pathfinder.divide");
+        let unfilled = divided.iter().filter(|(fill, _)| fill.is_none()).count();
+        // The overlap takes the paint of the rectangle in front, so it has no fill either.
+        assert_eq!(unfilled, if on { 0 } else { 2 }, "Divide, option {on}: {divided:?}");
+        assert_eq!(divided.len() - unfilled, 1, "the square's piece stays");
+        s.execute("edit.undo", &json!({})).unwrap();
+        let outlined = pieces(&mut s, "object.pathfinder.outline");
+        let from_unfilled = outlined.iter().filter(|(_, stroke)| *stroke != red).count();
+        assert_eq!(from_unfilled > 0, !on, "Outline, option {on}: {outlined:?}");
+        assert!(outlined.iter().any(|(_, stroke)| *stroke == red), "the square's edges stay");
+    }
+}
+
+/// Pathfinder Options › Remove Redundant Points: Unite of a square with an anchor in the middle of
+/// its top edge and a square inside it keeps the extra anchor unless the option is on.
+#[test]
+fn remove_redundant_points_drops_anchors_that_shape_nothing() {
+    for on in [false, true] {
+        let mut s = session();
+        s.execute("object.pathfinder.options", &json!({"removeRedundantPoints": on})).unwrap();
+        let pts = [(0.0, 0.0), (50.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)];
+        let anchors: Vec<Value> = pts.iter().map(|(x, y)| json!({"x": x, "y": y})).collect();
+        let a = NodeId(s.execute("path.create", &json!({"anchors": anchors, "closed": true})).unwrap()["id"].as_u64().unwrap());
+        let b = rect(&mut s, 20.0, 20.0, 60.0, 60.0);
+        s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+        let r = ids(&s.execute("object.pathfinder.unite", &json!({})).unwrap());
+        let anchors = path_of(&s, r[0]).0.anchor_count();
+        if on {
+            assert_eq!(anchors, 4, "option on");
+        } else {
+            assert!(anchors > 4, "option off keeps the anchor: {anchors}");
+        }
+        assert!((area_of(&s, r[0]) - 10_000.0).abs() < 1e-6);
+    }
+}
+
+/// Pathfinder Options › Precision: Divide drops a 0.5 pt overlap at a precision of 1 pt and keeps
+/// it at the default.
+#[test]
+fn precision_decides_whether_a_thin_overlap_is_a_piece() {
+    for (precision, faces) in [(None, 3), (Some(1.0), 2)] {
+        let mut s = session();
+        if let Some(p) = precision {
+            s.execute("object.pathfinder.options", &json!({"precision": p})).unwrap();
+        }
+        let a = rect(&mut s, 0.0, 0.0, 100.0, 100.0);
+        let b = rect(&mut s, 0.0, 99.5, 100.0, 100.0);
+        s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+        let r = ids(&s.execute("object.pathfinder.divide", &json!({})).unwrap());
+        assert_eq!(node(&s, r[0]).children().unwrap().len(), faces, "precision {precision:?}");
+    }
+}
+
+/// A hidden fill paints nothing: with Divide and Outline Will Remove Unpainted Artwork on, the
+/// pieces of an object whose only fill is hidden go too.
+#[test]
+fn remove_unpainted_counts_a_hidden_fill_as_unpainted() {
+    let mut s = session();
+    s.execute("object.pathfinder.options", &json!({"removeUnpainted": true})).unwrap();
+    let a = rect(&mut s, 0.0, 0.0, 100.0, 100.0);
+    let b = rect(&mut s, 50.0, 25.0, 100.0, 50.0);
+    set_fill(&mut s, a, Color::rgb(1.0, 0.0, 0.0));
+    set_fill(&mut s, b, Color::rgb(0.0, 0.0, 1.0));
+    s.edit("t", |d, _| {
+        d.node_mut(b).unwrap().appearance.fill_mut().unwrap().visible = false;
+        Ok(())
+    })
+    .unwrap();
+    s.execute("select.set", &json!({"ids": [a.0, b.0]})).unwrap();
+    let divided = pieces(&mut s, "object.pathfinder.divide");
+    let red = Paint::solid(Color::rgb(1.0, 0.0, 0.0));
+    assert_eq!(divided.len(), 1, "only the red square's piece: {divided:?}");
+    assert_eq!(divided[0].0, red);
+}
+
+/// Shape Modes unite a group selected with other objects first: at a fine precision a group
+/// member thinner than the default precision (0.005 pt) is kept there too.
+#[test]
+fn a_thin_group_member_survives_the_group_union_at_a_fine_precision() {
+    for (precision, subpaths) in [(None, 2), (Some(0.001), 3)] {
+        let mut s = session();
+        if let Some(p) = precision {
+            s.execute("object.pathfinder.options", &json!({"precision": p})).unwrap();
+        }
+        let (a, thin) = (rect(&mut s, 0.0, 0.0, 50.0, 50.0), rect(&mut s, 0.0, 100.0, 100.0, 0.005));
+        s.execute("select.set", &json!({"ids": [a.0, thin.0]})).unwrap();
+        let g = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+        let other = rect(&mut s, 200.0, 0.0, 50.0, 50.0);
+        s.execute("select.set", &json!({"ids": [g, other.0]})).unwrap();
+        let r = ids(&s.execute("object.pathfinder.unite", &json!({})).unwrap());
+        assert_eq!(path_of(&s, r[0]).0.subpaths.len(), subpaths, "precision {precision:?}");
+    }
+}
+
+/// A Pathfinder operation records the options it used in its journal entry, so replaying the
+/// journal with other preferences gives the same art.
+#[test]
+fn pathfinder_journal_entries_replay_with_the_options_they_used() {
+    let mut s = session();
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap();
+    s.execute("paint.setFill", &json!({"color": "#ff0000"})).unwrap();
+    s.execute("shape.rectangle", &json!({"x": 0, "y": 99.5, "width": 100, "height": 50})).unwrap();
+    s.execute("paint.setFill", &json!({"none": true})).unwrap();
+    s.execute("select.all", &json!({})).unwrap();
+    s.prefs.pathfinder = PathfinderOptions { precision: 1.0, remove_redundant_points: true, remove_unpainted: true };
+    let r = ids(&s.execute("object.pathfinder.divide", &json!({})).unwrap());
+    assert_eq!(node(&s, r[0]).children().unwrap().len(), 1, "the thin overlap and the unfilled piece go");
+    let (id, p) = s.journal.last().unwrap().clone();
+    assert_eq!(id, "object.pathfinder.divide");
+    assert_eq!((&p["precision"], &p["removeRedundantPoints"], &p["removeUnpainted"]), (&json!(1.0), &json!(true), &json!(true)));
+    let mut replay = Session::new();
+    for (id, p) in &s.journal {
+        replay.execute(id, p).unwrap();
+    }
+    assert_eq!(replay.prefs.pathfinder, PathfinderOptions::default());
+    let doc = |s: &Session| serde_json::to_value(&*s.doc().unwrap().doc).unwrap();
+    assert_eq!(doc(&replay), doc(&s));
+    // Options given as params are checked as object.pathfinder.options checks them.
+    assert!(s.execute("object.pathfinder.divide", &json!({"precision": 20})).is_err());
 }

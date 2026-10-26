@@ -677,7 +677,7 @@ fn close_puts_the_panel_away_from_a_floating_group_a_card_and_a_pop_out() {
     // Floating.
     let mut app = app();
     app.run("window.panel.float", json!({"panel": "color"})).unwrap();
-    assert!(crate::floating::group_of(&app.ui, "color").is_some() || app.ui.docking.is_some());
+    assert!(crate::panel_docking::floats(&app.ui, "color"));
     assert!(shown(&app));
     let ctx = egui::Context::default();
     frame(&ctx, &mut app, vec![]);

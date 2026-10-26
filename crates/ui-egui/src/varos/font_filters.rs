@@ -67,7 +67,7 @@ impl HeaderFamilies {
 
 fn header_families<R>(ctx: &egui::Context, db: &FontDb, read: impl FnOnce(&mut HeaderFamilies) -> R) -> R {
     // Test databases share no catalog even if their generation counters happen to match.
-    let id = egui::Id::new(("varos-font-header-families", std::ptr::from_ref(db) as usize));
+    let id = egui::Id::unique(("varos-font-header-families", std::ptr::from_ref(db) as usize));
     ctx.data_mut(|d| {
         let cache = d.get_temp_mut_or_insert_with(id, || HeaderFamilies::new(db));
         if cache.generation != db.generation() {
@@ -274,7 +274,7 @@ fn paint_shaped_chip(
         let rect = egui::Rect::from_center_size(center, size);
         ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), tint);
     }
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, fallback));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, fallback));
     response
 }
 
@@ -299,8 +299,8 @@ mod tests {
     fn sample_switch_overrides_arabic_selection_and_survives_state_round_trip() {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let id = egui::Id::new("sample-language-test");
-        let state = egui::Id::new("sample-language-state");
+        let id = egui::Id::unique("sample-language-test");
+        let state = egui::Id::unique("sample-language-state");
         let db = FontDb::with_font_dirs(vec![]);
         db.set_system_fallback(false);
         db.add_font(include_bytes!("../../../text-arabic/fixtures/NotoSansArabic.ttf").to_vec());
@@ -420,7 +420,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut menu = ArabicMenu { samples: SampleMode::Arabic, ..Default::default() };
         let mut out = ctx.run_ui(Default::default(), |ui| {
-            search(ui, egui::Id::new("no-previews"), &mut menu, false);
+            search(ui, egui::Id::unique("no-previews"), &mut menu, false);
         });
         out.textures_delta.clear();
         assert!(!out.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if ["Auto", "Aa", "Arabic"].contains(&t.galley.text()))));
@@ -441,7 +441,7 @@ mod tests {
                     return;
                 }
                 ui.set_width(360.0);
-                search(ui, egui::Id::new("evidence-query"), &mut state.3, true);
+                search(ui, egui::Id::unique("evidence-query"), &mut state.3, true);
                 filters(ui, &mut state.0, &mut state.1, &mut state.2, &mut state.3);
             },
             (0, None, false, ArabicMenu::default()),

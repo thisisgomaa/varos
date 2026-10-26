@@ -136,7 +136,7 @@ pub(super) fn strip(ui: &mut Ui, origin: Pos2, prefs: &mut Prefs) {
     let t = Tokens::get(ui.ctx());
     for (i, (rule, icon)) in RULES.into_iter().enumerate() {
         let r = Rect::from_min_size(origin + vec2(PAD + i as f32 * (TAB_H + TAB_GAP), (STRIP_H - TAB_H) / 2.0), egui::Vec2::splat(TAB_H));
-        let resp = ui.interact(r, ui.id().with(("varos-harmony-rule", i)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("varos-harmony-rule", i)), Sense::click());
         let on = prefs.harmony == rule;
         super::tab_button(ui, &t, r, icon, on, resp.hovered(), true);
         if resp.on_hover_text(tip(rule)).clicked() {
@@ -151,7 +151,7 @@ pub(super) fn chips(ui: &mut Ui, origin: Pos2, st: &State, prefs: &Prefs, acts: 
     let chip = |ui: &mut Ui, r: Rect, id: (&str, usize, usize), hsv: [f32; 3], acts: &mut Vec<Action>| {
         let [red, g, b] = hsv_to_rgb(hsv[0], hsv[1], hsv[2]);
         let c = vectorcraft_color::Color::rgb(red, g, b);
-        let resp = ui.interact(r, ui.id().with(id), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(id), Sense::click());
         super::chip(ui, r, Some(&c), resp.hovered());
         if resp.on_hover_text(c.to_hex().to_uppercase()).clicked() {
             acts.push(Action::Set(c));

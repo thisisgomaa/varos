@@ -168,7 +168,7 @@ pub(crate) fn group_head(ui: &mut Ui, folded: &mut bool, out: &mut Vec<Drawn>) -
     if text_end + 6.0 < c.x - 10.0 {
         p.hline(text_end + 6.0..=c.x - 10.0, rect.center().y, Stroke::new(1.0, t.border));
     }
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, !folded, name));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, !folded, name));
     resp.on_hover_text(tip);
     out.push(Drawn { key: "group", rect, tip: tip.into(), lit: !folded, ..Default::default() });
     ui.add_space(2.0);
@@ -201,7 +201,7 @@ pub(crate) fn segments(ui: &mut Ui, choices: &[Choice<'_>], width: f32, out: &mu
     let mut clicked = None;
     for (i, c) in choices.iter().enumerate() {
         let r = Rect::from_min_size(pos2(inner.left() + i as f32 * (w + 1.0), inner.top()), vec2(w, inner.height()));
-        let resp = ui.interact(r, ui.id().with(("varos-me-segment", c.key)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("varos-me-segment", c.key)), Sense::click());
         let enabled = ui.is_enabled();
         let fill = if c.lit {
             t.input
@@ -232,7 +232,7 @@ pub(crate) fn segments(ui: &mut Ui, choices: &[Choice<'_>], width: f32, out: &mu
             ui.painter().galley(at, g, ink);
         }
         let name = if c.label.is_empty() { c.tip.clone() } else { c.label.to_string() };
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, c.lit, &name));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, c.lit, &name));
         if resp.on_hover_text(&c.tip).on_disabled_hover_text(&c.tip).clicked() {
             clicked = Some(i);
         }
@@ -298,7 +298,7 @@ pub(crate) fn toggle(
         }
     }
     let name = if label.is_empty() { tip } else { label };
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, lit, name));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, lit, name));
     out.push(Drawn { key, rect: r, tip: tip.into(), lit, ..Default::default() });
     resp.on_hover_text(tip).on_disabled_hover_text(tip).clicked()
 }
@@ -309,7 +309,7 @@ pub(crate) fn row_icon(ui: &mut Ui, key: &'static str, icon: &'static str, tip: 
     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 22.0), Sense::hover());
     let ink = if ui.is_enabled() { t.text_dim } else { t.text_disabled };
     me_icons::paint(ui, icon, Rect::from_center_size(r.center(), Vec2::splat(16.0)), ink);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), tip));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), tip));
     resp.on_hover_text(tip).on_disabled_hover_text(tip);
     out.push(Drawn { key, rect: r, tip: tip.into(), ..Default::default() });
 }
@@ -320,7 +320,7 @@ pub(crate) fn row_icon(ui: &mut Ui, key: &'static str, icon: &'static str, tip: 
 pub(crate) fn rail(ui: &mut Ui, id: &str, name: &str, tip: &str, value: Option<f64>, max: f64, width: f32) -> (Rect, Option<(f64, Live)>) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
-    let resp = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    let resp = ui.interact(rect, ui.scope_id().with(id), Sense::click_and_drag());
     let enabled = ui.is_enabled();
     let bar = rect.shrink2(vec2(5.0, 0.0));
     let y = rect.center().y;
@@ -340,7 +340,7 @@ pub(crate) fn rail(ui: &mut Ui, id: &str, name: &str, tip: &str, value: Option<f
     }
     resp.widget_info(|| match value {
         Some(v) => egui::WidgetInfo::slider(enabled, v, name),
-        None => egui::WidgetInfo::labeled(egui::WidgetType::Slider, enabled, name),
+        None => egui::WidgetInfo::labeled(egui::Role::Slider, enabled, name),
     });
     let resp = resp.on_hover_text(tip).on_disabled_hover_text(tip);
     let hit = widgets::pointer_phase(&resp).map(|(at, phase)| ((((at.x - bar.left()) / bar.width()).clamp(0.0, 1.0) as f64 * max).round(), phase));
@@ -352,16 +352,16 @@ pub(crate) fn rail(ui: &mut Ui, id: &str, name: &str, tip: &str, value: Option<f
 /// committed.
 pub(crate) fn number_field(ui: &mut Ui, id: &str, tip: &str, value: Option<f64>, width: f32) -> (Rect, Option<f64>) {
     let t = Tokens::get(ui.ctx());
-    let mut focus_id = ui.id();
+    let mut focus_id = ui.scope_id();
     let r = ui.scope(|ui| {
-        focus_id = ui.id().with(id);
+        focus_id = ui.scope_id().with(id);
         control_corners(ui, |ui| widgets::mixed_field(ui, id, value, "", 0, width))
     });
     let rect = r.response.rect;
     // Screen readers name the text editor by its tool tip.
     ui.ctx().accesskit_node_builder(focus_id, |node| node.set_label(tip));
     // Its tool tip: a hover-only area on top of the text field, which takes no clicks.
-    ui.interact(rect, ui.id().with((id, "tip")), Sense::hover()).on_hover_text(tip).on_disabled_hover_text(tip);
+    ui.interact(rect, ui.scope_id().with((id, "tip")), Sense::hover()).on_hover_text(tip).on_disabled_hover_text(tip);
     if value.is_none() && !ui.memory(|m| m.has_focus(focus_id)) {
         let ink = if ui.is_enabled() { t.text } else { t.text_disabled };
         ui.painter().text(rect.right_center() - vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, "–", FontId::proportional(11.5), ink);
@@ -655,7 +655,7 @@ fn digits_dropdown(ui: &mut Ui, current: Option<Digits>, out: &mut Vec<Drawn>) -
     };
     resp.widget_info(|| egui::WidgetInfo {
         current_text_value: Some(name.to_string()),
-        ..egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, tl!("Digits"))
+        ..egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!("Digits"))
     });
     out.push(Drawn { key: "digits", rect, tip: tip.clone(), lit: now.is_some(), ..Default::default() });
     let resp = resp.on_hover_text(tip);
@@ -676,7 +676,7 @@ fn digits_dropdown(ui: &mut Ui, current: Option<Digits>, out: &mut Vec<Drawn>) -
                 let ink = if d == Digits::Default { t.text_dim } else { t.text };
                 paint_digits(p, pos2(r.left() + 24.0, r.center().y), glyphs, ink);
                 p.text(pos2(r.left() + 60.0, r.center().y), egui::Align2::LEFT_CENTER, name, FontId::proportional(11.0), t.text);
-                row.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, current == Some(d), name));
+                row.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, current == Some(d), name));
                 out.push(Drawn { key: row_key(key), rect: r, tip: name.into(), lit: current == Some(d), ..Default::default() });
                 if row.clicked() {
                     chosen = Some(key);
@@ -728,7 +728,7 @@ fn presets(ui: &mut Ui, current: Option<&str>, salt: &str, out: &mut Vec<Drawn>)
         ui.spacing_mut().item_spacing.x = 4.0;
         for (name, [r, g, b]) in HARAKAT_COLOURS {
             let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-            let resp = ui.interact(rect, ui.id().with(("varos-harakat-preset", salt, name)), Sense::click());
+            let resp = ui.interact(rect, ui.scope_id().with(("varos-harakat-preset", salt, name)), Sense::click());
             let hex = format!("{r:02X}{g:02X}{b:02X}");
             let on = current == Some(hex.as_str());
             let p = ui.painter();
@@ -744,7 +744,7 @@ fn presets(ui: &mut Ui, current: Option<&str>, salt: &str, out: &mut Vec<Drawn>)
                 "Gold" => tl!("Gold"),
                 _ => tl!("Black"),
             };
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), on, tip));
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, tip));
             let key = match name {
                 "Red" => "preset-red",
                 "Green" => "preset-green",
@@ -780,13 +780,13 @@ const LIVE_LABEL: &str = "Style Harakat";
 /// Drop a harakat colour being dragged: the harakat get back the colour they had, and nothing is
 /// added to the undo history.
 fn cancel_drag(app: &mut VectorcraftApp, ctx: &egui::Context) {
-    let live = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(LIVE_DRAG))).unwrap_or(false);
+    let live = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(LIVE_DRAG))).unwrap_or(false);
     let ours = app.session.active().and_then(|d| d.interaction.as_ref()).is_some_and(|i| i.label == LIVE_LABEL);
     if live && ours {
         app.session.cancel_interaction().ok();
         app.sync_views();
     }
-    ctx.data_mut(|d| d.remove::<(String, [f32; 3])>(egui::Id::new(POPOVER_HSB)));
+    ctx.data_mut(|d| d.remove::<(String, [f32; 3])>(egui::Id::unique(POPOVER_HSB)));
 }
 
 /// Escape while the harakat colour popover is open is the popover's alone: it closes the popover
@@ -795,7 +795,7 @@ fn cancel_drag(app: &mut VectorcraftApp, ctx: &egui::Context) {
 /// they read the keys, and before the panels are drawn; the focus is left where it is. → it took
 /// the Escape.
 pub(crate) fn escape_popover(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
-    let Some(popover) = ctx.data(|d| d.get_temp::<egui::Id>(egui::Id::new(WELL_POPOVER))) else { return false };
+    let Some(popover) = ctx.data(|d| d.get_temp::<egui::Id>(egui::Id::unique(WELL_POPOVER))) else { return false };
     let open = ctx.data(|d| d.get_temp::<u64>(popover)).is_some_and(|f| f + 1 >= ctx.cumulative_frame_nr());
     if !open || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
         return false;
@@ -846,16 +846,16 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
     }
     chevron(p, pos2(rect.right() - 7.0, rect.center().y), t.text_dim);
     let tip = tl!("Harakat colour: click for any colour");
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tip));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tip));
     out.push(Drawn { key: "well", rect, tip: tip.into(), ..Default::default() });
     let resp = resp.on_hover_text(tip).on_disabled_hover_text(tip);
     let toggle = resp.clicked();
-    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(WELL_POPOVER), open_id));
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(WELL_POPOVER), open_id));
     widgets::popover(&resp, toggle, |ui| {
         ui.set_width(196.0);
         // The colour being edited: kept while it is the one shown, so a grey keeps its hue.
         let hex = hex_digits(shown);
-        let kept = ui.ctx().data(|d| d.get_temp::<(String, [f32; 3])>(egui::Id::new(POPOVER_HSB)));
+        let kept = ui.ctx().data(|d| d.get_temp::<(String, [f32; 3])>(egui::Id::unique(POPOVER_HSB)));
         let [h, s, b] = match kept {
             Some((k, hsb)) if k == hex && !mixed => hsb,
             _ => shown.to_hsb(),
@@ -863,7 +863,7 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
         let mut pick: Option<([f32; 3], Live)> = None;
         let at = |x: f32, y: f32| crate::panels::c32(&Color::from_hsb(h, x, 1.0 - y));
         let field_at = ui.next_widget_position();
-        let field_id = ui.id().with("varos-harakat-field");
+        let field_id = ui.scope_id().with("varos-harakat-field");
         if let (Some((x, y)), phase) = widgets::color_field(ui, "varos-harakat-field", vec2(196.0, 96.0), (s, 1.0 - b), &at) {
             pick = Some(([h, x, 1.0 - y], phase));
         }
@@ -881,7 +881,7 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
         ui.add_space(2.0);
         let mut typed = None;
         let hex_row = ui.horizontal(|ui| {
-            let hex_id = ui.id().with("varos-harakat-hex");
+            let hex_id = ui.scope_id().with("varos-harakat-hex");
             if let Some(text) = control_corners(ui, |ui| widgets::hex_field(ui, "varos-harakat-hex", if mixed { "" } else { &hex })) {
                 typed = parse_hex(&text);
             }
@@ -893,7 +893,7 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
         let preset = ui.horizontal(|ui| presets(ui, current, "popover", &mut vec![])).inner;
         // Egui ends a drag on Escape as if it were released: that Escape drops the colour dragged
         // instead (when the shortcuts did not take it first, [`escape_popover`]).
-        let live = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new(LIVE_DRAG))).unwrap_or(false);
+        let live = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique(LIVE_DRAG))).unwrap_or(false);
         if live && ui.input(|i| i.key_pressed(Key::Escape)) {
             cancel_drag(app, ui.ctx());
             return;
@@ -901,8 +901,8 @@ fn colour_well(app: &mut VectorcraftApp, ui: &mut Ui, shown: &Color, mixed: bool
         if let Some((hsb, phase)) = pick {
             let c = Color::from_hsb(hsb[0], hsb[1], hsb[2]);
             ui.ctx().data_mut(|d| {
-                d.insert_temp(egui::Id::new(POPOVER_HSB), (hex_digits(&c), hsb));
-                d.insert_temp(egui::Id::new(LIVE_DRAG), phase == Live::Dragging);
+                d.insert_temp(egui::Id::unique(POPOVER_HSB), (hex_digits(&c), hsb));
+                d.insert_temp(egui::Id::unique(LIVE_DRAG), phase == Live::Dragging);
             });
             colour_harakat(app, ui.ctx(), &c, phase);
         } else if let Some(c) = typed.or(preset) {

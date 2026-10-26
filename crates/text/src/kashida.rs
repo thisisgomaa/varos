@@ -66,6 +66,13 @@ pub(crate) fn joins(g: &SGlyph) -> bool {
     g.inline.is_none() && (arabic::joining_script(g.ch) || g.ch == arabic::TATWEEL)
 }
 
+/// Is `next` a virtual tatweel (zero length, at the byte of the letter it extends) drawn in the
+/// cluster of `letter`? Upstream treats a zero-length glyph (a list marker) as a cluster of its
+/// own; a kashida's tatweel stays with its letter, in line breaking and in visual order.
+pub(crate) fn extends(letter: &SGlyph, next: &SGlyph) -> bool {
+    letter.len > 0 && next.len == 0 && next.ch == arabic::TATWEEL && next.inline.is_none()
+}
+
 /// The end of the word the overflowing glyph `j` is in, with the spaces after it: where a line
 /// ends that holds a joined word too wide for it, which overflows whole rather than being cut.
 pub(crate) fn word_end(g: &[SGlyph], j: usize) -> usize {

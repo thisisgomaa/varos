@@ -1,7 +1,36 @@
 //! Preferences › Type › Highlight Alternate Glyphs (#394): OpenType substitutions get a pink
-//! cell behind them on screen when the preference is on.
+//! cell behind them on screen when the preference is on. Preferences › Type › Highlight
+//! Substituted Fonts does the same for text drawn in a substitute for a missing font.
 
 use super::*;
+
+/// Highlight Substituted Fonts follows the preference passed in [`RenderOptions`] for every
+/// document, whatever a document's own setup stored: on, type in a missing font has pink behind
+/// it; off, it does not.
+#[test]
+fn highlight_substituted_fonts_follows_the_preference_in_every_document() {
+    use vectorcraft_doc::text::{CharStyle, TextObject};
+    use vectorcraft_doc::{Node, NodeKind};
+    use vectorcraft_geom::Point;
+
+    let on = RenderOptions { background: Some([255, 255, 255, 255]), highlight_substitutions: true, ..Default::default() };
+    assert!(on.highlight_substituted_fonts, "on by default");
+    let off = RenderOptions { highlight_substituted_fonts: false, ..on.clone() };
+    let pinkish = |px: &[u8]| px.chunks(4).filter(|p| p[0] > 200 && p[1] < 180 && p[2] > 150 && p[2] < 230).count();
+    // A document saved with the old Document Setup value on, and one with it off.
+    for stored in [true, false] {
+        let mut d = Document::new(200.0, 100.0);
+        d.setup.highlight_substituted_fonts = stored;
+        let style = CharStyle { size: 30.0, font_family: "No Such Family".into(), ..Default::default() };
+        let n = Node::new(d.alloc_id(), NodeKind::Text(Box::new(TextObject::point(Point::new(10.0, 60.0), "Hamburg", style))));
+        let l = d.layers[0].id;
+        d.insert(Some(l), 0, n).unwrap();
+        let with = Renderer::new().render(&d, 200, 100, Affine::IDENTITY, &on);
+        let without = Renderer::new().render(&d, 200, 100, Affine::IDENTITY, &off);
+        assert!(pinkish(&with.pixels) > 50, "stored {stored}: the preference on highlights the text");
+        assert_eq!(pinkish(&without.pixels), 0, "stored {stored}: the preference off leaves no highlight");
+    }
+}
 
 #[test]
 fn is_opentype_alternate_marks_ligatures_and_forms() {
@@ -80,6 +109,8 @@ fn glyphs(t: &vectorcraft_doc::text::TextObject) -> Vec<(usize, usize, u32)> {
 /// required shaping, not alternates, so ordinary Arabic text shows no pink.
 #[test]
 fn arabic_joining_forms_are_not_alternates() {
+    // Looking up an installed font loads it, which changes the fonts.
+    let _adding = crate::tests_fontchange::adding_fonts();
     let Some(style) = arabic_style("arabic_joining_forms_are_not_alternates") else { return };
     let t = text("خلطة مبتكرة من اللومي الحساوي", style);
     // The words are shaped: most glyphs are not their letter's cmap glyph.
@@ -90,6 +121,8 @@ fn arabic_joining_forms_are_not_alternates() {
 /// #394: the lam-alef ligature is required (`rlig`), so it isn't highlighted either.
 #[test]
 fn lam_alef_is_not_an_alternate() {
+    // Looking up an installed font loads it, which changes the fonts.
+    let _adding = crate::tests_fontchange::adding_fonts();
     let Some(style) = arabic_style("lam_alef_is_not_an_alternate") else { return };
     for s in ["لا", "سلام", "الاسم"] {
         assert_eq!(alternates(&text(s, style.clone())), 0, "{s}");
@@ -100,6 +133,8 @@ fn lam_alef_is_not_an_alternate() {
 /// discretionary alternate…) is highlighted on the glyphs it changes, and only on those.
 #[test]
 fn optional_features_on_arabic_flag_only_the_glyphs_they_change() {
+    // Looking up an installed font loads it, which changes the fonts.
+    let _adding = crate::tests_fontchange::adding_fonts();
     let db = vectorcraft_text::FontDb::global();
     let s = "خلطة مبتكرة من اللومي الحساوي";
     // Arabic fonts that may have optional features; the first installed one with a feature that

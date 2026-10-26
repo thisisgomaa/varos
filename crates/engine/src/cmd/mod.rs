@@ -3,13 +3,14 @@
 pub(crate) mod appearance;
 mod assets;
 mod attributes;
+pub mod brushlib;
 mod brushsym;
 mod buildcmds;
 pub mod clipboard;
 mod colorcmds;
 pub mod colormgmt;
 pub mod colortheme;
-mod create;
+pub(crate) mod create;
 mod css;
 mod cut;
 pub(crate) mod dimension;
@@ -28,6 +29,7 @@ pub mod flatten;
 pub mod fontfiles;
 mod fonts;
 pub(crate) mod freeform;
+pub mod globaledit;
 pub(crate) mod gradient;
 pub(crate) mod graph;
 mod halftone;
@@ -50,16 +52,16 @@ mod object;
 pub(crate) mod objects_on_path;
 mod opacitymask;
 mod overprint;
-mod package;
+pub mod package;
 mod paint;
 mod panelcmds;
 pub mod params;
 mod path;
-mod pathops;
+pub(crate) mod pathops;
 mod patterncmds;
 pub mod pdfcmds;
 pub mod perspgrid;
-pub(crate) mod place;
+pub mod place;
 pub mod plugin;
 pub mod prefscmds;
 pub mod print;
@@ -79,6 +81,7 @@ mod style;
 pub mod stylelib;
 mod swatch;
 pub mod swatchlib;
+pub mod symbollib;
 pub(crate) mod tabs;
 mod textedit;
 pub mod textstyles;
@@ -218,6 +221,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(object::specs());
         v.extend(path::specs());
         v.extend(select::specs());
+        v.extend(globaledit::specs());
         v.extend(wand::specs());
         v.extend(paint::specs());
         // Split out of `paint` (M3.8); kept next to it so lists in registry order (the command
@@ -271,6 +275,8 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(freeform::specs());
         v.extend(flatten::specs());
         v.extend(stylelib::specs());
+        v.extend(symbollib::specs());
+        v.extend(brushlib::specs());
         v.extend(library::specs());
         v.extend(expand::specs());
         v.extend(attributes::specs());
@@ -323,19 +329,41 @@ pub(crate) fn f64_or(p: &Value, key: &str, default: f64) -> f64 {
 pub(crate) fn f64_req(p: &Value, key: &str, cmd: &str) -> Result<f64> {
     p.get(key).and_then(Value::as_f64).ok_or_else(|| bad(cmd, format!("missing number `{key}`")))
 }
-/// Error unless each of `keys` that `p` gives is a number (or null): an optional number read with
-/// [`f64_or`] would otherwise fall back to its default for a string such as `"60 mm"` (#1952).
+/// The number `p` gives for `key`, or `default` when `p` leaves it out or gives null. Any other
+/// value, such as `"40"`, is an error: "`{key}` must be a number, not {v}".
+pub(crate) fn number_or(p: &Value, key: &str, default: f64, cmd: &str) -> Result<f64> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => v.as_f64().ok_or_else(|| bad(cmd, format!("`{key}` must be a number, not {v}"))),
+    }
+}
+/// Error unless each of `keys` that `p` gives is a number (or null), as [`number_or`] reads them: an
+/// optional number read with [`f64_or`] would otherwise fall back to its default for a string such as
+/// `"60 mm"` (#1952).
 pub(crate) fn check_numbers(p: &Value, keys: &[&str], cmd: &str) -> Result<()> {
     for key in keys {
-        match p.get(*key) {
-            None | Some(Value::Null) | Some(Value::Number(_)) => {}
-            Some(v) => return Err(bad(cmd, format!("`{key}` must be a number, not {v}"))),
-        }
+        number_or(p, key, 0.0, cmd)?;
     }
     Ok(())
 }
 pub(crate) fn bool_or(p: &Value, key: &str, default: bool) -> bool {
     p.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+/// The true or false `p` gives for `key`, or `default` when `p` leaves it out or gives null. Any
+/// other value, such as `"false"`, is an error: "`{key}` must be true or false".
+pub(crate) fn switch_or(p: &Value, key: &str, default: bool, cmd: &str) -> Result<bool> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => v.as_bool().ok_or_else(|| bad(cmd, format!("`{key}` must be true or false"))),
+    }
+}
+/// Error unless each of `keys` that `p` gives is true or false (or null), as [`switch_or`] reads
+/// them.
+pub(crate) fn check_switches(p: &Value, keys: &[&str], cmd: &str) -> Result<()> {
+    for key in keys {
+        switch_or(p, key, false, cmd)?;
+    }
+    Ok(())
 }
 pub(crate) fn str_param<'a>(p: &'a Value, key: &str) -> Option<&'a str> {
     p.get(key).and_then(Value::as_str)
@@ -345,6 +373,26 @@ pub(crate) fn id_param(p: &Value, key: &str) -> Option<NodeId> {
 }
 pub(crate) fn ids_param(p: &Value, key: &str) -> Option<Vec<NodeId>> {
     p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(NodeId).collect())
+}
+/// The objects `p` gives `command`: its `ids`, else its `id` as `ids` of one (as [`targets`] reads
+/// them), each checked ([`checked_id`]): a malformed one, or one naming no object, is an error,
+/// never the selection. `None` when it gives neither (or gives them as `null`).
+pub(crate) fn given_objects(s: &Session, p: &Value, command: &str) -> Result<Option<Vec<NodeId>>> {
+    if p.get("ids").is_some_and(|v| !v.is_null()) {
+        return checked_ids_param(s, p, "ids", command).map(Some);
+    }
+    match p.get("id").filter(|v| !v.is_null()) {
+        None => Ok(None),
+        // A step reference a batch couldn't resolve, as `targets` reports it, under the command.
+        Some(Value::String(r)) if r.starts_with('$') => {
+            Err(bad(command, format!("`id` is the step reference {r:?}, which only `run` and `command_batch` resolve")))
+        }
+        Some(v) => Ok(Some(vec![checked_id(s, v, command)?])),
+    }
+}
+/// `v` as an index, a count or a byte offset: past `usize::MAX` reads as `usize::MAX`, past the end of any list.
+pub(crate) fn index(v: u64) -> usize {
+    usize::try_from(v).unwrap_or(usize::MAX)
 }
 /// Validate all explicit targets before a command changes the document or selection.
 pub(crate) fn checked_ids_param(s: &Session, p: &Value, key: &str, command: &str) -> Result<Vec<NodeId>> {
@@ -456,10 +504,12 @@ pub(crate) fn ok() -> Result<Value> {
 }
 
 /// Leaves whose appearance a paint command changes: groups and layers expand to their contents,
-/// and compound paths own their children's appearance.
+/// and compound paths own their children's appearance, so a member stands for its compound path
+/// (#3692), which is listed once.
 pub(crate) fn leaf_targets(s: &Session, ids: &[NodeId]) -> Result<Vec<NodeId>> {
     use vectorcraft_doc::NodeKind;
     let d = &s.doc()?.doc;
+    let compound = |id: NodeId| d.parent_of(id).filter(|p| matches!(d.node(*p).map(|n| &n.kind), Some(NodeKind::Compound { .. })));
     let mut out = vec![];
     for id in ids {
         let Some(n) = d.node(*id) else { continue };
@@ -469,11 +519,13 @@ pub(crate) fn leaf_targets(s: &Session, ids: &[NodeId]) -> Result<Vec<NodeId>> {
                     out.push(c.id)
                 }
             }),
-            _ => out.push(*id),
+            _ => out.push(compound(*id).unwrap_or(*id)),
         }
     }
     let comp: Vec<NodeId> = out.iter().filter(|id| matches!(d.node(**id).map(|n| &n.kind), Some(NodeKind::Compound { .. }))).copied().collect();
     out.retain(|id| !comp.iter().any(|c| d.parent_of(*id) == Some(*c)));
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|id| seen.insert(*id));
     Ok(out)
 }
 
@@ -491,6 +543,7 @@ pub(crate) fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
 }
 
 pub(crate) use edit::{settle_interaction, typing_in_progress};
+pub(crate) use object::bounds_rewrite;
 pub(crate) use vectorcraft_doc::range::parse_range;
 
 /// A date param in Unix seconds that defaults to the clock: `None` when absent (now, see
@@ -518,6 +571,9 @@ pub use opacitymask::TransparencyInfo;
 /// Eyedropper Options (`Prefs::eyedropper`).
 pub use xform::{AppearanceAttrs, EyedropperAttrs, EyedropperOptions, FillAttrs, StrokeAttrs};
 
+/// Pathfinder Options (`Prefs::pathfinder`).
+pub use pathops::{PATHFINDER_PRECISION_RANGE, PathfinderOptions};
+
 /// The Attributes panel's state ([`Session::attributes_info`]).
 pub use overprint::AttributesInfo;
 
@@ -529,6 +585,9 @@ pub use flatten::FlattenerPreset;
 
 /// The shapes a group selected alone gives the Pathfinder panel.
 pub use pathops::shape_count;
+
+/// The gaps View › Show Live Paint Gaps shows on a Live Paint group.
+pub use buildcmds::live_paint_gaps;
 
 /// Command ids kept only so older scripts keep working: `(alias, the command it duplicates)`.
 /// They run as before but the command palette leaves them out (it lists the command once).

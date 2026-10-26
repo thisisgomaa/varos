@@ -216,7 +216,9 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, prefs: &
     ui.scope_builder(egui::UiBuilder::new().max_rect(header).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
         ui.spacing_mut().item_spacing.y = 6.0;
         let index = MODES.iter().position(|m| *m == mode).unwrap_or(0);
-        if let Some(i) = super::control_corners(ui, |ui| crate::widgets::dropdown_names(ui, "varos-picker-mode", NAMES[index], &NAMES, MODE_W)) {
+        if let Some(i) = super::control_corners(ui, |ui| {
+            crate::widgets::dropdown_names_named(ui, "varos-picker-mode", Some(tl!("Color Mode")), NAMES[index], &NAMES, MODE_W)
+        }) {
             prefs.mode = MODES[i];
         }
         super::fields::hex(ui, st, v, acts);
@@ -226,7 +228,7 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, prefs: &
         let row = Rect::from_min_size(origin + vec2(PAD, HEADER_H + index as f32 * ROW_H), vec2(super::W - PAD * 2.0, ROW_H));
         ui.painter().text(row.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::monospace(11.0), t.text_dim);
         let track = Rect::from_min_size(egui::pos2(row.left() + LABEL_W, row.center().y - TRACK_H / 2.0), vec2(SLIDER_W, TRACK_H));
-        let hit = ui.interact(track.expand(KNOB_R), ui.id().with(("varos-picker-channel", index)), Sense::click_and_drag());
+        let hit = ui.interact(track.expand(KNOB_R), ui.scope_id().with(("varos-picker-channel", index)), Sense::click_and_drag());
         // The release frame's own movement counts too (`drag_stopped`), for this channel's gesture.
         let this = st.gesture == Some(Gesture::Channel(index));
         if ((hit.is_pointer_button_down_on() || hit.clicked()) && (st.gesture.is_none() || this)) || (hit.drag_stopped() && this) {
@@ -245,7 +247,15 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, prefs: &
         let typed = ui
             .scope_builder(egui::UiBuilder::new().max_rect(field).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
                 super::control_corners(ui, |ui| {
-                    crate::widgets::plain_field(ui, ("varos-picker-value", index), values[index].round() as f64, "", 0, field.width())
+                    crate::widgets::plain_field_named(
+                        ui,
+                        ("varos-picker-value", index),
+                        Some(label),
+                        values[index].round() as f64,
+                        "",
+                        0,
+                        field.width(),
+                    )
                 })
             })
             .inner;

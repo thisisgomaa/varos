@@ -61,7 +61,7 @@ pub(crate) fn instant(
     alt_rate: f64,
     (factor, scroll): (f64, Vec2),
 ) -> (f64, Vec2) {
-    let id = egui::Id::new("varos-zoom-wheel-gesture");
+    let id = egui::Id::unique("varos-zoom-wheel-gesture");
     let mut gesture: Gesture = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     let out = ui.input(|i| frame(i, &mut gesture, wheel_zooms, alt, glide, line, page, alt_rate, (factor, scroll)));
     ui.data_mut(|d| d.insert_temp(id, gesture));
@@ -100,7 +100,7 @@ fn frame(
     };
     let mut alt_turn = false;
     for e in &i.events {
-        if let Event::MouseWheel { unit, delta, modifiers, phase } = e {
+        if let Event::MouseWheel { unit, delta, modifiers, phase, .. } = e {
             let Some(held) = gesture.step(*phase, *modifiers) else { continue };
             let d = match unit {
                 MouseWheelUnit::Point => *delta,

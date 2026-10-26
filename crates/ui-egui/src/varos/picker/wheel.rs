@@ -170,7 +170,8 @@ fn marker(p: &egui::Painter, c: Pos2, r: f32, color: Color32) {
 /// `harmony` marks the linked hues of the Harmony tab.
 pub(super) fn wheel(ui: &mut Ui, rect: Rect, st: &mut State, harmony: Option<super::Rule>) {
     let c = rect.min + vec2(CENTER[0], CENTER[1]);
-    let hit = ui.interact(Rect::from_center_size(c, egui::Vec2::splat(RING_R * 2.0)), ui.id().with("varos-picker-wheel"), Sense::click_and_drag());
+    let hit =
+        ui.interact(Rect::from_center_size(c, egui::Vec2::splat(RING_R * 2.0)), ui.scope_id().with("varos-picker-wheel"), Sense::click_and_drag());
     let pos = hit.interact_pointer_pos();
     if (hit.is_pointer_button_down_on() || hit.clicked())
         && st.gesture.is_none()
@@ -224,7 +225,7 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &super::View, p
     let t = Tokens::get(ui.ctx());
     // Default: two squares side by side, the default fill (white) and stroke (black) (D).
     let default = Rect::from_min_size(rect.min + vec2(DEFAULT_POS[0], DEFAULT_POS[1]), vec2(DEFAULT_SIZE * 2.0, DEFAULT_SIZE));
-    let resp = ui.interact(default, ui.id().with("varos-picker-default"), Sense::click());
+    let resp = ui.interact(default, ui.scope_id().with("varos-picker-default"), Sense::click());
     let edge = Stroke::new(1.0, if resp.hovered() { t.text } else { t.text_dim });
     for (i, fill) in [WHITE, BLACK].into_iter().enumerate() {
         let r = Rect::from_min_size(default.min + vec2(i as f32 * DEFAULT_SIZE, 0.0), egui::Vec2::splat(DEFAULT_SIZE));

@@ -267,11 +267,11 @@ pub(crate) enum Action {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("varos-picker-state")
+    egui::Id::unique("varos-picker-state")
 }
 
 fn rect_id() -> egui::Id {
-    egui::Id::new("varos-picker-rect")
+    egui::Id::unique("varos-picker-rect")
 }
 
 /// The picker's height for `prefs`.
@@ -342,7 +342,7 @@ fn header(ui: &mut Ui, origin: Pos2, prefs: &mut Prefs, eyedropper: bool, acts: 
     ];
     for (i, (tab, icon, tip)) in tabs.into_iter().enumerate() {
         let r = Rect::from_min_size(origin + vec2(PAD + i as f32 * (TAB_W + TAB_GAP), (HEADER_H - TAB_H) / 2.0), vec2(TAB_W, TAB_H));
-        let resp = ui.interact(r, ui.id().with(("varos-picker-tab", i)), if tab.is_some() { Sense::click() } else { Sense::hover() });
+        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-tab", i)), if tab.is_some() { Sense::click() } else { Sense::hover() });
         tab_button(ui, &t, r, icon, tab == Some(prefs.tab), resp.hovered(), tab.is_some());
         if resp.on_hover_text(tip).clicked()
             && let Some(tab) = tab
@@ -355,7 +355,7 @@ fn header(ui: &mut Ui, origin: Pos2, prefs: &mut Prefs, eyedropper: bool, acts: 
     for (r, icon, tip, on, action) in
         [(eye, "pipette", tl!("Eyedropper Tool"), eyedropper, Action::Eyedropper), (close, "x", tl!("Close"), false, Action::Close)]
     {
-        let resp = ui.interact(r, ui.id().with(("varos-picker-header", icon)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-header", icon)), Sense::click());
         tab_button(ui, &t, r, icon, on, resp.hovered(), true);
         if resp.on_hover_text(tip).clicked() {
             acts.push(action);
@@ -611,7 +611,7 @@ pub(crate) fn close(app: &mut VectorcraftApp) {
     if crate::menus::checked(app, "window.panel", &json!({ "panel": PANEL })) != Some(true) {
         return;
     }
-    if crate::varos::panel_stack::keeps_icon(app, PANEL) {
+    if crate::varos::panel_stack::in_card(app, PANEL) {
         // Its card closes (the panel only, when others share it).
         crate::varos::panel_stack::toggle(app, PANEL);
     } else if app.ui.open_panel.as_deref() == Some(PANEL) {

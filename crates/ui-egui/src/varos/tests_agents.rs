@@ -463,7 +463,8 @@ fn only_a_save_writes_over_the_documents_own_file() {
 }
 
 /// A window capture is written frames after its request: it is still held to that request's
-/// guards, so two captures asked for at the same new path don't both write it.
+/// guards, so two captures asked for at the same new path don't both write it. (Upstream's egui
+/// 0.37 capture pipeline issues one capture at a time, each completed through its callback.)
 #[test]
 fn a_capture_written_later_keeps_its_requests_guard() {
     let (mut app, tx) = app_with_writer();
@@ -476,18 +477,39 @@ fn a_capture_written_later_keeps_its_requests_guard() {
         tx.send(req.with_actor(guarded())).unwrap();
         replies.push(reply);
     }
-    app.drain_control(&egui::Context::default());
-    assert!(replies.iter().all(|r| r.try_recv().is_err()), "both wait for a frame");
-    let first = app.screenshot_token;
-    let image = std::sync::Arc::new(egui::ColorImage::new([2, 2], vec![egui::Color32::WHITE; 4]));
-    let events = [first - 1, first]
-        .into_iter()
-        .map(|token| egui::Event::Screenshot { viewport_id: egui::ViewportId::ROOT, user_data: egui::UserData::new(token), image: image.clone() })
-        .collect();
     let ctx = egui::Context::default();
-    ctx.begin_pass(egui::RawInput { events, ..Default::default() });
-    app.collect_screenshots(&ctx);
-    ctx.end_pass().textures_delta.clear();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 200.0));
+    // One host frame: the control channel, then the UI (which issues a due capture).
+    let frame = |app: &mut VectorcraftApp| {
+        app.begin_host_iteration();
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+            app.tick(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        out.viewport_output.get(&egui::ViewportId::ROOT).and_then(|v| {
+            v.commands.iter().rev().find_map(|c| match c {
+                egui::ViewportCommand::Screenshot(callback) => Some(callback.clone()),
+                _ => None,
+            })
+        })
+    };
+    let image = std::sync::Arc::new(egui::ColorImage::filled([320, 200], egui::Color32::WHITE));
+    for _ in 0..2 {
+        let mut callback = None;
+        for _ in 0..64 {
+            for q in &mut app.queued_screenshots {
+                q.due_ms = f64::MIN;
+            }
+            callback = frame(&mut app);
+            if callback.is_some() {
+                break;
+            }
+        }
+        callback.expect("the settled frame issues the capture").complete(image.clone());
+        app.begin_host_iteration();
+        app.tick(&ctx);
+    }
     let answers: Vec<Value> = replies.iter().map(|r| r.try_recv().unwrap()).collect();
     assert_eq!(answers[0]["ok"], true, "{}", answers[0]);
     assert!(answers[1]["error"].as_str().unwrap_or("").contains("never overwrite"), "{}", answers[1]);
