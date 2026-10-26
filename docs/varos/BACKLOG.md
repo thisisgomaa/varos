@@ -64,3 +64,6 @@ Tags: **[done, owner to look]** = built, gates green, waiting for the owner's ey
 13. **Native-speaker review of translations.** The new Arabic Essentials, kashida and font-menu
     labels were machine-written into 23 catalogs. *Acceptance:* a native reader signs off each
     language, or the rows fall back to English on purpose.
+
+## AI panel (owner request 2026-10-26)
+See `docs/varos/AI_PANEL_PLAN.md` — A0 mockup → A1 Ask via Codex → A2 Claude Code → A3 Images with the user's own key → A4 edit/variations → A5 API agent loop → A6 History. Selling point: own model, own key, own files, no subscription.
