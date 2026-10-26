@@ -24,7 +24,6 @@ pub(crate) mod profile;
 pub(crate) mod picker;
 // Varos: icon panels open as independent cards beside the icon column.
 pub(crate) mod panel_stack;
-pub(crate) mod shortcuts;
 #[cfg(test)]
 mod tests_agents;
 #[cfg(test)]

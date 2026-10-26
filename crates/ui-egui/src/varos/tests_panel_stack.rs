@@ -46,8 +46,9 @@ impl Harness {
         let screen = Rect::from_min_size(egui::Pos2::ZERO, self.screen);
         let input = egui::RawInput { time: Some(self.time), events, screen_rect: Some(screen), ..Default::default() };
         let app = &mut self.app;
+        app.begin_host_iteration();
         let mut out = self.ctx.run_ui(input, |ui| {
-            app.logic(ui.ctx());
+            app.tick(ui.ctx());
             app.ui(ui);
         });
         out.textures_delta.clear();
@@ -77,28 +78,48 @@ impl Harness {
         self.settle();
     }
 
-    /// The icon column's left edge, as drawn last.
-    fn column(&self) -> f32 {
-        self.ctx.data(|d| d.get_temp::<f32>(egui::Id::new("dock-icon-column-left"))).unwrap()
+    /// The dock area's controls as drawn last.
+    fn hits(&self) -> Vec<(craft_ui::docking::Hit<String>, Rect)> {
+        crate::panel_docking::hit_rects(&self.ctx)
     }
 
-    /// The icon of panel `id` in the column (the column holds the icon panels in
-    /// `ICON_PANEL_GROUPS` order; an open card keeps its icon there).
+    /// The icon columns' bounds, as drawn last.
+    fn icons(&self) -> Rect {
+        self.hits()
+            .into_iter()
+            .filter(|(hit, _)| matches!(hit, craft_ui::docking::Hit::Icon(_) | craft_ui::docking::Hit::IconGrip(_)))
+            .map(|(_, r)| r)
+            .reduce(|a, b| a.union(b))
+            .expect("an icon column is drawn")
+    }
+
+    /// The icon column's left edge, as drawn last.
+    fn column(&self) -> f32 {
+        self.icons().left()
+    }
+
+    /// The docked groups' left edge (their tabs and bars), as drawn last; the column's when none
+    /// shows.
+    fn dock_left(&self) -> f32 {
+        use craft_ui::docking::Hit;
+        self.hits()
+            .into_iter()
+            .filter(|(hit, _)| match hit {
+                Hit::Tab(p) | Hit::DragBar(p) | Hit::ColumnBar(p) => {
+                    p != crate::panel_docking::CANVAS && !crate::panel_docking::floats(&self.app.ui, p)
+                }
+                _ => false,
+            })
+            .map(|(_, r)| r.left())
+            .fold(self.column(), f32::min)
+    }
+
+    /// The icon of panel `id` in its column (an open card keeps its icon there).
     fn icon(&self, id: &str) -> Rect {
-        let left = self.column();
-        let mut icons: Vec<Rect> = self.ctx.viewport(|vp| {
-            vp.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == vec2(30.0, 30.0)).map(|w| w.rect).collect()
-        });
-        icons.retain(|r| r.left() >= left - 1.0);
-        icons.sort_by(|a, b| a.top().total_cmp(&b.top()));
-        icons.dedup();
-        let order: Vec<&str> = crate::state::ICON_PANEL_GROUPS
-            .iter()
-            .flat_map(|g| g.iter().copied())
-            .filter(|p| crate::state::ICON_PANELS.iter().any(|e| e.0 == *p))
-            .collect();
-        assert_eq!(icons.len(), order.len(), "one icon per icon panel, cards' too");
-        icons[order.iter().position(|p| *p == id).expect("an icon panel")]
+        self.hits()
+            .into_iter()
+            .find_map(|(hit, r)| matches!(&hit, craft_ui::docking::Hit::Icon(p) if p == id).then_some(r))
+            .unwrap_or_else(|| panic!("{id}'s icon is drawn"))
     }
 
     /// Click panel `id`'s icon where it is drawn now.
@@ -114,19 +135,19 @@ impl Harness {
 
     /// Panel `first`'s card as drawn last.
     fn card(&self, first: &str) -> Rect {
-        let id = egui::Id::new("vectorcraft-panel-docking").with(("floating", &first.to_string()));
+        let id = egui::Id::unique("vectorcraft-panel-docking").with(("floating", &first.to_string()));
         self.ctx.memory(|m| m.area_rect(id)).unwrap_or_else(|| panic!("{first}'s card is drawn"))
     }
 
     /// Panel `first`'s card was drawn in the last frame.
     fn card_drawn(&self, first: &str) -> bool {
-        let id = egui::Id::new("vectorcraft-panel-docking").with(("floating", &first.to_string()));
+        let id = egui::Id::unique("vectorcraft-panel-docking").with(("floating", &first.to_string()));
         self.ctx.memory(|m| m.areas().visible_last_frame(&egui::LayerId::new(egui::Order::Middle, id)))
     }
 
     /// Panel `p`'s tab in its card's header, as drawn last.
     fn tab(&self, p: &str) -> Rect {
-        self.ctx.read_response(egui::Id::new("varos-card-tab").with(p)).unwrap_or_else(|| panic!("{p}'s tab is drawn")).rect
+        self.ctx.read_response(egui::Id::unique("varos-card-tab").with(p)).unwrap_or_else(|| panic!("{p}'s tab is drawn")).rect
     }
 
     /// A point of the empty part of card `first`'s header (between its tabs and its ×).
@@ -148,14 +169,19 @@ impl Harness {
         self.frame(vec![button(last, false)]);
     }
 
-    /// The floating groups' panels.
+    /// The cards' panels.
     fn groups(&self) -> Vec<Vec<&str>> {
-        self.app.ui.floating_panels.iter().map(|g| g.panels.iter().map(String::as_str).collect()).collect()
+        self.app.ui.varos_panel_stack.live.iter().map(|c| c.panels.iter().map(String::as_str).collect()).collect()
+    }
+
+    /// The tab in front of the first card.
+    fn front(&self) -> String {
+        let c = &self.app.ui.varos_panel_stack.live[0];
+        c.panels[c.active].clone()
     }
 }
 
-/// Character then Paragraph from their icons: each opens as a card of its own (an upstream
-/// floating group), both stay open, neither overlaps the other, both sit left of the dock, each
+/// Character then Paragraph from their icons: each opens as a card of its own, both stay open, neither overlaps the other, both sit left of the dock, each
 /// icon stays in the column and is lit. Character's icon again closes only Character's card.
 #[test]
 fn each_icon_opens_its_own_card_and_the_others_stay_open() {
@@ -164,7 +190,7 @@ fn each_icon_opens_its_own_card_and_the_others_stay_open() {
     h.tap("character");
     h.tap("paragraph");
     assert_eq!(h.cards(), ["character", "paragraph"]);
-    assert_eq!(h.groups(), [["character"], ["paragraph"]], "two independent floating groups");
+    assert_eq!(h.groups(), [["character"], ["paragraph"]], "two independent cards");
     assert_eq!(h.app.ui.open_panel.as_deref(), Some("paragraph"), "upstream's open panel is the newest card");
     assert!(panel_stack::is_open(&h.app, "character") && panel_stack::is_open(&h.app, "paragraph"), "both icons lit");
     let (a, b) = (h.card("character"), h.card("paragraph"));
@@ -287,7 +313,7 @@ fn three_cards_in_a_short_window_stay_on_screen() {
 fn a_card_is_as_tall_as_its_panel() {
     let mut h = Harness::new();
     let note = |h: &Harness| {
-        h.ctx.data(|d| d.get_temp::<(egui::Vec2, egui::Vec2, u64)>(egui::Id::new(("varos-card-body", "align")))).map(|(c, v, _)| (c, v)).unwrap()
+        h.ctx.data(|d| d.get_temp::<(egui::Vec2, egui::Vec2, u64)>(egui::Id::unique(("varos-card-body", "align")))).map(|(c, v, _)| (c, v)).unwrap()
     };
     // Opened outside a click (as a Properties button does): the frame that opens it asks for the
     // next one, which draws it at its first size and asks for the one that fits it.
@@ -449,9 +475,9 @@ fn a_card_never_opens_over_the_dock() {
     h.screen = vec2(1000.0, 1400.0);
     h.settle();
     h.tap("character");
-    let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
+    let dock = h.dock_left();
     let reopened = h.card("character");
-    assert!(reopened.right() <= h.column() && reopened.right() <= dock.left(), "{saved:?} -> {reopened:?}, column {}", h.column());
+    assert!(reopened.right() <= h.column() && reopened.right() <= dock, "{saved:?} -> {reopened:?}, column {}", h.column());
     // Saved open in the wide window, loaded in the narrow one.
     let mut wide = Harness::new();
     wide.tap("paragraph");
@@ -461,9 +487,9 @@ fn a_card_never_opens_over_the_dock() {
     let mut narrow = Harness::sized(vec2(1000.0, 1400.0));
     narrow.app.ui = saved.sanitized();
     narrow.settle();
-    let dock = narrow.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
+    let dock = narrow.dock_left();
     let restored = narrow.card("paragraph");
-    assert!(restored.right() <= narrow.column() && restored.right() <= dock.left(), "{restored:?}, dock {dock:?}");
+    assert!(restored.right() <= narrow.column() && restored.right() <= dock, "{restored:?}, dock {dock:?}");
 }
 
 /// With the dock expanded (its tabbed group showing), cards open left of all of it.
@@ -474,10 +500,10 @@ fn cards_open_left_of_the_expanded_dock() {
     for id in ["character", "paragraph", "align"] {
         h.tap(id);
     }
-    let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
+    let dock = h.dock_left();
     for id in ["character", "paragraph", "align"] {
         let c = h.card(id);
-        assert!(c.right() <= dock.left() && c.right() <= h.column(), "{id}: {c:?}, dock {dock:?}");
+        assert!(c.right() <= dock && c.right() <= h.column(), "{id}: {c:?}, dock {dock:?}");
     }
 }
 
@@ -525,8 +551,8 @@ fn a_card_is_never_larger_than_the_room_left_of_the_dock() {
     place.fit = false;
     h.tap("character");
     let card = h.card("character");
-    let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
-    assert!(card.left() >= 0.0 && card.right() <= h.column() && card.right() <= dock.left(), "{card:?}, dock {dock:?}");
+    let dock = h.dock_left();
+    assert!(card.left() >= 0.0 && card.right() <= h.column() && card.right() <= dock, "{card:?}, dock {dock:?}");
 }
 
 /// A card dragged over the dock, or resized across it, goes back left of it once let go.
@@ -560,27 +586,28 @@ fn cascade_steps_moved_into_the_room_stay_distinct() {
     }
 }
 
-/// A workspace saved with cards open brings them back as cards (icons kept and lit).
+/// A workspace switch keeps the cards whose panels stay in an icon column (icons kept and lit);
+/// since the 2026-10-26 merge cards are Varos' own and workspaces (craft-ui layouts) don't carry
+/// them.
 #[test]
-fn a_workspace_restores_its_cards() {
+fn a_workspace_switch_keeps_the_cards() {
     let mut h = Harness::new();
     h.tap("character");
     h.tap("paragraph");
     let saved = crate::workspaces::capture(&h.app.ui, "Cards");
     crate::workspaces::apply(&mut h.app.ui, &crate::workspaces::Workspace::default());
     h.settle();
-    assert!(h.cards().is_empty());
     crate::workspaces::apply(&mut h.app.ui, &saved);
     h.settle();
     assert_eq!(h.cards(), ["character", "paragraph"]);
     for id in ["character", "paragraph"] {
-        assert!(panel_stack::is_open(&h.app, id) && h.card_drawn(id), "{id}: a card again, its icon lit");
+        assert!(panel_stack::is_open(&h.app, id) && h.card_drawn(id), "{id}: a card, its icon lit");
         h.icon(id);
     }
 }
 
-/// Turning Auto-Collapse Iconic Panels on with cards open closes them; the newest pops out of its
-/// icon as upstream's single transient pop-out.
+/// Turning Auto-Collapse Iconic Panels on with cards open closes them; the newest shows as its icon
+/// column's flyout, upstream's single transient pop-out.
 #[test]
 fn auto_collapse_turns_the_cards_into_one_pop_out() {
     let mut h = Harness::new();
@@ -588,9 +615,9 @@ fn auto_collapse_turns_the_cards_into_one_pop_out() {
     h.tap("paragraph");
     h.app.session.execute("prefs.set", &json!({"key": "autoCollapseIconPanels", "value": true})).unwrap();
     h.settle();
-    assert!(h.groups().is_empty() && h.cards().is_empty(), "no unmanaged floating cards left: {:?}", h.groups());
+    assert!(h.groups().is_empty() && h.cards().is_empty(), "no cards left: {:?}", h.groups());
     assert_eq!(h.app.ui.open_panel.as_deref(), Some("paragraph"));
-    assert!(h.ctx.memory(|m| m.area_rect(egui::Id::new("icon-panel"))).is_some(), "the pop-out shows");
+    assert!(crate::panel_docking::showing(&h.app.ui, "paragraph"), "its flyout shows");
 }
 
 /// A card moves with the pointer from anywhere on its header (its empty part or its tab), in the
@@ -677,8 +704,8 @@ fn a_card_opens_beside_its_icon() {
         h.tap(id);
         let (card, icon) = (h.card(id), h.icon(id));
         assert!((card.top() - icon.top()).abs() <= 1.0, "{id}: top {} beside its icon's {}", card.top(), icon.top());
-        let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
-        assert!((card.right() - (dock.left().min(h.column()) - 6.0)).abs() <= 1.0, "{id}: {card:?}, dock {dock:?}");
+        let dock = h.dock_left();
+        assert!((card.right() - (dock.min(h.column()) - 6.0)).abs() <= 1.0, "{id}: {card:?}, dock {dock:?}");
         h.tap(id);
     }
     // A short window: History's icon is near its bottom; the card goes up to fit.
@@ -705,8 +732,7 @@ fn a_closed_group_opens_again_as_it_was() {
     let corner = h.card("character").right_bottom() - vec2(4.0, 4.0);
     h.drag(corner, corner + vec2(0.0, 60.0));
     let card = h.card("character");
-    let front = |h: &Harness| h.app.ui.floating_panels[0].panels[h.app.ui.floating_panels[0].active].clone();
-    assert_eq!(front(&h), "character");
+    assert_eq!(h.front(), "character");
     h.click(pos2(card.right() - 36.0, card.top() + 16.0));
     assert!(h.groups().is_empty() && h.cards().is_empty(), "its × closed the whole card");
     let saved = serde_json::to_value(&h.app.ui).unwrap();
@@ -714,7 +740,7 @@ fn a_closed_group_opens_again_as_it_was() {
     // Paragraph's icon brings the whole card back, as it was.
     h.tap("paragraph");
     assert_eq!(h.groups(), [["character", "paragraph"]], "the same tabs");
-    assert_eq!(front(&h), "character", "the same tab in front");
+    assert_eq!(h.front(), "character", "the same tab in front");
     assert_eq!(h.card("character"), card, "the same place and size");
     assert!(panel_stack::is_open(&h.app, "character") && panel_stack::is_open(&h.app, "paragraph"), "both icons lit");
     // A tab closed by its icon opens again in its card.
@@ -753,12 +779,11 @@ fn tabs_move_between_cards_and_to_the_dock() {
     let path: Vec<Pos2> = (1..=10).map(|k| from + vec2(-40.0 * k as f32, 30.0 * k as f32)).collect();
     let mut followed = 0;
     h.drag_through(from, &path, |h, p| {
-        if h.app.ui.floating_panels.iter().any(|g| g.panels == ["paragraph"]) && h.card_drawn("paragraph") {
+        if h.groups().iter().any(|g| g == &["paragraph"]) && h.card_drawn("paragraph") {
             // Held by its tab: the pointer 16 points into the new card, on its tab.
             let card = h.card("paragraph");
             // (pushed left of the dock where the pointer would put it over it).
-            let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
-            let room_right = dock.left().min(h.column()) - 6.0;
+            let room_right = h.dock_left().min(h.column()) - 6.0;
             let x_follows = (card.left() - (p.x - 16.0)).abs() < 1.0 || (card.right() - room_right).abs() < 1.5;
             assert!(x_follows && (card.top() - (p.y - 16.0)).abs() < 1.0, "the torn card is under the pointer: {card:?}, {p:?}");
             followed += 1;
@@ -773,8 +798,8 @@ fn tabs_move_between_cards_and_to_the_dock() {
     assert_eq!(h.groups(), [vec!["character"], vec!["paragraph", "glyphs"]]);
     assert_eq!(h.cards().len(), 3, "every panel is still a card's");
     // Character's card let go on the icon column docks it: it goes back to its icon.
-    let icons = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::icons_rect_id())).unwrap();
-    h.drag(h.header("character"), icons.center());
+    let icon = h.icon("swatches");
+    h.drag(h.header("character"), icon.center());
     assert_eq!(h.groups(), [vec!["paragraph", "glyphs"]]);
     assert!(!panel_stack::is_open(&h.app, "character"), "Character closed");
     assert!(h.app.ui.open_panel.as_deref() != Some("character"), "no pop-out instead");
@@ -792,10 +817,12 @@ fn a_card_is_drawn_as_the_kit_card() {
     h.time += 0.05;
     let input = egui::RawInput { time: Some(h.time), screen_rect: Some(screen), ..Default::default() };
     let app = &mut h.app;
-    let out = h.ctx.run_ui(input, |ui| {
-        app.logic(ui.ctx());
+    app.begin_host_iteration();
+    let mut out = h.ctx.run_ui(input, |ui| {
+        app.tick(ui.ctx());
         app.ui(ui);
     });
+    out.textures_delta.clear();
     let rects: Vec<&egui::epaint::RectShape> = out
         .shapes
         .iter()
@@ -839,38 +866,31 @@ fn a_held_card_stays_in_the_room() {
     let mut h = Harness::new();
     h.tap("character");
     let from = h.header("character");
-    let dock = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::dock_rect_id())).unwrap();
-    let icons = h.ctx.data(|d| d.get_temp::<Rect>(crate::floating::icons_rect_id())).unwrap();
-    let right = dock.left().min(h.column()) - 6.0;
+    let icons = h.icons();
+    let right = h.dock_left().min(h.column()) - 6.0;
     let path: Vec<Pos2> = (1..=10).map(|k| from + vec2(40.0 * k as f32, 120.0 * k as f32)).collect();
     h.drag_through(from, &path, |h, p| {
         let c = h.card("character");
         assert!(
-            c.right() <= right + 0.5 && c.bottom() <= icons.bottom() + 0.5,
-            "held at {p:?}: {c:?} stays in the room (right {right}, bottom {})",
-            icons.bottom()
+            c.right() <= right + 0.5 && c.bottom() <= h.ctx.content_rect().bottom() + 0.5,
+            "held at {p:?}: {c:?} stays in the room (right {right}, icons {icons:?})"
         );
     });
 }
 
-/// Review fix 3: a card holding an icon panel and a dock tab (Character + Layers), closed by its ×,
-/// comes back whole: Layers waits in the dock meanwhile and returns into the card.
+/// A card let go on a docked group's tabs joins that group (its panel leaves the icon column and
+/// its card closes).
 #[test]
-fn a_card_with_a_dock_tab_comes_back_whole() {
+fn a_card_dropped_on_the_dock_joins_its_group() {
+    use craft_ui::docking::Hit;
     let mut h = Harness::new();
     h.tap("character");
-    h.app.run("window.panel.float", json!({"panel": "layers", "onto": "character"})).unwrap();
-    h.settle();
-    assert_eq!(h.groups(), [["character", "layers"]]);
-    let card = h.card("character");
-    h.click(pos2(card.right() - 36.0, card.top() + 16.0));
-    assert!(h.groups().is_empty(), "closed");
-    let layout = h.app.ui.docking.clone().unwrap();
-    assert!(layout.contains(&"layers".to_string()), "Layers went back to the dock");
-    assert_eq!(h.app.ui.varos_panel_stack.groups[0].parked, ["layers"]);
-    h.tap("character");
-    assert_eq!(h.groups(), [["character", "layers"]], "Layers came back into the card");
-    assert!(h.app.ui.varos_panel_stack.groups[0].parked.is_empty());
+    let tab = h.hits().into_iter().find_map(|(hit, r)| matches!(&hit, Hit::Tab(p) if p == "layers").then_some(r)).expect("Layers' tab in the dock");
+    h.drag(h.header("character"), tab.center());
+    assert!(h.groups().is_empty(), "the card closed");
+    let layout = crate::panel_docking::layout_of(&h.app.ui);
+    assert!(!crate::panel_docking::in_iconic_column(&layout, "character"), "Character left its icon column");
+    assert!(layout.contains(&"character".to_string()), "Character is in the dock");
 }
 
 /// Review fix 4: a tab closed alone and opened again goes back to its place among its card's tabs,
@@ -888,8 +908,7 @@ fn a_tab_opens_again_at_its_place() {
     assert_eq!(h.groups(), [["character", "glyphs"]]);
     h.tap("paragraph");
     assert_eq!(h.groups(), [["character", "paragraph", "glyphs"]], "back between Character and Glyphs");
-    let g = &h.app.ui.floating_panels[0];
-    assert_eq!(g.panels[g.active], "paragraph", "in front");
+    assert_eq!(h.front(), "paragraph", "in front");
 }
 
 /// Review fix 5: a tab dragged along its own header takes the place of the tabs it passes, live;
@@ -967,8 +986,9 @@ fn capture_three_cards() {
             ..Default::default()
         };
         let app = &mut h.app;
+        app.begin_host_iteration();
         let mut out = ctx.run_ui(raw, |ui| {
-            app.logic(ui.ctx());
+            app.tick(ui.ctx());
             app.ui(ui);
         });
         for (id, deltas) in &out.textures_delta.set {

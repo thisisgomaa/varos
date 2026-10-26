@@ -1,8 +1,9 @@
 # Varos fork: state
 
-The one truth table for what exists today. Updated: 2026-10-19, at `main` = `31de359c`
-(upstream `cdba0aac` + Varos lanes). If anything else disagrees with this file, this file wins
-until it is corrected.
+The one truth table for what exists today. Updated: 2026-10-26. Upstream base: `1cdc9873`
+(storytold/vectorcraft `main`, 2026-10-26), merged onto Varos `main` `f4b20c72` + Varos lanes (see
+`lanes/upstream-merge.log`). If anything else disagrees with this file, this file wins until it is
+corrected.
 
 Status values:
 - **done**: built, gates green, nothing pending from the owner for this scope.

@@ -3,6 +3,7 @@
 
 use super::*;
 use kurbo::{Affine, Shape};
+use vectorcraft_doc::text::{KashidaMode, KashidaOptions};
 use vectorcraft_doc::{CharStyle, JustificationOptions, Justify, SingleWordJustify, TextKind};
 use vectorcraft_geom::PathData;
 
@@ -111,6 +112,24 @@ fn justified_lines_use_word_then_letter_spacing_then_glyph_scaling() {
     assert!((at(&l, 2).advance - (space + 10.0 - letters)).abs() < 1e-6);
 }
 
+/// Full Justify spreads a right-to-left word between its letters as they are drawn: the word runs
+/// from the left edge to the right edge, with the same gap between each two letters.
+#[test]
+fn a_justified_right_to_left_word_is_spread_between_its_drawn_letters() {
+    let text = "שלום";
+    let natural = layout(db(), &point(text, JustificationOptions::default()));
+    let l = layout(db(), &area(text, 300.0, Justify::JustifyAll, JustificationOptions::default()));
+    // The letters from left to right: ם, ו, ל, ש.
+    let mut drawn: Vec<&PositionedGlyph> = l.glyphs.iter().collect();
+    drawn.sort_by(|a, b| a.origin.x.total_cmp(&b.origin.x));
+    assert!(drawn.len() == 4 && drawn.iter().all(|g| g.rtl), "{drawn:?}");
+    let gaps: Vec<f64> = drawn.windows(2).map(|p| p[1].origin.x - p[0].origin.x - at(&natural, p[0].byte).advance).collect();
+    let last = drawn[3];
+    assert!(drawn[0].origin.x.abs() < 1e-6, "{:?}", drawn[0].origin);
+    assert!((last.origin.x + at(&natural, last.byte).advance - 300.0).abs() < 1e-6, "{:?}", last.origin);
+    assert!(gaps.iter().all(|&g| g > 1.0 && (g - gaps[0]).abs() < 1e-6), "{gaps:?}");
+}
+
 /// Single Word Justification: a justified line holding one word is spread between its letters
 /// (Full Justify, the default) or aligned as chosen.
 #[test]
@@ -134,6 +153,80 @@ fn single_word_lines_follow_single_word_justification() {
     assert!((r1 - w).abs() < 1e-3 && (r0 - 30.0).abs() < 1e-3, "{r0}..{r1}");
     let (c0, c1) = first(SingleWordJustify::AlignCenter);
     assert!((c0 - 15.0).abs() < 1e-3 && (c1 - (w - 15.0)).abs() < 1e-3, "centred: {c0}..{c1}");
+}
+
+/// An OpenType (GSUB) Arabic face with a tatweel: craft-fonts' Noto Sans Arabic when the build has
+/// craft-fonts (`CRAFT_FONTS_DIR`), else an installed one. None skips the test.
+fn arabic_face(test: &str) -> Option<std::sync::Arc<FontFace>> {
+    let opentype = |face: &FontFace| {
+        use skrifa::raw::TableProvider;
+        face.skrifa().is_some_and(|f| f.gsub().is_ok())
+    };
+    let face = ["Noto Sans Arabic", "Arial", "Geeza Pro"]
+        .into_iter()
+        .filter_map(|name| db().face(name, "Regular"))
+        .find(|face| face.covers('ب') && face.covers('د') && face.covers('\u{0640}') && opentype(face));
+    match &face {
+        Some(face) => eprintln!("ASSERTIONS RUN: {test}; Arabic font {} {}", face.family, face.style),
+        None => eprintln!("SKIPPED: {test}; no font covers Arabic and the tatweel"),
+    }
+    face
+}
+
+/// Arabic type at 20 pt in `face`, in a frame 300 pt wide, aligned as `justify` with `kashida`
+/// (Varos: the paragraph's kashida settings).
+fn arabic_area(face: &FontFace, text: &str, justify: Justify, kashida: KashidaOptions) -> TextObject {
+    let st = CharStyle { font_family: face.family.clone(), font_style: face.style.clone(), size: 20.0, ..CharStyle::default() };
+    let mut t = TextObject::point(Point::ZERO, text, st);
+    t.kind = TextKind::Area { frame: PathData::from_bezpath(&Rect::new(0.0, 0.0, 300.0, 1000.0).to_path(0.1)) };
+    t.xf = Affine::IDENTITY;
+    t.para.justify = justify;
+    t.para.kashida = kashida;
+    t
+}
+
+/// The kashida glyphs of a layout: tatweels that stand for no character.
+fn kashidas<'a>(l: &'a TextLayout, face: &FontFace) -> Vec<&'a PositionedGlyph> {
+    let tatweel = face.glyph_for('\u{0640}');
+    l.glyphs.iter().filter(|g| g.len == 0 && g.gid == tatweel).collect()
+}
+
+// Varos: upstream's `justified_arabic_lines_take_their_room_on_kashidas` tested upstream's Insert
+// Kashidas engine (one kashida per word at its last joint, Short/Medium/Long lengths), which this
+// fork replaces with Varos' kashida engine (`crate::kashida`, tested in `tests_kashida.rs` and
+// `tests_kashida_policy.rs`). Its helpers stay for the test that still applies.
+
+/// Kashida changes only justified horizontal lines of Arabic: right-aligned and Auto Arabic
+/// paragraphs, a justified Latin one and justified vertical Arabic type are set as with kashida
+/// Off. (Varos: upstream's test on its Insert Kashidas levels, run with Varos' Auto and Off.)
+#[test]
+fn kashidas_leave_unjustified_and_latin_lines_as_they_were() {
+    let on = KashidaOptions { mode: KashidaMode::Auto, strength: 100 };
+    let off = KashidaOptions { mode: KashidaMode::Off, strength: 50 };
+    let same = |a: &TextLayout, b: &TextLayout| {
+        assert_eq!(a.glyphs.len(), b.glyphs.len());
+        for (x, y) in a.glyphs.iter().zip(&b.glyphs) {
+            assert_eq!((x.gid, x.byte, x.len, x.origin, x.advance), (y.gid, y.byte, y.len, y.origin, y.advance));
+        }
+    };
+    let latin = |k: KashidaOptions| {
+        let mut t = area("ab cd", 300.0, Justify::JustifyAll, JustificationOptions::default());
+        t.para.kashida = k;
+        layout(db(), &t)
+    };
+    same(&latin(on), &latin(off));
+    let Some(face) = arabic_face("kashidas_leave_unjustified_and_latin_lines_as_they_were") else { return };
+    let arabic = |j: Justify, k: KashidaOptions| layout(db(), &arabic_area(&face, "كتب محمد", j, k));
+    same(&arabic(Justify::Right, on), &arabic(Justify::Right, off));
+    same(&arabic(Justify::Auto, on), &arabic(Justify::Auto, off));
+    assert!(!kashidas(&arabic(Justify::JustifyAll, on), &face).is_empty());
+    // Vertical type is set as with Off too.
+    let vertical = |k: KashidaOptions| {
+        let mut t = arabic_area(&face, "كتب محمد", Justify::JustifyAll, k);
+        t.vertical = true;
+        layout(db(), &t)
+    };
+    same(&vertical(on), &vertical(off));
 }
 
 /// Auto Leading: characters whose leading is Auto are set at the paragraph's share of their size;

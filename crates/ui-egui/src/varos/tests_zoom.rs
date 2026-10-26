@@ -14,7 +14,7 @@ fn app() -> VectorcraftApp {
 
 fn run(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let mut raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), ..Default::default() };
-    app.raw_input_hook(&mut raw);
+    app.raw_input_hook(ctx, &mut raw);
     let mut out = ctx.run_ui(raw, |ui| crate::canvas::show(app, ui));
     out.textures_delta.clear();
 }
@@ -122,7 +122,13 @@ fn a_gesture_keeps_zooming_after_its_modifier_is_let_go() {
             "alt" => egui::Modifiers::ALT,
             _ => egui::Modifiers::NONE,
         };
-        let wheel = |phase, modifiers| egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(0.0, 4.0), phase, modifiers };
+        let wheel = |phase, modifiers| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, 4.0),
+            phase,
+            modifiers,
+            source: egui::MouseWheelSource::Unknown,
+        };
         let steps = [
             (egui::TouchPhase::Start, held),
             (egui::TouchPhase::Move, held),

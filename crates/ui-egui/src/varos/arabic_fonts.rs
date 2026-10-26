@@ -171,7 +171,7 @@ pub(crate) fn paint_name(
         && db.known_arabic_support(f).is_some_and(af::ArabicSupport::morx_shaped)
     {
         let r = painter.text(name_rect.right_center(), egui::Align2::RIGHT_CENTER, "AAT", egui::FontId::proportional(9.0), t.text_dim);
-        let id = ui.id().with(("varos-aat", f));
+        let id = ui.scope_id().with(("varos-aat", f));
         ui.interact(r, id, egui::Sense::hover())
             .on_hover_text(tl!("AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules"));
         right = r.left() - 4.0;

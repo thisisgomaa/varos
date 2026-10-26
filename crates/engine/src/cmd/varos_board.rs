@@ -45,7 +45,17 @@ pub(crate) fn pdf_document(cmd: &str, doc: &Document, p: &Value) -> Result<Optio
     }
     let rect = vectorcraft_render::encode::art_bounds(doc).ok_or_else(|| bad(cmd, "nothing to export: the document has no visible art"))?;
     let mut output = doc.clone();
-    output.artboards.push(vectorcraft_doc::Artboard { id: 1, name: String::new(), rect, show_center_mark: false, show_cross_hairs: false });
+    output.artboards.push(vectorcraft_doc::Artboard {
+        id: 1,
+        name: String::new(),
+        rect,
+        locked: false,
+        show_center_mark: false,
+        show_cross_hairs: false,
+        show_video_safe_areas: false,
+        video_ruler_pixel_aspect_ratio: 1.0,
+        color: None,
+    });
     Ok(Some(output))
 }
 

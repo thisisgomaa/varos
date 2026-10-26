@@ -58,7 +58,7 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, v: &View, acts: &mut Vec<Action>) 
         origin + vec2(STROKE_CENTER[0] - STROKE_R, STROKE_CENTER[1] - STROKE_R),
         origin + vec2(FILL_CENTER[0] + FILL_R, FILL_CENTER[1] + FILL_R),
     );
-    let resp = ui.interact(bounds, ui.id().with("varos-picker-cluster"), Sense::click());
+    let resp = ui.interact(bounds, ui.scope_id().with("varos-picker-cluster"), Sense::click());
     let hit = resp.hover_pos().or(resp.interact_pointer_pos()).and_then(|p| target_at(origin, p, v.fill_active));
     for (is_fill, point, radius, paint, mixed) in order {
         let center = origin + vec2(point[0], point[1]);
@@ -108,7 +108,7 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, v: &View, acts: &mut Vec<Action>) 
     for (icon, point, size, swap) in [("dc-swap", SWAP_POS, GLYPH, true), ("dc-fill-none", NONE_POS, NONE_SIZE, false)] {
         let center = origin + vec2(point[0], point[1]);
         let r = Rect::from_center_size(center, egui::Vec2::splat(size));
-        let resp = ui.interact(r, ui.id().with(("varos-picker-cluster-icon", swap)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-cluster-icon", swap)), Sense::click());
         let ink = if resp.hovered() { t.text } else { t.text_dim };
         super::icons::paint(ui, icon, r, ink);
         let tip = if swap { tl!("Swap Fill and Stroke (Shift+X)") } else { tl!("None") };

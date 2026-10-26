@@ -2,6 +2,7 @@
 //! `tests_textedit`).
 
 use super::*;
+use crate::ImeSurrounding;
 use crate::testutil::{cx, paint};
 use vectorcraft_doc::{CharStyle, Document, Node, NodeKind, Selection, TextObject};
 use vectorcraft_text::FontDb;
@@ -419,6 +420,36 @@ fn area_and_path_tools_convert_clicked_paths() {
     assert!(acts.iter().any(|a| matches!(a, Action::Exec(cmd, p) if cmd == "text.createInPath" && p["mode"] == "onPath")), "{acts:?}");
 }
 
+/// Area Type and Type on a Path follow the reference app: click the path outline, not the fill interior
+/// (helpx: add-text-work-with-type-objects, creating-type-path).
+#[test]
+fn area_and_path_tools_hit_path_outline_not_fill_interior() {
+    let (mut d, rect) = crate::testutil::doc_with_rect();
+    if let Some(n) = d.node_mut(rect) {
+        n.appearance.set_stroke(vectorcraft_color::Paint::None);
+    }
+    let (sel, p) = (Selection::default(), paint());
+    let c = cx(&d, &sel, &p);
+    let edge = (100.0, 150.0);
+    let interior = (150.0, 150.0);
+    for tool_id in ["areaType", "typeOnPath"] {
+        let mut tool = TypeTool::new(tool_id);
+        tool.pointer(&c, &PointerEvent::new(PointerKind::Down, edge.0, edge.1));
+        let acts = tool.pointer(&c, &PointerEvent::new(PointerKind::Up, edge.0, edge.1));
+        assert!(
+            acts.iter().any(|a| matches!(a, Action::Exec(cmd, v) if cmd == "text.createInPath" && v["path"] == json!(rect.0))),
+            "{tool_id} on outline: {acts:?}"
+        );
+        let mut tool = TypeTool::new(tool_id);
+        tool.pointer(&c, &PointerEvent::new(PointerKind::Down, interior.0, interior.1));
+        let acts = tool.pointer(&c, &PointerEvent::new(PointerKind::Up, interior.0, interior.1));
+        assert!(
+            !acts.iter().any(|a| matches!(a, Action::Exec(cmd, _) if cmd == "text.createInPath")),
+            "{tool_id} in fill interior should not attach to path: {acts:?}"
+        );
+    }
+}
+
 #[test]
 fn vertical_tools_preserve_their_ids_and_create_vertical_text() {
     for id in ["verticalType", "verticalAreaType", "verticalTypeOnPath"] {
@@ -437,6 +468,29 @@ fn ime_ranges_convert_characters_to_bytes() {
     #[allow(clippy::reversed_empty_ranges)]
     let backwards = 2..1;
     assert_eq!(char_range_to_bytes("ががく", backwards), None, "backwards");
+}
+
+/// Outgoing surrounding text excludes the pre-edit and remaps a selection that crosses it, not
+/// only a caret at its end.
+#[test]
+fn ime_surrounding_remaps_a_selection_across_the_preedit() {
+    let (mut d, _id, mut tool) = editing("abcd");
+    let snap = d.clone();
+    let (sel, p) = (Selection::default(), paint());
+    tool.caret = 2;
+    tool.anchor = 2;
+    let acts = tool.ime_preedit(&cx(&d, &sel, &p), "xy", None);
+    apply(&mut d, &snap, &acts);
+    assert_eq!(tool.preedit.as_ref().map(|p| p.range.clone()), Some(2..4));
+    // A selection from before the marked text to after it: the IME receives the committed text
+    // with both offsets folded across the removed pre-edit.
+    tool.anchor = 1;
+    tool.caret = 6;
+    let ImeSurrounding::Available { text, cursor, anchor } = tool.ime_surrounding(&cx(&d, &sel, &p), 4000) else {
+        panic!("the pre-edit has committed text around it");
+    };
+    assert_eq!(text, "abcd");
+    assert_eq!((cursor, anchor), (4, 1));
 }
 
 #[test]
@@ -557,6 +611,20 @@ fn new_type_snaps_to_smart_guides() {
     let acts = tool.pointer(&c, &PointerEvent::new(PointerKind::Up, 199.0, 202.0));
     let area = json!({"width": 100.0, "height": 100.0});
     assert!(acts.iter().any(|a| matches!(a, Action::Exec(cmd, v) if cmd == "text.create" && v["x"] == 100.0 && v["area"] == area)), "{acts:?}");
+}
+
+#[test]
+fn area_type_drag_measure_labels_honor_preference() {
+    let (d, _) = crate::testutil::doc_with_rect();
+    let (sel, p) = (Selection::default(), paint());
+    let on = ToolContext { measurement_labels: true, ..cx(&d, &sel, &p) };
+    let off = ToolContext { measurement_labels: false, ..cx(&d, &sel, &p) };
+    let mut tool = TypeTool::new("type");
+    tool.pointer(&on, &PointerEvent::new(PointerKind::Down, 100.0, 100.0));
+    tool.pointer(&on, &PointerEvent::new(PointerKind::Drag, 200.0, 150.0));
+    let want = on.size_label(100.0, 50.0);
+    assert!(tool.overlays(&on).iter().any(|o| matches!(o, Overlay::Measure { text, .. } if text == &want)));
+    assert!(!tool.overlays(&off).iter().any(|o| matches!(o, Overlay::Measure { .. })));
 }
 
 #[test]
@@ -702,20 +770,332 @@ fn a_drag_or_a_click_on_other_type_while_editing_acts_at_once() {
     assert_eq!(tool.editing, Some(other));
 }
 
-/// Selected area type whose text doesn't fit its frame shows the red out port with any tool, not
-/// only the Type tools (#2323); text that fits shows none.
+/// #2572: selected area type shows its in and out ports with any tool, not only the Type tools
+/// (#2323): empty while its text fits and it isn't threaded, the out port's red "+" when the text
+/// doesn't fit, an arrow in the port on the side where it is threaded.
 #[test]
-fn overflowing_selected_type_shows_its_marker_without_the_type_tool() {
+fn selected_type_shows_its_ports_in_each_state() {
     let (mut d, id) = crate::testutil::doc_with_area_type();
     let (mut sel, p) = (Selection::default(), paint());
     sel.set([id]);
-    let mut marks = OverflowMarks::default();
-    assert!(overflow_markers(&mut marks, &cx(&d, &sel, &p)).is_empty(), "the text fits");
+    let mut marks = PortMarks::default();
+    // (white boxes, outlines, glyph strokes, red outlines)
+    let count = |ov: &[Overlay]| {
+        let n = |f: &dyn Fn(&Overlay) -> bool| ov.iter().filter(|o| f(o)).count();
+        (
+            n(&|o| matches!(o, Overlay::Highlight { color: [255, 255, 255, 255], .. })),
+            n(&|o| matches!(o, Overlay::Path { .. })),
+            n(&|o| matches!(o, Overlay::Line { .. })),
+            n(&|o| matches!(o, Overlay::Path { color: [230, 30, 30], .. })),
+        )
+    };
+    assert_eq!(count(&thread_ports(&mut marks, &cx(&d, &sel, &p))), (2, 2, 0, 0), "the text fits: two empty ports");
+    let Some(NodeKind::Text(t)) = d.node(id).map(|n| &n.kind) else { panic!("not text") };
+    let (input, output) = (t.xf * Point::new(0.0, PORT_RISE_PX), t.xf * Point::new(120.0, 40.0 - PORT_RISE_PX));
+    let near = |a: Option<Point>, b: Point| a.is_some_and(|a| a.distance(b) < 1e-9);
+    assert!(near(port_centre(t, Port::In, 1.0), input), "on the left side, below the top-left corner");
+    assert!(near(port_centre(t, Port::Out, 1.0), output), "on the right side, above the bottom-right corner");
+    let ov = thread_ports(&mut marks, &cx(&d, &sel, &p));
+    let box_at = |c: Point| ov.iter().any(|o| matches!(o, Overlay::Highlight { quad, .. } if quad[0].midpoint(quad[2]).distance(c) < 1e-9));
+    assert!(box_at(input) && box_at(output), "{ov:?}");
     if let Some(NodeKind::Text(t)) = d.node_mut(id).map(|n| &mut n.kind) {
         t.runs = vec![TextRun::new("Words that fill more than the frame holds. ".repeat(20), CharStyle { size: 20.0, ..Default::default() })];
     }
-    let ov = overflow_markers(&mut marks, &cx(&d, &sel, &p));
-    assert_eq!(ov.len(), 3, "a box and a plus: {ov:?}");
+    assert_eq!(count(&thread_ports(&mut marks, &cx(&d, &sel, &p))), (2, 2, 2, 1), "an empty in port and the red plus");
+    assert_eq!(port_states(&d, id, true), (PortState::Empty, PortState::Overflow));
+    // Threaded on both sides: arrows (three strokes each), the out port's in place of the plus.
+    let (a, b) = (d.alloc_id(), d.alloc_id());
+    d.text_threads = vec![vec![a, id, b]];
+    assert_eq!(port_states(&d, id, true), (PortState::Threaded, PortState::Threaded));
+    assert_eq!(count(&thread_ports(&mut marks, &cx(&d, &sel, &p))), (2, 2, 6, 0));
+    d.text_threads = vec![vec![id, a]];
+    assert_eq!(port_states(&d, id, false), (PortState::Empty, PortState::Threaded));
+    d.text_threads = vec![vec![a, id]];
+    assert_eq!(port_states(&d, id, false), (PortState::Threaded, PortState::Empty));
+    assert_eq!(port_states(&d, id, true), (PortState::Threaded, PortState::Overflow), "the last frame's text doesn't fit");
     sel.clear();
-    assert!(overflow_markers(&mut marks, &cx(&d, &sel, &p)).is_empty(), "only selected type shows it");
+    assert!(thread_ports(&mut marks, &cx(&d, &sel, &p)).is_empty(), "only selected type shows them");
+}
+
+/// Past [`PORTS_MAX`] selected frames (select all of an opened PDF) no ports are drawn or clicked:
+/// they would bury the canvas in boxes; up to it every frame has its two.
+#[test]
+fn a_huge_selection_of_type_shows_no_ports() {
+    let (mut d, id) = crate::testutil::doc_with_area_type();
+    let node = d.node(id).unwrap().clone();
+    let l = d.layers[0].id;
+    let mut sel = Selection::default();
+    sel.set([id]);
+    for _ in 0..PORTS_MAX {
+        let copy = d.alloc_id();
+        d.insert(Some(l), 1, Node::new(copy, node.kind.clone())).unwrap();
+        sel.add(copy);
+    }
+    let p = paint();
+    let Some(NodeKind::Text(t)) = d.node(id).map(|n| &n.kind) else { panic!("not text") };
+    let out = port_centre(t, Port::Out, 1.0).unwrap();
+    let mut marks = PortMarks::default();
+    assert!(thread_ports(&mut marks, &cx(&d, &sel, &p)).is_empty());
+    assert_eq!(port_at(&cx(&d, &sel, &p), out), None);
+    sel.remove(id);
+    let ports = thread_ports(&mut marks, &cx(&d, &sel, &p));
+    assert_eq!(ports.iter().filter(|o| matches!(o, Overlay::Highlight { .. })).count(), 2 * PORTS_MAX, "at the limit");
+}
+
+/// Type in perspective has no ports, as it can't thread ([`crate::select::is_threadable`]): none
+/// are drawn with any tool, the Type tools included, and it doesn't count toward [`PORTS_MAX`].
+#[test]
+fn type_in_perspective_has_no_ports_and_doesnt_count() {
+    let (mut d, id) = crate::testutil::doc_with_area_type();
+    d.node_mut(id).unwrap().extras_mut().perspective = Some(Box::new(vectorcraft_doc::PerspectiveAttachment::new("left", 0.0)));
+    let (mut sel, p) = (Selection::default(), paint());
+    sel.set([id]);
+    let mut marks = PortMarks::default();
+    assert!(thread_ports(&mut marks, &cx(&d, &sel, &p)).is_empty(), "no ports on type in perspective");
+    let boxes = |o: &[Overlay]| o.iter().filter(|o| matches!(o, Overlay::Highlight { color: [255, 255, 255, 255], .. })).count();
+    assert_eq!(boxes(&TypeTool::new("type").overlays(&cx(&d, &sel, &p))), 0, "nor with the Type tool");
+    // With PORTS_MAX frames that have ports selected besides it, theirs still show.
+    let mut node = d.node(id).unwrap().clone();
+    node.extras_mut().perspective = None;
+    let l = d.layers[0].id;
+    for _ in 0..PORTS_MAX {
+        let copy = d.alloc_id();
+        d.insert(Some(l), 1, Node::new(copy, node.kind.clone())).unwrap();
+        sel.add(copy);
+    }
+    assert_eq!(boxes(&thread_ports(&mut marks, &cx(&d, &sel, &p))), 2 * PORTS_MAX);
+}
+
+/// The Type tool draws the ports of the type it edits as of the rest of the selection: none past
+/// [`PORTS_MAX`] selected frames, where they can't be clicked either.
+#[test]
+fn the_edited_types_ports_follow_the_limit_too() {
+    let (mut d, id) = crate::testutil::doc_with_area_type();
+    let node = d.node(id).unwrap().clone();
+    let l = d.layers[0].id;
+    let mut sel = Selection::default();
+    sel.set([id]);
+    for _ in 1..PORTS_MAX {
+        let copy = d.alloc_id();
+        d.insert(Some(l), 1, Node::new(copy, node.kind.clone())).unwrap();
+        sel.add(copy);
+    }
+    let p = paint();
+    let mut tool = TypeTool::new("type");
+    tool.start_editing(id, 0);
+    let boxes = |o: &[Overlay]| o.iter().filter(|o| matches!(o, Overlay::Highlight { color: [255, 255, 255, 255], .. })).count();
+    assert_eq!(boxes(&tool.overlays(&cx(&d, &sel, &p))), 2 * PORTS_MAX, "at the limit, the edited one's included");
+    let copy = d.alloc_id();
+    d.insert(Some(l), 1, Node::new(copy, node.kind.clone())).unwrap();
+    sel.add(copy);
+    assert_eq!(boxes(&tool.overlays(&cx(&d, &sel, &p))), 0, "past it, not even the edited one's");
+}
+
+/// Type on a path has its in port just before its start bracket and its out port just past its
+/// end bracket, along the path, clear of the brackets.
+#[test]
+fn type_on_a_path_has_its_ports_beyond_its_brackets() {
+    let (d, id) = crate::testutil::doc_with_path_type();
+    let Some(NodeKind::Text(t)) = d.node(id).map(|n| &n.kind) else { panic!("not text") };
+    let near = |a: Option<Point>, b: Point| a.is_some_and(|a| a.distance(b) < 1e-6);
+    assert!(near(port_centre(t, Port::In, 1.0), Point::new(160.0 - PORT_RISE_PX, 300.0)), "{:?}", port_centre(t, Port::In, 1.0));
+    assert!(near(port_centre(t, Port::Out, 1.0), Point::new(400.0 + PORT_RISE_PX, 300.0)), "{:?}", port_centre(t, Port::Out, 1.0));
+    assert!(near(port_centre(t, Port::In, 0.5), Point::new(160.0 - PORT_RISE_PX / 2.0, 300.0)), "screen pixels at 200%");
+}
+
+/// The outgoing query copies only the 4 KiB window around the selection, not the whole document,
+/// and reports offsets into that window.
+#[test]
+fn ime_surrounding_bounds_a_long_document() {
+    let source: String = (0..10_000).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+    let (d, _id, mut tool) = editing(&source);
+    tool.caret = 5000;
+    tool.anchor = 5000;
+    let ImeSurrounding::Available { text, cursor, anchor } = tool.ime_surrounding(&cx(&d, &Selection::default(), &paint()), 4000) else {
+        panic!("a caret in a long document is available");
+    };
+    assert_eq!(text.len(), 4000, "only the bounded window is copied");
+    assert_eq!(text.as_str(), &source[3000..7000]);
+    assert_eq!((cursor, anchor), (2000, 2000), "offsets are relative to the returned window");
+
+    tool.anchor = 0;
+    let ImeSurrounding::Unavailable(reason) = tool.ime_surrounding(&cx(&d, &Selection::default(), &paint()), 4000) else {
+        panic!("a selection wider than the limit must be explicit");
+    };
+    assert!(reason.contains("selection"), "{reason}");
+}
+
+/// Unicode offsets are UTF-8 bytes and a reversed selection stays reversed through the query.
+#[test]
+fn ime_surrounding_preserves_reversed_unicode_selection_and_empty_text() {
+    let (d, _id, mut tool) = editing("aé😀z");
+    tool.caret = 1;
+    tool.anchor = 7;
+    let ImeSurrounding::Available { text, cursor, anchor } = tool.ime_surrounding(&cx(&d, &Selection::default(), &paint()), 4000) else {
+        panic!("the short text is available");
+    };
+    assert_eq!(text, "aé😀z");
+    assert_eq!((cursor, anchor), (1, 7), "cursor is the primary end, anchor the other");
+
+    let (d, _id, tool) = editing("");
+    let ImeSurrounding::Available { text, cursor, anchor } = tool.ime_surrounding(&cx(&d, &Selection::default(), &paint()), 4000) else {
+        panic!("an empty document is available, not unavailable");
+    };
+    assert_eq!((text.as_str(), cursor, anchor), ("", 0, 0));
+}
+
+/// Deleting around a selection removes only the surrounding text, keeps the reversed selection
+/// direction, and leaves it for the following commit to replace.
+#[test]
+fn ime_delete_surrounding_preserves_a_reversed_selection() {
+    let (mut d, _id, mut tool) = editing("abcd");
+    let snap = d.clone();
+    let (sel, p) = (Selection::default(), paint());
+    tool.anchor = 3; // "bc", selected backwards
+    tool.caret = 1;
+    let acts = tool.ime_delete_surrounding(&cx(&d, &sel, &p), 1, 1, SurroundingUnit::Bytes);
+    apply(&mut d, &snap, &acts);
+    let NodeKind::Text(t) = &d.node(_id).unwrap().kind else { panic!() };
+    assert_eq!(t.plain_text(), "bc", "the selection itself is preserved");
+    assert_eq!((tool.caret, tool.anchor), (0, 2), "direction is kept, shifted left by the preceding deletion");
+    let ImeSurrounding::Available { text, cursor, anchor } = tool.ime_surrounding(&cx(&d, &sel, &p), 4000) else {
+        panic!("the selection is still an available context");
+    };
+    assert_eq!((text.as_str(), cursor, anchor), ("bc", 0, 2));
+}
+
+/// Deleting around a composition removes only the surrounding committed text, keeps the pre-edit
+/// in place for the commit to replace, and remaps the composition range.
+#[test]
+fn ime_delete_surrounding_preserves_the_preedit() {
+    let (mut d, id, mut tool) = editing("abcd");
+    let snap = d.clone();
+    let (sel, p) = (Selection::default(), paint());
+    tool.caret = 2;
+    tool.anchor = 2;
+    let acts = tool.ime_preedit(&cx(&d, &sel, &p), "xy", None);
+    apply(&mut d, &snap, &acts);
+    assert_eq!(tool.preedit.as_ref().map(|p| p.range.clone()), Some(2..4));
+    let acts = tool.ime_delete_surrounding(&cx(&d, &sel, &p), 1, 0, SurroundingUnit::Bytes);
+    apply(&mut d, &snap, &acts);
+    let NodeKind::Text(t) = &d.node(id).unwrap().kind else { panic!() };
+    assert_eq!(t.plain_text(), "axycd", "only the byte before the composition is deleted");
+    assert_eq!(tool.preedit.as_ref().map(|p| p.range.clone()), Some(1..3), "the composition stayed and moved left");
+    let ImeSurrounding::Available { text, cursor, anchor } = tool.ime_surrounding(&cx(&d, &sel, &p), 4000) else {
+        panic!("the composition has committed text around it");
+    };
+    assert_eq!((text.as_str(), cursor, anchor), ("acd", 1, 1), "the pre-edit is excluded and remapped");
+}
+
+/// Edit-session identity changes only when editing starts afresh, not on ordinary edits or caret
+/// moves; the owner keeps the document uid and target id.
+#[test]
+fn ime_target_is_stable_within_an_edit_session() {
+    let (d, id, mut tool) = editing("abc");
+    let (sel, p) = (Selection::default(), paint());
+    let first = tool.ime_target(&cx(&d, &sel, &p)).expect("editing has an owner");
+    assert_eq!((first.0, first.1), (0, id.0));
+    tool.caret = 1;
+    tool.anchor = 3;
+    assert_eq!(tool.ime_target(&cx(&d, &sel, &p)), Some(first), "caret and selection moves keep the context");
+    tool.start_editing(id, 0);
+    let second = tool.ime_target(&cx(&d, &sel, &p)).expect("re-entering has an owner");
+    assert_eq!((second.0, second.1), (first.0, first.1));
+    assert_ne!(second.2, first.2, "a new edit session is a replacement epoch");
+}
+
+/// The bounded query walks the styled runs without joining them, and its byte offsets still refer
+/// to the concatenated logical text.
+#[test]
+fn ime_surrounding_maps_across_styled_runs() {
+    use vectorcraft_doc::TextRun;
+    let (mut d, id, mut tool) = editing("aé😀z");
+    let NodeKind::Text(t) = &mut d.node_mut(id).unwrap().kind else { panic!() };
+    t.runs =
+        vec![TextRun::new("aé", CharStyle { size: 20.0, ..Default::default() }), TextRun::new("😀z", CharStyle { size: 24.0, ..Default::default() })];
+    tool.caret = 1;
+    tool.anchor = 7;
+    let ImeSurrounding::Available { text, cursor, anchor } = tool.ime_surrounding(&cx(&d, &Selection::default(), &paint()), 4000) else {
+        panic!("the short text is available");
+    };
+    assert_eq!((text.as_str(), cursor, anchor), ("aé😀z", 1, 7));
+}
+
+/// Deletion counts start at the caret, including when it is in a later styled run. Character
+/// units count Unicode scalars; byte units round inward instead of cutting a multibyte scalar.
+#[test]
+fn ime_character_deletion_walks_styled_runs_backwards_from_the_caret() {
+    use vectorcraft_doc::TextRun;
+    for (caret, before, after, unit, expected, shifted, committed) in [
+        (7, 1, 0, SurroundingUnit::Chars, "aéz!x", 3, "aéQz!x"),
+        (8, 3, 0, SurroundingUnit::Chars, "a!x", 1, "aQ!x"),
+        (7, 3, 0, SurroundingUnit::Bytes, "aé😀z!x", 7, "aé😀Qz!x"),
+        (7, 1, 1, SurroundingUnit::Chars, "aé!x", 3, "aéQ!x"),
+        (7, 4, 1, SurroundingUnit::Bytes, "aé!x", 3, "aéQ!x"),
+        (9, 1, 1, SurroundingUnit::Chars, "aé😀z", 8, "aé😀zQ"),
+    ] {
+        let (mut d, id, mut tool) = editing("aé😀z!x");
+        let NodeKind::Text(t) = &mut d.node_mut(id).unwrap().kind else { panic!() };
+        t.runs = vec![
+            TextRun::new("aé", CharStyle { size: 20.0, ..Default::default() }),
+            TextRun::new("😀z", CharStyle { size: 24.0, ..Default::default() }),
+            TextRun::new("!x", CharStyle { size: 28.0, ..Default::default() }),
+        ];
+        tool.caret = caret;
+        tool.anchor = caret;
+        let snap = d.clone();
+        let (sel, p) = (Selection::default(), paint());
+        let owner = tool.ime_target(&cx(&d, &sel, &p));
+        let acts = tool.ime_delete_surrounding(&cx(&d, &sel, &p), before, after, unit);
+        apply(&mut d, &snap, &acts);
+        let NodeKind::Text(t) = &d.node(id).unwrap().kind else { panic!() };
+        assert_eq!(t.plain_text(), expected, "caret={caret} before={before} after={after} unit={unit:?}");
+        assert_eq!((tool.caret, tool.anchor), (shifted, shifted));
+        assert_eq!(tool.ime_target(&cx(&d, &sel, &p)), owner, "deletion preserves the immutable edit target");
+        let acts = tool.text_input(&cx(&d, &sel, &p), "Q");
+        apply(&mut d, &snap, &acts);
+        let NodeKind::Text(t) = &d.node(id).unwrap().kind else { panic!() };
+        assert_eq!(t.plain_text(), committed, "the following commit uses the shifted caret");
+    }
+}
+
+/// A recreated Type tool (a document switch, File › Revert) must not reuse the replacement epoch
+/// of the same document and text node: a still-cached native IME context would look current.
+#[test]
+fn a_recreated_type_tool_gets_a_new_replacement_epoch() {
+    let (d, id) = doc_with_text("Same");
+    let (sel, p) = (Selection::default(), paint());
+    let mut first = TypeTool::new("type");
+    first.start_editing(id, 0);
+    let a = first.ime_target(&cx(&d, &sel, &p)).expect("the first tool edits");
+    let mut second = TypeTool::new("type");
+    second.start_editing(id, 0);
+    let b = second.ime_target(&cx(&d, &sel, &p)).expect("the recreated tool edits");
+    assert_eq!((a.0, a.1), (b.0, b.1), "the owner key is the document and text node");
+    assert_ne!(a.2, b.2, "edit sessions are numbered process-wide, not per tool");
+}
+
+/// The surrounding query never publishes a typing session's text after the document changed
+/// outside it: it reports the document's own text (and drops the stale marked-text range), and the
+/// commit-time session check keeps the reset from earning an IME receipt.
+#[test]
+fn ime_surrounding_reports_the_document_when_it_changed_under_the_session() {
+    let (mut d, id, mut tool) = editing("abc");
+    let (sel, p) = (Selection::default(), paint());
+    tool.caret = 3;
+    tool.anchor = 3;
+    let snap = d.clone();
+    let acts = tool.text_input(&cx(&d, &sel, &p), "x");
+    apply(&mut d, &snap, &acts);
+    let ImeSurrounding::Available { text, .. } = tool.ime_surrounding(&cx(&d, &sel, &p), 4000) else {
+        panic!("the session matches the document");
+    };
+    assert_eq!(text, "abcx");
+    // A panel, menu or control edit replaces the text while the typing session is open.
+    let NodeKind::Text(t) = &mut d.node_mut(id).unwrap().kind else { panic!() };
+    let len = edit::runs_len(&t.runs);
+    let _ = edit::replace_range(&mut t.runs, 0, len, "XYZ");
+    let stale = tool.ime_surrounding(&cx(&d, &sel, &p), 4000);
+    assert_eq!(stale, ImeSurrounding::Available { text: "XYZ".into(), cursor: 3, anchor: 3 });
+    assert!(!tool.ime_session_matches_document(&cx(&d, &sel, &p)), "the commit starts a fresh session");
 }

@@ -83,7 +83,7 @@ pub(super) fn show(app: &VectorcraftApp, ui: &mut Ui, origin: Pos2, prefs: &mut 
     for i in 0..SHOWN {
         let r = Rect::from_min_size(row.min + vec2(PAD + i as f32 * (SWATCH + GAP), (ROW_H - SWATCH) / 2.0), egui::Vec2::splat(SWATCH));
         let c = recent.get(i);
-        let resp = ui.interact(r, ui.id().with(("varos-picker-recent", i)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-recent", i)), Sense::click());
         super::chip(ui, r, c, resp.hovered() && c.is_some());
         if let Some(c) = c
             && resp.on_hover_text(c.to_hex().to_uppercase()).clicked()
@@ -92,7 +92,7 @@ pub(super) fn show(app: &VectorcraftApp, ui: &mut Ui, origin: Pos2, prefs: &mut 
         }
     }
     let r = Rect::from_center_size(egui::pos2(row.right() - PAD - 8.0, row.center().y), egui::Vec2::splat(16.0));
-    let resp = ui.interact(r, ui.id().with("varos-picker-drawer"), Sense::click());
+    let resp = ui.interact(r, ui.scope_id().with("varos-picker-drawer"), Sense::click());
     let ink = if prefs.drawer_open || resp.hovered() { t.text } else { t.text_dim };
     super::icons::paint(ui, "chevron-down", r, ink);
     if resp.on_hover_text(tl!("Recent Colors")).clicked() {

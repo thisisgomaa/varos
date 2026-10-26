@@ -34,12 +34,14 @@ fn rect(id: NodeId, x: f64, y: f64) -> Arc<Node> {
 /// a group g of c1 and c2, all on artboard 1.
 fn fixture() -> Fx {
     let mut d = Document::new(100.0, 100.0);
+    let base = d.artboards[0].clone();
     d.artboards.push(Artboard {
         id: 2,
         name: "Artboard 2".into(),
         rect: Rect::new(200.0, 0.0, 300.0, 100.0),
         show_center_mark: false,
         show_cross_hairs: false,
+        ..base
     });
     let layer = d.alloc_id();
     let r1 = d.alloc_id();
@@ -266,13 +268,14 @@ fn diff_reports_artboards() {
     let fx = fixture();
     let after = edit(&fx.doc, |d| {
         d.artboards[0].name = "Cover".into();
-        d.artboards.remove(1);
+        let base = d.artboards.remove(1);
         d.artboards.push(Artboard {
             id: 3,
             name: "Story".into(),
             rect: Rect::new(0.0, 200.0, 50.0, 300.0),
             show_center_mark: false,
             show_cross_hairs: false,
+            ..base
         });
     });
     let c = diff(&fx.doc, &after);

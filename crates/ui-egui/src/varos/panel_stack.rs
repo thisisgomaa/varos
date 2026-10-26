@@ -2,51 +2,50 @@
 //! own, not in a fake side list that scrolls").
 //!
 //! With the dock in "keep open" mode ([`PanelStack::keep_open`], on by default) a click on an icon
-//! of the icon column floats its panel as a card of its own. A card is an upstream floating panel
-//! group (`window.panel.float`) for the model, persistence and docking, but Varos draws it and
-//! handles its pointer (lane-panels3, owner: "they feel stuck"): an 8-point card with a 1-point
-//! line, no shadow, a 32-point header holding its tabs, its × and its panel menu (≡). The whole
-//! header moves the card, live under the pointer (no outline that jumps on release); its
-//! bottom-right corner and its right and bottom edges resize it, live too. A tab dragged out of a
-//! card with several tabs becomes a card of its own that follows the pointer; a card let go on
-//! another card's header joins it as tabs; let go on the dock or the icon column it docks (goes
-//! back to its icon), as upstream's drop targets say ([`crate::floating::drop_target`]).
+//! of an icon column opens its panel as a card of its own, drawn by Varos inside the main window:
+//! an 8-point card with a 1-point line, no shadow, a 32-point header holding its tabs, its × and
+//! its panel menu (≡). The whole header moves the card, live under the pointer; its bottom-right
+//! corner and its right and bottom edges resize it, live too. A tab dragged out of a card with
+//! several tabs becomes a card of its own that follows the pointer; a card let go on another
+//! card's header joins it as tabs; let go on a docked group's tabs it joins that group (and leaves
+//! the icon column); let go on an icon column it closes (back to its icon).
+//!
+//! Since the 2026-10-26 upstream merge the dock is craft-ui's shared dock area, whose floating
+//! panels are OS windows. A card is not one of them: its panels stay where the layout keeps them
+//! (an iconic column, so their icons stay in place) and Varos keeps the card itself
+//! ([`PanelStack::live`]). craft-ui's flyout for an icon is turned into a card
+//! ([`flyout`]), and `window.panel` on an icon panel opens or shows its card ([`show`]).
 //!
 //! Where a new card goes ([`place`]): its right edge 6 points left of the dock, its top beside its
 //! icon in the column (kept in the window), then down past the cards already there; when the
 //! window's bottom is reached it cascades, 24 points left and down per step. A card closed and
 //! opened again comes back where it was left, at the size it was given ([`PanelStack::places`]),
 //! unless half of it would lie on another card (then it takes a new place); always left of the
-//! dock, also when the window or the dock changed size since (cards restored from `ui.json` too).
-//! Until it is resized by hand, a card is as tall as its panel's contents (capped by the window):
-//! the body hook ([`note_body`]) reports how big the contents are and [`frame`] fits the card to
-//! them (wider too when a row of the panel doesn't fit its default width).
+//! dock, also when the window or the dock changed size since. Until it is resized by hand, a card
+//! is as tall as its panel's contents (capped by the window): [`frame`] fits the card to them
+//! (wider too when a row of the panel doesn't fit its default width).
 //!
 //! Panels put together as tabs of one card stay together ([`PanelStack::groups`]): the card closed
 //! by its ×, any of its panels opened again opens the whole card, with the same tabs, the same tab
 //! in front, where it was. A tab closed alone (by its icon) opens again in its card.
 //!
-//! Panels opened another way (a Properties button, a workspace, a shortcut) become cards too. A
-//! shortcut or an agent's `window.panel` on a card already open only shows it (it never closes
-//! it); its icon and Window › that panel (`toggle`) close it. Two
-//! upstream pop-outs stay as they were: a panel dragged out of the column (it leaves the column,
-//! as in Illustrator) and put back pops out of its icon once; the tabbed group's panels in a
-//! collapsed dock pop out one at a time. `UiState::open_panel` names the newest card, so upstream
-//! code and agents that read "the open panel" see the one just opened. User Interface ›
-//! Auto-Collapse Iconic Panels makes pop-outs transient: with it on the column goes back to
-//! upstream's one-at-a-time behaviour, as with `keep_open` off.
+//! A shortcut or an agent's `window.panel` on a card already open only shows it (it never closes
+//! it); its icon and Window › that panel (`toggle`) close it. User Interface › Auto-Collapse
+//! Iconic Panels makes pop-outs transient: with it on, the column goes back to upstream's
+//! one-flyout-at-a-time behaviour, as with `keep_open` off.
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
+use craft_ui::docking::Hit;
 use egui::{CornerRadius, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::VectorcraftApp;
 use crate::state::ICON_PANELS;
-use crate::{VectorcraftApp, floating};
 
-/// Top of a new card when the icon column hasn't been drawn yet (upstream's `dock::FLYOUT_TOP`).
+/// Top of a new card when the icon column hasn't been drawn yet.
 const TOP: f32 = 110.0;
 /// Room between the dock and a card, and between two cards stacked down the column.
 const GAP: f32 = 6.0;
@@ -60,10 +59,10 @@ const START_TALL: f32 = 360.0;
 const SLACK: f32 = 2.0;
 /// The least height a card is fitted to.
 const MIN_TALL: f32 = 120.0;
-/// The icon column's width (`dock::ICON_COL`) and the tabbed group's (`dock::DOCK_WIDTH`), for a
-/// card opened before the dock has been drawn.
-const ICON_COL: f32 = 38.0;
-const DOCK_WIDTH: f32 = 310.0;
+/// The icon column's width and the main column's (`panel_docking::COLUMN_WIDTH`), for a card
+/// opened before the dock has been drawn.
+const ICON_COL: f32 = crate::panel_docking::ICON_WIDTH;
+const DOCK_WIDTH: f32 = crate::panel_docking::COLUMN_WIDTH;
 /// A card's header (its tabs, × and ≡), as the kit's card (`panel-kit.html` §5).
 const HEADER: f32 = 32.0;
 /// A tab's height, and the room left and right of the header's contents.
@@ -73,7 +72,7 @@ const PAD: f32 = 4.0;
 const BUTTON: Vec2 = vec2(20.0, 24.0);
 /// A card's corners.
 const RADIUS: u8 = 8;
-/// The least size a card is drawn at (upstream's floating panel limits).
+/// The least size a card is drawn at.
 const MIN_W: f32 = 220.0;
 const MIN_H: f32 = HEADER + 48.0;
 /// The resize grips: the bottom-right corner, and the strips along the right and bottom edges.
@@ -103,34 +102,60 @@ fn yes() -> bool {
     true
 }
 
-/// The icon panels opened as cards, kept with the UI state (`ui.json`). The cards themselves are
-/// upstream floating groups (`UiState::docking`, `UiState::floating_panels`).
+/// A card open now: its tabs, the one in front and where it is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Card {
+    /// The tabs, in order (never empty).
+    pub panels: Vec<String>,
+    /// The tab in front.
+    #[serde(default)]
+    pub active: usize,
+    /// `[x, y, width, height]` in window points.
+    pub rect: [f32; 4],
+}
+
+impl Card {
+    fn first(&self) -> &str {
+        self.panels.first().map_or("", String::as_str)
+    }
+
+    /// The panel shown (in front).
+    fn front(&self) -> &str {
+        self.panels.get(self.active).or(self.panels.first()).map_or("", String::as_str)
+    }
+
+    fn area(&self) -> Rect {
+        let [x, y, w, h] = self.rect;
+        Rect::from_min_size(pos2(x, y), vec2(w, h))
+    }
+
+    fn set_area(&mut self, r: Rect) {
+        if r.is_finite() && r.width() > 0.0 && r.height() > 0.0 {
+            self.rect = [r.left(), r.top(), r.width(), r.height()];
+        }
+    }
+}
+
+/// The icon panels opened as cards, kept with the UI state (`ui.json`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PanelStack {
     /// Icon clicks open their panel as a card and leave the others open (Varos default). Off:
-    /// upstream's one pop-out at a time.
+    /// upstream's one flyout at a time.
     pub keep_open: bool,
     /// The panels open as cards, in the order they were opened.
     pub cards: Vec<String>,
+    /// The cards open now, each with its tabs and its place.
+    pub live: Vec<Card>,
     /// Where each panel's card was last.
     pub places: BTreeMap<String, Place>,
     /// Panels put together as tabs of one card, remembered when it closes: any of them opened
     /// again opens the whole card.
     pub groups: Vec<Group>,
-    /// The icon panels floating in the last frame. Not saved.
-    #[serde(skip)]
-    seen: Vec<&'static str>,
-    /// A pop-out left as upstream made it (a dragged-out panel put back). Not saved.
-    #[serde(skip)]
-    flyout: Option<String>,
     /// Per card (by its first panel): the size it was fitted to, the contents' size then and how
     /// many panels the card had. Not saved.
     #[serde(skip)]
     fitted: BTreeMap<String, Fitted>,
-    /// Native sets (drawn by `floating`) as drawn last, by first panel. Not saved.
-    #[serde(skip)]
-    drawn: BTreeMap<String, Rect>,
     /// The window and the dock as drawn last. Not saved.
     #[serde(skip)]
     view: Option<View>,
@@ -140,7 +165,7 @@ pub struct PanelStack {
     /// The workspace generation (`UiState::docking_generation`) the cards belong to. Not saved.
     #[serde(skip)]
     generation: Option<u64>,
-    /// The top of each icon in the column, as drawn last. Not saved.
+    /// The top of each icon in the columns, as drawn last. Not saved.
     #[serde(skip)]
     icons: Vec<(&'static str, f32)>,
     /// A card being moved or resized, or a tab being dragged. Not saved.
@@ -168,8 +193,7 @@ struct Fresh {
     /// Its first panel.
     first: String,
     /// The icon it was placed beside and that icon's top then: for its first frames the card
-    /// follows the icon if the column is laid out anew (the dock switching to its shared layout
-    /// when the first card opens).
+    /// follows the icon if the column is laid out anew.
     icon: Option<(&'static str, f32)>,
     /// Frames since it opened.
     age: u8,
@@ -182,8 +206,7 @@ pub struct Group {
     pub panels: Vec<String>,
     /// The tab in front.
     pub active: String,
-    /// Tabs that aren't icon panels (a dock tab grouped in), put back in the dock when the card
-    /// closed: they come back into the card with it, unless moved elsewhere since.
+    /// Kept for files saved before the 2026-10-26 merge (dock tabs grouped into a card); unused.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parked: Vec<String>,
 }
@@ -207,11 +230,9 @@ impl Default for PanelStack {
         Self {
             keep_open: true,
             cards: Vec::new(),
+            live: Vec::new(),
             places: BTreeMap::new(),
-            seen: Vec::new(),
-            flyout: None,
             fitted: BTreeMap::new(),
-            drawn: BTreeMap::new(),
             view: None,
             repaint: false,
             generation: None,
@@ -230,7 +251,11 @@ impl Default for PanelStack {
 /// What is saved: frame-to-frame bookkeeping doesn't make the UI state differ.
 impl PartialEq for PanelStack {
     fn eq(&self, other: &Self) -> bool {
-        self.keep_open == other.keep_open && self.cards == other.cards && self.places == other.places && self.groups == other.groups
+        self.keep_open == other.keep_open
+            && self.cards == other.cards
+            && self.live == other.live
+            && self.places == other.places
+            && self.groups == other.groups
     }
 }
 
@@ -260,6 +285,15 @@ impl View {
     }
 }
 
+/// `p` moved so that a `size` box at it lies inside `room` (its top-left corner kept on screen
+/// when it is larger than the room).
+pub(crate) fn clamp(p: [f32; 2], size: Vec2, room: Rect) -> Pos2 {
+    let x = p[0].min(room.right() - size.x).max(room.left());
+    let y = p[1].min(room.bottom() - size.y).max(room.top());
+    let pos = pos2(x, y);
+    if pos.is_finite() { pos } else { room.min }
+}
+
 /// `size` made to fit in `room` (a card never larger than the room left of the dock; what doesn't
 /// fit scrolls), at least [`MIN_TALL`] high when the room allows.
 fn bounded(size: Vec2, room: Rect) -> Vec2 {
@@ -271,102 +305,135 @@ fn active(app: &VectorcraftApp) -> bool {
     app.ui.varos_panel_stack.keep_open && !app.session.prefs.auto_collapse_icon_panels
 }
 
-/// Panel `id` as the `'static` id of an icon-column panel, if it is one.
+/// Panel `id` as the `'static` id of an icon panel, if it is one.
 fn rail_panel(id: &str) -> Option<&'static str> {
     ICON_PANELS.iter().find(|e| e.0 == id).map(|e| e.0)
 }
 
-/// Is panel `id` in a floating group (a card, or a group docked as a dock column)?
-fn floating(app: &VectorcraftApp, id: &str) -> bool {
-    match &app.ui.docking {
-        Some(layout) => layout.floating.iter().any(|g| g.panels.iter().any(|p| p == id)),
-        None => floating::group_of(&app.ui, id).is_some(),
-    }
+/// Can panel `id` open as a card now: card mode is on and it is an icon panel kept in a column
+/// collapsed to icons.
+fn cardable(app: &VectorcraftApp, id: &str) -> Option<&'static str> {
+    let id = rail_panel(id).filter(|_| active(app))?;
+    crate::panel_docking::in_iconic_column(&crate::panel_docking::layout_of(&app.ui), id).then_some(id)
 }
 
-/// Is this floating group of the shared layout a card (drawn by Varos, not by upstream's floating
-/// window): card mode is on, it holds a panel opened as a card and it isn't a native set.
-pub(crate) fn owns(app: &VectorcraftApp, group: &craft_ui::docking::Floating<String>) -> bool {
-    active(app)
-        && group.panels.iter().any(|p| app.ui.varos_panel_stack.cards.contains(p))
-        && !group.panels.first().is_some_and(|first| native(app, first))
+/// The card holding panel `id`, by index.
+fn card_index(app: &VectorcraftApp, id: &str) -> Option<usize> {
+    app.ui.varos_panel_stack.live.iter().position(|c| c.panels.iter().any(|p| p == id))
 }
 
-/// Is the floating group led by `first` a native set (a dock column, a set, collapsed), drawn by
-/// `floating`?
-fn native(app: &VectorcraftApp, first: &str) -> bool {
-    app.ui.floating_panels.iter().any(|n| n.panels.first().is_some_and(|p| p == first) && crate::panel_docking::decorated(n))
+/// The card led by `first`, by index.
+fn led_by(app: &VectorcraftApp, first: &str) -> Option<usize> {
+    app.ui.varos_panel_stack.live.iter().position(|c| c.first() == first)
 }
 
-/// The cards of the shared layout.
-fn owned(app: &VectorcraftApp) -> impl Iterator<Item = &craft_ui::docking::Floating<String>> {
-    app.ui.docking.iter().flat_map(|l| l.floating.iter()).filter(|g| owns(app, g))
+/// Is panel `id` open in a card (its icon lit)?
+pub(crate) fn in_card(app: &VectorcraftApp, id: &str) -> bool {
+    active(app) && card_index(app, id).is_some()
 }
 
-/// The card holding panel `id`, if it is in one.
-fn card_of<'a>(app: &'a VectorcraftApp, id: &str) -> Option<&'a craft_ui::docking::Floating<String>> {
-    owned(app).find(|g| g.panels.iter().any(|p| p == id))
-}
-
-/// The icon of panel `id` was drawn in the column with its top at `top` (a new card opens beside
-/// it). Kept in place: no allocation once every icon is known.
-pub(crate) fn note_icon(app: &mut VectorcraftApp, id: &'static str, top: f32) {
-    let icons = &mut app.ui.varos_panel_stack.icons;
-    match icons.iter_mut().find(|e| e.0 == id) {
-        Some(e) => e.1 = top,
-        None => icons.push((id, top)),
-    }
-}
-
-/// Does panel `id` keep its icon in the column though it floats: it is open as a card.
-pub(crate) fn keeps_icon(app: &VectorcraftApp, id: &str) -> bool {
-    active(app) && app.ui.varos_panel_stack.cards.iter().any(|p| p == id) && floating(app, id)
-}
-
-/// Is panel `id` open (its icon lit): popped out, or open as a card.
+/// Is panel `id` open (its icon lit): in its flyout, or in a card.
 pub(crate) fn is_open(app: &VectorcraftApp, id: &str) -> bool {
-    app.ui.open_panel.as_deref() == Some(id) || keeps_icon(app, id)
+    app.ui.open_panel.as_deref() == Some(id) || in_card(app, id)
+}
+
+/// `cards` follows the live cards (their panels, in the order they were opened).
+fn sync_cards(app: &mut VectorcraftApp) {
+    let stack = &mut app.ui.varos_panel_stack;
+    let open: Vec<String> = stack.live.iter().flat_map(|c| c.panels.iter().cloned()).collect();
+    stack.cards.retain(|p| open.contains(p));
+    for p in open {
+        if !stack.cards.contains(&p) {
+            stack.cards.push(p);
+        }
+    }
 }
 
 /// An icon click (or Window › that panel) on panel `id`. In card mode an icon panel opens as a
-/// card, or its card closes; otherwise upstream's swap (pop it out in place of the one popped
-/// out, or put it away).
+/// card, or its card closes; otherwise upstream's swap (show its flyout in place of the one shown,
+/// or put it away).
 pub(crate) fn toggle(app: &mut VectorcraftApp, id: &str) {
-    let Some(id) = rail_panel(id).filter(|_| active(app)) else {
+    let Some(id) = cardable(app, id) else {
         app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(id) { None } else { Some(id.to_string()) };
         return;
     };
-    if floating(app, id) {
+    if card_index(app, id).is_some() {
         close(app, id);
-    } else if app.ui.open_panel.as_deref() == Some(id) {
-        // Popped out of its icon (a dragged-out panel put back): its icon puts it away.
-        app.ui.open_panel = None;
     } else {
         open(app, id);
     }
 }
 
+/// `window.panel {panel}` without `toggle` (a shortcut, an agent, a Properties button): an icon
+/// panel's card opens, or comes to the front of its card when open. `None` when it isn't one.
+pub(crate) fn show(app: &mut VectorcraftApp, id: &str) -> Option<serde_json::Value> {
+    let id = cardable(app, id)?;
+    match card_index(app, id) {
+        Some(k) => {
+            let card = &mut app.ui.varos_panel_stack.live[k];
+            card.active = card.panels.iter().position(|p| p == id).unwrap_or(card.active);
+            app.ui.varos_panel_stack.repaint = true;
+            app.ui.open_panel = Some(id.to_string());
+        }
+        None => {
+            open(app, id);
+        }
+    }
+    app.ui.dock = true;
+    Some(json!({"panel": id, "card": true}))
+}
+
+/// craft-ui opened (`Some`) or closed the flyout of an icon column: in card mode an icon panel's
+/// flyout becomes its card (or its card closes, the icon clicked again). → the open panel to keep
+/// (`UiState::open_panel`: the newest card, or a flyout).
+pub(crate) fn flyout(app: &mut VectorcraftApp, panel: Option<String>) -> Option<String> {
+    match panel.as_deref().and_then(|p| cardable(app, p)) {
+        Some(p) => {
+            toggle(app, p);
+            app.ui.open_panel.clone()
+        }
+        // A flyout put away by craft-ui: the newest card stays the open panel.
+        None if panel.is_none() => app.ui.open_panel.clone().filter(|p| in_card(app, p)),
+        None => panel,
+    }
+}
+
+/// The dock area is about to open the flyout of `panel` (`UiState::open_panel`): in card mode an
+/// icon panel is a card instead (opened now if it isn't one yet: a Properties button, a workspace).
+/// True when the dock area opens no flyout for it.
+pub(crate) fn takes_flyout(app: &mut VectorcraftApp, panel: &str) -> bool {
+    let Some(p) = cardable(app, panel) else { return false };
+    if card_index(app, p).is_none() {
+        open(app, p);
+    }
+    true
+}
+
+/// After cards closed: upstream's open panel follows the newest card still open.
+fn follow_open_panel(app: &mut VectorcraftApp) {
+    let open = app.ui.open_panel.clone();
+    if open.as_deref().is_none_or(|p| rail_panel(p).is_some() && card_index(app, p).is_none()) {
+        app.ui.open_panel = app.ui.varos_panel_stack.cards.last().cloned();
+    }
+}
+
 /// Open panel `id` as a card: where it was left, or at the next free place beside its icon; with
-/// the panels it was grouped with as tabs (in their card when it is open). False when upstream
-/// refused (its status says why).
+/// the panels it was grouped with as tabs (in their card when it is open).
 fn open(app: &mut VectorcraftApp, id: &'static str) -> bool {
     let group = app.ui.varos_panel_stack.groups.iter().find(|g| g.panels.iter().any(|p| p == id)).cloned();
     if let Some(done) = group.and_then(|g| reopen(app, id, &g)) {
         return done;
     }
     let (rect, fresh) = spot(app, id);
-    let params = json!({"panel": id, "x": rect.left(), "y": rect.top(), "width": rect.width(), "height": rect.height()});
-    if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.float", &params) {
-        app.ui.status = error;
-        return false;
-    }
-    opened(app, &[id], id, fresh);
+    let mut card = Card { panels: vec![id.to_string()], active: 0, rect: [0.0; 4] };
+    card.set_area(rect);
+    app.ui.varos_panel_stack.live.push(card);
+    opened(app, id, id, fresh);
     true
 }
 
 /// For their first frames, cards placed beside their icon follow it if the icon column was laid
-/// out anew (the first card switches the dock to its shared layout, which draws the column a bit
-/// higher or lower). True when a card moved.
+/// out anew. True when a card moved.
 fn follow_icons(app: &mut VectorcraftApp) -> bool {
     let stack = &mut app.ui.varos_panel_stack;
     if stack.fresh.is_empty() {
@@ -385,32 +452,29 @@ fn follow_icons(app: &mut VectorcraftApp) -> bool {
     }
     let room = view(app).room();
     for (first, dy) in &shifts {
-        let Some(r) = app.ui.docking.as_ref().and_then(|l| l.floating.iter().find(|g| g.panels.first() == Some(first))).map(|g| g.rect) else {
-            continue;
-        };
-        let size = vec2(r[2], r[3]);
-        set_rect(app, first, Rect::from_min_size(floating::clamp([r[0], r[1] + dy], size, room), size));
+        let Some(k) = led_by(app, first) else { continue };
+        let card = &mut app.ui.varos_panel_stack.live[k];
+        let r = card.area();
+        card.set_area(Rect::from_min_size(clamp([r.left(), r.top() + dy], r.size(), room), r.size()));
     }
     !shifts.is_empty()
 }
 
-/// `panels` (led by the first) were opened as one card, `id` asked for: they are cards now. `fresh`:
-/// placed by Varos beside `id`'s icon, whose top was then this.
-fn opened(app: &mut VectorcraftApp, panels: &[&'static str], id: &'static str, fresh: Option<Option<f32>>) {
+/// The card led by `lead` was opened for `id`: its panels are cards now. `fresh`: placed by Varos
+/// beside `id`'s icon, whose top was then this.
+fn opened(app: &mut VectorcraftApp, lead: &str, id: &'static str, fresh: Option<Option<f32>>) {
+    sync_cards(app);
     let stack = &mut app.ui.varos_panel_stack;
-    for p in panels.iter().filter(|p| **p != id).chain([&id]).filter(|p| rail_panel(p).is_some()) {
-        stack.cards.retain(|c| c != p);
-        stack.cards.push(p.to_string());
-    }
-    if let Some(lead) = panels.first() {
-        stack.fitted.remove(*lead);
-        stack.fresh.retain(|f| f.first != *lead);
-        if let Some(icon) = fresh {
-            stack.fresh.push(Fresh { first: lead.to_string(), icon: icon.map(|top| (id, top)), age: 0 });
-        }
+    stack.cards.retain(|c| c != id);
+    stack.cards.push(id.to_string());
+    stack.fitted.remove(lead);
+    stack.fresh.retain(|f| f.first != lead);
+    if let Some(icon) = fresh {
+        stack.fresh.push(Fresh { first: lead.to_string(), icon: icon.map(|top| (id, top)), age: 0 });
     }
     stack.repaint = true;
-    // Upstream's open panel is the newest card (its float put the pop-out away).
+    // Upstream's open panel is the newest card (code and agents that read "the open panel" see the
+    // one just opened); the dock area opens no flyout for it ([`no_flyout`]).
     app.ui.open_panel = Some(id.to_string());
 }
 
@@ -418,66 +482,31 @@ fn opened(app: &mut VectorcraftApp, panels: &[&'static str], id: &'static str, f
 /// of them is open, else as their card again, its tabs in their order with the same one in front.
 /// None when nothing of the group is left to open with it (it opens alone).
 fn reopen(app: &mut VectorcraftApp, id: &'static str, group: &Group) -> Option<bool> {
-    let fail = |app: &mut VectorcraftApp, result: Option<Result<serde_json::Value, String>>| match result {
-        Some(Err(error)) => {
-            app.ui.status = error;
-            true
-        }
-        _ => false,
-    };
-    if let Some(host) = group.panels.iter().filter(|p| *p != id).find(|p| card_of(app, p).is_some()).cloned() {
-        let result = crate::panel_docking::command(app, "window.panel.float", &json!({"panel": id, "onto": host}));
-        if fail(app, result) {
-            return Some(false);
-        }
-        // At its place among the tabs (it was appended): before the next of its group's tabs in
-        // the card. In front, as it was asked for.
-        let card: Vec<String> = card_of(app, &host).map(|g| g.panels.clone()).unwrap_or_default();
+    if let Some(k) = group.panels.iter().filter(|p| *p != id).find_map(|p| card_index(app, p)) {
+        // At its place among the tabs: before the next of its group's tabs in the card. In front,
+        // as it was asked for.
         let at = group.panels.iter().position(|p| p == id).unwrap_or(0);
-        if let Some(next) = group.panels[at + 1..].iter().find(|p| card.contains(p)).cloned() {
-            let action = craft_ui::docking::Action::Move {
-                panel: id.to_string(),
-                anchor: next.clone(),
-                placement: craft_ui::docking::Placement::Tab { before: Some(next) },
-            };
-            let action = serde_json::to_value(action).unwrap_or_default();
-            let result = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action }));
-            if fail(app, result) {
-                return Some(false);
-            }
-        }
-        opened(app, &[id], id, None);
+        let card = &mut app.ui.varos_panel_stack.live[k];
+        let next = group.panels[at + 1..].iter().find_map(|p| card.panels.iter().position(|q| q == p));
+        let i = next.unwrap_or(card.panels.len());
+        card.panels.insert(i, id.to_string());
+        card.active = i;
+        let lead = card.first().to_string();
+        opened(app, &lead, id, None);
         return Some(true);
     }
-    // Its group's panels closed with it (or parked in the dock by its ×), not those opened
-    // elsewhere since.
-    let shown = |p: &String| app.ui.docking.as_ref().is_some_and(|l| l.contains(p));
-    let members: Vec<&'static str> = group
-        .panels
-        .iter()
-        .filter(|p| *p == id || !shown(p) || group.parked.contains(p))
-        .filter_map(|p| crate::menus::normalize_panel(p).filter(|n| n == p))
-        .collect();
-    let (lead, rest) = members.split_first().filter(|(_, rest)| !rest.is_empty())?;
+    // Its group's panels that can open with it (not opened elsewhere since).
+    let members: Vec<&'static str> = group.panels.iter().filter_map(|p| cardable(app, p)).filter(|p| card_index(app, p).is_none()).collect();
+    if members.len() < 2 || !members.contains(&id) {
+        return None;
+    }
     let (rect, fresh) = spot(app, id);
-    let params = json!({"panel": lead, "x": rect.left(), "y": rect.top(), "width": rect.width(), "height": rect.height()});
-    let result = crate::panel_docking::command(app, "window.panel.float", &params);
-    if fail(app, result) {
-        return Some(false);
-    }
-    for p in rest {
-        let result = crate::panel_docking::command(app, "window.panel.float", &json!({"panel": p, "onto": lead}));
-        if fail(app, result) {
-            return Some(false);
-        }
-    }
-    let front = members.iter().find(|p| **p == group.active).unwrap_or(&id);
-    let action = serde_json::to_value(craft_ui::docking::Action::Activate { panel: front.to_string() }).unwrap_or_default();
-    let result = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action }));
-    if fail(app, result) {
-        return Some(false);
-    }
-    opened(app, &members, id, fresh);
+    let active = members.iter().position(|p| *p == group.active).or_else(|| members.iter().position(|p| *p == id)).unwrap_or(0);
+    let mut card = Card { panels: members.iter().map(|p| p.to_string()).collect(), active, rect: [0.0; 4] };
+    card.set_area(rect);
+    let lead = card.first().to_string();
+    app.ui.varos_panel_stack.live.push(card);
+    opened(app, &lead, id, fresh);
     Some(true)
 }
 
@@ -486,37 +515,38 @@ fn close(app: &mut VectorcraftApp, id: &str) {
     remember(app);
     sync_groups(app);
     app.ui.varos_panel_stack.signature = 0;
-    if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.close", &json!({ "panel": id })) {
-        app.ui.status = error;
-    }
-    app.ui.varos_panel_stack.cards.retain(|p| p != id);
-    if app.ui.open_panel.as_deref() == Some(id) {
-        app.ui.open_panel = None;
-    }
-}
-
-/// The card led by `first` closes (its ×): its icon panels go back to their icons, other panels
-/// (a dock tab grouped with them) back to the dock. Its grouping is remembered.
-fn close_card(app: &mut VectorcraftApp, first: &str) {
-    let Some(panels) = card_of(app, first).map(|g| g.panels.clone()) else { return };
-    remember(app);
-    sync_groups(app);
-    // Its other panels go back to the dock, as parked tabs of its group.
-    if let Some(g) = app.ui.varos_panel_stack.groups.iter_mut().find(|g| g.panels.iter().any(|p| panels.contains(p))) {
-        g.parked = panels.iter().filter(|p| rail_panel(p).is_none()).cloned().collect();
-    }
-    // Brought up to date again when its card opens again (the same tabs as now).
-    app.ui.varos_panel_stack.signature = 0;
-    for p in &panels {
-        let id = if rail_panel(p).is_some() { "window.panel.close" } else { "window.panel.dock" };
-        if let Some(Err(error)) = crate::panel_docking::command(app, id, &json!({ "panel": p })) {
-            app.ui.status = error;
+    if let Some(k) = card_index(app, id) {
+        let stack = &mut app.ui.varos_panel_stack;
+        let card = &mut stack.live[k];
+        let front = card.front().to_string();
+        card.panels.retain(|p| p != id);
+        if card.panels.is_empty() {
+            stack.live.remove(k);
+        } else {
+            card.active = card.panels.iter().position(|p| *p == front).unwrap_or(0).min(card.panels.len() - 1);
         }
     }
-    app.ui.varos_panel_stack.cards.retain(|p| !panels.contains(p));
-    if app.ui.open_panel.as_ref().is_some_and(|p| panels.contains(p)) {
-        app.ui.open_panel = None;
+    sync_cards(app);
+    follow_open_panel(app);
+    app.ui.varos_panel_stack.repaint = true;
+}
+
+/// The card led by `first` closes (its ×): its panels go back to their icons. Its grouping is
+/// remembered.
+fn close_card(app: &mut VectorcraftApp, first: &str) {
+    if led_by(app, first).is_none() {
+        return;
     }
+    remember(app);
+    sync_groups(app);
+    // Brought up to date again when its card opens again (the same tabs as now).
+    app.ui.varos_panel_stack.signature = 0;
+    if let Some(k) = led_by(app, first) {
+        app.ui.varos_panel_stack.live.remove(k);
+    }
+    sync_cards(app);
+    follow_open_panel(app);
+    app.ui.varos_panel_stack.repaint = true;
 }
 
 /// The window and dock as last drawn, or a guess before the first frame.
@@ -537,6 +567,12 @@ fn overlap(a: Rect, b: Rect) -> f32 {
     both.area() / a.area().min(b.area()).max(1.0)
 }
 
+/// A new card's width for panel `id`: the Color panel is the 240 pt colour picker v3 and the
+/// panel's 10 pt margins; other icon panels are 256 points.
+fn panel_width(id: &str) -> f32 {
+    if id == crate::varos::picker::PANEL { crate::varos::picker::W + 20.0 } else { 256.0 }
+}
+
 /// Panel `id`'s card: where it was left (moved into the room left of the dock), unless half of it
 /// or more would lie on another card; else a new place beside its icon (then also the icon's top it
 /// was placed by, if known).
@@ -546,10 +582,10 @@ fn spot(app: &VectorcraftApp, id: &str) -> (Rect, Option<Option<f32>>) {
     let stack = &app.ui.varos_panel_stack;
     let saved = stack.places.get(id).filter(|p| p.pos.iter().chain(&p.size).all(|v| v.is_finite()) && p.size.iter().all(|v| *v > 0.0));
     let tallest = (v.screen.bottom() - v.top - MARGIN).max(MIN_TALL);
-    let size = saved.map_or(vec2(crate::dock::panel_width(id), START_TALL), |p| vec2(p.size[0], p.size[1]));
+    let size = saved.map_or(vec2(panel_width(id), START_TALL), |p| vec2(p.size[0], p.size[1]));
     let size = bounded(vec2(size.x, size.y.min(tallest)), room);
     let taken = taken(app, None);
-    let back = saved.map(|p| Rect::from_min_size(floating::clamp(p.pos, size, room), size)).filter(|r| taken.iter().all(|t| overlap(*r, *t) < 0.5));
+    let back = saved.map(|p| Rect::from_min_size(clamp(p.pos, size, room), size)).filter(|r| taken.iter().all(|t| overlap(*r, *t) < 0.5));
     if let Some(back) = back {
         return (back, None);
     }
@@ -560,30 +596,10 @@ fn spot(app: &VectorcraftApp, id: &str) -> (Rect, Option<Option<f32>>) {
     (Rect::from_min_size(place(size, &taken, room, v.right, top), size), Some(icon))
 }
 
-/// The floating groups' bounds (not those docked as dock columns, nor the one led by `except`): a
-/// shared-layout window's own rect (moved into the window as it is drawn), a native set's bounds as
-/// drawn last, else a guess.
+/// The cards' bounds (but the one led by `except`).
 fn taken(app: &VectorcraftApp, except: Option<&str>) -> Vec<Rect> {
     let screen = view(app).screen;
-    let stack = &app.ui.varos_panel_stack;
-    app.ui
-        .floating_panels
-        .iter()
-        .filter(|g| g.docked.is_none())
-        .filter_map(|g| {
-            let first = g.panels.first().filter(|f| Some(f.as_str()) != except)?;
-            let shared = app.ui.docking.as_ref().filter(|_| !crate::panel_docking::decorated(g));
-            if let Some(r) = shared.and_then(|l| l.floating.iter().find(|f| f.panels.first() == Some(first))).map(|f| f.rect) {
-                let size = vec2(r[2], r[3]);
-                return Some(Rect::from_min_size(floating::clamp([r[0], r[1]], size, screen), size));
-            }
-            if let Some(r) = stack.drawn.get(first) {
-                return Some(*r);
-            }
-            let size = vec2(g.width.unwrap_or_else(|| crate::dock::panel_width(first)), START_TALL);
-            Some(Rect::from_min_size(pos2(g.pos[0], g.pos[1]), size))
-        })
-        .collect()
+    app.ui.varos_panel_stack.live.iter().filter(|c| Some(c.first()) != except).map(|c| shown(c.rect, screen)).collect()
 }
 
 /// Where a new card `size` big goes among the cards `taken` in `screen`: right edge at `right`,
@@ -630,25 +646,21 @@ pub(crate) fn place(size: Vec2, taken: &[Rect], screen: Rect, right: f32, top: f
     // don't both count as free.
     let near = |p: Pos2| taken.iter().any(|t| (t.min - p).length() < CASCADE / 2.0);
     let steps = 1..=(taken.len() + 1).max(2) * 2;
-    let step = steps.map(|k| floating::clamp([x - CASCADE * k as f32, top + CASCADE * k as f32], size, screen)).find(|p| !near(*p));
-    step.unwrap_or_else(|| floating::clamp([x, top], size, screen))
+    let step = steps.map(|k| clamp([x - CASCADE * k as f32, top + CASCADE * k as f32], size, screen)).find(|p| !near(*p));
+    step.unwrap_or_else(|| clamp([x, top], size, screen))
 }
 
-/// Keep where each card is (and its size) as the place it opens at next time.
+/// Keep where each card is (and its size) as the place its panels open at next time.
 fn remember(app: &mut VectorcraftApp) {
-    let ui = &mut app.ui;
-    let stack = &mut ui.varos_panel_stack;
-    for g in ui.floating_panels.iter().filter(|g| g.docked.is_none()) {
-        let Some(first) = g.panels.first() else { continue };
-        let kept = ui.docking.as_ref().and_then(|l| l.floating.iter().find(|f| f.panels.first() == Some(first))).map(|f| [f.rect[2], f.rect[3]]);
-        let drawn = stack.drawn.get(first).map(|r| [r.width(), r.height()]);
-        let Some(size) = kept.or(drawn) else { continue };
-        if !g.pos.iter().chain(&size).all(|v| v.is_finite()) {
+    let stack = &mut app.ui.varos_panel_stack;
+    for c in &stack.live {
+        let [x, y, w, h] = c.rect;
+        if ![x, y, w, h].iter().all(|v| v.is_finite()) {
             continue;
         }
-        for p in g.panels.iter().filter(|p| stack.cards.contains(p)) {
+        for p in &c.panels {
             let fit = stack.places.get(p).is_none_or(|x| x.fit);
-            let place = Place { pos: g.pos, size, fit };
+            let place = Place { pos: [x, y], size: [w, h], fit };
             if stack.places.get(p) != Some(&place) {
                 stack.places.insert(p.clone(), place);
             }
@@ -656,51 +668,60 @@ fn remember(app: &mut VectorcraftApp) {
     }
 }
 
-/// The body of a card's panel was drawn this frame: its contents `content` big in a scroll area
-/// `viewport` big. Called from upstream's floating-panel body (`panel_docking`).
-pub(crate) fn note_body(ctx: &egui::Context, panel: &str, content: Vec2, viewport: Vec2) {
-    let pass = ctx.cumulative_pass_nr();
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(("varos-card-body", panel)), (content, viewport, pass)));
-}
-
-/// Once a frame (from `dock::floating_panel`, after the dock and its floating groups were drawn):
-/// follow what upstream did to the cards, turn other pop-outs of icon panels into cards, keep the
-/// cards left of the dock, keep each card's place and fit cards to their contents.
+/// Once a frame (after the dock area was drawn): turn other ways of showing an icon panel into
+/// cards, keep the cards left of the dock, keep each card's place and fit cards to their
+/// contents, and draw them.
 pub(crate) fn frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let generation = app.ui.docking_generation;
-    let stack = &mut app.ui.varos_panel_stack;
-    match stack.generation {
-        // First frame: what was loaded keeps only icon panels.
-        None => {
-            stack.cards.retain(|p| rail_panel(p).is_some());
-            stack.places.retain(|p, _| rail_panel(p).is_some());
-            for g in &mut stack.groups {
-                g.panels.retain(|p| crate::menus::normalize_panel(p) == Some(p.as_str()));
-            }
-            stack.groups.retain(|g| g.panels.len() >= 2);
-        }
-        // A workspace was applied: it brings its own panels. Its floating icon panels are cards
-        // (workspaces keep the floating groups, not which of them were cards).
-        Some(g) if g != generation => {
-            stack.cards.clear();
-            stack.seen.clear();
-            stack.fitted.clear();
-            stack.fresh.clear();
-            stack.gesture = None;
-            stack.hint = None;
-            stack.flyout = None;
-            let ui = &mut app.ui;
-            let groups: Vec<&String> = match &ui.docking {
-                Some(l) => l.floating.iter().flat_map(|g| g.panels.iter()).collect(),
-                None => ui.floating_panels.iter().flat_map(|g| g.panels.iter()).collect(),
-            };
-            ui.varos_panel_stack.cards = groups.into_iter().filter(|p| rail_panel(p).is_some()).cloned().collect();
-        }
-        Some(_) => {}
-    }
+    let first_frame = app.ui.varos_panel_stack.generation.is_none();
+    let workspace = app.ui.varos_panel_stack.generation.is_some_and(|g| g != generation);
     app.ui.varos_panel_stack.generation = Some(generation);
+    if first_frame {
+        // What was loaded keeps only icon panels.
+        let stack = &mut app.ui.varos_panel_stack;
+        stack.places.retain(|p, _| rail_panel(p).is_some());
+        for g in &mut stack.groups {
+            g.panels.retain(|p| rail_panel(p).is_some());
+            g.parked.clear();
+        }
+        stack.groups.retain(|g| g.panels.len() >= 2);
+        // A UI state saved before the cards were kept (`live`): its cards open again.
+        if stack.live.is_empty() && !stack.cards.is_empty() {
+            let cards = std::mem::take(&mut stack.cards);
+            for p in cards {
+                if let Some(p) = cardable(app, &p)
+                    && card_index(app, p).is_none()
+                {
+                    open(app, p);
+                }
+            }
+        }
+    }
+    if workspace {
+        // A workspace was applied: it brings its own panels; cards whose panels left their icon
+        // columns close.
+        let stack = &mut app.ui.varos_panel_stack;
+        stack.fitted.clear();
+        stack.fresh.clear();
+        stack.gesture = None;
+        stack.hint = None;
+    }
+    // Cards hold icon panels kept in an icon column: a panel moved elsewhere (dragged into the
+    // dock, floated) leaves its card.
+    let layout = crate::panel_docking::layout_of(&app.ui);
+    let card_mode = active(app);
+    let stack = &mut app.ui.varos_panel_stack;
+    if !stack.live.is_empty() {
+        for c in &mut stack.live {
+            let front = c.front().to_string();
+            c.panels.retain(|p| card_mode && rail_panel(p).is_some() && crate::panel_docking::in_iconic_column(&layout, p));
+            c.active = c.panels.iter().position(|p| *p == front).unwrap_or(0);
+        }
+        stack.live.retain(|c| !c.panels.is_empty());
+    }
+    sync_cards(app);
     let screen = ctx.content_rect();
-    if !active(app) {
+    if !card_mode {
         leave(app);
         return;
     }
@@ -709,42 +730,16 @@ pub(crate) fn frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
         return;
     }
     let moved = measure(app, ctx);
-    if let Some(p) = app.ui.open_panel.as_deref().and_then(rail_panel)
-        && !floating(app, p)
+    // A flyout opened another way (a Properties button, a workspace): a card.
+    if let Some(p) = app.ui.open_panel.clone().as_deref().and_then(|p| cardable(app, p))
         && app.ui.dock
         && app.ui.screen_mode < 3
+        && card_index(app, p).is_none()
     {
-        let stack = &mut app.ui.varos_panel_stack;
-        let docked = app.ui.docking.as_ref().is_some_and(|l| l.contains(&p.to_string()));
-        if stack.seen.contains(&p) {
-            if stack.cards.iter().any(|c| c == p) {
-                // Its card was put back in the dock (its ×, dropped on the column): it closes,
-                // rather than popping out of its icon.
-                app.ui.open_panel = None;
-            } else {
-                // A dragged-out panel put back pops out of its icon, as upstream.
-                stack.flyout = Some(p.to_string());
-            }
-        } else if stack.flyout.as_deref() != Some(p) && !docked && !open(app, p) {
-            // Opened another way (a Properties button, a workspace): a card. Refused (a broken
-            // saved layout): it isn't asked again each frame.
-            app.ui.open_panel = None;
-        }
+        open(app, p);
     }
-    let ui = &mut app.ui;
-    if ui.varos_panel_stack.flyout.is_some() && ui.varos_panel_stack.flyout != ui.open_panel {
-        ui.varos_panel_stack.flyout = None;
-    }
-    // The icon panels floating now, for the next frame.
-    let mut seen = std::mem::take(&mut ui.varos_panel_stack.seen);
-    seen.clear();
-    match &ui.docking {
-        Some(l) => seen.extend(l.floating.iter().flat_map(|g| g.panels.iter()).filter_map(|p| rail_panel(p))),
-        None => seen.extend(ui.floating_panels.iter().flat_map(|g| g.panels.iter()).filter_map(|p| rail_panel(p))),
-    }
-    ui.varos_panel_stack.seen = seen;
-    // The cards are drawn by Varos where upstream draws its floating groups: with the panels shown.
-    if !app.ui.varos_panel_stack.cards.is_empty() && app.ui.dock && app.ui.screen_mode < 3 && app.ui.docking.is_some() {
+    let shown = app.ui.dock && app.ui.screen_mode < 3 && !app.ui.varos_panel_stack.live.is_empty();
+    if shown {
         #[cfg(test)]
         let start = std::time::Instant::now();
         track(app, ctx);
@@ -758,24 +753,15 @@ pub(crate) fn frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
         app.ui.varos_panel_stack.hint = None;
     }
     let mut repaint = std::mem::take(&mut app.ui.varos_panel_stack.repaint);
-    if !app.ui.varos_panel_stack.cards.is_empty() {
-        let mut cards = std::mem::take(&mut app.ui.varos_panel_stack.cards);
-        cards.retain(|p| floating(app, p));
-        // Upstream's open panel follows the newest card still open when nothing else pops out
-        // (its layout changes put the pop-out away).
-        if app.ui.open_panel.is_none() && app.ui.dock {
-            app.ui.open_panel = cards.last().cloned();
-        }
-        app.ui.varos_panel_stack.cards = cards;
+    if !app.ui.varos_panel_stack.live.is_empty() {
         repaint |= follow_icons(app);
-        let mut moves = Vec::new();
+        let mut moved_cards = false;
         // The window or dock changed, or a card's move or resize was let go: back into the room.
         if moved || ctx.input(|i| i.pointer.any_released()) {
-            keep_in_room(app, &mut moves);
+            moved_cards |= keep_in_room(app);
         }
-        fit(app, ctx, &mut moves);
-        repaint |= !moves.is_empty();
-        apply(app, moves);
+        moved_cards |= fit(app, ctx);
+        repaint |= moved_cards;
         // Places and groups are kept once a move or resize is let go.
         if !ctx.input(|i| i.pointer.any_down()) {
             remember(app);
@@ -788,108 +774,102 @@ pub(crate) fn frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 /// Card mode was left (Auto-Collapse Iconic Panels on, or keep-open off): the cards close and the
-/// newest pops out of its icon instead, as upstream's single transient pop-out.
+/// newest shows as its icon column's flyout instead, as upstream's single transient pop-out.
 fn leave(app: &mut VectorcraftApp) {
-    app.ui.varos_panel_stack.seen.clear();
-    if app.ui.varos_panel_stack.cards.is_empty() {
+    if app.ui.varos_panel_stack.live.is_empty() {
         return;
     }
     remember(app);
-    let mut cards = std::mem::take(&mut app.ui.varos_panel_stack.cards);
-    cards.retain(|p| floating(app, p));
-    for p in &cards {
-        if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.close", &json!({ "panel": p })) {
-            app.ui.status = error;
-        }
-    }
-    app.ui.open_panel = cards.last().cloned();
+    sync_groups(app);
+    let newest = app.ui.varos_panel_stack.cards.last().cloned();
+    app.ui.varos_panel_stack.live.clear();
+    app.ui.varos_panel_stack.cards.clear();
+    app.ui.varos_panel_stack.gesture = None;
+    app.ui.open_panel = newest;
 }
 
-/// Keep the window, the dock and the native sets as drawn this frame. True when the window or
-/// the dock changed since (or this is the first frame).
+/// Keep the window and the dock as drawn this frame (from the dock area's controls). True when
+/// the window or the dock changed since (or this is the first frame).
 fn measure(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     let screen = ctx.content_rect();
     let shown = app.ui.dock && app.ui.screen_mode < 3;
-    let column = ctx.data(|d| d.get_temp::<Rect>(floating::icons_rect_id())).filter(|r| r.is_finite() && r.left() > screen.left());
-    let right = match column.filter(|_| shown) {
-        Some(c) => {
-            // Left of the icon column, of the docked columns and of the dock (the shared layout's
-            // tabbed group included).
-            let left = |id: egui::Id| ctx.data(|d| d.get_temp::<f32>(id)).filter(|x| x.is_finite() && *x > screen.left());
-            let dock = ctx.data(|d| d.get_temp::<Rect>(floating::dock_rect_id())).map(|r| r.left()).filter(|x| x.is_finite() && *x > screen.left());
-            [left(crate::dock::dock_left_id()), dock].into_iter().flatten().fold(c.left(), f32::min)
+    let layout = crate::panel_docking::layout_of(&app.ui);
+    let floats = |p: &String| layout.floating.iter().any(|w| w.contains(p));
+    let mut column: Option<Rect> = None;
+    let mut dock_left: Option<f32> = None;
+    let mut icons: Vec<(&'static str, f32)> = Vec::new();
+    for (hit, r) in crate::panel_docking::hit_rects(ctx) {
+        if !r.is_finite() || r.left() <= screen.left() {
+            continue;
         }
-        None if shown => screen.right() - ICON_COL - if app.ui.dock_collapsed { 0.0 } else { DOCK_WIDTH },
+        match &hit {
+            Hit::Icon(p) | Hit::IconGrip(p) => {
+                column = Some(column.map_or(r, |c| c.union(r)));
+                if let (Hit::Icon(_), Some(id)) = (&hit, rail_panel(p)) {
+                    icons.push((id, r.top()));
+                }
+            }
+            // The docked groups' controls (floating windows' title, × and grips aren't the dock).
+            // (An icon column's flyout isn't the dock either.)
+            Hit::Tab(p) | Hit::DragBar(p) | Hit::Border(p) | Hit::Overflow(p) | Hit::ColumnBar(p) | Hit::Collapse(p) | Hit::StackToggle(p)
+                if p != crate::panel_docking::CANVAS && !floats(p) && !crate::panel_docking::in_iconic_column(&layout, p) =>
+            {
+                dock_left = Some(dock_left.map_or(r.left(), |x: f32| x.min(r.left())));
+            }
+            _ => {}
+        }
+    }
+    let right = match column.filter(|_| shown) {
+        Some(c) => dock_left.map_or(c.left(), |x| x.min(c.left())),
+        None if shown => screen.right() - ICON_COL - if crate::panel_docking::dock_collapsed(&app.ui) { 0.0 } else { DOCK_WIDTH },
         None => screen.right(),
     } - GAP;
     let top = column.filter(|_| shown).map_or(TOP, |c| c.top());
-    let ui = &mut app.ui;
-    let stack = &mut ui.varos_panel_stack;
-    // Native sets' bounds, updated in place (no allocation once a set is known).
-    if !stack.drawn.is_empty() {
-        stack.drawn.retain(|first, _| ui.floating_panels.iter().any(|g| crate::panel_docking::decorated(g) && g.panels.first() == Some(first)));
-    }
-    for g in ui.floating_panels.iter().filter(|g| crate::panel_docking::decorated(g)) {
-        if let Some(first) = g.panels.first()
-            && let Some(r) = ctx.data(|d| d.get_temp::<Rect>(floating::group_rect_id(first))).filter(|r| r.is_finite())
-        {
-            match stack.drawn.get_mut(first) {
-                Some(kept) => *kept = r,
-                None => {
-                    stack.drawn.insert(first.clone(), r);
-                }
-            }
+    let stack = &mut app.ui.varos_panel_stack;
+    // The icons' tops, updated in place (no allocation once every icon is known).
+    for (id, y) in icons {
+        match stack.icons.iter_mut().find(|e| e.0 == id) {
+            Some(e) => e.1 = y,
+            None => stack.icons.push((id, y)),
         }
-    }
-    // Cards keep above the status bars: down to the icon column's bottom, as the dock.
-    let mut screen = screen;
-    if let Some(c) = column.filter(|c| shown && c.bottom() > top + MIN_TALL && c.bottom() < screen.bottom()) {
-        screen.max.y = c.bottom();
     }
     let view = View { screen, right, top };
     stack.view.replace(view) != Some(view)
 }
 
-/// The cards of the shared docking layout (not native sets) and their rects, with the panel shown.
-fn shared_cards<'a>(
-    app: &'a VectorcraftApp,
-    layout: &'a craft_ui::docking::Layout<String>,
-) -> impl Iterator<Item = (&'a craft_ui::docking::Floating<String>, &'a String)> + 'a {
-    layout.floating.iter().filter(|g| owns(app, g)).filter_map(|g| Some((g, g.panels.get(g.active).or(g.panels.first())?)))
-}
-
 /// Cards reaching over the dock (or out of the window) move back into the room left of it, made
-/// smaller only when larger than the room.
-fn keep_in_room(app: &VectorcraftApp, moves: &mut Vec<craft_ui::docking::Action<String>>) {
-    let (Some(layout), Some(v)) = (&app.ui.docking, app.ui.varos_panel_stack.view) else { return };
-    let room = v.room();
-    for (g, _) in shared_cards(app, layout) {
-        let [x, y, w, h] = g.rect;
-        // A point or two over (a dock edge that moved by a rounding) is left alone.
-        let room = room.expand(SLACK);
+/// smaller only when larger than the room. True when one moved.
+fn keep_in_room(app: &mut VectorcraftApp) -> bool {
+    let Some(v) = app.ui.varos_panel_stack.view else { return false };
+    // A point or two over (a dock edge that moved by a rounding) is left alone.
+    let room = v.room().expand(SLACK);
+    let mut moved = false;
+    for c in &mut app.ui.varos_panel_stack.live {
+        let [x, y, w, h] = c.rect;
         let size = bounded(vec2(w, h), room);
-        let to = floating::clamp([x, y], size, room);
-        if ((to - pos2(x, y)).length() > 0.5 || (size - vec2(w, h)).length() > 0.5)
-            && let Some(first) = g.panels.first()
-        {
-            moves.push(craft_ui::docking::Action::MoveFloating { panel: first.clone(), rect: [to.x, to.y, size.x, size.y] });
+        let to = clamp([x, y], size, room);
+        if (to - pos2(x, y)).length() > 0.5 || (size - vec2(w, h)).length() > 0.5 {
+            c.set_area(Rect::from_min_size(to, size));
+            moved = true;
         }
     }
+    moved
 }
 
-/// Fit each card drawn by the shared docking layout to its shown panel's contents, until it is
-/// resized by hand. A size is fitted once per size of the contents, so contents that follow the
-/// card's height (a list filling it) leave it as it is.
-fn fit(app: &mut VectorcraftApp, ctx: &egui::Context, moves: &mut Vec<craft_ui::docking::Action<String>>) {
-    let Some(layout) = &app.ui.docking else { return };
-    let Some(v) = app.ui.varos_panel_stack.view else { return };
+/// Fit each card to its shown panel's contents, until it is resized by hand. A size is fitted once
+/// per size of the contents, so contents that follow the card's height (a list filling it) leave
+/// it as it is. True when a card changed.
+fn fit(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
+    let Some(v) = app.ui.varos_panel_stack.view else { return false };
     let mut resized: Vec<String> = Vec::new();
     let mut fitted: Vec<(String, Fitted)> = Vec::new();
-    for (g, shown) in shared_cards(app, layout) {
-        let Some(first) = g.panels.first() else { continue };
+    let mut moves: Vec<(String, Rect)> = Vec::new();
+    for c in &app.ui.varos_panel_stack.live {
+        let first = c.first().to_string();
+        let shown_panel = c.front();
         let stack = &app.ui.varos_panel_stack;
-        let [x, y, w, h] = g.rect;
-        let before = stack.fitted.get(first).filter(|f| f.panels == g.panels.len());
+        let [x, y, w, h] = c.rect;
+        let before = stack.fitted.get(&first).filter(|f| f.panels == c.panels.len());
         if let Some(f) = before
             && ((h - f.size.y).abs() > 0.5 || (w - f.size.x).abs() > 0.5)
         {
@@ -897,10 +877,10 @@ fn fit(app: &mut VectorcraftApp, ctx: &egui::Context, moves: &mut Vec<craft_ui::
             resized.push(first.clone());
             continue;
         }
-        if stack.places.get(shown).is_some_and(|p| !p.fit) {
+        if stack.places.get(shown_panel).is_some_and(|p| !p.fit) {
             continue;
         }
-        let Some((content, viewport)) = note(ctx, shown) else { continue };
+        let Some((content, viewport)) = note(ctx, shown_panel) else { continue };
         if before.is_some_and(|f| (f.content - content).abs().max_elem() <= 1.0) {
             continue;
         }
@@ -913,13 +893,12 @@ fn fit(app: &mut VectorcraftApp, ctx: &egui::Context, moves: &mut Vec<craft_ui::
         let wide = if content.x > viewport.x + 0.5 { (w + content.x - viewport.x).ceil().max(w).min(widest) } else { w.min(widest) };
         // Widened leftwards: its right edge stays (beside the dock).
         let mut at = pos2((x - (wide - w)).max(v.screen.left()).min(v.room().right() - wide).max(v.screen.left()), y);
-        let tall = match stack.fresh.iter().find(|f| f.first == *first) {
+        let tall = match stack.fresh.iter().find(|f| f.first == first) {
             Some(f) => {
                 let tall = wanted.min((floor - v.top.min(y).max(v.screen.top())).max(MIN_TALL));
                 if before.is_none() {
-                    // Its first fitting (it hasn't been seen yet: a new egui area is drawn once
-                    // invisibly to measure it): placed again beside its icon at its real size.
-                    let others = taken(app, Some(first));
+                    // Its first fitting: placed again beside its icon at its real size.
+                    let others = taken(app, Some(&first));
                     let room = v.room();
                     let start = f.icon.map_or(y, |(_, top)| top).min(room.bottom() - MARGIN - MIN_TALL).max(room.top());
                     at = place(vec2(wide, tall), &others, room, v.right, start);
@@ -931,17 +910,15 @@ fn fit(app: &mut VectorcraftApp, ctx: &egui::Context, moves: &mut Vec<craft_ui::
         };
         let changed = (tall - h).abs() > 1.0 || (wide - w).abs() > 0.5 || (at - pos2(x, y)).length() > 0.5;
         let size = if changed { vec2(wide, tall) } else { vec2(w, h) };
-        fitted.push((first.clone(), Fitted { size, content, panels: g.panels.len() }));
+        fitted.push((first.clone(), Fitted { size, content, panels: c.panels.len() }));
         if changed {
-            moves.retain(|m| !matches!(m, craft_ui::docking::Action::MoveFloating { panel, .. } if panel == first));
-            moves.push(craft_ui::docking::Action::MoveFloating { panel: first.clone(), rect: [at.x, at.y, size.x, size.y] });
+            moves.push((first, Rect::from_min_size(at, size)));
         }
     }
-    let ui = &mut app.ui;
-    let stack = &mut ui.varos_panel_stack;
+    let stack = &mut app.ui.varos_panel_stack;
     for first in resized {
-        if let Some(g) = ui.docking.as_ref().and_then(|l| l.floating.iter().find(|g| g.panels.first() == Some(&first))) {
-            for p in &g.panels {
+        if let Some(c) = stack.live.iter().find(|c| c.first() == first) {
+            for p in &c.panels {
                 if let Some(place) = stack.places.get_mut(p) {
                     place.fit = false;
                 }
@@ -950,60 +927,48 @@ fn fit(app: &mut VectorcraftApp, ctx: &egui::Context, moves: &mut Vec<craft_ui::
         stack.fitted.remove(&first);
     }
     stack.fitted.extend(fitted);
-    // Cards gone, or now led by another panel, are fitted afresh.
-    if let Some(layout) = &ui.docking {
-        stack.fitted.retain(|first, _| layout.floating.iter().any(|g| g.panels.first() == Some(first)));
-        if !stack.fresh.is_empty() {
-            stack.fresh.retain(|f| layout.floating.iter().any(|g| g.panels.first() == Some(&f.first)));
+    let changed = !moves.is_empty();
+    for (first, r) in moves {
+        if let Some(c) = stack.live.iter_mut().find(|c| c.first() == first) {
+            c.set_area(r);
         }
     }
+    // Cards gone, or now led by another panel, are fitted afresh.
+    let live: Vec<String> = stack.live.iter().map(|c| c.first().to_string()).collect();
+    stack.fitted.retain(|first, _| live.contains(first));
+    stack.fresh.retain(|f| live.contains(&f.first));
+    changed
 }
 
-/// Apply the moves of [`frame`] through upstream's layout command.
-fn apply(app: &mut VectorcraftApp, moves: Vec<craft_ui::docking::Action<String>>) {
-    if moves.is_empty() {
-        return;
-    }
-    // Fitting a card is no layout change of upstream's: its pop-out (the newest card) stays.
-    let open = app.ui.open_panel.clone();
-    for action in moves {
-        // A size set here is no hand resize.
-        if let craft_ui::docking::Action::MoveFloating { panel, rect } = &action
-            && let Some(f) = app.ui.varos_panel_stack.fitted.get_mut(panel)
-        {
-            f.size = vec2(rect[2], rect[3]);
-        }
-        let Ok(action) = serde_json::to_value(action) else { continue };
-        if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action })) {
-            app.ui.status = error;
-        }
-    }
-    app.ui.open_panel = open;
+/// Note that the body of a card's panel was drawn this frame: its contents `content` big in a
+/// scroll area `viewport` big.
+fn note_body(ctx: &egui::Context, panel: &str, content: Vec2, viewport: Vec2) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("varos-card-body", panel)), (content, viewport, pass)));
 }
 
 /// The note [`note_body`] left this frame for panel `id`: its contents' and scroll area's sizes.
 fn note(ctx: &egui::Context, id: &str) -> Option<(Vec2, Vec2)> {
-    let (content, viewport, pass) = ctx.data(|d| d.get_temp::<(Vec2, Vec2, u64)>(egui::Id::new(("varos-card-body", id))))?;
+    let (content, viewport, pass) = ctx.data(|d| d.get_temp::<(Vec2, Vec2, u64)>(egui::Id::unique(("varos-card-body", id))))?;
     (pass == ctx.cumulative_pass_nr() && content.is_finite() && viewport.is_finite()).then_some((content, viewport))
 }
 
-/// The egui area of the card led by `first` (the id upstream's floating window had, so the card
-/// keeps its place among the layers and `floating::drop_target` finds it).
+/// The egui area of the card led by `first`.
 fn card_id(first: &str) -> egui::Id {
-    egui::Id::new("vectorcraft-panel-docking").with(("floating", first))
+    egui::Id::unique("vectorcraft-panel-docking").with(("floating", first))
 }
 
 /// Panel `panel`'s tab in a card's header.
 fn tab_id(panel: &str) -> egui::Id {
-    egui::Id::new("varos-card-tab").with(panel)
+    egui::Id::unique("varos-card-tab").with(panel)
 }
 
-/// Where a card `rect` (`[x, y, width, height]`, the layout's) is drawn in `screen`: at least the
-/// least card size, at most the window, inside the window.
+/// Where a card `rect` (`[x, y, width, height]`) is drawn in `screen`: at least the least card
+/// size, at most the window, inside the window.
 fn shown(rect: [f32; 4], screen: Rect) -> Rect {
     let least = vec2(MIN_W.min(screen.width()), MIN_H.min(screen.height()));
     let size = vec2(rect[2], rect[3]).max(least).min(screen.size());
-    Rect::from_min_size(floating::clamp([rect[0], rect[1]], size, screen), size)
+    Rect::from_min_size(clamp([rect[0], rect[1]], size, screen), size)
 }
 
 /// The header of a card drawn at `rect`.
@@ -1018,18 +983,10 @@ fn label(app: &VectorcraftApp, id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-/// Put the card led by `first` at `rect` now (the layout and its legacy mirror), so that it is
-/// drawn there this very frame.
+/// Put the card led by `first` at `rect` now, so that it is drawn there this very frame.
 fn set_rect(app: &mut VectorcraftApp, first: &str, rect: Rect) {
-    if !(rect.is_finite() && rect.width() > 0.0 && rect.height() > 0.0) {
-        return;
-    }
-    if let Some(g) = app.ui.docking.as_mut().and_then(|l| l.floating.iter_mut().find(|g| g.panels.first().is_some_and(|p| p == first))) {
-        g.rect = [rect.left(), rect.top(), rect.width(), rect.height()];
-    }
-    if let Some(g) = app.ui.floating_panels.iter_mut().find(|g| g.panels.first().is_some_and(|p| p == first)) {
-        g.pos = [rect.left(), rect.top()];
-        g.width = Some(rect.width());
+    if let Some(k) = led_by(app, first) {
+        app.ui.varos_panel_stack.live[k].set_area(rect);
     }
 }
 
@@ -1074,7 +1031,7 @@ fn track(app: &mut VectorcraftApp, ctx: &egui::Context) {
             // The card stays in the room left of the dock and above the status bars while held;
             // the pointer itself (for the drop targets) goes anywhere.
             let to = pos - grab;
-            set_rect(app, &first, Rect::from_min_size(floating::clamp([to.x, to.y], original.size(), room), original.size()));
+            set_rect(app, &first, Rect::from_min_size(clamp([to.x, to.y], original.size(), room), original.size()));
             if !down {
                 app.ui.varos_panel_stack.gesture = None;
                 if (pos - from).length() >= TRAVEL {
@@ -1084,7 +1041,7 @@ fn track(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 // Light up where a let-go here would put it.
                 match target(app, ctx, &first, pos) {
                     Some(Target::Card(onto)) => app.ui.varos_panel_stack.hint = Some(onto),
-                    Some(Target::Upstream(drop, zone)) => floating::preview(ctx, drop, zone),
+                    Some(Target::Dock(_, zone) | Target::Icons(zone)) => preview(ctx, zone),
                     None => {}
                 }
             }
@@ -1101,21 +1058,22 @@ fn track(app: &mut VectorcraftApp, ctx: &egui::Context) {
             }
             // Out of its card's header: it leaves as a card of its own, held by its tab.
             let grab = vec2(PAD + 12.0, HEADER / 2.0);
-            let at = floating::clamp([pos.x - grab.x, pos.y - grab.y], size, room);
-            let open = app.ui.open_panel.clone();
-            let params = json!({"panel": panel, "x": at.x, "y": at.y, "width": size.x, "height": size.y});
-            let result = crate::panel_docking::command(app, "window.panel.float", &params);
-            app.ui.open_panel = open;
-            app.ui.varos_panel_stack.gesture = match result {
-                Some(Err(error)) => {
-                    app.ui.status = error;
-                    None
-                }
-                _ => {
-                    app.ui.varos_panel_stack.fitted.remove(&panel);
-                    Some(Gesture::Move { first: panel, grab, from, original: Rect::from_min_size(at, size) })
-                }
-            };
+            let at = clamp([pos.x - grab.x, pos.y - grab.y], size, room);
+            if let Some(k) = card_index(app, &panel) {
+                let stack = &mut app.ui.varos_panel_stack;
+                let card = &mut stack.live[k];
+                let front = card.front().to_string();
+                card.panels.retain(|p| *p != panel);
+                card.active = card.panels.iter().position(|p| *p == front).unwrap_or(0);
+                let mut torn = Card { panels: vec![panel.clone()], active: 0, rect: [0.0; 4] };
+                torn.set_area(Rect::from_min_size(at, size));
+                stack.live.push(torn);
+                stack.fitted.remove(&panel);
+                stack.gesture = Some(Gesture::Move { first: panel, grab, from, original: Rect::from_min_size(at, size) });
+            } else {
+                app.ui.varos_panel_stack.gesture = None;
+            }
+            sync_cards(app);
         }
         Gesture::Resize { first, right, bottom, grab, original } => {
             if cancel {
@@ -1123,9 +1081,7 @@ fn track(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 app.ui.varos_panel_stack.gesture = None;
                 return;
             }
-            let Some(now) =
-                app.ui.docking.as_ref().and_then(|l| l.floating.iter().find(|g| g.panels.first() == Some(&first))).map(|g| shown(g.rect, screen))
-            else {
+            let Some(now) = led_by(app, &first).map(|k| shown(app.ui.varos_panel_stack.live[k].rect, screen)) else {
                 app.ui.varos_panel_stack.gesture = None;
                 return;
             };
@@ -1143,7 +1099,8 @@ fn track(app: &mut VectorcraftApp, ctx: &egui::Context) {
 /// Tab `panel`, dragged along its card's header to `at`, passes the middle of another tab of its
 /// card: it moves to that tab's other side (in front, as a dragged tab is).
 fn reorder(app: &mut VectorcraftApp, ctx: &egui::Context, panel: &str, at: Pos2) {
-    let Some(panels) = card_of(app, panel).map(|g| g.panels.clone()) else { return };
+    let Some(k) = card_index(app, panel) else { return };
+    let panels = app.ui.varos_panel_stack.live[k].panels.clone();
     let Some(from) = panels.iter().position(|p| p == panel) else { return };
     let rect = |p: &str| ctx.read_response(tab_id(p)).map(|r| r.rect);
     let Some((to, over)) =
@@ -1151,30 +1108,35 @@ fn reorder(app: &mut VectorcraftApp, ctx: &egui::Context, panel: &str, at: Pos2)
     else {
         return;
     };
-    let before = if to < from && at.x < over.center().x {
-        Some(panels[to].clone())
-    } else if to > from && at.x > over.center().x {
-        panels.get(to + 1).cloned()
-    } else {
+    let passed = (to < from && at.x < over.center().x) || (to > from && at.x > over.center().x);
+    if !passed {
         return;
-    };
-    let anchor = panels[to].clone();
-    let open = app.ui.open_panel.clone();
-    let action = craft_ui::docking::Action::Move { panel: panel.to_string(), anchor, placement: craft_ui::docking::Placement::Tab { before } };
-    let action = serde_json::to_value(action).unwrap_or_default();
-    if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action })) {
-        app.ui.status = error;
     }
-    app.ui.open_panel = open;
+    let stack = &mut app.ui.varos_panel_stack;
+    let card = &mut stack.live[k];
+    let lead = card.first().to_string();
+    let moved = card.panels.remove(from);
+    card.panels.insert(to, moved);
+    card.active = to;
+    // The card keeps its fitting and its placing when another tab leads it now.
+    let now = card.first().to_string();
+    if now != lead {
+        if let Some(f) = stack.fitted.remove(&lead) {
+            stack.fitted.insert(now.clone(), f);
+        }
+        for f in stack.fresh.iter_mut().filter(|f| f.first == lead) {
+            f.first.clone_from(&now);
+        }
+    }
 }
 
 /// The gesture egui's drag of widget `dragged` (pressed at `press`) starts on a card, if it is one
 /// of a card's.
 fn begin(app: &VectorcraftApp, dragged: egui::Id, press: Pos2, screen: Rect) -> Option<Gesture> {
-    for g in owned(app) {
-        let Some(first) = g.panels.first() else { continue };
-        let rect = shown(g.rect, screen);
-        let id = card_id(first);
+    for c in &app.ui.varos_panel_stack.live {
+        let first = c.first().to_string();
+        let rect = shown(c.rect, screen);
+        let id = card_id(&first);
         let mover = || Gesture::Move { first: first.clone(), grab: press - rect.min, from: press, original: rect };
         let resize = |right, bottom| Gesture::Resize { first: first.clone(), right, bottom, grab: press - rect.max, original: rect };
         if dragged == id.with("header") {
@@ -1189,9 +1151,9 @@ fn begin(app: &VectorcraftApp, dragged: egui::Id, press: Pos2, screen: Rect) -> 
         if dragged == id.with("resize-y") {
             return Some(resize(false, true));
         }
-        if let Some(panel) = g.panels.iter().find(|p| dragged == tab_id(p)) {
+        if let Some(panel) = c.panels.iter().find(|p| dragged == tab_id(p)) {
             // A card's only tab moves the card; one of several tabs is torn out of it.
-            return Some(if g.panels.len() == 1 {
+            return Some(if c.panels.len() == 1 {
                 mover()
             } else {
                 Gesture::Tab { panel: panel.clone(), from: press, strip: header(rect), size: rect.size() }
@@ -1205,55 +1167,91 @@ fn begin(app: &VectorcraftApp, dragged: egui::Id, press: Pos2, screen: Rect) -> 
 enum Target {
     /// In the card led by this panel, as tabs (let go on its header).
     Card(String),
-    /// Upstream's drop target (the dock, a dock column, another floating group's tabs).
-    Upstream(floating::Drop, Rect),
+    /// In the docked group of this panel, as tabs (let go on its tabs); the zone lit meanwhile.
+    Dock(String, Rect),
+    /// Back on the icon column (its panels go back to their icons); the zone lit meanwhile.
+    Icons(Rect),
 }
 
 /// Where the card led by `first` lands if let go at `at`: on another card's header it joins that
-/// card; else where upstream's drop targets say (the dock and the icon column dock it, a dock
-/// column's edge docks it as a column, a group that isn't a card takes it as tabs). Dropped
+/// card; on a docked group's tabs it joins that group; on an icon column it closes. Dropped
 /// anywhere else, it stays where it is.
 fn target(app: &VectorcraftApp, ctx: &egui::Context, first: &str, at: Pos2) -> Option<Target> {
     let screen = ctx.content_rect();
     // The topmost card under the pointer (but the moved one): on its header, the moved card joins it.
     let layers: Vec<egui::LayerId> = ctx.memory(|m| m.layer_ids().collect());
-    let under = owned(app)
-        .filter(|g| g.panels.first().is_some_and(|p| p != first))
-        .filter_map(|g| Some((g.panels.first()?, shown(g.rect, screen))))
+    let under = app
+        .ui
+        .varos_panel_stack
+        .live
+        .iter()
+        .filter(|c| c.first() != first)
+        .map(|c| (c.first(), shown(c.rect, screen)))
         .filter(|(_, r)| r.contains(at))
         .max_by_key(|(p, _)| layers.iter().position(|l| l.id == card_id(p)));
     if let Some((onto, rect)) = under {
-        return header(rect).contains(at).then(|| Target::Card(onto.clone()));
+        return header(rect).contains(at).then(|| Target::Card(onto.to_string()));
     }
-    let panel = crate::menus::normalize_panel(first)?;
-    match floating::drop_target(app, ctx, floating::Moving::Panel(panel), at)? {
-        (drop @ (floating::Drop::Dock | floating::Drop::Column(_)), zone) => Some(Target::Upstream(drop, zone)),
-        (drop @ floating::Drop::Stack(onto), zone) if card_of(app, onto).is_none() => Some(Target::Upstream(drop, zone)),
-        _ => None,
+    for (hit, r) in crate::panel_docking::hit_rects(ctx) {
+        if !r.contains(at) {
+            continue;
+        }
+        match hit {
+            Hit::Icon(_) | Hit::IconGrip(_) => return Some(Target::Icons(r)),
+            Hit::Tab(p) | Hit::DragBar(p)
+                if p != crate::panel_docking::CANVAS && !crate::panel_docking::floats(&app.ui, &p) && card_index(app, &p).is_none() =>
+            {
+                return Some(Target::Dock(p, r));
+            }
+            _ => {}
+        }
     }
+    None
 }
 
-/// The card led by `first` was let go at `at`: group it, dock it, or leave it there.
+/// Light up where a let-go would put the moved card.
+fn preview(ctx: &egui::Context, zone: Rect) {
+    let t = crate::theme::Tokens::get(ctx);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("varos-card-drop")));
+    painter.rect(zone.shrink(1.0), CornerRadius::same(3), t.accent.gamma_multiply(0.15), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+}
+
+/// The card led by `first` was let go at `at`: group it, dock it, close it, or leave it there.
 fn let_go(app: &mut VectorcraftApp, ctx: &egui::Context, first: &str, at: Pos2) {
     let Some(target) = target(app, ctx, first, at) else { return };
-    let panels: Vec<String> = card_of(app, first).map(|g| g.panels.clone()).unwrap_or_default();
-    let open = app.ui.open_panel.clone();
-    let (id, params) = match target {
-        Target::Card(onto) => ("window.panel.float", json!({"panel": first, "group": true, "onto": onto})),
-        Target::Upstream(floating::Drop::Stack(onto), _) => ("window.panel.float", json!({"panel": first, "group": true, "onto": onto})),
-        Target::Upstream(floating::Drop::Column(slot), _) => ("window.panel.dock", json!({"panel": first, "group": true, "column": slot})),
-        Target::Upstream(_, _) => ("window.panel.dock", json!({"panel": first, "group": true})),
-    };
-    if let Err(error) = app.run(id, params) {
-        app.ui.status = error;
+    let Some(k) = led_by(app, first) else { return };
+    match target {
+        Target::Card(onto) => {
+            let moved = app.ui.varos_panel_stack.live.remove(k);
+            if let Some(j) = led_by(app, &onto) {
+                let card = &mut app.ui.varos_panel_stack.live[j];
+                let front = moved.front().to_string();
+                card.panels.extend(moved.panels);
+                card.active = card.panels.iter().position(|p| *p == front).unwrap_or(card.active);
+                let lead = card.first().to_string();
+                app.ui.varos_panel_stack.fitted.remove(&lead);
+            }
+        }
+        Target::Dock(anchor, _) => {
+            remember(app);
+            let moved = app.ui.varos_panel_stack.live.remove(k);
+            for p in &moved.panels {
+                let action = craft_ui::docking::Action::Move {
+                    panel: p.clone(),
+                    anchor: anchor.clone(),
+                    placement: craft_ui::docking::Placement::Tab { before: None },
+                };
+                let action = serde_json::to_value(action).unwrap_or_default();
+                if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action })) {
+                    app.ui.status = error;
+                }
+            }
+        }
+        Target::Icons(_) => close_card(app, first),
     }
-    // A card put back in the dock closes (its icon panels go back to their icons): it doesn't pop
-    // out of its icon instead.
-    app.ui.open_panel = match app.ui.open_panel.take() {
-        Some(p) if panels.contains(&p) && !floating(app, &p) => None,
-        Some(p) if id == "window.panel.float" => open.or(Some(p)),
-        other => other,
-    };
+    sync_cards(app);
+    follow_open_panel(app);
+    app.ui.varos_panel_stack.repaint = true;
 }
 
 /// What a card's header asked for this frame.
@@ -1268,24 +1266,54 @@ enum Ask {
 fn draw(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let screen = ctx.content_rect();
     let t = crate::theme::Tokens::get(ctx);
-    let cards: Vec<(Vec<String>, usize, Rect)> = owned(app).map(|g| (g.panels.clone(), g.active, shown(g.rect, screen))).collect();
+    // The click that opened a card opened the dock area's flyout of its icon too, drawn this frame:
+    // it closes now and the card shows from the next frame (a panel's widgets are drawn once).
+    let area = crate::panel_docking::area_id();
+    let flown = craft_ui::docking::flyout::<String>(ctx, area).filter(|p| card_index(app, p).is_some());
+    if flown.is_some() {
+        craft_ui::docking::close_flyout::<String>(ctx, area);
+        ctx.request_repaint();
+    }
+    let cards: Vec<(Vec<String>, usize, Rect)> = app
+        .ui
+        .varos_panel_stack
+        .live
+        .iter()
+        .filter(|c| flown.as_ref().is_none_or(|f| !c.panels.contains(f)))
+        .map(|c| (c.panels.clone(), c.active, shown(c.rect, screen)))
+        .collect();
     let mut asks = Vec::new();
     for (panels, active, rect) in &cards {
         card(app, ctx, &t, panels, *active, *rect, &mut asks);
     }
-    let open = app.ui.open_panel.clone();
     for ask in asks {
         match ask {
             Ask::Activate(panel) => {
-                let action = serde_json::to_value(craft_ui::docking::Action::Activate { panel }).unwrap_or_default();
-                if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action })) {
-                    app.ui.status = error;
+                if let Some(k) = card_index(app, &panel) {
+                    let card = &mut app.ui.varos_panel_stack.live[k];
+                    card.active = card.panels.iter().position(|p| *p == panel).unwrap_or(card.active);
                 }
-                app.ui.open_panel.clone_from(&open);
             }
             Ask::Close(first) => close_card(app, &first),
         }
     }
+}
+
+/// Panel `panel`'s body in a card: its contents in a scroll area, the size they took noted for
+/// [`fit`].
+fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, panel: &str) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let back = ui.max_rect();
+    if back.is_positive() {
+        ui.painter().rect_filled(back, 0.0, t.panel);
+    }
+    let width = ui.available_width();
+    let height = (ui.available_height() - 20.0).max(0.0);
+    let out = egui::ScrollArea::vertical()
+        .id_salt(("shared-panel-body", panel))
+        .auto_shrink([false, false])
+        .show(ui, |ui| crate::dock::panel_body(app, ui, panel, width, height));
+    note_body(ui.ctx(), panel, out.content_size, out.inner_rect.size());
 }
 
 /// Draw one card at `rect`: `panels` as its tabs, the `active` one's body under them.
@@ -1353,13 +1381,13 @@ fn card(app: &mut VectorcraftApp, ctx: &egui::Context, t: &crate::theme::Tokens,
         crate::panels::panel_menu(app, ui, front_panel, Rect::from_center_size(menu.center(), vec2(18.0, 18.0)));
         painter.hline((rect.left() + 1.0)..=(rect.right() - 1.0), head.bottom() - 0.5, Stroke::new(1.0, t.border));
         // The shown panel's body, inside the rounded corners.
-        let body = Rect::from_min_max(pos2(rect.left() + 1.0, head.bottom()), pos2(rect.right() - 1.0, rect.bottom() - FOOT));
-        if body.is_positive() {
+        let inner = Rect::from_min_max(pos2(rect.left() + 1.0, head.bottom()), pos2(rect.right() - 1.0, rect.bottom() - FOOT));
+        if inner.is_positive() {
             let mut child = ui.new_child(
-                egui::UiBuilder::new().id_salt(("varos-card-body", front_panel)).max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)),
+                egui::UiBuilder::new().id_salt(("varos-card-body", front_panel)).max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)),
             );
-            child.set_clip_rect(body.intersect(ui.clip_rect()));
-            crate::panel_docking::panel_body(app, &mut child, front_panel);
+            child.set_clip_rect(inner.intersect(ui.clip_rect()));
+            body(app, &mut child, front_panel);
         }
         // Resize grips, over the body's edges.
         let corner = Rect::from_min_max(rect.max - vec2(CORNER, CORNER), rect.max);
@@ -1379,44 +1407,42 @@ fn card(app: &mut VectorcraftApp, ctx: &egui::Context, t: &crate::theme::Tokens,
         ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
         if hint {
             // A card let go here joins this one.
-            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("varos-card-drop")));
-            painter.rect(
-                head.shrink(2.0),
-                CornerRadius::same(3),
-                t.accent.gamma_multiply(0.15),
-                Stroke::new(1.5, t.accent),
-                egui::StrokeKind::Inside,
-            );
+            preview(ctx, head.shrink(1.0));
         }
-        ctx.data_mut(|d| d.insert_temp(floating::group_rect_id(first), rect));
     });
 }
 
+/// Paint an icon of an icon column lit when its panel is open as a card (craft-ui lights the icon
+/// of its flyout only). Called before craft-ui paints the glyph.
+pub(crate) fn paint_icon_well(app: &VectorcraftApp, painter: &egui::Painter, rect: Rect, id: &str) {
+    if in_card(app, id) {
+        let t = crate::theme::Tokens::get(painter.ctx());
+        painter.rect(rect.expand(5.0), CornerRadius::same(3), t.input, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    }
+}
+
 /// Keep [`PanelStack::groups`] up to date with the cards: a card with several tabs is a group; a
-/// panel that left its card (to another card, the dock) leaves its group; a panel closed keeps its
-/// place in its group, so that it opens again with it. Only when the cards changed.
+/// panel that left its card (to another card) leaves its group; a panel closed keeps its place in
+/// its group, so that it opens again with it. Only when the cards changed.
 fn sync_groups(app: &mut VectorcraftApp) {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for g in owned(app) {
-        g.panels.hash(&mut hasher);
-        g.active.hash(&mut hasher);
+    for c in &app.ui.varos_panel_stack.live {
+        c.panels.hash(&mut hasher);
+        c.active.hash(&mut hasher);
     }
     let signature = hasher.finish();
     if app.ui.varos_panel_stack.signature == signature {
         return;
     }
-    let current: Vec<(Vec<String>, String)> =
-        owned(app).filter_map(|g| Some((g.panels.clone(), g.panels.get(g.active).or(g.panels.first())?.clone()))).collect();
-    let ui = &mut app.ui;
-    let Some(layout) = ui.docking.as_ref() else { return };
-    let stack = &mut ui.varos_panel_stack;
+    let current: Vec<(Vec<String>, String)> = app.ui.varos_panel_stack.live.iter().map(|c| (c.panels.clone(), c.front().to_string())).collect();
+    let open: Vec<String> = current.iter().flat_map(|(p, _)| p.iter().cloned()).collect();
+    let stack = &mut app.ui.varos_panel_stack;
     stack.signature = signature;
     for (panels, active) in current {
         let k = stack.groups.iter().position(|m| m.panels.iter().any(|p| panels.contains(p)));
         for (j, m) in stack.groups.iter_mut().enumerate() {
             if Some(j) != k {
                 m.panels.retain(|p| !panels.contains(p));
-                m.parked.retain(|p| !panels.contains(p));
             }
         }
         match k {
@@ -1424,23 +1450,17 @@ fn sync_groups(app: &mut VectorcraftApp) {
                 let m = &mut stack.groups[k];
                 let mut kept = panels.clone();
                 for (i, p) in m.panels.iter().enumerate() {
-                    if !panels.contains(p) && (!layout.contains(p) || m.parked.contains(p)) {
+                    // A closed tab keeps its place; one open in another card left the group.
+                    if !panels.contains(p) && !open.contains(p) {
                         kept.insert(i.min(kept.len()), p.clone());
                     }
                 }
                 m.panels = kept;
                 m.active = active;
-                m.parked.retain(|p| !panels.contains(p));
             }
             None if panels.len() >= 2 => stack.groups.push(Group { panels, active, parked: Vec::new() }),
             None => {}
         }
-    }
-    // A parked tab floating elsewhere since left its group.
-    for m in &mut stack.groups {
-        let moved: Vec<String> = m.parked.iter().filter(|p| layout.floating.iter().any(|g| g.panels.contains(p))).cloned().collect();
-        m.panels.retain(|p| !moved.contains(p));
-        m.parked.retain(|p| !moved.contains(p) && m.panels.contains(p));
     }
     stack.groups.retain(|m| m.panels.len() >= 2);
 }

@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use vectorcraft_color::gradient::{
     MIN_STOPS, duplicate_stop, insert_stop, midpoint_from_pos, midpoint_pos, move_stop, remove_stop, set_midpoint, swap_stop_colors,
 };
-use vectorcraft_color::{Color, Freeform, FreeformMode, Gradient, GradientKind, GradientPaint, GradientStop, Paint};
+use vectorcraft_color::{Color, Freeform, FreeformMode, Gradient, GradientKind, GradientMethod, GradientPaint, GradientStop, Paint};
 use vectorcraft_doc::{NodeId, StrokeGradientMode};
 
 use super::{active_paint, live_run, pstate, set_pstate};
@@ -189,9 +189,9 @@ fn write_stops(app: &mut VectorcraftApp, params: Value, select: Option<usize>, p
     }
 }
 
-/// Save the gradient as a swatch.
+/// Save the gradient as a swatch; its stops keep their color models.
 fn save_to_swatches(app: &mut VectorcraftApp, g: &GradientPaint) {
-    app.run("swatch.new", super::paint_params(&Paint::Gradient(Box::new(g.clone())))).ok();
+    app.run("swatch.new", super::swatch_paint_params(&Paint::Gradient(Box::new(g.clone())))).ok();
 }
 
 /// The document's gradient swatches (groups included): name and gradient.
@@ -287,6 +287,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         freeform_section(app, ui, &g);
         return;
     }
+    method_row(app, ui, &g, is_grad);
     // The proxy beside the angle and aspect ratio fields.
     ui.horizontal(|ui| {
         super::proxy(app, ui, 36.0);
@@ -297,7 +298,18 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let angle = g.geom.map_or(g.angle, |x| x.angle_deg());
                 let set = ui
                     .add_enabled_ui(placed, |ui| {
-                        widgets::spin_plain(ui, "grad-angle", (angle * 10.0).round() / 10.0, "°", 1, 104.0, 1.0, -180.0, &ANGLE_PRESETS)
+                        widgets::spin_plain_named(
+                            ui,
+                            "grad-angle",
+                            Some(tl!("Angle")),
+                            (angle * 10.0).round() / 10.0,
+                            "°",
+                            1,
+                            104.0,
+                            1.0,
+                            -180.0,
+                            &ANGLE_PRESETS,
+                        )
                     })
                     .inner;
                 if let Some(a) = set {
@@ -311,7 +323,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 icons::icon(ui, "scaling", 15.0, if radial { t.icon } else { t.text_disabled }).on_hover_text(tl!("Aspect Ratio"));
                 let asp = g.geom.map_or(100.0, |x| (x.aspect * 1000.0).round() / 10.0);
-                let set = ui.add_enabled_ui(radial, |ui| widgets::spin_plain(ui, "grad-aspect", asp, "%", 1, 104.0, 1.0, 0.5, &ASPECT_PRESETS)).inner;
+                let set = ui
+                    .add_enabled_ui(radial, |ui| {
+                        widgets::spin_plain_named(ui, "grad-aspect", Some(tl!("Aspect Ratio")), asp, "%", 1, 104.0, 1.0, 0.5, &ASPECT_PRESETS)
+                    })
+                    .inner;
                 if let Some(a) = set {
                     edit(app, json!({"aspect": a}), Live::Released);
                 }
@@ -322,9 +338,34 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     ramp(app, ui, &g.gradient, is_grad);
     ui.add_space(4.0);
     stop_fields(app, ui, &g.gradient, is_grad);
+    // Dither applies to gradient fills only: off and dimmed behind the Stroke proxy.
+    ui.add_space(4.0);
+    let fill = app.session.fill_active;
+    let dither = is_grad && fill && g.gradient.dither;
+    if widgets::check_tip(ui, tl!("Dither"), dither, is_grad && fill, tl!("Fine noise hides banding in the gradient fill")) {
+        edit(app, json!({"dither": !dither}), Live::Released);
+    }
     if !is_grad {
         widgets::dim_label(ui, tl!("Click the ramp or a type button to apply a gradient."));
     }
+}
+
+/// The Method row (Illustrator 30): how a linear or radial gradient mixes the colours between its
+/// stops, Classic or Perceptual.
+fn method_row(app: &mut VectorcraftApp, ui: &mut Ui, g: &GradientPaint, is_grad: bool) {
+    let methods = [(GradientMethod::Classic, tl!("Classic")), (GradientMethod::Perceptual, tl!("Perceptual"))];
+    let current = g.gradient.method;
+    let shown = methods.iter().find(|(m, _)| *m == current).map_or("", |(_, l)| *l);
+    ui.horizontal(|ui| {
+        widgets::dim_label(ui, tl!("Method:"));
+        let labels = methods.map(|(_, l)| l);
+        let chosen = ui.add_enabled_ui(is_grad, |ui| widgets::dropdown_names(ui, "grad-method", shown, &labels, 104.0)).inner;
+        if let Some((m, _)) = chosen.and_then(|i| methods.get(i))
+            && *m != current
+        {
+            edit(app, json!({"method": m.label().to_lowercase()}), Live::Released);
+        }
+    });
 }
 
 /// The freeform points shown: the gradient's own, else (unplaced) as many as it places, coloured
@@ -410,7 +451,7 @@ fn thumbnail(app: &mut VectorcraftApp, ui: &mut Ui, g: &GradientPaint, is_grad: 
     widgets::drag_source(ui, &resp, || PanelDrag::paint(Paint::Gradient(Box::new(g.clone()))));
     let dr = Rect::from_min_size(r.right_top() + vec2(1.0, 0.0), vec2(14.0, 40.0));
     ui.advance_cursor_after_rect(dr);
-    let dresp = ui.interact(dr, ui.id().with("grad-swatches"), Sense::click());
+    let dresp = ui.interact(dr, ui.scope_id().with("grad-swatches"), Sense::click());
     icons::paint(ui, "chevron-down", Rect::from_center_size(dr.center(), vec2(12.0, 12.0)), if dresp.hovered() { t.text_strong } else { t.icon });
     let dresp = dresp.on_hover_text(tl!("Gradient swatches"));
     egui::Popup::menu(&dresp).show(|ui| {
@@ -583,8 +624,8 @@ fn ramp(app: &mut VectorcraftApp, ui: &mut Ui, g: &Gradient, is_grad: bool) {
     // The ramp and the strip below it, under the stops and diamonds (interacted first): a click
     // below adds a stop, and without a gradient either applies one.
     let below = Rect::from_min_max(pos2(bar.left(), bar.bottom()), pos2(bar.right(), area.bottom()));
-    let add_resp = ui.interact(below, ui.id().with("grad-add"), Sense::click());
-    let bar_resp = ui.interact(bar, ui.id().with("grad-bar"), Sense::click());
+    let add_resp = ui.interact(below, ui.scope_id().with("grad-add"), Sense::click());
+    let bar_resp = ui.interact(bar, ui.scope_id().with("grad-bar"), Sense::click());
     if add_resp.hovered() && is_grad {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Copy);
     }
@@ -602,7 +643,7 @@ fn ramp(app: &mut VectorcraftApp, ui: &mut Ui, g: &Gradient, is_grad: bool) {
         let Some(p) = midpoint_pos(stops, i) else { continue };
         let c = pos2(x_of(p), bar.top() - 5.0);
         let rect = Rect::from_center_size(c, vec2(10.0, 10.0));
-        let resp = ui.interact(rect, ui.id().with(("grad-mid", i)), Sense::click_and_drag());
+        let resp = ui.interact(rect, ui.scope_id().with(("grad-mid", i)), Sense::click_and_drag());
         let lit = drag == Drag::Mid(i) || mid_sel == Some(i) || resp.hovered();
         let pts = vec![c + vec2(0.0, -4.0), c + vec2(4.0, 0.0), c + vec2(0.0, 4.0), c + vec2(-4.0, 0.0)];
         ui.painter().add(egui::Shape::convex_polygon(pts, if lit { Color32::WHITE } else { t.icon }, Stroke::new(1.0, t.border)));
@@ -633,7 +674,7 @@ fn ramp(app: &mut VectorcraftApp, ui: &mut Ui, g: &Gradient, is_grad: bool) {
         let x = x_of(s.offset);
         let m = marker(s.offset);
         let top = m.top();
-        let resp = ui.interact(m, ui.id().with(("grad-stop", i)), Sense::click_and_drag());
+        let resp = ui.interact(m, ui.scope_id().with(("grad-stop", i)), Sense::click_and_drag());
         let (dragging_this, copy) = match drag {
             Drag::Stop { index, copy } => (index == i, copy),
             _ => (false, false),
@@ -791,6 +832,23 @@ mod tests {
         assert_eq!(g.freeform.map(|f| f.points[1].color), Some(orange));
     }
 
+    /// In a CMYK document Add to Swatches and Save to Swatches keep the gradient's RGB stops RGB.
+    #[test]
+    fn a_gradient_saved_as_a_swatch_keeps_its_stops_models_in_a_cmyk_document() {
+        let mut app = app(json!({"color": "#000000"}));
+        app.run("file.documentColorMode", json!({"mode": "cmyk"})).unwrap();
+        let stops = json!([{"offset": 0, "color": "#ff8000"}, {"offset": 1, "color": {"c": 0, "m": 0, "y": 0, "k": 1}}]);
+        app.run("paint.setFill", json!({"gradient": {"stops": stops}, "keepModel": true})).unwrap();
+        let g = current(&app).expect("a gradient fill");
+        let colors = |g: &GradientPaint| g.gradient.stops.iter().map(|s| s.color).collect::<Vec<_>>();
+        assert_eq!(colors(&g), [Color::rgb8(255, 128, 0), Color::cmyk(0.0, 0.0, 0.0, 1.0)]);
+        save_to_swatches(&mut app, &g);
+        let Some(Paint::Gradient(saved)) = app.session.doc().unwrap().doc.swatches.last().map(|w| w.paint.clone()) else {
+            panic!("a gradient swatch")
+        };
+        assert_eq!(colors(&saved), colors(&g));
+    }
+
     #[test]
     fn dragged_stops_move_copy_or_swap() {
         let g = Gradient::default();
@@ -853,10 +911,15 @@ mod tests {
             v
         }
 
-        /// The rect of the widget its parent ui keyed `key` (last frame).
+        /// The rect of the widget keyed `key` (last frame). egui 0.37's `WidgetRect.parent_id` is
+        /// the parent Ui's unstable `unique_id`, not the stable `scope_id` widgets are salted with;
+        /// debug builds remember the `with(key)` that made each id, so match that.
         fn widget(&self, key: impl std::hash::Hash + std::fmt::Debug + Copy) -> Rect {
+            let suffix = format!(".with({key:?})");
             self.ctx
-                .viewport(|vp| vp.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).find(|w| w.id == w.parent_id.with(key)).map(|w| w.rect))
+                .viewport(|vp| {
+                    vp.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).find(|w| format!("{:?}", w.id).ends_with(&suffix)).map(|w| w.rect)
+                })
                 .expect("widget drawn")
         }
 
@@ -952,6 +1015,49 @@ mod tests {
     }
 
     #[test]
+    fn the_dither_box_dithers_the_gradient_fill_and_is_off_for_strokes() {
+        let mut app = app(json!({"gradient": {}}));
+        app.run("paint.setStroke", json!({"gradient": {}, "focus": false})).unwrap();
+        let mut p = Panel::new();
+        let texts = p.frame(&mut app, vec![], Modifiers::NONE);
+        let at = texts.iter().find(|(t, _)| t == "Dither").expect("the Dither box").1;
+        p.click(&mut app, at);
+        assert!(fill(&app).gradient.dither, "the fill's gradient is dithered");
+        p.click(&mut app, at);
+        assert!(!fill(&app).gradient.dither, "a second click clears it");
+        app.run("edit.undo", json!({})).unwrap();
+        assert!(fill(&app).gradient.dither, "one undo step per click");
+        // Behind the Stroke proxy the box is dimmed and does nothing.
+        let stroke = p.widget("stroke-proxy");
+        p.click(&mut app, stroke.right_bottom() - vec2(2.0, 2.0));
+        assert!(!app.session.fill_active);
+        let undo = app.session.doc().unwrap().history.undo.len();
+        p.click(&mut app, at);
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), undo, "no edit on the stroke");
+        let Paint::Gradient(st) = app.session.shown_stroke().unwrap().paint.clone() else { panic!("a gradient stroke") };
+        assert!(!st.gradient.dither);
+    }
+
+    #[test]
+    fn the_method_menu_makes_the_gradient_perceptual() {
+        let mut app = app(json!({"gradient": {}}));
+        let mut p = Panel::new();
+        let texts = p.frame(&mut app, vec![], Modifiers::NONE);
+        assert!(texts.iter().any(|(t, _)| t == "Method:"), "{texts:?}");
+        let shown = texts.iter().find(|(t, _)| t == "Classic").expect("Classic shown").1;
+        let undo = app.session.doc().unwrap().history.undo.len();
+        let texts = p.click(&mut app, shown);
+        let option = texts.iter().find(|(t, _)| t == "Perceptual").expect("the menu lists Perceptual").1;
+        p.click(&mut app, option);
+        assert_eq!(fill(&app).gradient.method, GradientMethod::Perceptual);
+        assert_eq!(app.session.doc().unwrap().history.undo.len(), undo + 1, "one undo step");
+        let texts = p.frame(&mut app, vec![], Modifiers::NONE);
+        assert!(texts.iter().any(|(t, _)| t == "Perceptual"), "the menu shows the method: {texts:?}");
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(fill(&app).gradient.method, GradientMethod::Classic);
+    }
+
+    #[test]
     fn a_selected_diamond_shows_and_sets_its_midpoint_in_location() {
         let stops = json!([{"offset": 0, "color": "#ffffff", "midpoint": 0.3}, {"offset": 1, "color": "#000000"}]);
         let mut app = app(json!({"gradient": {"stops": stops}}));
@@ -1044,7 +1150,7 @@ mod tests {
         // A spot swatch tile dropped on a stop links it: editing the swatch recolours the stop.
         app.run("swatch.new", json!({"name": "Ink", "color": "#cc0066", "spot": true})).unwrap();
         let ink = app.session.doc().unwrap().doc.swatch("Ink").unwrap().paint.clone();
-        egui::DragAndDrop::set_payload(&p.ctx, PanelDrag::Paint { paint: ink, params: json!({"swatch": "Ink"}), rows: None });
+        egui::DragAndDrop::set_payload(&p.ctx, PanelDrag::Paint { paint: ink, params: json!({"swatch": "Ink"}), rows: None, library: None });
         p.frame(&mut app, vec![Event::PointerMoved(a)], Modifiers::NONE);
         p.frame(
             &mut app,
@@ -1102,6 +1208,27 @@ mod tests {
         let texts = Panel::new().frame(&mut app, vec![], Modifiers::NONE);
         assert!(texts.iter().any(|(t, _)| t == "#FFFFFF"), "the stop's colour row: {texts:?}");
         stop_eyedropper(&mut app);
-        assert_eq!((app.session.tool_id(), app.session.tool_options()), ("eyedropper", json!({"stop": "gradient"})));
+        assert_eq!((app.session.tool_id(), app.session.tool_options()), ("eyedropper", json!({"stop": "gradient", "brushKeyColor": false})));
+    }
+
+    /// The gradient panel names its Angle and Aspect Ratio inputs.
+    #[test]
+    fn angle_and_aspect_fields_are_named() {
+        use egui_kittest::kittest::Queryable;
+        let app = app(json!({"gradient": {}}));
+        let mut fonts = false;
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(280.0, 640.0)).with_accessibility_check(false).build_ui_state(
+            move |ui, app: &mut VectorcraftApp| {
+                if !std::mem::replace(&mut fonts, true) {
+                    crate::theme::install_fonts(ui.ctx());
+                    return;
+                }
+                show(app, ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        let _ = h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Angle");
+        let _ = h.get_by_role_and_label(egui::accesskit::Role::TextInput, "Aspect Ratio");
     }
 }

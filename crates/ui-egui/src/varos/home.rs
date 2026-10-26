@@ -82,7 +82,7 @@ fn greeting(ui: &mut Ui) {
     // egui does not shape Arabic. Reuse Varos' HarfRust sample rasterizer with the
     // already attributed bundled Plex face, never disconnected or reversed glyphs.
     let px = (40.0 * ui.ctx().pixels_per_point()).round().clamp(16.0, 96.0) as u32;
-    let id = egui::Id::new(("home-arabic-greeting", px));
+    let id = egui::Id::unique(("home-arabic-greeting", px));
     let texture = ui.ctx().data(|d| d.get_temp::<egui::TextureHandle>(id)).or_else(|| {
         let image = super::arabic_fonts::render_in(super::theme::arabic_font_db(), "IBM Plex Sans Arabic", "Regular", ARABIC_GREETING, px)?;
         let tex = ui.ctx().load_texture("home-arabic-greeting", image, egui::TextureOptions::LINEAR);
@@ -109,7 +109,7 @@ fn action(ui: &mut Ui, label: &str, icon: &str, primary: bool) -> Response {
     let font = theme::semibold(13.0);
     let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), t.text).size().x) + 52.0;
     let (rect, response) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     ui.painter().rect_filled(
         rect,
         CornerRadius::same(3),
@@ -162,7 +162,7 @@ fn presets(app: &mut VectorcraftApp, ui: &mut Ui) {
             for (label, size, params, aspect) in row {
                 let t = Tokens::get(ui.ctx());
                 let (r, response) = ui.allocate_exact_size(vec2(width, 140.0), Sense::click());
-                response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), *label));
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), *label));
                 ui.painter().rect_filled(r, CornerRadius::same(8), if response.hovered() { t.hover } else { t.panel });
                 ui.painter().rect_stroke(
                     r,
@@ -239,7 +239,7 @@ fn recent_modified(path: &str) -> Option<i64> {
 /// Only list changes touch the filesystem, never a repaint of the same Home list.
 fn recent_dates(ctx: &egui::Context, files: &[String]) -> Vec<Option<i64>> {
     type Cache = (Vec<String>, Vec<Option<i64>>);
-    let id = egui::Id::new("home-recent-dates");
+    let id = egui::Id::unique("home-recent-dates");
     if let Some((key, dates)) = ctx.data(|d| d.get_temp::<Cache>(id))
         && key == files
     {
@@ -293,7 +293,7 @@ fn recent(app: &mut VectorcraftApp, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let name = path.rsplit(['/', '\\']).next().unwrap_or(&path);
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), name));
         if response.hovered() || response.has_focus() {
             ui.painter().rect_filled(rect, CornerRadius::same(3), t.hover);
         }
@@ -357,14 +357,22 @@ pub(crate) mod tests {
             max_texture_side: Some(8192),
             ..Default::default()
         };
-        let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+        let mut root = egui::Id::NULL;
+        let mut out = ctx.run_ui(raw, |ui| {
+            root = ui.scope_id();
+            app.ui(ui);
+        });
         out.textures_delta.clear();
         assert!(!app.ui.status.starts_with("Internal error:"), "{}", app.ui.status);
-        let panel = |id| egui::containers::panel::PanelState::load(&ctx, egui::Id::new(id)).is_some();
+        // egui 0.37: a panel's id is its parent Ui's scope id salted with the panel's name.
+        let panel = |id: &str| egui::containers::panel::PanelState::load(&ctx, root.with_salt(egui::IdSalt::new(id))).is_some();
         assert!(panel("app_bar"), "title bar remains available");
-        for id in ["toolbar", "dock", "icon_column", "control_bar", "status_bar", "hint_bar"] {
+        for id in ["toolbar", "control_bar", "status_bar", "hint_bar"] {
             assert_eq!(panel(id), document, "{id}: editor chrome follows the Home gate");
         }
+        // The dock (craft-ui's dock area since the 2026-10-26 merge): its icons show with a document.
+        let icons = crate::panel_docking::hit_rects(&ctx).iter().any(|(hit, _)| matches!(hit, craft_ui::docking::Hit::Icon(_)));
+        assert_eq!(icons, document, "dock: editor chrome follows the Home gate");
         assert_eq!(app.canvas_rect.is_some(), document);
         let texts: Vec<_> = out
             .shapes
@@ -510,7 +518,7 @@ mod board_tests {
         crate::theme::install_fonts(&ctx);
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
         let out = frame(&mut app, &ctx, vec![]);
-        let tex = ctx.data(|d| d.get_temp::<egui::TextureHandle>(egui::Id::new(("home-arabic-greeting", 40_u32)))).unwrap();
+        let tex = ctx.data(|d| d.get_temp::<egui::TextureHandle>(egui::Id::unique(("home-arabic-greeting", 40_u32)))).unwrap();
         let mesh = out
             .shapes
             .iter()
@@ -555,7 +563,7 @@ mod board_tests {
             s.interaction.show_tooltips_only_when_still = false;
         });
         let current = vectorcraft_doc::metadata::now_unix().unwrap();
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new("home-recent-dates"), (vec![path.clone()], vec![Some(current - 120)])));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("home-recent-dates"), (vec![path.clone()], vec![Some(current - 120)])));
         let out = frame(&mut app, &ctx, vec![]);
         assert!(shown(&out, "2 min ago").is_some(), "relative date painted in the recent row");
         let at = shown(&out, path.rsplit('/').next().unwrap()).unwrap().center();

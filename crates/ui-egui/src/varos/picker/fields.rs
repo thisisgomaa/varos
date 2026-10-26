@@ -43,7 +43,7 @@ pub(crate) fn parse_hex(s: &str) -> Option<([f32; 3], Option<f32>)> {
 
 /// A single-line text field showing `shown`; returns the typed text when it is committed (Enter or
 /// focus loss, not Escape) and differs.
-fn text_field(ui: &mut Ui, id: egui::Id, shown: &str, width: f32, hint: &str) -> Option<String> {
+fn text_field(ui: &mut Ui, id: egui::Id, label: egui::Id, shown: &str, width: f32, hint: &str) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let focused = ui.memory(|m| m.has_focus(id));
     let mut buf = if focused { ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.to_string()) } else { shown.to_string() };
@@ -64,7 +64,8 @@ fn text_field(ui: &mut Ui, id: egui::Id, shown: &str, width: f32, hint: &str) ->
                     .hint_text(hint),
             )
         })
-        .inner;
+        .inner
+        .labelled_by(label);
     let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
     // The field keeps its text under its id, as upstream's fields do (the shown value while it
     // hasn't the keyboard).
@@ -78,9 +79,9 @@ pub(super) fn hex(ui: &mut Ui, st: &mut State, v: &View, acts: &mut Vec<Action>)
     let shown = if v.mixed { String::new() } else { hex_digits(st.rgb()) };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        ui.label(egui::RichText::new("#").font(egui::FontId::monospace(12.0)).color(t.text_dim));
-        let id = ui.id().with("varos-picker-hex");
-        if let Some(typed) = text_field(ui, id, &shown, HEX_W, if v.mixed { "?" } else { "" })
+        let label = ui.label(egui::RichText::new("#").font(egui::FontId::monospace(12.0)).color(t.text_dim)).id;
+        let id = ui.scope_id().with("varos-picker-hex");
+        if let Some(typed) = text_field(ui, id, label, &shown, HEX_W, if v.mixed { "?" } else { "" })
             && let Some((c, alpha)) = parse_hex(&typed)
         {
             let color = Color::rgb(c[0], c[1], c[2]);
@@ -132,7 +133,8 @@ fn alpha_slider(ui: &mut Ui, st: &mut State, v: &View, width: f32) {
 fn alpha_field(ui: &mut Ui, st: &mut State, v: &View, acts: &mut Vec<Action>) {
     ui.add_enabled_ui(v.alpha.is_some(), |ui| {
         let typed = super::control_corners(ui, |ui| {
-            crate::widgets::plain_field(ui, "varos-picker-alpha", (st.hsva[3] * 100.0).round() as f64, "%", 0, PERCENT_W)
+            // Named for assistive technology (egui 0.37's harness checks every field has a name).
+            crate::widgets::plain_field_named(ui, "varos-picker-alpha", Some(tl!("Opacity")), (st.hsva[3] * 100.0).round() as f64, "%", 0, PERCENT_W)
         });
         if let Some(a) = typed {
             let a = (a as f32 / 100.0).clamp(0.0, 1.0);

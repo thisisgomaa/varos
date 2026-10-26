@@ -1,0 +1,150 @@
+Upstream merge log (storytold/vectorcraft main into Varos)
+==========================================================
+
+Earlier merges: 5e778cb4 / 7b64653c (2026-10-20, 239 commits through 19e3144d); gates in
+gates-v8-7b64653c.log.
+
+---------------------------------------------------------------------------------------------
+2026-10-26 — upstream 1cdc98735c49c2511ffe0f94118afc97a58f1571 (2026-10-26 16:08 +0700)
+Merged onto Varos main f4b20c72 in lane-upstream2. 1503 upstream commits, 988 files.
+---------------------------------------------------------------------------------------------
+
+Conflicted files (61) and how each was resolved
+- i18n catalogues (23 .tsv: bg cs da de el es fi fr hu id it ja ka ko nl pl pt-br ru sv uk vi
+  zh-hans zh-hant): union of rows (upstream's rows first, then Varos rows not already present).
+  Checked afterwards: no duplicate (context, source) key in any catalogue.
+- crates/ui-egui/src/i18n/tests.rs: upstream's renamed render_site_labels_fall_back_to_english,
+  with the Varos rebrand wrapper (crate::varos::text) on the English fallback.
+- ASSETS.md: upstream's updated hayro rows (craft-libs a0916808) + all Varos asset sections.
+- NOTICE: upstream's new sections (sctk-adwaita, egui icon fonts) + all Varos notices.
+- Cargo.toml: upstream's [patch.crates-io] (craft-libs a0916808, storytold egui 0.37 fork, winit);
+  Varos workspace members/deps kept (varos-text stays git-pinned at rev 5936eaf, ssh;
+  .cargo/config.toml keeps git-fetch-with-cli). Cargo.lock: upstream's, then cargo added only the
+  three Varos packages (varos-agents, varos-text, vectorcraft-text-arabic).
+- crates/ui-egui/Cargo.toml: varos-agents dep + upstream's egui features (bytemuck, default_fonts,
+  monochrome_emoji_fonts).
+- packaging/windows/sign.ps1: upstream's random temp dir + Varos signing description.
+- apps/vectorcraft-cli/src/main.rs: Varos usage text + upstream's repeatable --automation-*-root.
+- apps/vectorcraft/src/main.rs: upstream's run() wrapper (linux stylus); brand::APP_NAME re-applied
+  in both run_native calls. Startup update check turned OFF (see "Upstream overlaps").
+- apps/vectorcraft/src/portal_save.rs: upstream FilePick::filter API with brand::APP_NAME.
+- crates/doc/src/text.rs: ParaStyle.kashida stays Varos' KashidaOptions (Off/Auto/Force +
+  strength). Upstream's Kashida enum (None/Short/Medium/Long/Stylistic) kept as a type;
+  KashidaOptions::from_level maps it (None=Off; Short/Medium/Long/Stylistic = Auto 25/50/75/100),
+  and KashidaOptions deserialises either its own object or upstream's level string, so files
+  written by upstream VectorCraft load. Upstream's broadened Direction doc kept.
+- crates/text/src/kashida.rs (add/add): Varos' engine kept whole. Upstream's 185-line Insert
+  Kashidas planner dropped.
+- crates/text/src/layout.rs: Varos mojikumi clearing + upstream list markers/`continued`; upstream's
+  kashida plan/emit_kashida path removed (Varos' stretch_line does kashida); upstream's
+  drawn_after gap count with the Varos "joined script: no letter spacing" branch.
+- crates/text/src/lib.rs / shape.rs / fontdb.rs: both sides' modules, SGlyph fields (tatweel +
+  no_break/cursive), FontTraits (arabic + variable) with one family_traits that aggregates both.
+  Selection quads: upstream's list-marker exclusion + Varos zero-length-glyph rule.
+- crates/engine/src/cmd/panelcmds.rs: Varos kashida/kashidaStrength parsing + upstream's levels
+  accepted (mapped via from_level) + upstream's list/bullet/number code; spec text merged.
+- crates/engine/src/cmd/create.rs, textedit.rs, textstyles.rs: upstream's new code
+  (insert_look_turned, ruby_after_replace) with the Varos Arabic new-type hooks re-applied.
+- crates/engine/src/cmd/fileio/save.rs: upstream's named_for_save (same fix as ours, narrower).
+- crates/engine/src/lib.rs: upstream's journal-list undo groups (journal: Vec, steps) with the
+  Varos actor rules re-applied: UndoGroup.actor/resumed; another actor's journal entries are not
+  noted in a group; settle_undo_groups now clears the group's journal/steps when its owner resumes
+  after another actor's step. Session.actor/varos_new_type + upstream global_edit_options.
+- crates/mcp/src/prompts.rs: upstream's one-pass placeholder fill on the Varos-branded template.
+- crates/tools/src/select.rs: upstream's `remembered` bounds cache replaces the Varos `measured`
+  cache (same purpose); Varos outer handles of area type kept.
+- crates/ui-egui/src/lib.rs: both module lists (varos + updates_ui); upstream's capture pipeline
+  (CaptureSlot) with the Varos per-request write guard carried into PendingScreenshot and applied
+  at completion; logic() split into begin_host_iteration/tick (profile scope moved to tick);
+  Varos brightness restore moved into ui_setup; ui(): cursors begin/end frame + profile scopes
+  around upstream's ime begin/finish; ui_frame: upstream's single docking layout + Varos cards
+  frame, dialogs/plugin_runs/palette; canvas_area hides document tabs on Home.
+- crates/ui-egui/src/theme.rs: upstream's interface_fonts()/interface_faces(); Varos
+  register_fonts appended (varos/theme.rs now calls interface_fonts()).
+- crates/ui-egui/src/shortcuts.rs: upstream's craft-keymap dispatcher; the Varos icon-panel
+  `toggle: true` re-applied in run_hit. Varos varos/shortcuts.rs (frame gate) deleted: upstream's
+  dispatcher reads a cached keymap mirror, so the gate has nothing to skip.
+- crates/ui-egui/src/shortcut_editor.rs: upstream's FilePick::filter + brand::SHORTCUTS_FILE.
+- crates/ui-egui/src/font_menu.rs: Varos concept-A header/chips + Arabic filter, with upstream's
+  Font Technology (Variable) toggle row added under it; RowsKey carries both (variable, recent,
+  Arabic key); upstream's Recent Fonts rows kept.
+- crates/ui-egui/src/menus.rs: upstream removed its window.panel handler (moved to panel_docking);
+  checked() = upstream's `showing` OR the Varos card; Help menu keeps the Varos list (no
+  Discord/ArtCraft links, no Check for Updates).
+- crates/ui-egui/src/canvas.rs: Varos Home surface + profile scopes on upstream's new code.
+- crates/ui-egui/src/background.rs, dialogs/export_as.rs: both conditions combined.
+- crates/ui-egui/src/dialogs/save_for_web.rs: upstream's preview_folder_in kept with upstream's
+  folder name ("VectorCraft Save for Web": a temp folder, like other persisted identifiers it
+  stays upstream's to keep merges cheap); the Varos test line reverted to match.
+- crates/ui-egui/src/panels/paragraph.rs: Varos Middle Eastern group (Direction, Kashida,
+  Strength) kept; upstream's Bullets/Numbered row added below; upstream's Insert Kashidas
+  dropdown removed (the Varos group replaces it); Reset Panel sets kashida Auto 50.
+- crates/ui-egui/src/floating.rs: deleted upstream; our only hooks there were cosmetic (8 px
+  radius, two test flags) — deletion accepted.
+- crates/ui-egui/src/panel_docking.rs, dock.rs: upstream's rewrite taken (craft-ui shared dock
+  area, floating panels as OS windows). Varos hooks re-applied: show_panel opens/shows a card;
+  FlyoutChanged turns an icon's flyout into its card; a card's panel opens no flyout; Home hides
+  the panels; paint_icon lights an open card's icon; dock::panel_body keeps the profile scope.
+
+Panel cards: re-homed (choice (a), not a floating.rs compat shim)
+- floating.rs, the legacy floating_panels model and drop targets are gone upstream, and craft-ui
+  now draws the icon columns itself; a compat shim would have had to re-implement them. Cards are
+  now Varos-owned (PanelStack.live: tabs, front tab, rect), drawn in the main window as before
+  (not OS windows). A card's panels stay in their iconic column in the layout, so icons never
+  disappear. Persisted fields keep their names (cards, places, groups) plus `live`; older ui.json
+  files with only `cards` reopen those cards. open_panel still names the newest card.
+- Drops: on another card's header = tabs; on a docked group's tab/drag bar = joins that group
+  (Action::Move, card closes); on an icon column = closes. Dock edges come from craft-ui hit rects.
+- Behaviour change: workspaces no longer carry cards (craft-ui layouts don't); a workspace switch
+  keeps cards whose panels stay in an icon column (test renamed a_workspace_switch_keeps_the_cards).
+  The "card holding a dock tab (Layers)" case is gone (test replaced by
+  a_card_dropped_on_the_dock_joins_its_group).
+
+Other fixes the merge needed
+- crates/text/src/kashida.rs + layout.rs: upstream made every zero-length glyph its own cluster
+  (list markers); a Varos virtual tatweel now stays in its letter's cluster (kashida::extends) in
+  line breaking and visual order — without it tatweels were drawn on the wrong side.
+- egui 0.37 port of Varos code: Id::new -> Id::unique, Ui::id -> scope_id, WidgetType -> Role,
+  MouseWheel `source`, raw_input_hook(ctx, raw), capture test on the CaptureSlot pipeline, picker
+  fields named for accessibility (kittest checks), home chrome test reads panel ids as egui 0.37
+  makes them (scope_id + IdSalt).
+- Tests adapted to the kept Varos model: upstream's kashida tests (typecmd, textimport, pdf,
+  paragraph panel, tests_justify) now check the level mapping; upstream's
+  justified_arabic_lines_take_their_room_on_kashidas removed (it tests the dropped upstream engine);
+  install_fonts test expects the Varos faces first; docking native test makes a document first
+  (Home shows no panels); docking flyout test sets keep_open=false (as before for upstream pop-out
+  tests); varos-agents tests build the new Artboard fields; varos_board builds them too.
+
+Upstream overlaps worth knowing
+- Upstream shipped its own kashida (Insert Kashidas, 1cea163b) and DOCX kashida levels (7d58ce4f):
+  ours kept, their levels mapped. Upstream's own docking rewrite (71443452) with OS-window floating
+  panels and a new iconic column: ours (in-window cards) kept on top of it.
+- craft-update self-update (caef9238): compiled but NOT wired: startup check off in
+  apps/vectorcraft/src/main.rs, Help › Check for Updates removed from the menu and
+  `help.checkForUpdates` answers "Varos has no update channel yet" (ADR-0007).
+- Upstream added a Home screen gate (menus::home_showing) — ours wraps it (varos::home::is_home).
+- Upstream's select.rs bounds cache supersedes the Varos 13.9k-part measure cache.
+- Upstream egui 0.37 / craft-libs a0916808 / craft-keymap / craft-window / workspace 0.17.0.
+
+Gates (this worktree, -j 4, --test-threads=4)
+- cargo build -j 4 --release -p vectorcraft -p vectorcraft-cli: "Finished `release` profile [optimized] target(s) in 6m 08s"
+- cargo test -j 4 --release (vectorcraft, ui-egui, engine, text, doc, tools, varos-agents,
+  text-arabic): every binary ok except
+  - vectorcraft-ui-egui lib: 2374 passed; 10 failed; 7 ignored. The 10 are upstream tests that only
+    work in debug builds (they match widget ids by their debug-only `.with(key)` names — upstream's
+    own comment in panels/gradient.rs): 9 panels::gradient::tests::* and
+    tests_rotateview::escape_after_closing_a_popup_or_during_a_ruler_origin_drag_keeps_the_rotation.
+    The same tests pass in the dev profile (cargo test -p vectorcraft-ui-egui --lib: 33 passed for
+    that filter set before the home fix; gradient and rotateview all ok).
+  - vectorcraft-text lib: 434 passed; 1 failed (tests_typo::layout_10k_area_text_is_fast, a 10 ms
+    wall-clock budget: 13.3 ms under load average ~8 with another lane's cargo test running).
+    Same machine, same load (~6), alternating runs of the JustifyLeft case: pure upstream 1cdc9873
+    10.09 / 9.89 / 10.26 / 10.33 ms (upstream fails its own budget here too), this merge 9.77 /
+    10.00 / 9.82 ms. Not a regression of the merge; machine load.
+  Totals of the passing binaries include: engine 3206 passed (2 ignored), text-arabic and
+  varos-agents ok, vectorcraft app (incl. tests/it) ok.
+- cargo clippy -j 4 --release -p vectorcraft-ui-egui -p vectorcraft-text --all-targets
+  -- -D warnings: Finished, no warnings.
+- cargo fmt --all -- --check: clean. git diff --check (the merge's own edits): clean (upstream's
+  new tr.tsv carries intentional trailing spaces in its catalogue strings).
+- cargo check -p vectorcraft-text --target wasm32-unknown-unknown: Finished.
