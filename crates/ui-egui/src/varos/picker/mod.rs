@@ -1,7 +1,7 @@
 // Varos colour picker v3 — ported from thisisgomaa/varos (MIT OR Apache-2.0).
 //! The Color panel's body in Varos: colour picker v3 (owner 2026-10-09; work order
 //! `docs/foundation/work_orders/COLOR_PICKER_V3.md` in the old repo). Tabs Wheel · Sliders ·
-//! Harmony · Gradient (disabled until gradient paints land), the frameless Fill/Stroke cluster, the
+//! Harmony · Gradient (opens the Gradient panel), the frameless Fill/Stroke cluster, the
 //! hex and alpha row and the recent colours with their drawer.
 //!
 //! It edits what upstream's Color panel edits (the active proxy's colour, or a selected gradient
@@ -50,7 +50,7 @@ const SAME: f32 = 0.5 / 255.0;
 /// The panel the picker is the body of.
 pub(crate) const PANEL: &str = "color";
 
-/// The picker's tab, kept with its preferences. Gradient is not a choice yet.
+/// The picker's local tab, kept with its preferences. Gradient opens the upstream panel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tab {
@@ -263,6 +263,7 @@ pub(crate) enum Action {
     Default,
     NoneTarget,
     Eyedropper,
+    Gradient,
     Close,
 }
 
@@ -295,6 +296,14 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         st.follow(&v);
     }
     let mut acts = Vec::new();
+    let gradient = matches!(if v.fill_active { &v.paints.0 } else { &v.paints.1 }, Paint::Gradient(_));
+    let key = egui::Id::unique("varos-picker-gradient-focus");
+    let focused = gradient.then(|| (v.fill_active, format!("{:?}", app.session.active().map(|s| (s.uid, &s.selection.objects)))));
+    let previous = ctx.data_mut(|d| d.get_temp::<Option<(bool, String)>>(key)).flatten();
+    if focused.is_some() && previous != focused {
+        acts.push(Action::Gradient);
+    }
+    ctx.data_mut(|d| d.insert_temp(key, focused));
     let tall = height(&prefs);
     let (outer, _) = ui.allocate_exact_size(vec2(ui.available_width().max(W), tall), Sense::hover());
     let origin = pos2(outer.left() + ((outer.width() - W) / 2.0).max(0.0).round(), outer.top());
@@ -331,6 +340,25 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     ctx.data_mut(|d| d.insert_temp(state_id(), st));
 }
 
+/// The upstream swatch tiles' explicit, non-modal Gradient action.
+pub(crate) fn gradient_menu(response: &egui::Response) -> bool {
+    let mut open = false;
+    response.context_menu(|ui| {
+        if ui.button(format!("{}…", tl!("Gradient"))).clicked() {
+            open = true;
+            ui.close();
+        }
+    });
+    open
+}
+
+/// Show/focus the shared Gradient panel without toggling it closed.
+pub(crate) fn open_gradient(app: &mut VectorcraftApp) {
+    if let Err(error) = app.run("window.panel", json!({"panel":"gradient"})) {
+        app.status(error);
+    }
+}
+
 /// The tab strip, the eyedropper and ×.
 fn header(ui: &mut Ui, origin: Pos2, prefs: &mut Prefs, eyedropper: bool, acts: &mut Vec<Action>) {
     let t = Tokens::get(ui.ctx());
@@ -338,16 +366,37 @@ fn header(ui: &mut Ui, origin: Pos2, prefs: &mut Prefs, eyedropper: bool, acts: 
         (Some(Tab::Wheel), "palette", tl!("Wheel")),
         (Some(Tab::Sliders), icons::SLIDERS, tl!("Sliders")),
         (Some(Tab::Harmony), "dc-color-guide", tl!("Harmony")),
-        (None, "dc-gradient", tl!("Gradient (coming soon)")),
+        (None, "dc-gradient", "Gradient… — open Gradient panel"),
     ];
     for (i, (tab, icon, tip)) in tabs.into_iter().enumerate() {
-        let r = Rect::from_min_size(origin + vec2(PAD + i as f32 * (TAB_W + TAB_GAP), (HEADER_H - TAB_H) / 2.0), vec2(TAB_W, TAB_H));
-        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-tab", i)), if tab.is_some() { Sense::click() } else { Sense::hover() });
-        tab_button(ui, &t, r, icon, tab == Some(prefs.tab), resp.hovered(), tab.is_some());
-        if resp.on_hover_text(tip).clicked()
-            && let Some(tab) = tab
-        {
-            prefs.tab = tab;
+        let r = Rect::from_min_size(
+            origin + vec2(PAD + i as f32 * (TAB_W + TAB_GAP), (HEADER_H - TAB_H) / 2.0),
+            vec2(if tab.is_none() { 86.0 } else { TAB_W }, TAB_H),
+        );
+        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-tab", i)), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+        if tab.is_none() {
+            if resp.hovered() {
+                ui.painter().rect_filled(r, CTRL_R, t.hover);
+            }
+            let glyph = Rect::from_center_size(r.left_center() + vec2(TAB_W / 2., 0.), egui::Vec2::splat(GLYPH));
+            icons::paint(ui, icon, glyph, t.text);
+            ui.painter().text(
+                r.left_center() + vec2(TAB_W + 2., 0.),
+                egui::Align2::LEFT_CENTER,
+                format!("{}…", tl!("Gradient")),
+                egui::FontId::proportional(11.),
+                t.text,
+            );
+        } else {
+            tab_button(ui, &t, r, icon, tab == Some(prefs.tab), resp.hovered(), true);
+        }
+        if resp.on_hover_text(tip).clicked() {
+            if let Some(tab) = tab {
+                prefs.tab = tab;
+            } else {
+                acts.push(Action::Gradient);
+            }
         }
     }
     let close = Rect::from_min_size(origin + vec2(W - PAD - TAB_W, (HEADER_H - TAB_H) / 2.0), vec2(TAB_W, TAB_H));
@@ -440,6 +489,10 @@ fn settle(app: &mut VectorcraftApp, ctx: &egui::Context, st: &mut State, v: &Vie
                 let _ = app.run("paint.none", json!({}));
             }
             Action::Eyedropper => app.select_tool("eyedropper"),
+            Action::Gradient => {
+                finish(app, st);
+                open_gradient(app);
+            }
             Action::Close => {
                 finish(app, st);
                 close(app);

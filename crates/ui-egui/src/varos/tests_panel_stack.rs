@@ -765,7 +765,7 @@ fn a_closed_group_opens_again_as_it_was() {
     // Paragraph's icon brings the whole card back, as it was.
     h.tap("paragraph");
     assert_eq!(h.groups(), [["character", "paragraph"]], "the same tabs");
-    assert_eq!(h.front(), "character", "the same tab in front");
+    assert_eq!(h.front(), "paragraph", "the requested tab wins over group memory");
     assert_eq!(h.card("character"), card, "the same place and size");
     assert!(panel_stack::is_open(&h.app, "character") && panel_stack::is_open(&h.app, "paragraph"), "both icons lit");
     // A tab closed by its icon opens again in its card.
@@ -1357,4 +1357,70 @@ fn capture_cards4() {
     }
     let pixels = crate::varos::home::capture::raster(&shot.unwrap(), &textures, width, height);
     image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+#[test]
+fn vqa_requested_character_wins_after_group_close_for_command_and_icon() {
+    let mut h = Harness::new();
+    h.tap("character");
+    h.tap("paragraph");
+    h.drag(h.tab("paragraph").center(), h.tab("character").right_center() - vec2(3., 0.));
+    assert_eq!(h.front(), "paragraph");
+    for command in [true, false] {
+        let card = h.card("character");
+        h.click(pos2(card.right() - 36., card.top() + 16.));
+        if command {
+            h.app.run("window.panel", json!({"panel":"character"})).unwrap();
+            h.settle();
+        } else {
+            h.tap("character");
+        }
+        assert_eq!(h.front(), "character");
+        h.click(h.tab("paragraph").center());
+    }
+}
+
+#[test]
+fn vqa_beside_dock_is_noop_and_tab_drop_survives_resize_close_reopen() {
+    use craft_ui::docking::Hit;
+    let mut h = Harness::new();
+    h.tap("character");
+    h.tap("paragraph");
+    h.drag(h.tab("paragraph").center(), h.tab("character").right_center() - vec2(3., 0.));
+    let tab = h.hits().into_iter().find_map(|(hit, r)| matches!(&hit, Hit::Tab(p) if p == "layers").then_some(r)).unwrap();
+    let before = serde_json::to_value(crate::panel_docking::layout_of(&h.app.ui)).unwrap();
+    h.drag(h.header("character"), tab.left_center() - vec2(4., -60.));
+    assert_eq!(serde_json::to_value(crate::panel_docking::layout_of(&h.app.ui)).unwrap(), before);
+    assert!(panel_stack::is_open(&h.app, "character"));
+    h.drag(h.header("character"), tab.center());
+    assert!(h.groups().is_empty());
+    let layout = crate::panel_docking::layout_of(&h.app.ui);
+    assert!(!crate::panel_docking::in_iconic_column(&layout, "character"));
+    assert!(!crate::panel_docking::in_iconic_column(&layout, "paragraph"));
+    assert!(layout.validate().is_ok());
+    h.screen = vec2(1100., 850.);
+    h.settle();
+    h.app.run("window.panel.close", json!({"panel":"character"})).unwrap();
+    h.settle();
+    h.app.run("window.panel", json!({"panel":"character"})).unwrap();
+    h.settle();
+    let layout = crate::panel_docking::layout_of(&h.app.ui);
+    assert!(layout.contains(&"layers".into()) && layout.contains(&"character".into()));
+    assert!(!crate::panel_docking::in_iconic_column(&layout, "character"));
+    assert!(h.groups().is_empty());
+}
+
+#[test]
+fn vqa_failed_second_dock_move_rolls_back_first_and_keeps_card() {
+    use craft_ui::docking::Hit;
+    let mut h = Harness::new();
+    h.tap("character");
+    let at = h.hits().into_iter().find_map(|(hit, r)| matches!(&hit, Hit::Tab(p) if p == "layers").then_some(r.center())).unwrap();
+    // Simulate stale group membership when a later tab can no longer be moved.
+    // The old per-panel loop docked Character, discarded the card, then failed on this tab.
+    h.app.ui.varos_panel_stack.live[0].panels.push("unregistered-panel".into());
+    let before = serde_json::to_value(crate::panel_docking::layout_of(&h.app.ui)).unwrap();
+    let cards = h.app.ui.varos_panel_stack.live.clone();
+    panel_stack::let_go(&mut h.app, &h.ctx, "character", at);
+    assert_eq!(serde_json::to_value(crate::panel_docking::layout_of(&h.app.ui)).unwrap(), before);
+    assert_eq!(h.app.ui.varos_panel_stack.live[0].panels, cards[0].panels);
+    assert!(!h.app.ui.status.is_empty());
 }

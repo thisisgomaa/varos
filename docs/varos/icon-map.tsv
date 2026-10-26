@@ -15,34 +15,34 @@ tool-eraser	toolbar+flyouts+All Tools dialog: Eraser Tool (Shift+E)	varos/path-e
 tool-eyedropper	toolbar+flyouts+All Tools dialog: Eyedropper Tool (I)	pipette.svg	exact	alias->pipette; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
 tool-flare	toolbar+flyouts+All Tools dialog: Flare Tool	EMPTY	none	alias->dc-flare; suggest=LUCIDE_IMPORT:sun ; Flare tool; Illustrator-specific, sun is a stand-in
 tool-free-transform	toolbar+flyouts+All Tools dialog: Free Transform Tool (E)	maximize.svg	close	alias->dc-free-transform; Varos rail uses Icon::Fit (maximize) as FreeTransform/Scale placeholder; a real glyph is NEEDS_DRAWING
-tool-gradient	toolbar+flyouts+All Tools dialog: Gradient Tool (G)	varos/picker-gradient.svg	exact	alias->dc-gradient; Gradient panel header
-tool-graph	toolbar+flyouts+All Tools dialog: Column Graph Tool (J), Stacked Column Graph Tool, Bar Graph Tool, Stacked Bar Graph Tool, Line Graph Tool (+4)	EMPTY	none	alias->chart-column; suggest=LUCIDE_IMPORT:chart-column ; graph tools; Varos has no graphs
+tool-gradient	toolbar+flyouts+All Tools dialog: Gradient Tool (G)	vqa-linear-gradient.svg	exact	alias -> dc-gradient; original linear ramp; MIT OR Apache-2.0
+tool-graph	toolbar+flyouts+All Tools dialog: Column Graph Tool (J), Stacked Column Graph Tool, Bar Graph Tool, Stacked Bar Graph Tool, Line Graph Tool (+4)	per-tool: varos-*Graph	exact	9 distinct Graph glyphs; varos::icons::tool resolves by tool id; MIT OR Apache-2.0
 tool-group-select	toolbar+flyouts+All Tools dialog: Group Selection Tool	EMPTY	none	alias->dc-group-select; suggest=NEEDS_DRAWING ; Group Selection tool; stand-in varos/draw-select.svg
 tool-hand	toolbar+flyouts+All Tools dialog: Hand Tool (H)	hand.svg	exact	alias->hand; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
 tool-join	toolbar+flyouts+All Tools dialog: Join Tool	link.svg	close	alias->dc-join; Varos Join tool uses Icon::Link
 tool-knife	toolbar+flyouts+All Tools dialog: Knife	varos/path-knife.svg	exact	alias->dc-knife
 tool-lasso	toolbar+flyouts+All Tools dialog: Lasso Tool (Q)	lasso.svg	exact	alias->lasso; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
 tool-line	toolbar+flyouts+All Tools dialog: Line Segment Tool (\\)	varos/draw-line.svg	exact	alias->dc-line
-tool-line-cut	toolbar+flyouts+All Tools dialog: Line Cut Tool	varos/path-knife.svg	close	alias->dc-line-cut; Line Cut tool (not an Illustrator tool); knife is the nearest
+tool-line-cut	toolbar+flyouts+All Tools dialog: Line Cut Tool	vqa-line-cut.svg	exact	alias -> dc-line-cut; original line-cut glyph; MIT OR Apache-2.0
 tool-live-select	toolbar+flyouts+All Tools dialog: Live Paint Selection Tool (Shift+L)	EMPTY	none	alias->dc-live-select; suggest=NEEDS_DRAWING ; Live Paint Selection; stand-in varos/draw-select.svg
 tool-magic-wand	toolbar+flyouts+All Tools dialog: Magic Wand Tool (Y)	EMPTY	none	alias->wand-sparkles; suggest=LUCIDE_IMPORT:wand-sparkles ; Magic Wand tool + header; Varos rail uses SmartGuides placeholder
 tool-measure	toolbar+flyouts+All Tools dialog: Measure Tool	ruler.svg	exact	alias->dc-measure; spike override; Varos Ruler
 tool-mesh	toolbar+flyouts+All Tools dialog: Mesh Tool (U)	EMPTY	none	alias->dc-mesh; suggest=LUCIDE_IMPORT:grid-3x3 ; Mesh tool / envelope mesh
 tool-mirror-cut	toolbar+flyouts+All Tools dialog: Mirror & Cut Tool	EMPTY	none	alias->dc-mirror-cut; suggest=NEEDS_DRAWING ; Mirror & Cut tool; stand-in varos/path-knife.svg
-tool-path-eraser	toolbar+flyouts+All Tools dialog: Path Eraser Tool	varos/path-eraser.svg	exact	alias->dc-path-eraser
+tool-path-eraser	toolbar+flyouts+All Tools dialog: Path Eraser Tool	vqa-path-eraser.svg	exact	alias -> dc-path-eraser; distinct from Eraser; MIT OR Apache-2.0
 tool-pen	toolbar+flyouts+All Tools dialog: Pen Tool (P)	pen-tool.svg	exact	alias->pen-tool; same Lucide file as upstream; Varos copy is stroke-width 2 (upstream rewrites 2->1.6 at load)
 tool-pen-add	toolbar+flyouts+All Tools dialog: Add Anchor Point Tool (+)	pen-line.svg	exact	alias->pen-tool-add; Varos AddAnchor -> PenLine
 tool-pen-delete	toolbar+flyouts+All Tools dialog: Delete Anchor Point Tool (-)	pen-off.svg	exact	alias->pen-tool-delete; Varos DeleteAnchor -> PenOff
 tool-pencil	toolbar+flyouts+All Tools dialog: Pencil Tool (N)	varos/draw-pencil.svg	exact	alias->pencil; Pencil tool; other uses are generic 'edit'
-tool-perspective	toolbar+flyouts+All Tools dialog: Perspective Grid Tool (Shift+P)	EMPTY	none	alias->dc-perspective; suggest=NEEDS_DRAWING ; Perspective Grid tool
-tool-perspective-select	toolbar+flyouts+All Tools dialog: Perspective Selection Tool (Shift+V)	EMPTY	none	alias->dc-perspective; suggest=NEEDS_DRAWING ; Perspective Grid tool
+tool-perspective	toolbar+flyouts+All Tools dialog: Perspective Grid Tool (Shift+P)	vqa-perspectiveGrid.svg	exact	original Perspective Grid glyph; MIT OR Apache-2.0
+tool-perspective-select	toolbar+flyouts+All Tools dialog: Perspective Selection Tool (Shift+V)	vqa-perspectiveSelection.svg	exact	original Perspective Selection glyph; MIT OR Apache-2.0
 tool-polar-grid	toolbar+flyouts+All Tools dialog: Polar Grid Tool	varos/draw-polar-grid.svg	exact	alias->dc-polar-grid
 tool-polygon	toolbar+flyouts+All Tools dialog: Polygon Tool	varos/draw-polygon.svg	exact	alias->dc-polygon
 tool-print-tiling	toolbar+flyouts+All Tools dialog: Print Tiling Tool	EMPTY	none	alias->printer; suggest=LUCIDE_IMPORT:printer
 tool-pucker	toolbar+flyouts+All Tools dialog: Pucker Tool	EMPTY	none	alias->dc-pucker; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
 tool-puppet	toolbar+flyouts+All Tools dialog: Puppet Warp Tool	EMPTY	none	alias->dc-puppet; suggest=NEEDS_DRAWING ; Puppet Warp tool
 tool-rect	toolbar+flyouts+All Tools dialog: Rectangle Tool (M)	varos/draw-rect.svg	exact	alias->square; Rectangle tool (tool-rect); also generic square/cap-square
-tool-rect-cut	toolbar+flyouts+All Tools dialog: Rectangle Cut Tool	varos/path-knife.svg	close	alias->dc-rect-cut; Rectangle Cut tool; knife is the nearest
+tool-rect-cut	toolbar+flyouts+All Tools dialog: Rectangle Cut Tool	vqa-rect-cut.svg	exact	alias -> dc-rect-cut; original rectangular-cut glyph; MIT OR Apache-2.0
 tool-rect-grid	toolbar+flyouts+All Tools dialog: Rectangular Grid Tool	layout-grid.svg	exact	alias->dc-rect-grid; Varos RectGrid tool uses Icon::Grid
 tool-reflect	toolbar+flyouts+All Tools dialog: Reflect Tool (O)	square-centerline-dashed-horizontal.svg	exact	alias->flip-horizontal-2; Varos Icon::FlipH / Reflect tool
 tool-reshape	toolbar+flyouts+All Tools dialog: Reshape Tool	EMPTY	none	alias->dc-reshape; suggest=NEEDS_DRAWING ; Reshape tool
@@ -56,17 +56,17 @@ tool-selection	toolbar+flyouts+All Tools dialog: Selection Tool (V)	varos/draw-s
 tool-shape-builder	toolbar+flyouts+All Tools dialog: Shape Builder Tool (Shift+M)	varos/path-merge.svg	exact	alias->dc-shape-builder; Varos ShapeBuilder -> PathMerge
 tool-shaper	toolbar+flyouts+All Tools dialog: Shaper Tool (Shift+N)	EMPTY	none	alias->shapes; suggest=LUCIDE_IMPORT:shapes ; Shaper tool + live shape row
 tool-shear	toolbar+flyouts+All Tools dialog: Shear Tool	move.svg	close	alias->dc-shear; Varos rail uses Icon::MoveArtwork as Shear placeholder; real glyph NEEDS_DRAWING
-tool-slice	toolbar+flyouts+All Tools dialog: Slice Tool (Shift+K), Slice Selection Tool	EMPTY	none	alias->slice; suggest=LUCIDE_IMPORT:slice ; Slice tool
+tool-slice	toolbar+flyouts+All Tools dialog: Slice Tool (Shift+K), Slice Selection Tool	vqa-slice.svg / vqa-sliceSelection.svg	exact	distinct Slice variants; MIT OR Apache-2.0
 tool-smooth	toolbar+flyouts+All Tools dialog: Smooth Tool	varos/draw-smooth.svg	exact	alias->dc-smooth
 tool-spiral	toolbar+flyouts+All Tools dialog: Spiral Tool	varos/draw-spiral.svg	exact	alias->tornado; Spiral tool
 tool-star	toolbar+flyouts+All Tools dialog: Star Tool	varos/draw-star.svg	exact	alias->star; Star tool; file_info 'favourite' use is a different meaning
-tool-symbol	toolbar+flyouts+All Tools dialog: Symbol Sprayer Tool (Shift+S), Symbol Shifter Tool, Symbol Scruncher Tool, Symbol Sizer Tool, Symbol Spinner Tool (+3)	EMPTY	none	alias->dc-symbol-sprayer; suggest=LUCIDE_IMPORT:spray-can ; Symbol tools
+tool-symbol	toolbar+flyouts+All Tools dialog: Symbol Sprayer Tool (Shift+S), Symbol Shifter Tool, Symbol Scruncher Tool, Symbol Sizer Tool, Symbol Spinner Tool (+3)	per-tool: varos-symbol*	exact	8 distinct Symbol glyphs; varos::icons::tool resolves by tool id; MIT OR Apache-2.0
 tool-touch-type	toolbar+flyouts+All Tools dialog: Touch Type Tool (Shift+T)	EMPTY	none	alias->dc-touch-type; suggest=NEEDS_DRAWING ; Touch Type tool + OpenType panel header; stand-in inline Icon::Type
 tool-twirl	toolbar+flyouts+All Tools dialog: Twirl Tool	EMPTY	none	alias->dc-twirl; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
 tool-type	toolbar+flyouts+All Tools dialog: Type Tool (T)	inline:Icon::Type	exact	alias->type; Type tool + Character headers; Varos 'type' is inline SVG in kit/icons.rs (no file)
 tool-type-area	toolbar+flyouts+All Tools dialog: Area Type Tool	EMPTY	none	alias->dc-type-area; suggest=NEEDS_DRAWING ; Area Type tool; stand-in inline Icon::Type
-tool-type-path	toolbar+flyouts+All Tools dialog: Type on a Path Tool, Vertical Type on a Path Tool	EMPTY	none	alias->dc-type-path; suggest=NEEDS_DRAWING ; Type on a Path tool; stand-in inline Icon::Type
-tool-type-vertical	toolbar+flyouts+All Tools dialog: Vertical Type Tool, Vertical Area Type Tool	EMPTY	none	alias->dc-type-vertical; suggest=NEEDS_DRAWING ; Vertical Type tool; stand-in inline Icon::Type
+tool-type-path	toolbar+flyouts+All Tools dialog: Type on a Path Tool, Vertical Type on a Path Tool	per-tool: varos-verticalTypeOnPath	exact	vertical path variant distinguished; horizontal retains upstream glyph; MIT OR Apache-2.0
+tool-type-vertical	toolbar+flyouts+All Tools dialog: Vertical Type Tool, Vertical Area Type Tool	vqa-verticalType.svg / vqa-verticalAreaType.svg	exact	distinct vertical tool variants; MIT OR Apache-2.0
 tool-warp	toolbar+flyouts+All Tools dialog: Warp Tool (Shift+R)	EMPTY	none	alias->waves; suggest=LUCIDE_IMPORT:waves ; Warp tool
 tool-width	toolbar+flyouts+All Tools dialog: Width Tool (Shift+W)	EMPTY	none	alias->dc-width; suggest=NEEDS_DRAWING ; Width tool; Varos rail uses MoveArtwork placeholder
 tool-wrinkle	toolbar+flyouts+All Tools dialog: Wrinkle Tool	EMPTY	none	alias->dc-wrinkle; suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
@@ -154,12 +154,12 @@ dc-free-transform	toolbar: Free Transform | free_transform:32	maximize.svg	close
 dc-fx	P:appearance:338,708,844	EMPTY	none	suggest=LUCIDE_IMPORT:wand-sparkles ; Appearance 'add effect'
 dc-gamut	P:color:205	EMPTY	none	suggest=LUCIDE_IMPORT:triangle-alert ; Color panel: out-of-gamut warning
 dc-grad-freeform	P:gradient:192; P:swatches:297	EMPTY	none	suggest=NEEDS_DRAWING ; freeform gradient type; nearest varos/picker-gradient.svg
-dc-grad-linear	P:gradient:190; P:swatches:295	varos/picker-gradient.svg	close	only one gradient glyph in Varos (picker mode)
+dc-grad-linear	P:gradient:190; P:swatches:295	vqa-linear-gradient.svg	exact	VQA original glyph, MIT OR Apache-2.0
 dc-grad-radial	P:gradient:191; P:swatches:296	EMPTY	none	suggest=NEEDS_DRAWING ; radial gradient type; nearest varos/picker-gradient.svg
 dc-grad-stroke-across	P:gradient:220	EMPTY	none	suggest=NEEDS_DRAWING ; gradient-on-stroke mode, Illustrator-specific
 dc-grad-stroke-along	P:gradient:219	EMPTY	none	suggest=NEEDS_DRAWING ; gradient-on-stroke mode, Illustrator-specific
 dc-grad-stroke-within	P:gradient:218	EMPTY	none	suggest=NEEDS_DRAWING ; gradient-on-stroke mode, Illustrator-specific
-dc-gradient	panel-header: Gradient | toolbar: Gradient | state:112	varos/picker-gradient.svg	exact	Gradient panel header
+dc-gradient	panel-header: Gradient | toolbar: Gradient | state:112	vqa-linear-gradient.svg	exact	VQA original glyph, MIT OR Apache-2.0
 dc-graphic-styles	panel-header: Graphic Styles | P:graphic_styles:458,471; state:115	EMPTY	none	suggest=LUCIDE_IMPORT:shapes ; Graphic Styles panel header
 dc-grid-view	D:new_document:507; P:swatches:639	layout-grid.svg	exact	Varos Icon::Grid
 dc-group-select	toolbar: Group Selection	EMPTY	none	suggest=NEEDS_DRAWING ; Group Selection tool; stand-in varos/draw-select.svg
@@ -169,7 +169,7 @@ dc-join-miter	P:stroke:171	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join di
 dc-join-round	P:stroke:172	EMPTY	none	suggest=NEEDS_DRAWING ; stroke cap/join diagram (Stroke panel); Illustrator-specific, no Lucide equivalent
 dc-knife	toolbar: Knife	varos/path-knife.svg	exact	
 dc-line	toolbar: Line Segment	varos/draw-line.svg	exact	
-dc-line-cut	toolbar: Line Cut	varos/path-knife.svg	close	Line Cut tool (not an Illustrator tool); knife is the nearest
+dc-line-cut	toolbar: Line Cut	vqa-line-cut.svg	exact	VQA original glyph, MIT OR Apache-2.0
 dc-list-view	panel-header: Document Info | P:swatches:636; state:130	list.svg	exact	Varos Icon::List; also Document Info panel header
 dc-live-bucket	toolbar: Live Paint Bucket	EMPTY	none	suggest=LUCIDE_IMPORT:paint-bucket ; Live Paint Bucket
 dc-live-select	toolbar: Live Paint Selection	EMPTY	none	suggest=NEEDS_DRAWING ; Live Paint Selection; stand-in varos/draw-select.svg
@@ -190,7 +190,7 @@ dc-para-left	P:paragraph:16	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-start ; 
 dc-para-ltr	P:paragraph:82	EMPTY	none	suggest=LUCIDE_IMPORT:pilcrow-right ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
 dc-para-right	P:paragraph:18	EMPTY	none	suggest=LUCIDE_IMPORT:text-align-end ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
 dc-para-rtl	P:paragraph:83	EMPTY	none	suggest=LUCIDE_IMPORT:pilcrow-left ; Paragraph panel; Varos has no text-panel icons (Arabic-first: RTL/LTR matter)
-dc-path-eraser	toolbar: Path Eraser	varos/path-eraser.svg	exact	
+dc-path-eraser	toolbar: Path Eraser	vqa-path-eraser.svg	exact	VQA original glyph, MIT OR Apache-2.0
 dc-pathfinder	panel-header: Pathfinder | state:119	varos/path-merge.svg	close	Pathfinder panel header
 dc-perspective	toolbar: Perspective Grid, Perspective Selection	EMPTY	none	suggest=NEEDS_DRAWING ; Perspective Grid tool
 dc-pf-crop	P:pathfinder:21	EMPTY	none	suggest=NEEDS_DRAWING ; Pathfinder Crop; Varos crop.svg is 'clip to artboard', different meaning
@@ -209,7 +209,7 @@ dc-polygon	toolbar: Polygon	varos/draw-polygon.svg	exact
 dc-pucker	toolbar: Pucker	EMPTY	none	suggest=NEEDS_DRAWING ; Illustrator liquify-tool glyph, no Lucide equivalent
 dc-puppet	toolbar: Puppet Warp	EMPTY	none	suggest=NEEDS_DRAWING ; Puppet Warp tool
 dc-rearrange	P:artboards:116	EMPTY	none	suggest=LUCIDE_IMPORT:arrow-up-down ; Artboards 'rearrange'
-dc-rect-cut	toolbar: Rectangle Cut	varos/path-knife.svg	close	Rectangle Cut tool; knife is the nearest
+dc-rect-cut	toolbar: Rectangle Cut	vqa-rect-cut.svg	exact	VQA original glyph, MIT OR Apache-2.0
 dc-rect-grid	toolbar: Rectangular Grid	layout-grid.svg	exact	Varos RectGrid tool uses Icon::Grid
 dc-reference-point	no literal use in ui-egui (catalogue only)	EMPTY	none	UNUSED-literal; suggest=NEEDS_DRAWING ; Transform panel 9-point reference grid; probably painted upstream; Varos hand-paints its own
 dc-remove-brush	P:brushes:154	trash-2.svg	close	Brushes 'remove brush stroke'
@@ -270,7 +270,7 @@ external-link	community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:external
 git-branch	community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:git-branch ; community links (VectorCraft-specific community feature; fork may drop it)
 globe	panel-header: CSS Properties | community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:globe ; CSS Properties header + community (VectorCraft-specific community feature; fork may drop it)
 message-circle	community:34; community.rs (links row)	EMPTY	none	suggest=LUCIDE_IMPORT:message-circle ; community links (VectorCraft-specific community feature; fork may drop it)
-link-2-off	D:form:488; D:recolor:544; D:width_point:52; P:graphic_styles:493; P:links:342 ...	link.svg	close	unlinked state; Varos only has Link (dim/slash needed) ; or LUCIDE_IMPORT:link-2-off
+link-2-off	D:form:488; D:recolor:544; D:width_point:52; P:graphic_styles:493; P:links:342 ...	vqa-broken-link.svg	exact	VQA original glyph, MIT OR Apache-2.0
 lock	canvas:1891; P:layers:655,657	inline:LEGACY_L_LOCK	exact	Layers lock
 lock-open	no literal use in ui-egui (catalogue only)	inline:LEGACY_L_UNLOCK	exact	UNUSED upstream; Varos has it
 map	panel-header: Navigator	EMPTY	none	suggest=LUCIDE_IMPORT:map ; Navigator panel header
@@ -335,3 +335,32 @@ painter:free-transform-perspective	free_transform.rs Glyph::Perspective polygon	
 painter:free-transform-distort	free_transform.rs Glyph::Distort polygon	EMPTY	none	hand-painted; keep
 painter:flyout-corner-triangle	toolbar.rs:212 tool-group corner mark	EMPTY	none	hand-painted 3.5px triangle; keep
 brand:app-icon	brand.rs app bar mark (PNG engraved dragon)	EMPTY	none	raster brand mark, NOT in icon set; replace with Varos mark (separate task)
+varos-linear-gradient	VQA distinct glyph	vqa-linear-gradient.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-broken-link	VQA distinct glyph	vqa-broken-link.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-line-cut	VQA distinct glyph	vqa-line-cut.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-rect-cut	VQA distinct glyph	vqa-rect-cut.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-path-eraser	VQA distinct glyph	vqa-path-eraser.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-columnGraph	VQA distinct glyph	vqa-columnGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-stackedColumnGraph	VQA distinct glyph	vqa-stackedColumnGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-barGraph	VQA distinct glyph	vqa-barGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-stackedBarGraph	VQA distinct glyph	vqa-stackedBarGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-lineGraph	VQA distinct glyph	vqa-lineGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-areaGraph	VQA distinct glyph	vqa-areaGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-scatterGraph	VQA distinct glyph	vqa-scatterGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-pieGraph	VQA distinct glyph	vqa-pieGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-radarGraph	VQA distinct glyph	vqa-radarGraph.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-perspectiveGrid	VQA distinct glyph	vqa-perspectiveGrid.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-perspectiveSelection	VQA distinct glyph	vqa-perspectiveSelection.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-slice	VQA distinct glyph	vqa-slice.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-sliceSelection	VQA distinct glyph	vqa-sliceSelection.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-verticalType	VQA distinct glyph	vqa-verticalType.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-verticalAreaType	VQA distinct glyph	vqa-verticalAreaType.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-verticalTypeOnPath	VQA distinct glyph	vqa-verticalTypeOnPath.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolSprayer	VQA distinct glyph	vqa-symbolSprayer.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolShifter	VQA distinct glyph	vqa-symbolShifter.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolScruncher	VQA distinct glyph	vqa-symbolScruncher.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolSizer	VQA distinct glyph	vqa-symbolSizer.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolSpinner	VQA distinct glyph	vqa-symbolSpinner.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolStainer	VQA distinct glyph	vqa-symbolStainer.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolScreener	VQA distinct glyph	vqa-symbolScreener.svg	exact	original MIT OR Apache-2.0; 16/24 px
+varos-symbolStyler	VQA distinct glyph	vqa-symbolStyler.svg	exact	original MIT OR Apache-2.0; 16/24 px

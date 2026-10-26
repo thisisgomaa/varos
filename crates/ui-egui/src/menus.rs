@@ -2026,6 +2026,7 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "type.pathOptions" if p.get("effect").is_some() => {
             selected_text(true).is_some_and(|t| p.get("effect").and_then(Value::as_str) == Some(t.path_effect.id()))
         }
+        "view.edges" => !v.edges, // Varos: checked while edges are hidden.
         "view.smartGuides" => v.smart_guides,
         "view.grid" => v.grid,
         "view.snapToGrid" => v.snap_to_grid,

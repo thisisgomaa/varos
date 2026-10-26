@@ -67,3 +67,10 @@ Tags: **[done, owner to look]** = built, gates green, waiting for the owner's ey
 
 ## AI panel (owner request 2026-10-26)
 See `docs/varos/AI_PANEL_PLAN.md` — A0 mockup → A1 Ask via Codex → A2 Claude Code → A3 Images with the user's own key → A4 edit/variations → A5 API agent loop → A6 History. Selling point: own model, own key, own files, no subscription.
+
+## Deferred review findings — lane-ui-codex (Astra review 2026-10-27, P2, not fixed yet)
+1. picker Gradient navigation uses `window.panel` (toggle) → can close an already-visible floating Gradient panel; use a show-only path.
+2. tab_scroll: choosing the already-active document from the overflow list does not reveal its tab; scroll state survives a non-overflow resize.
+3. picker header: Gradient button (x 98–184) overlaps Eyedropper (176–202) by 8 px.
+4. clipping eligibility recomputed every frame in Properties + control bar; cache by (doc, revision, selection).
+Owner direction 2026-10-27: no further investment in craft-ui chrome while the new UI is designed on the Varos box system; fix these only if cheap or when the new shell lands.

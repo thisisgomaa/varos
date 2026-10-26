@@ -56,7 +56,8 @@ mod tests {
         let line = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}).to_string();
         let reply: serde_json::Value = serde_json::from_str(&s.handle_line(&line).unwrap()).unwrap();
         let r = &reply["result"];
-        assert_eq!(r["serverInfo"]["title"], "Varos");
+        assert_eq!(r["serverInfo"]["title"], vectorcraft_format::VAROS_IDENTITY);
+        assert_eq!(r["serverInfo"]["version"], vectorcraft_format::VAROS_IDENTITY);
         assert_eq!(r["serverInfo"]["name"], "vectorcraft", "the server's id stays upstream's");
         let instructions = r["instructions"].as_str().unwrap();
         assert!(instructions.starts_with("Varos is a professional vector illustration app."), "{instructions}");

@@ -1,0 +1,125 @@
+Varos UI Codex lane — 2026-10-26
+Scope: production VQA fixes requested on 2026-10-26. No git add/commit. No desktop automation.
+
+1) Changes per item (source locations)
+
+1. VQA-01
+The requested panel takes priority over remembered group activation. Group members, placement and size remain remembered; command and icon reopening are headless-tested.
+  crates/ui-egui/src/varos/panel_stack.rs:504
+  crates/ui-egui/src/varos/tests_panel_stack.rs:1017
+
+2. VQA-06
+Persistent previous/next overflow navigation; activation, document identity, resizing and title-width changes reveal the active tab. Long titles are clipped to the tab room. The upstream scrolling overflow list remains. Tests navigate all 40 scroll positions and render every activated document in a narrow strip.
+  crates/ui-egui/src/varos/tab_scroll.rs:13
+  crates/ui-egui/src/chrome.rs:483
+
+3. VQA-10
+Dock-header drops join tabs, with the existing visible accent drop preview. Beside/body drops leave the dock model unchanged. Multi-tab drops now roll back the whole gesture on any failed move, rather than discarding the card after partial success; the resulting layout is validated. Tests cover grouped drag, resize, close/reopen, and the partial-move failure case. No external craft-ui changes or adjacent-column docking were needed.
+  crates/ui-egui/src/varos/panel_stack.rs:1220
+  crates/ui-egui/src/varos/tests_panel_stack.rs:1038
+  crates/ui-egui/src/varos/tests_panel_stack.rs:1068
+
+4. VQA-17
+One contextual Make/Release action in Properties and the control bar. Invalid selections disable it with a reason; valid Make tooltips identify the topmost mask by name, kind and object id. Selection roots account for selected ancestors/compound membership. Headless widget clicks exercise Make and Release, and state follows Undo/Redo; invalid none/one/group-on-top selections are covered.
+  crates/ui-egui/src/varos/clipping.rs:12
+  crates/ui-egui/src/varos/clipping.rs:66
+  crates/ui-egui/src/panels/properties.rs:114
+  crates/ui-egui/src/chrome.rs:331
+
+5. VQA-18
+With a selection and hidden edges, the status message begins with "Edges hidden — ⌘H to show", including during background work; no modal is opened. The View item is checked while edges are hidden. A headless status/menu test covers showing and clearing the hint.
+  crates/ui-egui/src/chrome.rs:910
+  crates/ui-egui/src/menus.rs:2029
+  crates/ui-egui/src/chrome.rs:1250
+
+6. VQA-08
+Gradient is an enabled icon + short-label action opening/focusing the upstream Gradient panel; its tooltip explains the destination. Focused gradient paint/target transitions navigate once, without repeatedly stealing focus. Fill/Stroke chip context and double-click paths expose Gradient…. Picker colour mathematics and editing internals are unchanged.
+  crates/ui-egui/src/varos/picker/mod.rs:300
+  crates/ui-egui/src/varos/picker/mod.rs:344
+  crates/ui-egui/src/varos/picker/cluster.rs:108
+  crates/ui-egui/src/varos/picker/tests.rs:783
+
+7. VQA-07 + VQA-04 + VQA-03
+29 original SVGs (24 px viewBox, 1.6 px round stroke), registered and attributed in ASSETS.md/NOTICE under MIT OR Apache-2.0. A linear ramp replaces the Gradient glyph; Unlink is a broken link; cut/eraser variants differ. All 9 Graph, 8 Symbol, vertical type, Perspective and Slice variants have distinct glyphs/badges in the toolbar, flyouts and tool drawer. Registry raster tests plus 16/24 px tool-family tests cover the assets.
+  crates/ui-egui/src/varos/icons.rs:8
+  crates/ui-egui/src/varos/icons.rs:275
+  crates/ui-egui/src/toolbar.rs:236
+  crates/ui-egui/src/edit_toolbar.rs:602
+  docs/varos/icon-map.tsv:338
+
+8. VQA-05
+A build-time identity in vectorcraft-format is shared by About, OS window title/header tooltip, MCP initialize server info and native-file generator. Format: Varos <product version> (engine VectorCraft <workspace version>, build <short sha>). VAROS_PRODUCT_VERSION optionally supplies the product version; otherwise it defaults to the workspace version. Git metadata tracking supports worktrees. Internal crate/server ids and file compatibility stay unchanged; tests compare window/file and MCP identities.
+  crates/format/build.rs:2
+  crates/format/src/lib.rs:41
+  crates/ui-egui/src/dialogs/about.rs:57
+  crates/ui-egui/src/chrome.rs:126
+  crates/mcp/src/server.rs:423
+  crates/ui-egui/src/varos/tests_identity.rs:3
+
+2) Files touched
+ASSETS.md
+NOTICE
+crates/format/build.rs
+crates/format/src/lib.rs
+crates/mcp/src/server.rs
+crates/mcp/src/varos_brand.rs
+crates/ui-egui/assets/varos/icons/vqa-areaGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-barGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-broken-link.svg
+crates/ui-egui/assets/varos/icons/vqa-columnGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-line-cut.svg
+crates/ui-egui/assets/varos/icons/vqa-lineGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-linear-gradient.svg
+crates/ui-egui/assets/varos/icons/vqa-path-eraser.svg
+crates/ui-egui/assets/varos/icons/vqa-perspectiveGrid.svg
+crates/ui-egui/assets/varos/icons/vqa-perspectiveSelection.svg
+crates/ui-egui/assets/varos/icons/vqa-pieGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-radarGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-rect-cut.svg
+crates/ui-egui/assets/varos/icons/vqa-scatterGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-slice.svg
+crates/ui-egui/assets/varos/icons/vqa-sliceSelection.svg
+crates/ui-egui/assets/varos/icons/vqa-stackedBarGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-stackedColumnGraph.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolScreener.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolScruncher.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolShifter.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolSizer.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolSpinner.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolSprayer.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolStainer.svg
+crates/ui-egui/assets/varos/icons/vqa-symbolStyler.svg
+crates/ui-egui/assets/varos/icons/vqa-verticalAreaType.svg
+crates/ui-egui/assets/varos/icons/vqa-verticalType.svg
+crates/ui-egui/assets/varos/icons/vqa-verticalTypeOnPath.svg
+crates/ui-egui/src/chrome.rs
+crates/ui-egui/src/dialogs/about.rs
+crates/ui-egui/src/edit_toolbar.rs
+crates/ui-egui/src/icons.rs
+crates/ui-egui/src/menus.rs
+crates/ui-egui/src/panels/properties.rs
+crates/ui-egui/src/toolbar.rs
+crates/ui-egui/src/varos/clipping.rs
+crates/ui-egui/src/varos/icons.rs
+crates/ui-egui/src/varos/mod.rs
+crates/ui-egui/src/varos/panel_stack.rs
+crates/ui-egui/src/varos/picker/cluster.rs
+crates/ui-egui/src/varos/picker/mod.rs
+crates/ui-egui/src/varos/picker/tests.rs
+crates/ui-egui/src/varos/tab_scroll.rs
+crates/ui-egui/src/varos/tests_identity.rs
+crates/ui-egui/src/varos/tests_panel_stack.rs
+docs/varos/STATE.md
+docs/varos/icon-map.tsv
+docs/varos/lanes/ui-codex-report.txt
+
+3) Exact gate result lines
+PENDING — final verification still running.
+
+4) Limits / deliberately not done
+Native visual/installed-app acceptance is not claimed: the task explicitly prohibits desktop driving and screen capture. Headless tests are the verification boundary.
+The text engine, agent-layer behavior and external craft-ui dependency are untouched. MCP changes are restricted to product identity and its existing branding test.
+No adjacent dock column was introduced: drops on dock headers tab cleanly; beside/body drops are a no-op.
+No commits, staging, packaging, installed-app updates, modals, OS credential prompts, or auto-update changes.
+Local plan/STATUS.md, plan/execution-plan.md and plan/architecture.md are absent in this worktree; the explicit task and current fork docs supplied the scope.
+Upstream parity scores and headline counts were not reassessed for these fork-only bug fixes. docs/varos/STATE.md records provisional status pending owner acceptance.

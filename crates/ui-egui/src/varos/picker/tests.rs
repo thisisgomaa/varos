@@ -778,3 +778,21 @@ fn the_release_frames_movement_is_committed() {
     frame(&ctx, &mut app, vec![]);
     assert!(fill_hex(&app).starts_with("#ff"), "R at the release point: {}", fill_hex(&app));
 }
+
+#[test]
+fn gradient_tab_and_gradient_focus_open_upstream_panel_once() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    frame(&ctx, &mut app, vec![]);
+    let r = picker_rect(&ctx);
+    let at = r.min + vec2(PAD + 3. * (TAB_W + TAB_GAP) + TAB_W / 2., HEADER_H / 2.);
+    click(&ctx, &mut app, at);
+    assert!(crate::varos::panel_stack::is_open(&app, "gradient") || crate::panel_docking::showing(&app.ui, "gradient"));
+    let stops = json!([{"offset":0,"color":"#000000"},{"offset":1,"color":"#ffffff"}]);
+    app.run("paint.setFill", json!({"gradient":{"stops":stops}})).unwrap();
+    frame(&ctx, &mut app, vec![]);
+    assert!(crate::varos::panel_stack::is_open(&app, "gradient") || crate::panel_docking::showing(&app.ui, "gradient"));
+    let before = serde_json::to_value(&app.ui).unwrap();
+    frame(&ctx, &mut app, vec![]);
+    assert_eq!(serde_json::to_value(&app.ui).unwrap(), before, "idle gradient focus must not reopen or move panels");
+}

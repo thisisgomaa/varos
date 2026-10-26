@@ -37,6 +37,9 @@ mod legacy;
 mod stream;
 mod unpack;
 
+/// Varos: shared build-time product, engine and source revision identity.
+pub const VAROS_IDENTITY: &str = env!("VAROS_IDENTITY");
+
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read as _, Write};
@@ -386,7 +389,7 @@ pub fn save_to(doc: &Document, o: &SaveOptions, w: impl Write) -> Result<(), For
     // Older apps only know the name from before the rename.
     env.field(&mut out, "format", &if o.version < 3 { LEGACY_EXTENSION } else { EXTENSION })?;
     env.field(&mut out, "version", &o.version)?;
-    env.field(&mut out, "generator", &format!("VectorCraft {}", env!("CARGO_PKG_VERSION")))?;
+    env.field(&mut out, "generator", &VAROS_IDENTITY)?; // Varos: shared build identity.
     if let Some(png) = &o.preview {
         env.field(&mut out, "preview", &blob("image/png", png))?;
     }

@@ -231,7 +231,13 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
                         ui.painter().rect_filled(well, CornerRadius::same(6), t.hover);
                     }
                     let ir = egui::Rect::from_center_size(rect.center(), vec2(18.0, 18.0));
-                    icons::paint(ui, icons::tool_icon(shown.icon), ir, if is_active { t.text_strong } else { t.icon });
+                    icons::paint(
+                        ui,
+                        // Varos: distinct tool variants.
+                        crate::varos::icons::tool(shown.id, shown.icon),
+                        ir,
+                        if is_active { t.text_strong } else { t.icon },
+                    );
                     if slot.len() > 1 {
                         let c = rect.center() + vec2(12.5, 10.0);
                         ui.painter().add(egui::Shape::convex_polygon(vec![c, c + vec2(-3.5, 0.0), c + vec2(0.0, -3.5)], t.icon, Stroke::NONE));
@@ -662,7 +668,8 @@ fn tool_rows(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String]) -> Option<
             ui.painter().rect_filled(egui::Rect::from_center_size(r.left_center() + vec2(12.0, 0.0), vec2(5.0, 5.0)), 0.0, t.text);
         }
         let ir = egui::Rect::from_min_size(r.min + vec2(24.0, 6.0), vec2(18.0, 18.0));
-        icons::paint(ui, icons::tool_icon(tool.icon), ir, t.icon);
+        // Varos: distinct tool variants.
+        icons::paint(ui, crate::varos::icons::tool(tool.id, tool.icon), ir, t.icon);
         let color = color(tool);
         ui.painter().galley(pos2(r.left() + NAME_X, r.center().y - name.size().y / 2.0), name, color);
         if let Some(sc) = shortcut {
@@ -721,7 +728,13 @@ fn tool_strip(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String]) -> Option
             ui.painter().rect_filled(well, CornerRadius::same(6), t.hover);
         }
         let ir = egui::Rect::from_center_size(r.center(), vec2(18.0, 18.0));
-        icons::paint(ui, icons::tool_icon(tool.icon), ir, if active == tool.id { t.text_strong } else { t.icon });
+        icons::paint(
+            ui,
+            // Varos: distinct tool variants.
+            crate::varos::icons::tool(tool.id, tool.icon),
+            ir,
+            if active == tool.id { t.text_strong } else { t.icon },
+        );
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), active == tool.id, tip(tool)));
         if resp.on_hover_text(tip(tool)).clicked() {
             chosen = Some(tool.id);

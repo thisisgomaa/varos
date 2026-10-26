@@ -597,7 +597,13 @@ fn row(ui: &mut Ui, t: &Tokens, tool: &'static ToolInfo, on: bool, dimmed: bool)
         t.text
     };
     let icon = Rect::from_center_size(rect.left_center() + vec2(8.0 + ICON / 2.0, 0.0), vec2(ICON, ICON));
-    icons::paint(ui, icons::tool_icon(tool.icon), icon, if dimmed || on { color } else { t.icon });
+    icons::paint(
+        ui,
+        // Varos: distinct tool variants.
+        crate::varos::icons::tool(tool.id, tool.icon),
+        icon,
+        if dimmed || on { color } else { t.icon },
+    );
     let painter = ui.painter().with_clip_rect(rect);
     let shortcut = crate::shortcut_editor::tool_shortcut(tool.id);
     let keys_w = shortcut.as_ref().map_or(0.0, |k| {
@@ -632,7 +638,13 @@ fn ghost(ctx: &egui::Context, t: &Tokens) {
     egui::Area::new(egui::Id::unique("tool-drag-ghost")).order(egui::Order::Tooltip).fixed_pos(r.min).interactable(false).show(ctx, |ui| {
         let (r, _) = ui.allocate_exact_size(r.size(), Sense::hover());
         ui.painter().rect(r, 3.0, t.panel, Stroke::new(1.0, t.accent), StrokeKind::Inside);
-        icons::paint(ui, icons::tool_icon(tool.icon), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), t.text_strong);
+        icons::paint(
+            ui,
+            // Varos: distinct tool variants.
+            crate::varos::icons::tool(tool.id, tool.icon),
+            Rect::from_center_size(r.center(), vec2(18.0, 18.0)),
+            t.text_strong,
+        );
     });
 }
 

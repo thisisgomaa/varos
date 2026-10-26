@@ -99,6 +99,21 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, v: &View, acts: &mut Vec<Action>) 
         _ => tl!("Fill"),
     };
     let clicked = resp.clicked();
+    let double = resp.double_clicked();
+    if resp.secondary_clicked()
+        && let Some(fill) = hit
+    {
+        acts.push(Action::Focus(fill));
+    }
+    resp.context_menu(|ui| {
+        if ui.button("Gradient…").clicked() {
+            acts.push(Action::Gradient);
+            ui.close();
+        }
+    });
+    if double {
+        acts.push(Action::Gradient);
+    }
     if hit.is_some() {
         let _ = resp.on_hover_text(tip);
     }

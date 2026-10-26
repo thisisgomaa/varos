@@ -110,6 +110,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
+    crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
     let is_group = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Group { .. }));
     let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(**l, LiveShape::Path { .. }));
     // Blend Options for one blend while the Blend tool is in use, Merge Live Paint for a Live
@@ -120,7 +121,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let mut actions: Vec<(&str, &str)> = vec![];
     if n_sel > 1 {
         actions.push((tl!("Group"), "object.group"));
-        actions.push((tl!("Make Clipping Mask"), "object.clippingMask.make"));
+        // Varos: clipping action is shared above, with validation and tooltip.
     }
     if merge_live_paint {
         actions.push((tl!("Merge Live Paint"), "livePaint.merge"));
@@ -428,6 +429,7 @@ fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     });
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
+    crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
     ui.horizontal(|ui| {
         rearrange_button(app, ui, n, w);
         if widgets::flat_button(ui, tl!("Exit"), w).clicked() {
@@ -664,6 +666,7 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
+    crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
     let w = (ui.available_width() - 6.0) / 2.0;
     ui.horizontal(|ui| {
         if widgets::flat_button(ui, tl!("Document Setup"), w).clicked() {

@@ -167,3 +167,5 @@ Varos lane paragraph: the Middle Eastern panel icons (crates/ui-egui/assets/varo
 are original Varos glyphs from the owner's panel mockup (docs/varos/mockups/panels.html),
 copyright 2026 Ahmed Gomaa and the Varos contributors, MIT OR Apache-2.0; see
 crates/ui-egui/assets/varos/icons/LICENSE-MIT and LICENSE-APACHE.
+
+Varos VQA icons (crates/ui-egui/assets/varos/icons/vqa-*.svg): original geometric artwork by Varos contributors, MIT OR Apache-2.0; see repository LICENSE-MIT and LICENSE-APACHE.
