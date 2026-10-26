@@ -45,6 +45,15 @@ pub const STALE_REVISION: &str = "stale_revision";
 pub const WRONG_BOARD: &str = "wrong_board";
 /// The person is in the middle of a gesture or typing; working on another board now would end it.
 pub const PERSON_BUSY: &str = "person_busy";
+/// The verb would change the person's own state: their tool, view, window, panels, dialogs or
+/// input. Agents work on boards through document verbs.
+pub const PERSON_STATE: &str = "person_state";
+/// The command needs a dialog. Agents pass every option in the call; a dialog never opens for
+/// them and the person's dialog is never touched.
+pub const NEEDS_DIALOG: &str = "needs_dialog";
+/// A batch writes a file. Saves and exports go in a request of their own, after the batch, with
+/// the revision it answered.
+pub const WRITE_IN_BATCH: &str = "write_in_batch";
 
 /// Every error code with what it means and what the agent does next, for `capabilities`.
 pub const ERRORS: &[(&str, &str)] = &[
@@ -58,6 +67,15 @@ pub const ERRORS: &[(&str, &str)] = &[
     (STALE_REVISION, "the board changed since the revision you gave; read it again (doc_inspect / list_boards) and retry. Nothing was run."),
     (WRONG_BOARD, "an object reference (\"<board>:<id>\") belongs to another board than the one named. Nothing was run."),
     (PERSON_BUSY, "the person is dragging or typing; retry in a moment. Nothing was run."),
+    (
+        PERSON_STATE,
+        "the verb would change the person's tool, view, window, panels, dialogs or input (or close their boards); agents work through document verbs on explicit ids. Nothing was run.",
+    ),
+    (NEEDS_DIALOG, "the command opens a dialog; pass every option in the call (command_list shows them). Nothing was run."),
+    (
+        WRITE_IN_BATCH,
+        "a batch may not save or export: run the batch, then save or export in a call of its own with the revision the batch answered. Nothing was run.",
+    ),
 ];
 
 /// A refusal to the agent: `"<code>: <why>"`, as the proxy's other typed errors.

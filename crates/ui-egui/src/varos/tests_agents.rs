@@ -305,20 +305,22 @@ fn the_steps_of_a_batch_are_guarded_too() {
         {"command": "file.saveCopy", "params": {"path": s(&taken)}},
     ]}});
     let r = request(&mut app, &tx, guarded(), "engine.execute", batch);
-    assert!(r["error"].as_str().unwrap().contains("never overwrite"), "{r}");
+    // Varos boards: a batch writes no file at all now (write_in_batch), before the path guard.
+    let refused = |r: &Value, why: &str| r["error"].as_str().is_some_and(|e| e.starts_with("write_in_batch") || e.contains(why));
+    assert!(refused(&r, "never overwrite"), "{r}");
     assert_eq!(std::fs::read(&taken).unwrap(), b"keep me");
     // Nested one more level, and through action.batch's steps.
     let nested = json!({"command": "command.batch", "params": {"commands": [
         {"command": "command.batch", "params": {"commands": [{"command": "file.print", "params": {"path": "/etc/varos.pdf"}}]}},
     ]}});
-    assert!(request(&mut app, &tx, guarded(), "engine.execute", nested)["error"].as_str().unwrap().contains("home folder"));
+    assert!(refused(&request(&mut app, &tx, guarded(), "engine.execute", nested), "home folder"));
     let action = |destination: &str, step: Value| json!({"command": "action.batch", "params": {"source": "datasets", "destination": destination, "commands": [step]}});
     let plain = json!({"command": "select.all", "params": {}});
     let r = request(&mut app, &tx, guarded(), "engine.execute", action("saveAndClose", plain.clone()));
     assert!(r["error"].as_str().unwrap().contains("destination `none`"), "{r}");
     let save = json!({"command": "document.export", "params": {"path": s(&home.join("Desktop/out.png"))}});
     let r = request(&mut app, &tx, guarded(), "engine.execute", action("none", save));
-    assert!(r["error"].as_str().unwrap().contains("once per file"), "{r}");
+    assert!(refused(&r, "once per file"), "{r}");
 }
 
 /// Export for Screens names its files and subfolders itself: only into an empty folder.

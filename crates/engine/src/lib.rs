@@ -1909,6 +1909,7 @@ impl Session {
     /// Execute a command by id. This is THE entry point for every frontend.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| cmd::params::unknown_command(id))?;
+        cmd::varos_board::check_pin(self, id)?; // Varos: an agent request stays on the board it names, step by step
         // The crate's own tests are the audit of the params descriptions (#1442): a key a test
         // passes that its command's description doesn't name fails the test.
         #[cfg(test)]

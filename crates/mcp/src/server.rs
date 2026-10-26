@@ -434,7 +434,8 @@ impl Server {
             }
             "resources/read" => {
                 let uri = params.get("uri").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing `uri`".to_string()))?;
-                let v = resources::read(self.backend.as_mut(), uri).map_err(|e| match e {
+                // Varos: a board's resources name the board (varos_boards::read_resource).
+                let v = crate::varos_boards::read_resource(self.backend.as_mut(), uri).map_err(|e| match e {
                     resources::ReadError::NotFound(uri) => (RESOURCE_NOT_FOUND, format!("resource not found: {uri}")),
                     resources::ReadError::Invalid(why) => (INVALID_PARAMS, why),
                     resources::ReadError::Backend(why) => (INTERNAL_ERROR, why),

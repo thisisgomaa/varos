@@ -2222,6 +2222,7 @@ impl VectorcraftApp {
         if self.synthetic_injected {
             return;
         }
+        varos::boards::screen_synthetic(self); // Varos: input for a board no longer in front is dropped, never delivered to another
         let Some(first) = self.synthetic.first() else {
             if std::mem::take(&mut self.synthetic_modifiers) {
                 raw.events.push(egui::Event::ModifiersChanged(self.host_modifiers));

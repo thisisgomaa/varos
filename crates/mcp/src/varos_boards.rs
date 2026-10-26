@@ -19,24 +19,32 @@ use serde_json::{Map, Value, json};
 use varos_agents::boards::{self, BOARD_REQUIRED, ERRORS, error};
 
 use crate::backend::Backend;
+use crate::resources::ReadError;
 use crate::tools::{ToolResult, call_tool as upstream_call_tool};
 
 const LIST_BOARDS: &str = "list_boards";
 const CAPABILITIES: &str = "capabilities";
 
-/// Tools that act on the window (synthetic input, captures, menus): their board must be the one
-/// in front, else `target_changed`.
-const FRONT_ONLY_TOOLS: &[&str] = &["pointer_gesture", "press_key", "type_text", "ui_screenshot", "invoke_menu"];
+/// Tools that capture the window: their board must be the one in front, else `target_changed`.
+const FRONT_ONLY_TOOLS: &[&str] = &["ui_screenshot"];
+
+/// Tools that drive the person's window, tool or input: refused for agents (`person_state`).
+const PERSONS_TOOLS: &[&str] = &["pointer_gesture", "press_key", "type_text", "select_tool", "open_panel"];
 
 /// Tools that need no board: the catalogue, the lists, and opening a file (the new board is in
 /// the reply's `varos.opened`).
-const BOARD_FREE_TOOLS: &[&str] =
-    &[LIST_BOARDS, CAPABILITIES, "command_list", "list_commands", "ui_inspect", "inspect_ui", "select_tool", "open_panel", "open_file"];
+const BOARD_FREE_TOOLS: &[&str] = &[LIST_BOARDS, CAPABILITIES, "command_list", "list_commands", "ui_inspect", "inspect_ui", "open_file"];
+
+/// Resources that read no board: the command catalogue.
+const BOARD_FREE_RESOURCES: &[&str] = &["vectorcraft://commands", "vectorcraft://command/"];
+
+/// Where a board's resources live: `vectorcraft://board/<board>/<resource>`.
+const BOARD_URI: &str = "vectorcraft://board/";
 
 /// Tools whose description says what saving or exporting needs.
 const WRITERS: &[&str] = &["save_file", "export", "screenshot"];
 
-const RULE: &str = "All verbs are board-scoped: pass `board` (a stable id from list_boards) with every call that reads or changes a document, and `revision` too when saving or exporting (save_file, export, command_run file.save / file.saveAs / document.export*, screenshot or render to a path). Varos never falls back to the tab in front. Object ids come back as \"<board>:<id>\" references; pass them as they are. Every reply carries `varos: {board, revision, front, opened}`: use that revision next. The person's tab is never switched: work on a background board runs there and the person keeps their view.";
+const RULE: &str = "All verbs are board-scoped: pass `board` (a stable id from list_boards) with every call that reads or changes a document, and `revision` too when saving or exporting (save_file, export, command_run file.save / file.saveAs / document.export*, screenshot or render to a path). Varos never falls back to the tab in front. Object ids come back as \"<board>:<id>\" references; pass them as they are. Every reply carries `varos: {board, revision, front, opened}`: use that revision next. The person's tab, tool, selection, view and dialogs are never touched: each agent has its own selection per board, so act on explicit ids. Batches stay on their board and never save or export; save or export in a call of its own. Resources of a board are read as vectorcraft://board/<board>/document, .../object/<id>, .../swatch/<name>.";
 
 /// Add `board` and `revision` to every tool and append the Varos tools (`tool_definitions`).
 pub(crate) fn extend(defs: &mut Vec<Value>) {
@@ -54,7 +62,12 @@ pub(crate) fn extend(defs: &mut Vec<Value>) {
         if FRONT_ONLY_TOOLS.contains(&name.as_str())
             && let Some(Value::String(d)) = t.get_mut("description")
         {
-            d.push_str(" In Varos this acts on the window: its `board` must be the one in front, else target_changed.");
+            d.push_str(" In Varos this captures the window: its `board` must be the one in front, else target_changed.");
+        }
+        if PERSONS_TOOLS.contains(&name.as_str())
+            && let Some(Value::String(d)) = t.get_mut("description")
+        {
+            d.push_str(" Not for agents in Varos: it drives the person's own window, tool or input (person_state).");
         }
     }
     let empty = json!({"type": "object", "properties": {}, "additionalProperties": false});
@@ -103,6 +116,8 @@ pub(crate) fn capabilities(scoped: bool) -> Value {
         "objectRefs": "\"<board>:<id>\": object ids carry their board; one of another board is refused as wrong_board",
         "revision": "the board's content revision: it moves when the art changes (anyone's edit, undo), not when the person selects or scrolls",
         "frontOnly": FRONT_ONLY_TOOLS,
+        "personsOnly": PERSONS_TOOLS,
+        "resources": "vectorcraft://board/<board>/document, vectorcraft://board/<board>/document/json, vectorcraft://board/<board>/object/<id or <board>:<id>>, vectorcraft://board/<board>/swatch/<name>, vectorcraft://board/<board>/effect/<id>; vectorcraft://commands and vectorcraft://command/<id> need no board",
         "boardFree": BOARD_FREE_TOOLS,
         "errors": errors,
     })
@@ -217,6 +232,66 @@ fn decorate(r: &mut ToolResult, ran: &Value) {
     r.content.push(json!({"type": "text", "text": json!({"varos": ran}).to_string()}));
 }
 
+/// `resources/read` with its board: on a Varos board-scoped backend a board's resource is
+/// `vectorcraft://board/<board>/<resource>` (its object ids as plain numbers or `<board>:<id>`
+/// references of that board), read on that board only, its ids qualified; the board-free forms
+/// stay as they are, and the old board-less form of a board's resource is refused with the new
+/// form (a resource never follows the board of another call, nor the tab in front).
+pub(crate) fn read_resource(b: &mut dyn Backend, uri: &str) -> Result<Value, ReadError> {
+    if !b.board_scoped() {
+        return crate::resources::read(b, uri);
+    }
+    let Some(rest) = uri.strip_prefix(BOARD_URI) else {
+        if BOARD_FREE_RESOURCES.iter().any(|free| uri == *free || (free.ends_with('/') && uri.starts_with(free))) {
+            let _ = b.set_target(Some(Value::Null));
+            let r = crate::resources::read(b, uri);
+            let _ = b.set_target(None);
+            return r;
+        }
+        let tail = uri.strip_prefix("vectorcraft://").unwrap_or(uri);
+        return Err(ReadError::Invalid(error(
+            BOARD_REQUIRED,
+            format!("in Varos a board's resources name the board: read {BOARD_URI}<board>/{tail} (board ids from list_boards)"),
+        )));
+    };
+    let (board, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    if boards::parse_board(board).is_none() {
+        return Err(ReadError::Invalid(error(
+            BOARD_REQUIRED,
+            format!("`{board}` is not a board id; read {BOARD_URI}<board>/... with an id from list_boards"),
+        )));
+    }
+    // An object reference in the URI must be of this board.
+    let tail = match tail.strip_prefix("object/") {
+        Some(id) => {
+            let id = id.replace("%3A", ":").replace("%3a", ":");
+            match boards::parse_object_ref(&id) {
+                Some((of, n)) if of == board => format!("object/{n}"),
+                Some((of, _)) => {
+                    return Err(ReadError::Invalid(error(
+                        boards::WRONG_BOARD,
+                        format!("object `{id}` belongs to board `{of}`, not to board `{board}` the URI names"),
+                    )));
+                }
+                None => format!("object/{id}"),
+            }
+        }
+        None => tail.to_string(),
+    };
+    b.set_target(Some(json!({ "board": board }))).map_err(ReadError::Backend)?;
+    let r = crate::resources::read(b, &format!("vectorcraft://{tail}"));
+    let ran = b.last_board();
+    let _ = b.set_target(None);
+    let mut v = r?;
+    boards::qualify(&mut v, board);
+    if let Value::Object(o) = &mut v
+        && ran.is_object()
+    {
+        o.insert("varos".into(), ran);
+    }
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +314,7 @@ mod tests {
                 boards::LIST => {
                     Ok(json!({"boards": [{"board": boards::board_id(1), "front": true}, {"board": boards::board_id(2), "front": false}]}))
                 }
+                "engine.commands" => Ok(json!([])),
                 _ if board.is_none() => Err(error(BOARD_REQUIRED, "name it")),
                 "document.inspect" => Ok(json!({"layers": [{"id": 3, "children": [{"id": 4, "parent": 3}]}], "selection": [4]})),
                 _ => Ok(json!({"id": 9})),
@@ -351,5 +427,34 @@ mod tests {
         let reply: Value = serde_json::from_str(&s.handle_line(&line.to_string()).unwrap()).unwrap();
         assert_eq!(reply["result"]["isError"], true, "{reply}");
         assert!(reply.to_string().contains("desktop Varos"), "{reply}");
+    }
+
+    /// Fix 7: a board's resources name their board in the URI and are read on that board only,
+    /// with ids qualified; the old board-less form is refused (it never follows the board of the
+    /// last tool call), and a reference of another board in the URI is wrong_board.
+    #[test]
+    fn resources_name_their_board() {
+        let mut b = fake();
+        let (a, other) = (boards::board_id(1), boards::board_id(2));
+        let v = read_resource(&mut b, &format!("vectorcraft://board/{a}/object/42")).unwrap();
+        assert_eq!(v["id"], json!(format!("{a}:9")), "ids qualified: {v}");
+        assert_eq!(b.seen.last().unwrap().2, Some(json!({"board": a})));
+        assert_eq!(b.target, None, "the board is not kept for later calls");
+        // A reference of this board in the URI is fine; one of another board is not.
+        assert!(read_resource(&mut b, &format!("vectorcraft://board/{a}/object/{a}%3A42")).is_ok());
+        let seen = b.seen.len();
+        let e = read_resource(&mut b, &format!("vectorcraft://board/{a}/object/{other}:42")).unwrap_err();
+        assert!(matches!(&e, ReadError::Invalid(m) if m.starts_with("wrong_board")), "{e:?}");
+        assert_eq!(b.seen.len(), seen, "nothing was sent");
+        // A tool call on another board, then the old form: refused, never board B's object 42.
+        let _ = call_tool(&mut b, "doc_inspect", &json!({"board": other}));
+        let e = read_resource(&mut b, "vectorcraft://object/42").unwrap_err();
+        assert!(
+            matches!(&e, ReadError::Invalid(m) if m.starts_with("board_required") && m.contains("vectorcraft://board/<board>/object/42")),
+            "{e:?}"
+        );
+        // The command catalogue needs no board.
+        assert!(read_resource(&mut b, "vectorcraft://commands").is_ok());
+        assert_eq!(b.seen.last().unwrap().2, None);
     }
 }

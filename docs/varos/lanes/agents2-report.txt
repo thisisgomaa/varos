@@ -68,20 +68,17 @@ processed in frames, so no tab switch can come between these steps.
 Upstream's `--control` port is unchanged unless a line names a board (then the same steps run,
 without the board_required rule and the tab restore for unlent requests).
 
-FRONT-ONLY VERBS (item 5: where restoring is impossible, and why)
-These act on the window, not on a document, so they can't be run on a board behind the person's:
-- ui.click, ui.drag, ui.key, ui.text, ui.move, ui.wheel: synthetic input is queued and consumed by
-  later frames, after the turn has ended; lending the board for the turn would not cover them.
-- ui.pointer: drives the person's current tool with the view's transform; lending would mix the
-  person's tool state with another board.
-- ui.screenshot: captures the window frames later.
-- ui.dialog.set / confirm / cancel, ui.menu.invoke: dialogs and menus belong to the window.
-MCP tools that use them: pointer_gesture, press_key, type_text, ui_screenshot, invoke_menu, and
-screenshot with window: true. They run only when their board is the one in front, else
-target_changed; the agent asks the person to bring the board to the front or uses a document verb.
-Residual race (honest): for the synthetic-input verbs the check is at request time; the events are
-consumed by the next frame, so a tab click that arrives in that same frame's input could still put
-them on another board. Document verbs have no such window.
+WINDOW VERBS (item 5: where restoring is impossible, and why) -- revised in round 2, see below
+- Agents (Varos' agents port) may not drive the person's window at all: ui.click, ui.drag, ui.key,
+  ui.text, ui.move, ui.wheel, ui.pointer, ui.tool.select, ui.set, ui.resize, ui.focus,
+  ui.dialog.set / confirm / cancel and app.quit are refused as person_state (synthetic input is
+  consumed by later frames, after the turn; it drives the person's own tool and selection).
+- ui.screenshot (window capture) runs only when its board is in front, else target_changed; a
+  capture admitted for a board is refused, with no file, when another board is in front by the
+  time it is taken or written (upstream's document identity check, tested for agents).
+- Clients of upstream's --control port that name a board keep synthetic input, front-only, and
+  input still queued when the board leaves the front is dropped at injection (varos.dropped).
+- ui.menu.invoke is the same handler as engine.execute and is treated as one.
 
 MCP SURFACE (`vectorcraft-cli mcp`, crates/mcp)
 - New tools: capabilities (call first: api "varos-boards/1", the rule, error codes with what to do,
@@ -94,9 +91,11 @@ MCP SURFACE (`vectorcraft-cli mcp`, crates/mcp)
   = doc_inspect / render_preview; edit = command_run / command_batch / draw_* / set_paint / ...;
   select = command_run select.*; save / save_as = save_file / command_run file.saveAs; export_pdf =
   export {format: pdf}; list_boards and capabilities are new here.
-- resources/read and completions (no arguments to carry a board) use the board the agent last
-  named in a tool call (a stable id, never the tab in front); before any board was named they get
-  board_required from the app while a board is open.
+- resources/read: a board's resources are vectorcraft://board/<board>/<resource> (document,
+  document/json, object/<id or <board>:<id>>, swatch/<name>, effect/<id>), read on that board only,
+  ids qualified; vectorcraft://commands and command/<id> need no board; the old board-less form of
+  a board's resource is refused (board_required, with the new URI). Completions carry no board (the
+  app answers board_required for a board's data while one is open).
 - Upstream backends: --headless refuses a `board` (it has no boards); --connect forwards it.
 
 WHAT IS LEFT / RISKS
@@ -147,4 +146,67 @@ GATES (lane checkout, -j 4, one cargo command at a time)
   --all-targets fails on a pre-existing lint (clippy::chunks_exact... "using chunks_exact with a
   constant chunk size") in crates/engine/src/cmd/varos_board/tests.rs:26, a file this lane did not
   touch (last changed in d3e1fec7).
+- cargo fmt --all -- --check: clean. git diff --check: clean.
+
+ROUND 2: CODEX REVIEW FIXES (2026-10-27, on top of the merge of main 9e96e863 + docs)
+1. Batches escaped their target. Now: for agents, a batch step that closes, opens, makes or switches
+   a board (file.close, file.closeAll, document.close, document.activate, file.new, file.newBoard,
+   file.open, document.open, file.newFromTemplate, app.quit) is refused before anything runs
+   (target_changed); file.closeAll and app.quit are refused for agents outright (person_state).
+   For any request naming a board the engine is pinned to it (Session::varos_pin; check in
+   Session::execute before every command, each batch step included): a step that would run on
+   another board fails with target_changed, the rest don't run, and the failed batch rolls back.
+2. Synthetic input lost its board after admission. Now: agents may not send synthetic input at all
+   (person_state). For --control clients naming a board, every queued run of synthetic events is
+   tagged with its board, and raw_input_hook drops a run whose board is no longer in front before
+   injecting anything (screen_synthetic); the next reply carries varos.dropped with target_changed.
+3. Deferred captures: upstream's pipeline (from the merge) records the document identity (uid +
+   revision) at admission and fails the capture before issuing and before writing when it differs;
+   agents' captures are front-only and need board + revision. Tested: a capture admitted for A with
+   the person on B by issue time answers "the document changed" and writes no file.
+4. The person's tool, selection and view. Now: tool, view, window, workspace and ui command
+   families, ui.tool.select and ui.set are refused for agents (person_state). For every agent
+   request on a board, the person's selection, current layer, highlighted rows, isolation and that
+   board's view are put aside and restored in the same turn; the agent gets its own selection and
+   current layer per board (kept between its requests), so verbs that use "the selection" act on
+   the agent's. A tool switch made by a request is undone.
+5. Dialogs. Now: commands that are a dialog (edit.keyboardShortcuts, edit.preferences,
+   file.documentSetup, file.newDialog, type.findFont) are refused for agents before they run, and
+   those that open one when given no options (document.exportForOffice, file.export.pdf,
+   file.export.svg, file.exportAs, file.exportForScreens, file.print, file.saveForWeb,
+   object.slice.divide) are refused without options (needs_dialog). The person's open dialog is put
+   aside while an agent request runs and given back untouched; any dialog a request still opens is
+   dismissed and answered needs_dialog. A test runs every command the UI handles with no options
+   and fails if one opens a dialog without being refused.
+6. Writes in batches. Now: a batch (command.batch / action.batch) that saves or exports is refused
+   for agents (write_in_batch); saves and exports are calls of their own, checked against the
+   revision the batch answered.
+7. Resources inherited the last tool's board. Now: board URIs (see MCP SURFACE), no fallback to a
+   previously named board in the proxy.
+8. Multi-call tools reused their first revision. Now: VarosAttach carries the revision each step's
+   reply answered (same board only) into the tool's next step, so a tool's own edit doesn't make its
+   later steps stale, while anyone else's edit between steps still does.
+Also: the race test now consumes the queue through raw_input_hook instead of clearing it.
+New error codes: person_state, needs_dialog, write_in_batch (in capabilities).
+
+ROUND 2 MERGE AND GATES (2026-10-27)
+- `git merge --no-commit --no-ff main` (main = 8d911150: 9e96e863 upstream sync + AI-panel docs) is
+  staged, uncommitted (MERGE_HEAD set); the 8 fixes are unstaged on top. One conflict:
+  crates/mcp/src/tools.rs, end of tool_definitions(): kept upstream's new undo/redo descriptions
+  and our `let mut defs = vec![...]; varos_boards::extend(&mut defs); defs`. Everything else
+  (ui-egui lib.rs drain_control, engine lib.rs, control/MCP files, tests_agents.rs) auto-merged; the
+  merged screenshot pipeline now carries upstream's document identity check (used by fix 3).
+- cargo build -j 4 --offline --release -p vectorcraft -p vectorcraft-cli: Finished in 10m 21s, no
+  warnings beyond cargo's "patch ... was not used" notes for three egui crates.
+- cargo test -j 4 --offline --release -p vectorcraft-mcp -p varos-agents -p vectorcraft -- --test-threads=4:
+  varos_agents 63 passed; vectorcraft (bin) 186 passed; vectorcraft it 7 passed; vectorcraft_mcp
+  156 passed; automation_roots 5 passed; protocol_props 15 passed; 0 failed in each.
+- cargo test -j 4 --offline --release -p vectorcraft-ui-egui --lib -- --test-threads=4: 2389 passed,
+  10 failed, 7 ignored. All 166 varos:: tests pass. The 10 failures are panels::gradient::tests (9,
+  "widget drawn") and tests_rotateview::escape_after_closing_a_popup... ("the status bar's angle
+  menu"). Both find widgets by egui's debug Id names, which only debug builds have (the test's own
+  comment says so), and they don't touch the control path. Another lane's gate script filters the
+  same two groups out. I did not confirm them on main in release.
+- cargo clippy -j 4 --offline --release -p vectorcraft-mcp -p varos-agents -p vectorcraft
+  -p vectorcraft-ui-egui --all-targets -- -D warnings: clean. Engine --lib clippy: clean.
 - cargo fmt --all -- --check: clean. git diff --check: clean.

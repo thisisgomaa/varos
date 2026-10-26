@@ -11,6 +11,7 @@ use vectorcraft_engine::Session;
 
 use crate::control::ControlRequest;
 use crate::{Services, VectorcraftApp};
+use varos_agents::boards::board_id as id_of;
 
 fn app() -> (VectorcraftApp, Sender<ControlRequest>) {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -106,37 +107,33 @@ fn an_edit_on_a_background_board_lands_there_and_the_persons_tab_stays() {
     assert_eq!(front(&app), b);
 }
 
-/// VQA-11: the person switches tabs between two queued agent commands. A verb that acts on the
-/// window (keys, text, clicks, captures) aborts with `target_changed` and changes nothing in
-/// either board; a document verb still lands on the board it names, never the new front.
+/// VQA-11: the person switches tabs between two queued agent commands. A document command still
+/// lands on the board it names, never on the new front; agents may not drive the window at all.
 #[test]
 fn switching_the_tab_between_two_queued_commands_never_misroutes() {
     let (mut app, tx) = app();
     let (a, b) = two_boards(&mut app);
-    // The agent works on A, which is in front.
     app.session.set_active(index_of(&app, a));
-    let r = request(&mut app, &tx, agent(on(a)), "ui.text", json!({"text": "x"}));
-    assert_eq!(r["ok"], true, "{r}");
-    app.synthetic.clear();
-    // The next two commands are queued; the person clicks tab B before they run.
-    let typed = send(&tx, agent(on(a)), "ui.text", json!({"text": "y"}));
-    let key = send(&tx, agent(on(a)), "ui.key", json!({"key": "Delete"}));
+    // Two commands queued for A; the person clicks tab B before they run.
+    let first = send(&tx, agent(on(a)), "engine.execute", rect(10));
+    let second = send(&tx, agent(on(a)), "engine.execute", rect(40));
     app.session.set_active(index_of(&app, b));
     let (doc_a, doc_b) = (doc(&app, a), doc(&app, b));
     app.drain_control(&egui::Context::default());
-    for reply in [typed, key] {
+    for reply in [first, second] {
         let r = reply.try_recv().unwrap();
-        assert!(error(&r).starts_with("target_changed"), "{r}");
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["varos"]["board"], json!(board_id(a)));
     }
-    assert!(app.synthetic.is_empty(), "no input reached the window");
-    assert!(Arc::ptr_eq(&doc(&app, a), &doc_a) && Arc::ptr_eq(&doc(&app, b), &doc_b), "nothing changed in either board");
-    assert_eq!(front(&app), b, "the person's choice stands");
-    // A document command queued the same way lands on A, never on B.
-    let r = request(&mut app, &tx, agent(on(a)), "engine.execute", rect(40));
-    assert_eq!(r["ok"], true, "{r}");
-    assert!(!Arc::ptr_eq(&doc(&app, a), &doc_a), "it ran on A");
+    assert!(!Arc::ptr_eq(&doc(&app, a), &doc_a), "they ran on A");
     assert!(Arc::ptr_eq(&doc(&app, b), &doc_b), "B is untouched");
-    assert_eq!(front(&app), b);
+    assert_eq!(front(&app), b, "the person's choice stands");
+    // Keys and text from an agent never go to the window, whichever board is in front.
+    for method in ["ui.key", "ui.text", "ui.click", "ui.pointer"] {
+        let r = request(&mut app, &tx, agent(on(b)), method, json!({"key": "Delete", "text": "x", "events": []}));
+        assert!(error(&r).starts_with("person_state"), "{method}: {r}");
+    }
+    assert!(app.synthetic.is_empty());
 }
 
 /// Save and export need the board and the revision the agent read: a missing revision, an old
@@ -307,4 +304,229 @@ fn a_dialog_on_a_background_board_is_dismissed() {
     assert!(error(&r).contains("dialog"), "{r}");
     assert!(app.ui.dialog.is_none(), "no dialog left on the person's window");
     assert_eq!(front(&app), b);
+}
+
+fn ids(r: &Value) -> u64 {
+    r["result"]["id"].as_u64().expect("an object id")
+}
+
+/// Fix 1: a batch stays on the board it names. From an agent, a step that closes, opens, makes or
+/// switches a board is refused before anything runs (and closing all boards is refused outright);
+/// from any client naming a board, the engine is pinned to it: a step that would run on another
+/// board fails and the steps after it don't run.
+#[test]
+fn a_batch_never_leaves_its_board() {
+    let (mut app, tx) = app();
+    let (a, b) = two_boards(&mut app);
+    let (doc_a, doc_b) = (doc(&app, a), doc(&app, b));
+    let escape = json!({"command": "command.batch", "params": {"commands": [{"command": "file.close", "params": {}}, rect(10)]}});
+    for target in [a, b] {
+        let r = request(&mut app, &tx, agent(on(target)), "engine.execute", escape.clone());
+        assert!(error(&r).starts_with("target_changed"), "{r}");
+    }
+    assert_eq!(app.session.documents().len(), 2);
+    assert!(Arc::ptr_eq(&doc(&app, a), &doc_a) && Arc::ptr_eq(&doc(&app, b), &doc_b), "nothing ran");
+    let r = request(&mut app, &tx, agent(on(a)), "engine.execute", json!({"command": "file.closeAll", "params": {}}));
+    assert!(error(&r).starts_with("person_state"), "{r}");
+    assert_eq!(app.session.documents().len(), 2);
+    // A client of upstream's port naming board A: the batch closes A, then the pinned engine
+    // refuses to draw on B.
+    let client = Some(json!({"session": "c1", "target": {"board": board_id(a)}}));
+    let r = request(&mut app, &tx, client, "engine.execute", escape);
+    assert!(r.to_string().contains("target_changed"), "{r}");
+    assert!(Arc::ptr_eq(&doc(&app, b), &doc_b), "B was not drawn on");
+    // The failed batch is rolled back: A is open again.
+    assert_eq!(app.session.documents().len(), 2, "{r}");
+    assert!(app.session.documents().iter().any(|d| d.uid == a));
+}
+
+/// Fix 2: synthetic input queued for a board is delivered only while that board is in front. The
+/// person switches tabs before the host injects it: it is dropped (consumed from the queue, never
+/// put into the frame's input), and the next reply says so.
+#[test]
+fn queued_synthetic_input_never_reaches_another_board() {
+    let (mut app, tx) = app();
+    let (a, b) = two_boards(&mut app);
+    app.session.set_active(index_of(&app, a));
+    // Upstream's port, naming board A (agents may not send input at all).
+    let client = || Some(json!({"session": "c1", "target": {"board": board_id(a)}}));
+    let r = request(&mut app, &tx, client(), "ui.key", json!({"key": "Delete"}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(!app.synthetic.is_empty());
+    // The person clicks tab B (with an object selected there) before the frame that injects it.
+    app.session.set_active(index_of(&app, b));
+    app.run("shape.rectangle", json!({"x": 5, "y": 5, "width": 10, "height": 10})).unwrap();
+    let doc_b = doc(&app, b);
+    let ctx = egui::Context::default();
+    let mut raw = egui::RawInput::default();
+    app.raw_input_hook(&ctx, &mut raw);
+    assert!(!raw.events.iter().any(|e| matches!(e, egui::Event::Key { .. })), "no key reached B: {:?}", raw.events);
+    assert!(app.synthetic.is_empty(), "the input was consumed (dropped)");
+    assert!(Arc::ptr_eq(&doc(&app, b), &doc_b));
+    let r = request(&mut app, &tx, client(), "document.inspect", json!({"depth": 0}));
+    let dropped = &r["varos"]["dropped"][0];
+    assert_eq!(dropped["board"], json!(id_of(a)), "{r}");
+    assert!(dropped["error"].as_str().unwrap().starts_with("target_changed"), "{r}");
+    // With its board still in front, the same input is delivered.
+    app.session.set_active(index_of(&app, a));
+    let r = request(&mut app, &tx, client(), "ui.key", json!({"key": "Escape"}));
+    assert_eq!(r["ok"], true, "{r}");
+    let mut raw = egui::RawInput::default();
+    app.raw_input_hook(&ctx, &mut raw);
+    assert!(raw.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, .. })), "{:?}", raw.events);
+}
+
+/// Fix 3: a window capture admitted for board A, with the person on board B by the time it would
+/// be taken, is refused and writes no file.
+#[test]
+fn a_window_capture_never_captures_another_board() {
+    let (mut app, tx) = app();
+    let (a, b) = two_boards(&mut app);
+    app.session.set_active(index_of(&app, a));
+    let home = std::env::temp_dir().join(format!("varos-ui-capture-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join("Desktop")).unwrap();
+    let home = std::fs::canonicalize(home).unwrap();
+    app.agents.places = Some(varos_agents::guard::Places { home: home.clone(), app: None });
+    let shot = home.join("Desktop/a.png");
+    let rev = revision(&mut app, &tx, a);
+    let reply = send(&tx, agent(Some(json!({"board": board_id(a), "revision": rev}))), "ui.screenshot", json!({"path": shot.to_string_lossy()}));
+    // A context with a window size, as after a drawn frame.
+    let ctx = egui::Context::default();
+    ctx.begin_pass(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0))), ..Default::default() });
+    let _ = ctx.end_pass();
+    app.drain_control(&ctx);
+    assert!(reply.try_recv().is_err(), "it waits for a frame");
+    app.session.set_active(index_of(&app, b));
+    let start = std::time::Instant::now();
+    let r = loop {
+        app.issue_screenshots(&ctx);
+        app.collect_screenshots(&ctx);
+        if let Ok(r) = reply.try_recv() {
+            break r;
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(5), "no answer");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(error(&r).contains("document changed"), "{r}");
+    assert!(!shot.exists(), "no file");
+    // Captures of a board not in front are refused at once.
+    let rev = revision(&mut app, &tx, a);
+    let r =
+        request(&mut app, &tx, agent(Some(json!({"board": board_id(a), "revision": rev}))), "ui.screenshot", json!({"path": shot.to_string_lossy()}));
+    assert!(error(&r).starts_with("target_changed"), "{r}");
+}
+
+/// Fix 4: an agent never changes the person's tool, selection, current layer or view. It has a
+/// selection of its own per board, kept between its requests; the person's comes back after each.
+#[test]
+fn an_agent_never_changes_the_persons_tool_selection_or_view() {
+    let (mut app, tx) = app();
+    let (a, _) = two_boards(&mut app);
+    app.session.set_active(index_of(&app, a));
+    let mine = ids(&json!({"result": app.run("shape.rectangle", json!({"x": 5, "y": 5, "width": 10, "height": 10})).unwrap()}));
+    let persons = app.session.active().unwrap().selection.clone();
+    assert_eq!(persons.objects, vec![vectorcraft_doc::NodeId(mine)]);
+    app.sync_views();
+    let view = app.views[index_of(&app, a)];
+    let tool = app.session.tool_id();
+    // The agent draws on the person's own board: the new object is the agent's selection, not
+    // the person's.
+    let r = request(&mut app, &tx, agent(on(a)), "engine.execute", rect(60));
+    let its = ids(&r);
+    assert_eq!(app.session.active().unwrap().selection, persons, "the person's selection is back");
+    // Its next request acts on its own selection: deleting it removes its object, not the person's.
+    let r = request(&mut app, &tx, agent(on(a)), "engine.execute", json!({"command": "edit.clear", "params": {}}));
+    assert_eq!(r["ok"], true, "{r}");
+    let d = doc(&app, a);
+    assert!(d.node(vectorcraft_doc::NodeId(its)).is_none(), "its object went");
+    assert!(d.node(vectorcraft_doc::NodeId(mine)).is_some(), "the person's stayed");
+    assert_eq!(app.session.active().unwrap().selection, persons);
+    // Select All from the agent selects for the agent only.
+    request(&mut app, &tx, agent(on(a)), "engine.execute", json!({"command": "select.all", "params": {}}));
+    assert_eq!(app.session.active().unwrap().selection, persons);
+    // Tool, view and panel commands are the person's.
+    for (method, params) in [
+        ("ui.tool.select", json!({"tool": "pen"})),
+        ("engine.execute", json!({"command": "tool.setOption", "params": {"tool": "pen", "key": "x", "value": 1}})),
+        ("engine.execute", json!({"command": "view.zoomIn", "params": {}})),
+        ("engine.execute", json!({"command": "window.panel", "params": {"panel": "layers"}})),
+        ("ui.set", json!({"panel": "layers"})),
+    ] {
+        let r = request(&mut app, &tx, agent(on(a)), method, params);
+        assert!(error(&r).starts_with("person_state"), "{method}: {r}");
+    }
+    assert_eq!(app.session.tool_id(), tool);
+    let now = app.views[index_of(&app, a)];
+    assert_eq!((now.zoom, now.center), (view.zoom, view.center), "the person's view");
+}
+
+/// Fix 5: a command that would open a dialog is refused for an agent before it runs, and the
+/// person's own open dialog is never replaced, closed or answered.
+#[test]
+fn dialogs_never_open_for_an_agent_and_the_persons_dialog_stays() {
+    let (mut app, tx) = app();
+    let (a, _) = two_boards(&mut app);
+    app.ui.dialog = Some(crate::state::Dialog::new("rectangle", json!({"width": 50, "height": 50})));
+    for command in ["ui.newSwatch", "ui.swatchOptions"] {
+        let r = request(&mut app, &tx, agent(on(a)), "engine.execute", json!({"command": command, "params": {"name": "x"}}));
+        assert!(error(&r).starts_with("person_state") || error(&r).starts_with("needs_dialog"), "{command}: {r}");
+    }
+    for method in ["ui.dialog.confirm", "ui.dialog.cancel", "ui.dialog.set"] {
+        let r = request(&mut app, &tx, agent(on(a)), method, json!({}));
+        assert!(error(&r).starts_with("person_state"), "{method}: {r}");
+    }
+    for command in ["file.documentSetup", "type.findFont", "object.slice.divide", "file.exportAs"] {
+        let r = request(&mut app, &tx, agent(on(a)), "engine.execute", json!({"command": command, "params": {}}));
+        assert!(error(&r).starts_with("needs_dialog"), "{command}: {r}");
+    }
+    // An ordinary edit while the person's dialog is open leaves it as it was.
+    let r = request(&mut app, &tx, agent(on(a)), "engine.execute", rect(10));
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(app.ui.dialog.as_ref().map(|d| d.kind.as_str()), Some("rectangle"), "the person's dialog stays");
+}
+
+/// Fix 5's catalogue: every command the UI handles itself that opens a dialog when run with no
+/// options is refused for agents before it runs (by family or by [`super::boards::DIALOG_COMMANDS`]).
+/// A dialog opener upstream adds later fails this test until it is listed.
+#[test]
+fn every_dialog_opening_command_is_refused_up_front() {
+    let mut ids: Vec<String> = crate::menus::UI_COMMANDS.iter().map(|c| c.0.to_string()).collect();
+    ids.extend(vectorcraft_engine::command_specs().iter().map(|s| s.id.to_string()));
+    ids.sort();
+    ids.dedup();
+    let mut open = vec![];
+    for id in &ids {
+        let (req, _reply) = ControlRequest::new("engine.execute", json!({"command": id, "params": {}}));
+        let req = req.with_actor(agent(None));
+        if super::boards::refused_for_agents(&req).is_some() {
+            continue;
+        }
+        let (mut app, _tx) = app();
+        app.run("file.new", json!({"width": 100, "height": 100})).unwrap();
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::menus::run_ui_command(&mut app, id, &json!({}))));
+        if ran.is_ok() && app.ui.dialog.is_some() {
+            open.push(id.clone());
+        }
+    }
+    assert!(open.is_empty(), "open a dialog but are not refused for agents; add them to DIALOG_COMMANDS: {open:?}");
+}
+
+/// Fix 6: a batch never writes a file: the export would carry the revision checked before the
+/// batch's own edits, and a later failing step could not take the file back.
+#[test]
+fn a_batch_that_writes_a_file_is_refused() {
+    let (mut app, tx) = app();
+    let (a, _) = two_boards(&mut app);
+    let out = std::env::temp_dir().join(format!("varos-batch-write-{}.svg", std::process::id()));
+    let rev = revision(&mut app, &tx, a);
+    let before = doc(&app, a);
+    let batch = json!({"command": "command.batch", "params": {"commands": [
+        rect(10),
+        {"command": "document.export", "params": {"path": out.to_string_lossy(), "format": "svg"}},
+    ]}});
+    let r = request(&mut app, &tx, agent(Some(json!({"board": board_id(a), "revision": rev}))), "engine.execute", batch);
+    assert!(error(&r).starts_with("write_in_batch"), "{r}");
+    assert!(Arc::ptr_eq(&doc(&app, a), &before), "nothing ran");
+    assert!(!out.exists());
 }

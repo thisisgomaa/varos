@@ -92,7 +92,7 @@ pub(crate) mod typecmd;
 mod typemenu;
 mod variablecmds;
 mod varos_arabic;
-mod varos_board; // Varos: native free canvases.
+pub(crate) mod varos_board; // Varos: native free canvases; agent requests pinned to their board.
 pub(crate) mod views;
 pub mod wand;
 pub mod webexport;

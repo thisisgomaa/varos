@@ -67,6 +67,13 @@ pub(crate) struct Agents {
     /// The boards' content revisions, which agents name to save and export
     /// ([`super::boards`]).
     pub revisions: varos_agents::boards::Revisions,
+    /// Each agent's own selection and current layer, by session and board ([`super::boards`]).
+    pub(crate) private: HashMap<(String, u64), super::boards::Private>,
+    /// The synthetic input queued, in runs, with the board each run is for
+    /// ([`super::boards::screen_synthetic`]).
+    pub(crate) synthetic: std::collections::VecDeque<(Option<u64>, usize)>,
+    /// Synthetic input dropped because its board left the front, for the next reply.
+    pub(crate) dropped: Vec<Value>,
 }
 
 /// What [`before`] noted about a request, for [`after`].
