@@ -40,6 +40,31 @@ impl Harness {
         self.frame_out(events);
     }
 
+    /// One frame; what it painted.
+    fn frame_shapes(&mut self, events: Vec<egui::Event>) -> Vec<egui::epaint::ClippedShape> {
+        self.time += 0.05;
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, self.screen);
+        let input = egui::RawInput { time: Some(self.time), events, screen_rect: Some(screen), ..Default::default() };
+        let app = &mut self.app;
+        app.begin_host_iteration();
+        let mut out = self.ctx.run_ui(input, |ui| {
+            app.tick(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+        out.shapes
+    }
+
+    /// Preferences › User Interface › Panel cards (Varos) set to `on` and OK'd.
+    fn panel_cards(&mut self, on: bool) {
+        crate::prefs_dialog::open(&mut self.app, Some("User Interface"));
+        let d = self.app.ui.dialog.as_mut().unwrap();
+        assert_eq!(d.fields.get(panel_stack::PREF_KEY), Some(&json!(self.app.ui.varos_panel_stack.enabled)), "the dialog shows the switch's state");
+        d.fields.insert(panel_stack::PREF_KEY.into(), json!(on));
+        crate::prefs_dialog::confirm(&mut self.app).unwrap();
+        self.settle();
+    }
+
     /// One frame; true when it asked to be drawn again at once.
     fn frame_out(&mut self, events: Vec<egui::Event>) -> bool {
         self.time += 0.05;
@@ -135,13 +160,13 @@ impl Harness {
 
     /// Panel `first`'s card as drawn last.
     fn card(&self, first: &str) -> Rect {
-        let id = egui::Id::unique("vectorcraft-panel-docking").with(("floating", &first.to_string()));
+        let id = panel_stack::card_id(first);
         self.ctx.memory(|m| m.area_rect(id)).unwrap_or_else(|| panic!("{first}'s card is drawn"))
     }
 
     /// Panel `first`'s card was drawn in the last frame.
     fn card_drawn(&self, first: &str) -> bool {
-        let id = egui::Id::unique("vectorcraft-panel-docking").with(("floating", &first.to_string()));
+        let id = panel_stack::card_id(first);
         self.ctx.memory(|m| m.areas().visible_last_frame(&egui::LayerId::new(egui::Order::Middle, id)))
     }
 
@@ -1011,4 +1036,325 @@ fn capture_three_cards() {
     }
     let pixels = crate::varos::home::capture::raster(&shot.unwrap(), &textures, width, height);
     image::save_buffer(root.join("panels3-cards.png"), &pixels, width, height, image::ColorType::Rgba8).unwrap();
+}
+
+/// Every shape's bounds in `shape` (text named by its text).
+fn bounds(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+    match shape {
+        egui::Shape::Vec(v) => v.iter().for_each(|s| bounds(s, out)),
+        egui::Shape::Text(t) => out.push((format!("text {}", t.galley.text()), shape.visual_bounding_rect())),
+        other => out.push((String::new(), other.visual_bounding_rect())),
+    }
+}
+
+/// The card's frame as painted in `shapes`: its fill and its line, each fully opaque (no fade-in,
+/// no ghost alpha), exactly the theme's panel and border colours.
+fn assert_opaque(shapes: &[egui::epaint::ClippedShape], card: Rect, t: &crate::theme::Tokens, what: &str) {
+    let rects: Vec<&egui::epaint::RectShape> = shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Rect(r) if (r.rect.min - card.min).length() < 0.6 && (r.rect.max - card.max).length() < 0.6 => Some(r),
+            _ => None,
+        })
+        .collect();
+    let near: Vec<_> = shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Rect(r) if (r.rect.min - card.min).length() < 40.0 => Some((r.rect, r.fill, r.stroke.color)),
+            _ => None,
+        })
+        .collect();
+    assert!(rects.iter().any(|r| r.fill == t.panel), "{what}: the card's fill is the opaque panel colour: {rects:?} card {card:?} near {near:?}");
+    assert!(rects.iter().any(|r| r.stroke.width > 0.0 && r.stroke.color == t.border), "{what}: the card's line is opaque: {rects:?}");
+    for r in &rects {
+        assert!(r.fill.a() == 0 || r.fill.a() == 255, "{what}: no half-transparent card fill: {r:?}");
+        assert!(r.stroke.color.a() == 0 || r.stroke.color.a() == 255, "{what}: no half-transparent card line: {r:?}");
+    }
+}
+
+/// Owner report on v11 (2026-10-26): a card showed beside its icon for a moment, then jumped far
+/// away; one was drawn faded. At the owner's window sizes, Color, Swatches, Color Guide and Pattern
+/// Options opened from the icon column each appear once, in place: the first frame a card is
+/// painted is where it stays for the next frames, right edge 6 points left of the dock, beside its
+/// icon (under the document tabs) unless a card is in the way, never over another card, inside the
+/// room; its frame fully opaque. No flyout flashes beside the icon in the frame of the click.
+#[test]
+fn cards_open_beside_their_icons_and_never_jump() {
+    for size in [vec2(2000.0, 1295.0), vec2(1440.0, 900.0)] {
+        let mut h = Harness::sized(size);
+        let t = crate::theme::Tokens::get(&h.ctx);
+        let column = h.column();
+        let right = h.dock_left().min(column) - 6.0;
+        let mut placed: Vec<(&str, Rect)> = Vec::new();
+        for id in ["color", "swatches", "colorGuide", "patternOptions"] {
+            let icon = h.icon(id);
+            let at = icon.center();
+            h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+            let click = h.frame_shapes(vec![button(at, false)]);
+            // Nothing new beside the icon column in the click's frame: craft-ui's flyout (shown from
+            // its second opening on) is wiped, and the new card is measured unseen.
+            let mut drawn = Vec::new();
+            click.iter().for_each(|c| bounds(&c.shape, &mut drawn));
+            let flash: Vec<&(String, Rect)> = drawn
+                .iter()
+                .filter(|(_, r)| r.is_finite() && r.right() <= column + 0.5 && r.left() >= column - 400.0 && r.top() >= icon.top() - 1.0)
+                .filter(|(k, r)| k.starts_with("text") || (r.width() > 30.0 && r.height() < 700.0))
+                .filter(|(_, r)| !placed.iter().any(|(_, c)| c.expand(1.0).contains_rect(*r)))
+                .collect();
+            assert!(flash.is_empty(), "{size:?} {id}: nothing flashes beside the icon: {flash:?}");
+            let mut seen: Vec<Rect> = panel_stack::painted(&h.app, id).into_iter().collect();
+            for frame in 0..6 {
+                let shapes = h.frame_shapes(vec![]);
+                let now = panel_stack::painted(&h.app, id);
+                if let Some(r) = now {
+                    assert_opaque(&shapes, r, &t, &format!("{size:?} {id} frame {frame}"));
+                    seen.push(r);
+                } else {
+                    assert!(seen.is_empty(), "{size:?} {id}: once shown, a card stays shown (frame {frame})");
+                }
+            }
+            assert!(seen.len() >= 5, "{size:?} {id}: shown from the frame after the click at the latest: {seen:?}");
+            let card = seen[0];
+            for r in &seen {
+                assert!((r.min - card.min).length() < 0.5 && (r.size() - card.size()).length() < 0.5, "{size:?} {id}: no jump: {seen:?}");
+            }
+            assert_eq!(h.card(id), card, "{size:?} {id}: the area is where it was painted");
+            // Right edge 6 pt left of the dock; a cascade step left of it when the column is full.
+            let steps = (right - card.right()) / 24.0;
+            assert!(
+                steps > -0.05 && (steps - steps.round()).abs() < 0.05,
+                "{size:?} {id}: right edge {} 6 pt left of the dock {right}",
+                card.right()
+            );
+            let room = panel_stack::room(&h.app);
+            let area = craft_ui::docking::float_space::<String>(&h.ctx, crate::panel_docking::area_id()).expect("the dock area drew").area;
+            assert!(room.top() >= area.top() + 35.0 - 0.5, "{size:?}: the room starts under the document tabs: {room:?} in {area:?}");
+            assert!(card.top() >= room.top() - 0.5 && card.bottom() <= room.bottom() + 0.5, "{size:?} {id}: {card:?} in {room:?}");
+            if steps < 0.5 {
+                // Not a cascade step: on a free place.
+                for (other, r) in &placed {
+                    assert!(!card.intersects(r.shrink(0.5)), "{size:?} {id} over {other}: {card:?} {r:?}");
+                }
+            }
+            // Beside its icon (its top level with it, kept under the tabs) when no card is there.
+            let wanted = icon.top().max(room.top());
+            let free = placed.iter().all(|(_, r)| !r.intersects(Rect::from_min_size(pos2(card.left(), wanted), card.size())));
+            if free {
+                assert!((card.top() - wanted).abs() <= 1.0, "{size:?} {id}: top {} beside its icon {wanted}", card.top());
+            }
+            placed.push((id, card));
+        }
+        // A card closed and opened again (at its place, so drawn from the click's frame on) is
+        // opaque from its first frame: no fade-in.
+        h.tap("swatches");
+        let at = h.icon("swatches").center();
+        h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+        let mut frames = vec![h.frame_shapes(vec![button(at, false)])];
+        frames.push(h.frame_shapes(vec![]));
+        let place = placed.iter().find(|(p, _)| *p == "swatches").unwrap().1;
+        for (k, shapes) in frames.iter().enumerate() {
+            let r = panel_stack::painted(&h.app, "swatches").expect("drawn from the click's frame");
+            assert_eq!(r, place, "{size:?}: back where it was");
+            assert_opaque(shapes, r, &t, &format!("{size:?} swatches reopened, frame {k}"));
+        }
+    }
+}
+
+/// A UI state saved before the new dock (no cards version, as the owner's v10/v11 ui.json): its
+/// places are dropped once and its open cards placed again beside their icons; groups are kept.
+/// A place that would leave most of its card out of the room is dropped at load too.
+#[test]
+fn places_saved_before_the_new_dock_are_dropped() {
+    let size = vec2(1920.0, 1144.0);
+    let mut h = Harness::sized(size);
+    let mut saved = serde_json::to_value(&h.app.ui).unwrap();
+    let place = |x: f32, y: f32, w: f32, hh: f32| json!({"pos": [x, y], "size": [w, hh], "fit": true});
+    saved["varos_panel_stack"] = json!({
+        "keep_open": true,
+        "cards": ["colorGuide", "swatches"],
+        "live": [
+            {"panels": ["colorGuide"], "active": 0, "rect": [834.0, 607.5, 256.0, 231.0]},
+            {"panels": ["swatches"], "active": 0, "rect": [1059.5, 113.0, 256.0, 334.0]}
+        ],
+        "places": {
+            "color": place(116.4, 268.3, 262.0, 399.0),
+            "colorGuide": place(834.0, 607.5, 256.0, 231.0),
+            "swatches": place(1059.5, 113.0, 256.0, 334.0)
+        },
+        "groups": [{"panels": ["character", "paragraph"], "active": "paragraph"}]
+    });
+    let ui: crate::state::UiState = serde_json::from_value(saved).unwrap();
+    assert_eq!(ui.varos_panel_stack.version, 0, "an old file has no version");
+    assert!(ui.varos_panel_stack.enabled, "an old file has panel cards on");
+    h.app.ui = ui.sanitized();
+    h.settle();
+    let stack = &h.app.ui.varos_panel_stack;
+    assert_eq!(stack.version, panel_stack::VERSION);
+    assert!(!stack.places.contains_key("color"), "the old Color place is gone: {:?}", stack.places);
+    assert_eq!(h.groups(), [["colorGuide"], ["swatches"]], "the open cards stay open");
+    let right = h.dock_left().min(h.column()) - 6.0;
+    for id in ["colorGuide", "swatches"] {
+        let card = h.card(id);
+        assert!((card.right() - right).abs() <= 1.0, "{id}: placed again beside the dock: {card:?}");
+    }
+    assert_eq!(h.app.ui.varos_panel_stack.groups.len(), 1, "groups are kept");
+    let others: Vec<Rect> = ["colorGuide", "swatches"].iter().map(|id| h.card(id)).collect();
+    assert!(others[1].top() - others[0].bottom() <= 6.5, "Swatches right under Color Guide as fitted: {others:?}");
+    h.tap("color");
+    let card = h.card("color");
+    assert!((card.right() - right).abs() <= 1.0, "Color opens beside the dock, not at x 116: {card:?} others {others:?}");
+    // A current file whose place is off the room (another screen): that place is dropped.
+    let mut saved = serde_json::to_value(&h.app.ui).unwrap();
+    saved["varos_panel_stack"]["places"]["glyphs"] = place(5000.0, 3000.0, 256.0, 200.0);
+    let ui: crate::state::UiState = serde_json::from_value(saved).unwrap();
+    let mut h2 = Harness::sized(size);
+    h2.app.ui = ui.sanitized();
+    h2.settle();
+    assert!(!h2.app.ui.varos_panel_stack.places.contains_key("glyphs"));
+    assert!(h2.app.ui.varos_panel_stack.places.contains_key("color"), "a place in the room is kept");
+}
+
+/// Preferences › User Interface › Panel cards (Varos) off: the card layer is inert. Open cards
+/// close and the newest shows as upstream's flyout; icons open upstream's flyouts, an agent's
+/// window.panel too; an icon dragged onto the canvas floats as upstream's floating panel; the
+/// docking layout keeps its panels. Saved as `varos_panel_stack.enabled`. On again, the flyout
+/// shown is a card again.
+#[test]
+fn panel_cards_off_leaves_the_icon_columns_to_upstream() {
+    let mut h = Harness::new();
+    assert!(h.app.ui.varos_panel_stack.enabled, "on by default");
+    h.tap("character");
+    h.tap("paragraph");
+    let panels = |h: &Harness| {
+        let mut p: Vec<String> = crate::panel_docking::layout_of(&h.app.ui).panels().into_iter().cloned().collect();
+        p.sort();
+        p
+    };
+    let before = panels(&h);
+    h.panel_cards(false);
+    assert!(!h.app.ui.varos_panel_stack.enabled);
+    assert!(h.groups().is_empty() && h.cards().is_empty(), "the cards closed: {:?}", h.groups());
+    assert_eq!(h.app.ui.open_panel.as_deref(), Some("paragraph"), "the newest shows as its flyout");
+    assert!(crate::panel_docking::showing(&h.app.ui, "paragraph"));
+    assert!(crate::panel_docking::valid(&crate::panel_docking::layout_of(&h.app.ui)) && panels(&h) == before, "the layout is untouched");
+    // An icon: upstream's flyout, its group's tabs, no card, no Varos-lit well.
+    h.tap("swatches");
+    assert_eq!(h.app.ui.open_panel.as_deref(), Some("swatches"));
+    assert_eq!(craft_ui::docking::flyout::<String>(&h.ctx, crate::panel_docking::area_id()).as_deref(), Some("swatches"));
+    assert!(h.app.ui.varos_panel_stack.live.is_empty() && !panel_stack::in_card(&h.app, "swatches"));
+    assert!(panel_stack::painted(&h.app, "swatches").is_none());
+    // An agent's window.panel: the flyout too.
+    h.app.run("window.panel", json!({"panel": "glyphs"})).unwrap();
+    h.settle();
+    assert_eq!(h.app.ui.open_panel.as_deref(), Some("glyphs"));
+    assert!(h.app.ui.varos_panel_stack.live.is_empty());
+    let saved = serde_json::to_value(&h.app.ui).unwrap();
+    assert_eq!(saved["varos_panel_stack"]["enabled"], json!(false), "saved with the UI state");
+    let restored: crate::state::UiState = serde_json::from_value(saved).unwrap();
+    assert!(!restored.varos_panel_stack.enabled);
+    // On again: the flyout shown becomes its card; the layout keeps its panels.
+    h.panel_cards(true);
+    assert_eq!(h.cards(), ["glyphs"], "the flyout is a card again");
+    assert!(h.card_drawn("glyphs"));
+    assert_eq!(craft_ui::docking::flyout::<String>(&h.ctx, crate::panel_docking::area_id()), None, "no flyout beside the card");
+    assert_eq!(panels(&h), before);
+    // Off again: an icon dragged onto the canvas floats as upstream's floating panel (with no
+    // flyout open: upstream starts no icon drag while its Character group's flyout is open, with
+    // or without Varos).
+    h.panel_cards(false);
+    assert_eq!(h.app.ui.open_panel.as_deref(), Some("glyphs"), "the card is a flyout again");
+    h.tap("glyphs");
+    assert_eq!(h.app.ui.open_panel, None);
+    let icon = h.icon("stroke");
+    let canvas = h.app.canvas_rect.expect("the canvas is drawn");
+    h.drag(icon.center(), canvas.center());
+    assert!(
+        crate::panel_docking::floats(&h.app.ui, "stroke"),
+        "Stroke floats: {:?} {:?}",
+        crate::panel_docking::layout_of(&h.app.ui),
+        h.app.ui.status
+    );
+    assert!(h.app.ui.varos_panel_stack.live.is_empty());
+}
+
+/// The switch shows in Preferences › User Interface, right under Auto-Collapse Iconic Panels.
+#[test]
+fn the_panel_cards_switch_shows_under_auto_collapse() {
+    fn texts(s: &egui::Shape, out: &mut Vec<(String, f32)>) {
+        match s {
+            egui::Shape::Text(t) => out.push((t.galley.text().to_string(), t.pos.y)),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut a = VectorcraftApp::new(Session::new(), Default::default());
+    crate::prefs_dialog::open(&mut a, Some("User Interface"));
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| crate::prefs_dialog::show(&mut a, ui.ctx()));
+    out.textures_delta.clear();
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| crate::prefs_dialog::show(&mut a, ui.ctx()));
+    out.textures_delta.clear();
+    let mut shown = vec![];
+    out.shapes.iter().for_each(|c| texts(&c.shape, &mut shown));
+    let y = |label: &str| shown.iter().find(|(t, _)| t == label).map(|(_, y)| *y).unwrap_or_else(|| panic!("{label} shown: {shown:?}"));
+    let (collapse, cards) = (y("Auto-Collapse Iconic Panels"), y(panel_stack::PREF_LABEL));
+    assert!(cards > collapse && cards - collapse < 40.0, "right under Auto-Collapse: {collapse} {cards}");
+}
+
+/// Software capture (no GPU) of the window with a selection (control bar shown) and the four
+/// cards of the owner's report open: `VAROS_CARDS4_CAPTURE=<file.png>`.
+#[test]
+#[ignore = "optional software visual capture; set VAROS_CARDS4_CAPTURE"]
+fn capture_cards4() {
+    let Some(file) = std::env::var_os("VAROS_CARDS4_CAPTURE").map(std::path::PathBuf::from) else { return };
+    let (width, height) = (1440_u32, 900_u32);
+    let mut h = Harness::sized(vec2(width as f32, height as f32));
+    h.app.ui.control_bar = true; // as the owner's ui.json
+    h.app.run("shape.rectangle", json!({"x": 40, "y": 40, "width": 120, "height": 80})).unwrap();
+    h.settle();
+    for id in ["color", "swatches", "colorGuide", "patternOptions"] {
+        h.tap(id);
+    }
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    crate::theme::apply(&ctx, crate::theme::Brightness::Dark);
+    egui_extras::install_image_loaders(&ctx);
+    h.app.fonts_ready = true;
+    h.app.canvas.worker_started = true;
+    let mut textures = std::collections::HashMap::<egui::TextureId, egui::ColorImage>::new();
+    let mut shot = None;
+    for frame in 0..6 {
+        let raw = egui::RawInput {
+            time: Some(100.0 + 0.05 * frame as f64),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32))),
+            max_texture_side: Some(8192),
+            ..Default::default()
+        };
+        let app = &mut h.app;
+        app.begin_host_iteration();
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.tick(ui.ctx());
+            app.ui(ui);
+        });
+        for (id, deltas) in &out.textures_delta.set {
+            for delta in deltas {
+                let egui::ImageData::Color(image) = &delta.image;
+                if let Some([x, y]) = delta.pos {
+                    let target = textures.get_mut(id).unwrap();
+                    for row in 0..image.size[1] {
+                        for col in 0..image.size[0] {
+                            target.pixels[(y + row) * target.size[0] + x + col] = image.pixels[row * image.size[0] + col];
+                        }
+                    }
+                } else {
+                    textures.insert(*id, (**image).clone());
+                }
+            }
+        }
+        out.textures_delta.clear();
+        shot = Some(ctx.tessellate(out.shapes, out.pixels_per_point));
+    }
+    let pixels = crate::varos::home::capture::raster(&shot.unwrap(), &textures, width, height);
+    image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
 }

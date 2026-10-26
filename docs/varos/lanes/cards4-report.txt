@@ -1,0 +1,140 @@
+lane-cards4 report — 2026-10-26 — implementer: Opus 5.5 — worktree lane-upstream2 (branch lane-cards4,
+base main 9e96e863, the weekly upstream merge). Not committed.
+
+Owner report on v11: a card shows beside its icon for a moment, then jumps far away (Color ended at the far
+left beside the toolbox; Color Guide / Pattern Options mid-canvas; Swatches partly under the tab bar); the
+Swatches card is drawn faded; control bar / field look off after egui 0.37 (Opacity field text sits high,
+uneven field heights, a new framed "Snapping" button). Plus the owner's decision while this lane ran: a
+Preferences switch "Panel cards (Varos)" to compare with upstream's own panel system.
+
+WHAT THE OWNER WILL SEE
+- An icon of the column opens its card once, in its place: no flyout flashing beside the icon first, no
+  jump. Right edge 6 pt left of the dock, top level with its icon (never under the document tabs, never
+  over the status bars), stacking down under the cards already there, cascading (24 pt steps) only when the
+  column is full (e.g. Color + Swatches + Color Guide + Pattern Options in a 900 pt high window).
+- On the first start of this build, card places saved by v10/v11 are forgotten once (they were measured
+  against the old dock and were why Color opened at x 116 and Color Guide mid-canvas); the open cards are
+  placed again beside their icons. Tab groups (e.g. Character + Paragraph) are kept. After that, a card
+  moved by hand and closed comes back where it was left, as in v10.
+- Every card is fully opaque from its first frame (no fade-in, no ghost).
+- A lit icon (its card open) is the kit's toggle: dark well, 1 pt line, and now a bright glyph (before:
+  dim glyph in the well).
+- Text fields: the value text is centred again and every field is as tall as in v10 (Opacity, Stroke,
+  X/Y/W/H, ...).
+- The Control bar's "Snapping" is a link label like "Stroke:" / "Opacity:" / "Style:" (no framed
+  button); a click opens the same menu.
+- Preferences › User Interface, right under Auto-Collapse Iconic Panels: "Panel cards (Varos)", on by
+  default. Off: icons behave exactly as upstream (one flyout at a time, the group's tabs, drag an icon out
+  to float it as upstream's floating panel / OS window); open cards close and the newest shows as its
+  flyout. On again: that flyout becomes a card. The docking layout is never changed by the switch. Saved
+  in ui.json as varos_panel_stack.enabled.
+
+ROOT CAUSES
+1. "Beside its icon for a moment": craft-ui opens its own flyout in the frame of the icon click (before
+   its FlyoutChanged event reaches Varos) and draws the group's FRONT panel in it (Swatches when Pattern
+   Options was clicked) beside the icon. Varos then closed it and showed the card from the next frame.
+   In debug builds the panel drawn twice in one frame (flyout + card) even raised egui's
+   "Widget swatch-tile changed layer_id" assert (visible as "Internal error" in cards4-before.png).
+2. "Then jumps far away": the card opened at its remembered place. Those places (ui.json
+   varos_panel_stack.places) were saved by v10 against the old dock (Color at x 116, Color Guide at
+   834,607) and were honoured as they were. Also: a card whose egui area was already known was drawn at
+   its first guess (360 pt tall) and then re-placed by fit() the next frame (a second, smaller jump), and
+   fit() placed cards against the others' not-yet-fitted sizes in the same frame.
+3. "Under the tab bar" / over the status bars: since the merge the room was the whole window (the v10
+   clamp to the icon column's bottom was lost and there was never a top limit under the document tabs).
+4. Faded Swatches: the card's egui Area used egui's default fade-in (0.08 s); a card re-shown (reopened,
+   or after the frame Varos skipped it for the flyout) was painted at ~20 % alpha in its first frames
+   (measured: fill #05060732 instead of #1A1D23FF in the reopen frame). The cards also shared their
+   area id with craft-ui's floating windows (area.with(("floating", first))), so their area state could
+   mix with an upstream floating window of the same panel.
+5. Field look: egui 0.37's default text-edit style gives every text edit at least the interact height
+   (24 pt in our theme) with its text at the top (egui 0.36: as tall as the text). Our framed fields grew
+   (24 + margins) or kept their 26 pt box with the text riding ~4 pt high.
+6. "Snapping": upstream's new Control bar quick menu was an egui menu_button (framed default button).
+7. Opacity field focused without a click: NOT reproduced. Tested: a dialog opening over the Control bar
+   (its "focus the first field" flag), Tab / Shift+Tab twice, Escape, V, Cmd+Z, Cmd+A, clicks on
+   "Opacity:" and "Style:" — no field takes the keyboard in any of them (now regression tests). Clicking
+   the label right before a numeric field (upstream's scrub labels) focuses that field with its text
+   selected by design; that may be what the owner hit. Left for the owner's hand test.
+
+FIXES (files)
+  ~ crates/ui-egui/src/varos/panel_stack.rs
+      - room = craft-ui's dock area (float_space) ∩ window, under the document tabs (noted by
+        chrome::doc_tabs), above the status bars.
+      - cards drawn in Varos' own egui areas ("varos-card", first) with fade_in(false); every card
+        reports whether it was really painted (not egui's sizing pass, not hidden).
+      - a card Varos places is drawn unseen for its first 2 frames (measured, fitted, placed at real
+        size), then shown once where it stays; the flyout-skip of the click frame removed.
+      - fit() places cards one after the other with the others' fitted sizes.
+      - cards version (varos_panel_stack.version = 2): older files drop their places once and re-place
+        their open cards beside their icons; places with less than half their card in the room are
+        dropped at load.
+      - craft-ui's flyout for an icon panel that is a card draws no body and is wiped from the frame
+        (skips_body / wipe_flyout).
+      - Panel cards switch: enabled (saved, default on), PREF_KEY / PREF_LABEL, set_enabled; frame()
+        leaves card mode first when off (cards close, newest becomes upstream's flyout, places/groups
+        remembered, nothing else runs).
+      - paint_icon_well returns the glyph colour (bright when lit).
+  ~ crates/ui-egui/src/panel_docking.rs: 3 Varos lines (wipe_flyout after show_content; no body for
+      a flyout that is a card; lit glyph colour).
+  ~ crates/ui-egui/src/chrome.rs: doc_tabs notes its strip for the cards (1 line); Snapping menu as a
+      link label + Popup::menu.
+  ~ crates/ui-egui/src/prefs_dialog.rs: the switch's field (open/confirm) and its row under Auto-Collapse.
+  ~ crates/ui-egui/src/menus.rs: the switch's label in the translatable-strings list (1 line).
+  ~ crates/ui-egui/src/varos/theme.rs: TextFields — egui's default text-edit style without the 0.37
+      interact-height floor (replace_widget_theme).
+  ~ crates/ui-egui/Cargo.toml: egui feature "experimental" (makes egui's widget-theme API public; needed
+      for TextFields).
+  ~ crates/ui-egui/src/varos/mod.rs: + tests_control_bar module.
+  ~ crates/ui-egui/src/varos/tests_panel_stack.rs: harness on the new card ids, frame_shapes, panel_cards;
+      new tests below; capture_cards4 (ignored).
+  + crates/ui-egui/src/varos/tests_control_bar.rs: control bar / field tests.
+  + docs/varos/lanes/cards4-before.png (merge code 9e96e863), cards4-after.png (this lane): software
+      raster 1440x900, a rectangle selected, Control bar on, Color/Swatches/Color Guide/Pattern Options
+      opened from the rail. Both viewed.
+
+NEW TESTS
+  cards_open_beside_their_icons_and_never_jump (2000x1295 and 1440x900; per frame for 6 frames: painted
+    rect unchanged, opaque fill/line, right edge 6 pt left of the dock or a cascade step, under the tabs,
+    in the room, beside its icon when free, no overlap unless cascaded; nothing painted beside the column
+    in the click frame; a reopened card opaque from its first frame). Verified it FAILS without
+    wipe_flyout (the Swatches flyout flash) and with fade_in(true) (fill alpha 0x32).
+  places_saved_before_the_new_dock_are_dropped (owner-like ui.json without version; off-room place).
+  panel_cards_off_leaves_the_icon_columns_to_upstream (off: cards close, newest is a flyout, layout
+    panels unchanged, icon = flyout, window.panel = flyout, saved; on: flyout -> card; off: icon dragged
+    to the canvas floats).
+  the_panel_cards_switch_shows_under_auto_collapse.
+  a_dialog_never_lends_its_focus_to_the_control_bar, keys_and_link_labels_give_no_field_the_keyboard,
+  single_line_fields_keep_their_height_and_centre_their_text, the_snapping_menu_is_a_link_label.
+  All 34 earlier panel_stack tests (v10 behaviour) pass unchanged except the harness ids.
+
+GATES
+(this worktree, one cargo at a time, -j 4, --test-threads=4; macOS, 2026-10-26/27)
+  cargo build -j 4 --offline --release -p vectorcraft: Finished `release` profile [optimized] target(s) in 5m 09s
+  cargo test -j 4 --offline --release -p vectorcraft-ui-egui --no-fail-fast -- --test-threads=4:
+    lib: 2382 passed; 10 failed; 8 ignored. The 10 are exactly the known release-only upstream tests
+    (9 panels::gradient::tests::*, tests_rotateview::escape_after_closing_a_popup_or_during_a_ruler_origin_
+    drag_keeps_the_rotation — debug-only widget names). tests/install_fonts.rs: 2 passed. Doc-tests: ok.
+  cargo test -j 4 --offline -p vectorcraft-ui-egui --lib (dev profile) -- panel_stack: 38 passed, 0 failed,
+    1 ignored (capture); -- tests_control_bar: 4 passed.
+  cargo clippy -j 4 --offline --release -p vectorcraft-ui-egui --all-targets -- -D warnings: exit 0, no warnings.
+  cargo fmt --all -- --check: clean.  git diff --check (new files included via intent-to-add): clean.
+  Capture: VAROS_CARDS4_CAPTURE=... cargo test -p vectorcraft-ui-egui --lib -- capture_cards4 --ignored:
+    cards4-before.png (merge code, this lane's changes set aside and restored byte-identical) and
+    cards4-after.png; both viewed. Before: Color card overlapping the document tab strip, field text
+    riding high, framed "Snapping", status bar "Internal error: DEBUG ASSERT: Widget swatch-tile changed
+    layer_id" (the flyout drawing Swatches beside its card). After: none of these; lit icons bright.
+
+LEFT / RISKS
+- Opacity-field focus not reproduced headlessly (see root cause 7).
+- The egui "experimental" feature is enabled only to reach the widget-theme API (replace_widget_theme,
+  StyleProvider); it is exported API of the pinned storytold egui rev, but egui marks it unstable: an
+  egui bump may need this 15-line theme adjusted.
+- A card Varos places appears 2 frames (~16-33 ms) after the click (measured unseen first); a card
+  reopened at its saved place shows in the click frame.
+- With Panel cards off, upstream itself starts no icon drag while the Character group's flyout is open
+  (same with keep_open off before this lane); not changed.
+- In a 900 pt high window the four cards of the report don't fit down the column: Color Guide and
+  Pattern Options cascade over Color (v10 behaviour).
+- cap/ (untracked, cap/panels3-cards.png, 21:45) is not from this lane; left as is.
+- Not hand-tested in the real window.

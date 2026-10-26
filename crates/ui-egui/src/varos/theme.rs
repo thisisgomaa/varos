@@ -231,6 +231,23 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
         s.animation_time = 0.08;
         s.visuals.disabled_alpha = 0.48;
     });
+    ctx.replace_widget_theme::<egui::widget_style::TextEditStyle>(TextFields);
+}
+
+/// Text fields as egui 0.36 drew them. egui 0.37's default text field style gives every text edit
+/// at least the interact height (24 points) with its text at the top: a field framed by Varos
+/// (4-point margins, or a 26-point box) came out taller than the controls beside it, its text
+/// riding high. Without that floor a single-line field is as tall as its text again, centred by
+/// its box (owner report on v11, 2026-10-26).
+struct TextFields;
+
+impl egui::theme::StyleProvider<egui::widget_style::TextEditStyle> for TextFields {
+    fn style(&mut self, args: &egui::widget_style::StyleArgs<'_>) -> egui::widget_style::TextEditStyle {
+        let mut style =
+            <egui::theme::DefaultStyle as egui::theme::StyleProvider<egui::widget_style::TextEditStyle>>::style(&mut egui::theme::DefaultStyle, args);
+        style.atom_layout.min_size.y = 0.0;
+        style
+    }
 }
 
 #[cfg(test)]

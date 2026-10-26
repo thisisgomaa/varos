@@ -1093,6 +1093,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         dock = dock.raise_panel(panel);
     }
     let mut output = dock.show_content(ui, &layout, &style, &mut PanelContent { app: &mut *app });
+    crate::varos::panel_stack::wipe_flyout(app, &ctx); // Varos: an icon panel's card shows instead of its flyout
     app.dock_rt.space = craft_ui::docking::float_space(&ctx, area);
     if let Some(panel) = output.focused.take() {
         app.dock_rt.focused = Some(panel);
@@ -1209,6 +1210,9 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
             self.app.canvas_area(ui);
             return;
         }
+        if crate::varos::panel_stack::skips_body(self.app, ui) {
+            return; // Varos: a flyout that is a card instead draws no body
+        }
         if ui.ctx().viewport_id() != egui::ViewportId::ROOT {
             crate::canvas::release_art_in_window(self.app, ui.ctx());
         }
@@ -1253,7 +1257,7 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     }
 
     fn paint_icon(&mut self, painter: &egui::Painter, rect: egui::Rect, id: &String, color: egui::Color32) -> bool {
-        crate::varos::panel_stack::paint_icon_well(self.app, painter, rect, id); // Varos: an open card's icon is lit
+        let color = crate::varos::panel_stack::paint_icon_well(self.app, painter, rect, id, color); // Varos: an open card's icon is lit
         let icon = crate::state::rail_panel(id).map(|p| p.2).or_else(|| crate::panels::library_panel::parse(id).map(|_| "library"));
         let Some(icon) = icon else { return false };
         let image = egui::Image::new(crate::icons::source(icon));
