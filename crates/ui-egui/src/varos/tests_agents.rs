@@ -20,7 +20,7 @@ fn app() -> (VectorcraftApp, Sender<ControlRequest>) {
 /// One request from `actor` (`None`: a client that names none), drained as a frame drains it.
 fn request(app: &mut VectorcraftApp, tx: &Sender<ControlRequest>, actor: Option<Value>, method: &str, params: Value) -> Value {
     let (req, reply) = ControlRequest::new(method, params);
-    tx.send(req.with_actor(actor)).unwrap();
+    tx.send(req.with_actor(on_front(app, actor))).unwrap();
     app.drain_control(&egui::Context::default());
     reply.try_recv().unwrap()
 }
@@ -215,9 +215,23 @@ fn history_rows_name_the_agents_steps() {
     assert_eq!(crate::varos::agents::history_icon(rows.first(), egui::Color32::WHITE), egui::Color32::WHITE);
 }
 
-/// An agent that came in through Varos' always-on port (the transport marks it `guarded`).
+/// An agent that came in through Varos' always-on port (the transport marks it `guarded`),
+/// naming the board in front at its current revision (`"target": "front"`, filled in by
+/// [`on_front`] when the request is sent), as an agent that read the board first does.
 fn guarded() -> Option<Value> {
-    Some(json!({"session": "g1", "profile": "claude-code", "label": "Claude Code", "guarded": true}))
+    Some(json!({"session": "g1", "profile": "claude-code", "label": "Claude Code", "guarded": true, "target": "front"}))
+}
+
+/// `actor` with a `"target": "front"` placeholder made the board in front and its revision.
+pub(super) fn on_front(app: &mut VectorcraftApp, actor: Option<Value>) -> Option<Value> {
+    let mut actor = actor?;
+    if actor.get("target") == Some(&json!("front")) {
+        actor["target"] = match app.session.active().map(|d| (d.uid, d.doc.clone())) {
+            Some((uid, doc)) => json!({"board": varos_agents::boards::board_id(uid), "revision": app.agents.revisions.of(uid, &doc)}),
+            None => Value::Null,
+        };
+    }
+    Some(actor)
 }
 
 #[test]
@@ -291,20 +305,22 @@ fn the_steps_of_a_batch_are_guarded_too() {
         {"command": "file.saveCopy", "params": {"path": s(&taken)}},
     ]}});
     let r = request(&mut app, &tx, guarded(), "engine.execute", batch);
-    assert!(r["error"].as_str().unwrap().contains("never overwrite"), "{r}");
+    // Varos boards: a batch writes no file at all now (write_in_batch), before the path guard.
+    let refused = |r: &Value, why: &str| r["error"].as_str().is_some_and(|e| e.starts_with("write_in_batch") || e.contains(why));
+    assert!(refused(&r, "never overwrite"), "{r}");
     assert_eq!(std::fs::read(&taken).unwrap(), b"keep me");
     // Nested one more level, and through action.batch's steps.
     let nested = json!({"command": "command.batch", "params": {"commands": [
         {"command": "command.batch", "params": {"commands": [{"command": "file.print", "params": {"path": "/etc/varos.pdf"}}]}},
     ]}});
-    assert!(request(&mut app, &tx, guarded(), "engine.execute", nested)["error"].as_str().unwrap().contains("home folder"));
+    assert!(refused(&request(&mut app, &tx, guarded(), "engine.execute", nested), "home folder"));
     let action = |destination: &str, step: Value| json!({"command": "action.batch", "params": {"source": "datasets", "destination": destination, "commands": [step]}});
     let plain = json!({"command": "select.all", "params": {}});
     let r = request(&mut app, &tx, guarded(), "engine.execute", action("saveAndClose", plain.clone()));
     assert!(r["error"].as_str().unwrap().contains("destination `none`"), "{r}");
     let save = json!({"command": "document.export", "params": {"path": s(&home.join("Desktop/out.png"))}});
     let r = request(&mut app, &tx, guarded(), "engine.execute", action("none", save));
-    assert!(r["error"].as_str().unwrap().contains("once per file"), "{r}");
+    assert!(refused(&r, "once per file"), "{r}");
 }
 
 /// Export for Screens names its files and subfolders itself: only into an empty folder.
@@ -474,7 +490,7 @@ fn a_capture_written_later_keeps_its_requests_guard() {
     let mut replies = vec![];
     for _ in 0..2 {
         let (req, reply) = ControlRequest::new("ui.screenshot", json!({"path": s(&shot), "focus": false}));
-        tx.send(req.with_actor(guarded())).unwrap();
+        tx.send(req.with_actor(on_front(&mut app, guarded()))).unwrap();
         replies.push(reply);
     }
     let ctx = egui::Context::default();

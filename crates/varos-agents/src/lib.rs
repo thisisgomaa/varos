@@ -19,6 +19,8 @@
 //!   before the proxy sends anything; the proxy's token is checked before a line is parsed).
 //! - [`guard`]: the mistake guards on files agents write (never overwrite, never system folders),
 //!   checked on a request's parameters and again at every file it writes.
+//! - [`boards`]: every agent operation names its board by a stable id; content revisions for
+//!   save/export, and object references that carry their board.
 //!
 //! The desktop glue (control-channel hooks, painting, history rows) lives in
 //! `crates/ui-egui/src/varos/`.
@@ -26,6 +28,7 @@
 pub mod activity;
 pub mod actor;
 pub mod auth;
+pub mod boards;
 pub mod diff;
 pub mod endpoint;
 pub mod guard;

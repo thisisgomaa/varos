@@ -64,6 +64,16 @@ pub(crate) struct Agents {
     /// Where the file guards draw their lines; `None`: the user's home ([`Places::current`]).
     /// Tests put a folder of their own here.
     pub places: Option<Places>,
+    /// The boards' content revisions, which agents name to save and export
+    /// ([`super::boards`]).
+    pub revisions: varos_agents::boards::Revisions,
+    /// Each agent's own selection and current layer, by session and board ([`super::boards`]).
+    pub(crate) private: HashMap<(String, u64), super::boards::Private>,
+    /// The synthetic input queued, in runs, with the board each run is for
+    /// ([`super::boards::screen_synthetic`]).
+    pub(crate) synthetic: std::collections::VecDeque<(Option<u64>, usize)>,
+    /// Synthetic input dropped because its board left the front, for the next reply.
+    pub(crate) dropped: Vec<Value>,
 }
 
 /// What [`before`] noted about a request, for [`after`].
@@ -326,7 +336,7 @@ pub(crate) fn paint(app: &mut VectorcraftApp, painter: &egui::Painter, xf: &Xf) 
 }
 
 /// Did the request come through Varos' agents port (its transport marks its actor `guarded`)?
-fn is_guarded(req: &ControlRequest) -> bool {
+pub(crate) fn is_guarded(req: &ControlRequest) -> bool {
     req.actor.as_ref().and_then(|a| a.get("guarded")) == Some(&Value::Bool(true))
 }
 
@@ -348,7 +358,7 @@ pub(crate) fn guard(app: &VectorcraftApp, req: &ControlRequest) -> Option<crate:
 }
 
 /// The command a request runs and its params (a control method stands for itself).
-fn command_of(req: &ControlRequest) -> Option<(&str, &Value)> {
+pub(crate) fn command_of(req: &ControlRequest) -> Option<(&str, &Value)> {
     let p = &req.params;
     Some(match req.method.as_str() {
         "engine.execute" | "ui.menu.invoke" | "command" => {
@@ -424,7 +434,7 @@ pub(crate) const UI_WRITERS: &[&str] = &[
 ];
 
 /// Commands that write over the document's own file when it is the path they are given.
-const SAVES_OWN_FILE: &[&str] = &["app.save", "document.save", "file.save"];
+pub(crate) const SAVES_OWN_FILE: &[&str] = &["app.save", "document.save", "file.save"];
 
 /// Commands that write a set of files with names they make up into the `folder` they are given.
 const WRITES_A_SET: &[&str] = &["assets.export", "document.exportForScreens", "file.exportForScreens"];

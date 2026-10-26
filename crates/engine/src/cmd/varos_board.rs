@@ -59,5 +59,56 @@ pub(crate) fn pdf_document(cmd: &str, doc: &Document, p: &Value) -> Result<Optio
     Ok(Some(output))
 }
 
+impl Session {
+    /// Varos: put the open document with uid `uid` in front for the rest of one agent request
+    /// (and the person's back after it, in the same UI turn), without finishing the tool's work as
+    /// a tab switch does ([`Session::set_active`]): the tool's state stays the person's, on the
+    /// person's document. The host checks first that no tool work is in progress
+    /// ([`Session::tool_busy`], text editing, an open interaction). → `false` when it isn't open.
+    pub fn varos_lend_front(&mut self, uid: u64) -> bool {
+        match self.docs.iter().position(|d| d.uid == uid) {
+            Some(i) => {
+                self.active = Some(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Varos: does the tool hold the person's work in progress (a drag, an open pen path, typing)?
+    /// Then another board must not be lent the front ([`Session::varos_lend_front`]).
+    pub fn varos_tool_working(&self) -> bool {
+        self.tool_busy() || self.tool_wants_text() || self.tool_composing() || self.active().is_some_and(|d| d.interaction.is_some())
+    }
+}
+
+thread_local! {
+    /// Varos: the board (document uid) an agent request is pinned to while it runs on this thread.
+    static PIN: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+impl Session {
+    /// Varos: pin the commands run on this thread to the open document with uid `uid` (`None`:
+    /// unpin). While pinned, every command, each step of a batch included, runs only when that
+    /// document is the active one ([`check_pin`]): a step that would run on another document
+    /// fails with `target_changed` and the steps after it don't run. The host pins an agent
+    /// request that names a board for the turn that runs it.
+    #[allow(clippy::unused_self)] // a method so hosts reach it through the session they drive
+    pub fn varos_pin(&mut self, uid: Option<u64>) {
+        PIN.with(|p| p.set(uid));
+    }
+}
+
+/// Varos: the pin's check before command `id` runs ([`Session::varos_pin`]).
+pub(crate) fn check_pin(s: &Session, id: &str) -> Result<()> {
+    let Some(pin) = PIN.with(std::cell::Cell::get) else { return Ok(()) };
+    if s.active().map(|d| d.uid) == Some(pin) {
+        return Ok(());
+    }
+    Err(EngineError::Other(format!(
+        "target_changed: `{id}` would run on another board than the one the request names (a step left it); it and the steps after it were not run"
+    )))
+}
+
 #[cfg(test)]
 mod tests;

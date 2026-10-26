@@ -53,16 +53,22 @@ pub(super) const AUTH_WINDOW: Duration = Duration::from_secs(2);
 
 const UNAUTHORIZED: &str = "unauthorized: this Varos port needs the token from its endpoint file; use `vectorcraft-cli mcp`, which reads it. Nothing was run; closing the connection.";
 
-/// What a line carries besides the request: who sent it and the token it shows.
+/// What a line carries besides the request: who sent it, the token it shows, and the board it
+/// acts on (`target: {board, revision?}`, see `vectorcraft_ui_egui::varos::boards`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Extras {
     actor: Option<Value>,
     token: Option<String>,
+    target: Option<Value>,
 }
 
 /// The extras of a parsed request line.
 pub(super) fn extras(line: &Map<String, Value>) -> Extras {
-    Extras { actor: line.get("actor").cloned(), token: line.get("token").and_then(Value::as_str).map(str::to_string) }
+    Extras {
+        actor: line.get("actor").cloned(),
+        token: line.get("token").and_then(Value::as_str).map(str::to_string),
+        target: line.get("target").filter(|t| !t.is_null()).cloned(),
+    }
 }
 
 thread_local! {
@@ -201,6 +207,16 @@ impl Link {
         }
         let mut actor = line.actor.filter(Value::is_object).unwrap_or_else(|| json!({"session": format!("connection-{}", self.connection)}));
         actor["guarded"] = json!(self.secrets.is_some());
+        // The board the line names travels with the actor; one the client put inside its actor
+        // is not taken (the line's own member is the only place it is read from).
+        match line.target {
+            Some(target) => actor["target"] = target,
+            None => {
+                if let Some(a) = actor.as_object_mut() {
+                    a.remove("target");
+                }
+            }
+        }
         if let Some(session) = actor.get("session").and_then(Value::as_str) {
             let mut sessions = self.sessions.borrow_mut();
             // A connection carries one agent; a few at most are remembered (and counted).
@@ -422,6 +438,17 @@ mod tests {
         let got = open_link(None).admit().unwrap();
         assert_eq!(got["label"], "Claude Code");
         assert_eq!(open_link(None).admit().unwrap()["session"], "connection-7");
+    }
+
+    /// The board a line names (`target`) travels with its actor to the app; a `target` the
+    /// client hid inside its actor is not taken.
+    #[test]
+    fn a_lines_board_goes_with_its_actor() {
+        let target = json!({"board": "0123abcd-4", "revision": 9});
+        set_line(line(json!({"method": "x", "actor": {"session": "s1"}, "target": target})));
+        assert_eq!(open_link(None).admit().unwrap()["target"], target);
+        set_line(line(json!({"method": "x", "actor": {"session": "s1", "target": target}})));
+        assert!(open_link(None).admit().unwrap().get("target").is_none());
     }
 
     #[test]
@@ -678,12 +705,18 @@ mod tests {
         });
         let mut proxy = vectorcraft_mcp::VarosAttach::in_dir(&dir);
         proxy.set_client(&json!({"name": "claude-code"}));
+        // Varos: the board a call names reaches the app with the request.
+        proxy.set_target(Some(json!({"board": "0123abcd-4", "revision": 2}))).unwrap();
         assert_eq!(proxy.call("document.inspect", json!({})), Ok(json!({"method": "document.inspect"})));
+        proxy.set_target(Some(Value::Null)).unwrap();
         assert_eq!(proxy.call("ui.inspect", json!({})), Ok(json!({"method": "ui.inspect"})));
-        for actor in app.join().unwrap() {
-            let actor = actor.unwrap();
+        let actors = app.join().unwrap();
+        for actor in &actors {
+            let actor = actor.as_ref().unwrap();
             assert_eq!(actor["guarded"], true);
             assert_eq!(actor["label"], "Claude Code");
         }
+        assert_eq!(actors[0].as_ref().unwrap()["target"], json!({"board": "0123abcd-4", "revision": 2}));
+        assert!(actors[1].as_ref().unwrap().get("target").is_none(), "explicitly none: no board sent");
     }
 }

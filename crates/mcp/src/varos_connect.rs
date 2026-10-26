@@ -33,6 +33,10 @@ pub struct VarosAttach {
     dir: Option<PathBuf>,
     remote: Option<Remote>,
     client: Value,
+    /// The board the calls act on (`varos_boards`), sent with every line: set for each tool call
+    /// or resource read that names one; `None` otherwise (never the board of another call, never
+    /// the tab in front). Its revision moves with the replies of the call's own steps.
+    target: Option<Value>,
 }
 
 impl Default for VarosAttach {
@@ -44,12 +48,12 @@ impl Default for VarosAttach {
 impl VarosAttach {
     /// Attach through the user's agents folder ([`endpoint::dir`]).
     pub fn new() -> Self {
-        Self { dir: endpoint::dir(), remote: None, client: Value::Null }
+        Self { dir: endpoint::dir(), remote: None, client: Value::Null, target: None }
     }
 
     /// Attach through the endpoint files in `dir` (tests, isolated profiles).
     pub fn in_dir(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: Some(dir.into()), remote: None, client: Value::Null }
+        Self { dir: Some(dir.into()), remote: None, client: Value::Null, target: None }
     }
 
     /// The attached app, looking it up when none is.
@@ -100,17 +104,57 @@ pub(crate) fn prove_server(reader: &mut impl BufRead, stream: &TcpStream, server
     proved
 }
 
+impl VarosAttach {
+    /// The target each line carries.
+    fn line_target(&self) -> Option<Value> {
+        self.target.clone().filter(|t| !t.is_null())
+    }
+
+    /// A step of a tool call ran on its board: the next step carries the revision it answered,
+    /// so a tool's own earlier step doesn't make its later ones stale, while anyone else's edit in
+    /// between still does.
+    fn advance_revision(&mut self) {
+        let ran = self.remote.as_ref().map_or(Value::Null, Backend::last_board);
+        if let Some(t) = self.target.as_mut().filter(|t| t.get("revision").is_some_and(|r| !r.is_null()))
+            && ran.get("board").is_some_and(|b| Some(b) == t.get("board"))
+            && let Some(r) = ran.get("revision").filter(|r| r.is_u64())
+        {
+            t["revision"] = r.clone();
+        }
+    }
+}
+
 impl Backend for VarosAttach {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        match self.attached()?.call(method, params.clone()) {
+        let target = self.line_target();
+        let remote = self.attached()?;
+        remote.set_target(target.clone())?;
+        let r = match remote.call(method, params.clone()) {
             // The app quit (or restarted on a new port) since the last call: nothing was sent, so
             // look it up again and send once more.
             Err(e) if e.contains("is not reachable") => {
                 self.remote = None;
-                self.attached()?.call(method, params)
+                let remote = self.attached()?;
+                remote.set_target(target)?;
+                remote.call(method, params)
             }
             other => other,
-        }
+        };
+        self.advance_revision();
+        r
+    }
+
+    fn set_target(&mut self, target: Option<Value>) -> Result<(), String> {
+        self.target = target;
+        Ok(())
+    }
+
+    fn last_board(&self) -> Value {
+        self.remote.as_ref().map_or(Value::Null, Backend::last_board)
+    }
+
+    fn board_scoped(&self) -> bool {
+        true
     }
 
     fn has_ui(&self) -> bool {
@@ -118,10 +162,14 @@ impl Backend for VarosAttach {
     }
 
     fn describe(&self) -> String {
-        match &self.remote {
+        let at = match &self.remote {
             Some(r) => format!("Varos at {}", r.addr()),
             None => "Varos (attached on the first call)".into(),
-        }
+        };
+        // The board rule, where every agent reads it (`initialize` instructions).
+        format!(
+            "{at}. Every call is board-scoped: call capabilities, then list_boards, and pass `board` (plus `revision` to save or export) with each call"
+        )
     }
 
     fn set_client(&mut self, client_info: &Value) {
@@ -262,5 +310,54 @@ mod tests {
         let (_e, app) = fake_varos(&dir, 31, 1, true);
         assert_eq!(a.call("document.inspect", json!({})), Ok(json!({"ok": 1})));
         assert_eq!(app.join().unwrap().iter().filter(|v| v["method"] != auth::HELLO).count(), 1);
+    }
+
+    /// Fix 8: a tool's later steps carry the revision its earlier step answered, so its own edit
+    /// doesn't make them stale; the revision of another board's reply is never taken.
+    #[test]
+    fn a_tools_steps_carry_the_revision_their_earlier_steps_answered() {
+        let dir = temp("revision");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut e = Endpoint::new(listener.local_addr().unwrap().port()).unwrap();
+        e.pid = 51;
+        endpoint::publish(&dir, &e).unwrap();
+        let key = e.server_key.clone();
+        let app = std::thread::spawn(move || {
+            let mut targets = vec![];
+            let mut revision = 5;
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut out = stream;
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|n| n > 0) {
+                    let v: Value = serde_json::from_str(&line).unwrap();
+                    if let Some(proof) = auth::answer_hello(line.trim().as_bytes(), &key) {
+                        writeln!(out, "{proof}").unwrap();
+                    } else {
+                        targets.push(v["target"].clone());
+                        // Each step edits its board: the revision moves.
+                        revision += 1;
+                        let board = v["target"]["board"].clone();
+                        writeln!(out, "{}", json!({"id": v["id"], "ok": true, "result": {}, "varos": {"board": board, "revision": revision}}))
+                            .unwrap();
+                    }
+                    line.clear();
+                    if targets.len() == 3 {
+                        return targets;
+                    }
+                }
+            }
+            targets
+        });
+        let mut a = VarosAttach::in_dir(&dir);
+        a.set_target(Some(json!({"board": "0123abcd-1", "revision": 5}))).unwrap();
+        a.call("engine.execute", json!({})).unwrap();
+        a.call("engine.execute", json!({})).unwrap();
+        a.set_target(None).unwrap();
+        a.call("engine.commands", json!({})).unwrap();
+        let targets = app.join().unwrap();
+        assert_eq!(targets[0], json!({"board": "0123abcd-1", "revision": 5}));
+        assert_eq!(targets[1], json!({"board": "0123abcd-1", "revision": 6}), "the step after an edit carries its revision");
+        assert_eq!(targets[2], Value::Null, "no board after the call: never the last one named");
     }
 }

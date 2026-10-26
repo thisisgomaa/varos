@@ -23,6 +23,7 @@ mod resources;
 mod server;
 mod tools;
 mod varos_actor; // Varos: the agent behind this server
+mod varos_boards; // Varos: every tool call names its board
 mod varos_brand; // Varos: the product name agents read
 mod varos_connect; // Varos: attach to the running Varos
 pub use varos_connect::VarosAttach; // Varos

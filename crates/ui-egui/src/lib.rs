@@ -1260,10 +1260,20 @@ impl VectorcraftApp {
             // Guarded per request: a panic must not drop the channel (taken out of `self` above).
             let roots = self.automation_roots.clone();
             self.ui.answering_control = true;
+            let board = varos::boards::enter(self, &req); // Varos: the board the request names, in front for this turn only
             let agent = varos::agents::before(self, &req); // Varos: who sent it, and what it changes
-            let answer = file_access::confine(roots.as_ref(), || vectorcraft_engine::guard::catch_panic(|| control::handle(self, ctx, &req)));
+            let answer = match &board {
+                varos::boards::Entered::Answered(v) => Ok(control::Outcome::Done(v.clone())), // Varos
+                varos::boards::Entered::Run(_) => {
+                    file_access::confine(roots.as_ref(), || vectorcraft_engine::guard::catch_panic(|| control::handle(self, ctx, &req)))
+                }
+            };
             let guard = file_access::write_guard(); // Varos: a capture written later keeps the request's guard
             varos::agents::after(self, agent); // Varos
+            let answer = match board {
+                varos::boards::Entered::Run(scope) => varos::boards::leave(self, scope, answer), // Varos: checked, the person's tab given back
+                varos::boards::Entered::Answered(_) => answer,
+            };
             self.ui.answering_control = false;
             let outcome = match answer {
                 Ok(outcome) => outcome,
@@ -2212,6 +2222,7 @@ impl VectorcraftApp {
         if self.synthetic_injected {
             return;
         }
+        varos::boards::screen_synthetic(self); // Varos: input for a board no longer in front is dropped, never delivered to another
         let Some(first) = self.synthetic.first() else {
             if std::mem::take(&mut self.synthetic_modifiers) {
                 raw.events.push(egui::Event::ModifiersChanged(self.host_modifiers));
