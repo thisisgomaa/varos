@@ -112,7 +112,8 @@ fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> 
 /// All tools, in `tools/list` order.
 pub fn tool_definitions() -> Vec<Value> {
     let empty = || obj(json!({}), &[]);
-    vec![
+    // Varos: `defs`, extended below.
+    let mut defs = vec![
         tool(
             "command_list",
             "List commands",
@@ -491,7 +492,9 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool("undo", "Undo", "Undo the last change (Edit → Undo).", empty(), false),
         tool("redo", "Redo", "Redo the last undone change (Edit → Redo).", empty(), false),
-    ]
+    ];
+    crate::varos_boards::extend(&mut defs); // Varos: board + revision on every tool, list_boards, capabilities
+    defs
 }
 
 // ---------- implementation ----------

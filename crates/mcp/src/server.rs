@@ -15,7 +15,7 @@ use crate::backend::Backend;
 use crate::intake::{Job, Message, Shared, read_loop};
 use crate::prompts;
 use crate::resources;
-use crate::tools::{call_tool, tool_definitions};
+use crate::tools::tool_definitions; // Varos: tools/call goes through varos_boards::call_tool
 
 /// The MCP revision we implement.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -430,7 +430,7 @@ impl Server {
                 if let Some(arguments) = args.as_object() {
                     crate::tools::check_tool_arguments(name, arguments).map_err(|e| (INVALID_PARAMS, e))?;
                 }
-                Ok(call_tool(self.backend.as_mut(), name, &args).to_value())
+                Ok(crate::varos_boards::call_tool(self.backend.as_mut(), name, &args).to_value()) // Varos: board-scoped
             }
             "resources/read" => {
                 let uri = params.get("uri").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing `uri`".to_string()))?;

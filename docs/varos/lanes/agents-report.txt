@@ -125,3 +125,18 @@ FILES
 - apps/vectorcraft: varos_control.rs (screen, pools, window, probe-based prune, end-to-end proxy
   test), control_server.rs (screen hook before parse, params moved, slot pools),
   control_deadlines.rs (set_budgets), main.rs (with_agent_guards), Cargo.toml (mcp dev-dependency).
+
+BOARD-SCOPED AGENTS (lane-agents2, 2026-10-26; full write-up: agents2-report.txt)
+- VQA-11 (P1): agent commands followed the active document and hit the wrong one when the person
+  switched tabs. Now every agent operation names its board by a stable id ("<launch>-<uid>", from
+  list_boards); the app resolves it by id inside the single UI-thread turn that runs the request,
+  lends that board the front for the turn only (without finishing the person's tool work), and
+  gives the person's tab back in the same turn. Agents never switch the person's tab.
+- Saves and exports need board + content revision (stale_revision when the board changed since).
+- Object ids leave the MCP server as "<board>:<id>"; one used on another board is wrong_board.
+- Window verbs (synthetic input, pointer, window capture, dialogs, menus) run only when their board
+  is in front, else target_changed.
+- Error codes: board_required, board_not_found, session_reset, target_changed, stale_revision,
+  wrong_board, person_busy. MCP tools: capabilities, list_boards; `board` and `revision` on every
+  tool. Files: crates/varos-agents/src/boards.rs, crates/ui-egui/src/varos/boards.rs (+ tests_boards.rs),
+  crates/mcp/src/varos_boards.rs, engine cmd/varos_board.rs (Session::varos_lend_front).

@@ -1,0 +1,150 @@
+Lane: lane-agents2 (Opus 5.5), 2026-10-26, base main f4b20c72. Not committed (the moderator lands it).
+Issue: VQA-11 (P1, production test with ChatGPT-driven agents): agent commands followed "the active
+document", so when the person switched tabs they hit the wrong document (object-reference
+failures, an export written from an unintended document). Re-activating first only narrowed the
+race.
+
+WHAT CHANGED (IN ONE LINE)
+Every agent operation now names its board (open document) by a stable id; the app resolves it by
+id inside the single UI-thread turn that runs the request, never by "the tab in front", and gives
+the person's tab back in the same turn.
+
+THE RULES (what an agent sees)
+- Board id: "<launch>-<uid>", e.g. "9f3a1c2e-3". uid = DocState::uid (process-unique, survives
+  other tabs closing or moving; the tab index does not). launch = 8 random hex digits made once per
+  launch, so an id from before a restart is refused (session_reset), never taken for a new
+  document that happens to get the same uid.
+- Revision: a per-board content revision (varos_agents::boards::Revisions). It moves when the art
+  changes (anyone's edit, an undo to another state), not when the person selects, scrolls or saves
+  (upstream's DocState::revision moves on selection too, so it would make every save stale).
+- Object references: ids leave the MCP server as "<board>:<id>" and are turned back into plain ids
+  on the way in. A reference of board A in a call naming board B is refused as wrong_board before
+  anything is sent. References alone also name their board (a call with only references runs on
+  their board; references of two boards in one call are wrong_board).
+- Every MCP tool takes `board` and `revision` (schema properties added to all tools). Saves and
+  exports (anything that writes a file from a board: save_file, export, command_run file.save /
+  file.saveAs / document.export* / file.export.*, screenshot or render to a path, and such steps
+  inside command.batch / action.batch) need board + revision.
+- Through Varos' agents port, while any board is open, every request that reads or changes a
+  document must name its board (board_required). Exempt: the lists (engine.commands, ui.inspect,
+  menus/tool lists, varos.boards), tool/panel/window settings (ui.tool.select, ui.set, ui.resize,
+  ui.focus), and making or opening a board (file.new, file.newBoard, file.open, document.open,
+  file.newFromTemplate, app.open). With no board open (Home) nothing can be misrouted, so nothing
+  is required.
+- Every reply that ran for an agent carries varos: {board, revision, front, opened}: where it ran,
+  that board's revision now (use it next), the board in front (the person's), and boards the
+  request opened or made.
+
+ERROR CODES (prefix of the error text, "<code>: why. Nothing was run.")
+- board_required: no board named where one must be, or a save/export without its revision, or a
+  tab index given instead of a board (file.close {index}).
+- board_not_found: the board is not open (closed, or not an id).
+- session_reset: the id is from an earlier launch of Varos; call list_boards again.
+- target_changed: (a) a verb that acts on the window (see FRONT-ONLY) names a board that is not the
+  one in front (the person switched tabs); (b) document.activate from an agent (agents never switch
+  the person's tab); (c) after the run: the request left its board for another existing board, or
+  opened a dialog on a board lent the front (the dialog is dismissed).
+- stale_revision: the board changed since the revision given.
+- wrong_board: an object reference of another board.
+- person_busy: the person is dragging, typing or composing (IME) on their board; lending another
+  board the front now would end that gesture (upstream's tab switch finishes the tool's work).
+  Retry in a moment.
+
+HOW THE APP RUNS A REQUEST THAT NAMES A BOARD (ui-egui varos/boards.rs, in drain_control)
+All of this happens inside the one UI-thread turn that handles the request; the person's clicks are
+processed in frames, so no tab switch can come between these steps.
+1. enter: resolve the id (session_reset / board_not_found), check the revision when given and
+   require it for writes (stale_revision / board_required), refuse window verbs on a board not in
+   front (target_changed), refuse while the person's tool is working (person_busy), then lend the
+   board the front with Session::varos_lend_front (sets the active index without
+   reset_tool_for_doc_switch, so the person's tool state is not finished or cancelled) and verify
+   the active uid is the target.
+2. The existing agents::before (actor, write guard, presence) and control::handle run, now on the
+   target (so the write guard's "own file" is the target's file, presence is drawn on the target).
+3. leave: verify the request ended on its board (or a board it opened, or it closed its board) and
+   that it opened no dialog on a lent board; then give the person's board the front back (also
+   after an agent's file.new/open: a new board opens behind the person's; when the person was on
+   Home it stays in front); attach varos {...} to the reply.
+Upstream's `--control` port is unchanged unless a line names a board (then the same steps run,
+without the board_required rule and the tab restore for unlent requests).
+
+FRONT-ONLY VERBS (item 5: where restoring is impossible, and why)
+These act on the window, not on a document, so they can't be run on a board behind the person's:
+- ui.click, ui.drag, ui.key, ui.text, ui.move, ui.wheel: synthetic input is queued and consumed by
+  later frames, after the turn has ended; lending the board for the turn would not cover them.
+- ui.pointer: drives the person's current tool with the view's transform; lending would mix the
+  person's tool state with another board.
+- ui.screenshot: captures the window frames later.
+- ui.dialog.set / confirm / cancel, ui.menu.invoke: dialogs and menus belong to the window.
+MCP tools that use them: pointer_gesture, press_key, type_text, ui_screenshot, invoke_menu, and
+screenshot with window: true. They run only when their board is the one in front, else
+target_changed; the agent asks the person to bring the board to the front or uses a document verb.
+Residual race (honest): for the synthetic-input verbs the check is at request time; the events are
+consumed by the next frame, so a tab click that arrives in that same frame's input could still put
+them on another board. Document verbs have no such window.
+
+MCP SURFACE (`vectorcraft-cli mcp`, crates/mcp)
+- New tools: capabilities (call first: api "varos-boards/1", the rule, error codes with what to do,
+  the front-only and board-free tool lists) and list_boards (board, title, path, dirty, revision,
+  front, artboards; plus top-level front).
+- All tools: `board` and `revision` properties; save_file, export and screenshot descriptions say
+  revision is required; front-only tools say their board must be in front.
+- initialize instructions (Backend::describe of VarosAttach) state the rule.
+- Mapping to the verb names in the brief (they are the pre-fork varos-bridge's): describe/snapshot
+  = doc_inspect / render_preview; edit = command_run / command_batch / draw_* / set_paint / ...;
+  select = command_run select.*; save / save_as = save_file / command_run file.saveAs; export_pdf =
+  export {format: pdf}; list_boards and capabilities are new here.
+- resources/read and completions (no arguments to carry a board) use the board the agent last
+  named in a tool call (a stable id, never the tab in front); before any board was named they get
+  board_required from the app while a board is open.
+- Upstream backends: --headless refuses a `board` (it has no boards); --connect forwards it.
+
+WHAT IS LEFT / RISKS
+- Object references are made from key names (id, ids, created, parent, path, selection, objects,
+  selected) in tool results. An object id under another key in some command's result stays a
+  plain number (it is then taken on the board the call names). vectorcraft://object/{id} resource
+  URIs take plain ids only.
+- The "verify again" step reports a request that ended on another existing board as
+  target_changed but does not roll that back (its steps are in that board's History, tagged with
+  the agent). Known ways to do that (document.activate, file.close {index}) are refused up front.
+- No tab reorder exists in this app yet; id stability is tested across tabs closing (indices
+  shift, ids don't).
+- The installed /Applications/Varos.app (2026-10-10) is the pre-fork build with its own
+  varos-bridge, and ~/.claude.json's `varos` MCP server points at it. If VQA-11 ran against that
+  bridge, this lane does not change it; the fix lives in the fork's `vectorcraft-cli mcp` + app.
+- Not hand-tested in the real window (no GUI here; agents never take over the Mac).
+
+TESTS ADDED
+- crates/ui-egui/src/varos/tests_boards.rs (8, headless app through drain_control):
+  an edit on a background board lands there and the person's tab stays; switching the tab between
+  two queued commands: window verbs abort with target_changed and nothing changes in either board,
+  a document verb still lands on its named board; save/export need board + current revision
+  (missing -> board_required, old -> stale_revision, unknown -> board_not_found, earlier launch ->
+  session_reset, the person's edit makes the agent's revision stale, selecting does not; the file
+  written is the named board's from behind another); no board named -> board_required, lists and
+  file.new exempt (new board opens behind the person's); list_boards ids stable when other tabs
+  close; document.activate / file.close {index} refused, file.close by board closes a background
+  board; person_busy while the person has an interaction; a dialog on a lent board is dismissed.
+- crates/mcp/src/varos_boards.rs (5): every line of a tool carries its board, ids come back as
+  "<board>:<id>", board/revision never reach the command; an id of board A on board B is
+  wrong_board and nothing is sent; without a board the app is asked with none (never the last named
+  board); capabilities/list_boards; the headless backend refuses a board.
+- crates/varos-agents/src/tests.rs (3): board ids and launches, qualify/unqualify, revisions.
+- apps/vectorcraft/src/varos_control.rs: a line's board goes with its actor (and one hidden in the
+  actor is not taken); the real proxy over the real listener carries the target.
+- Existing guarded tests (tests_agents.rs) now name the board in front at its revision, as agents
+  must.
+
+GATES (lane checkout, -j 4, one cargo command at a time)
+- cargo build -j 4 --offline --release -p vectorcraft -p vectorcraft-cli: Finished (9m 14s), 0 warnings.
+- cargo test -j 4 --offline --release -p vectorcraft-mcp -p varos-agents -p vectorcraft -- --test-threads=4:
+  varos_agents 63 passed; vectorcraft (bin) 155 passed; automation_args 5; help 2; vectorcraft_mcp
+  131 passed; automation_roots 4; protocol_props 15; all 0 failed.
+- cargo test -j 4 --offline --release -p vectorcraft-ui-egui --lib -- --test-threads=4: 1894 passed,
+  0 failed, 7 ignored.
+- cargo clippy -j 4 --offline --release -p vectorcraft-mcp -p varos-agents -p vectorcraft
+  -p vectorcraft-ui-egui --all-targets -- -D warnings: clean. Engine: --lib clean; engine
+  --all-targets fails on a pre-existing lint (clippy::chunks_exact... "using chunks_exact with a
+  constant chunk size") in crates/engine/src/cmd/varos_board/tests.rs:26, a file this lane did not
+  touch (last changed in d3e1fec7).
+- cargo fmt --all -- --check: clean. git diff --check: clean.

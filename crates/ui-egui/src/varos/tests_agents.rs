@@ -20,7 +20,7 @@ fn app() -> (VectorcraftApp, Sender<ControlRequest>) {
 /// One request from `actor` (`None`: a client that names none), drained as a frame drains it.
 fn request(app: &mut VectorcraftApp, tx: &Sender<ControlRequest>, actor: Option<Value>, method: &str, params: Value) -> Value {
     let (req, reply) = ControlRequest::new(method, params);
-    tx.send(req.with_actor(actor)).unwrap();
+    tx.send(req.with_actor(on_front(app, actor))).unwrap();
     app.drain_control(&egui::Context::default());
     reply.try_recv().unwrap()
 }
@@ -215,9 +215,23 @@ fn history_rows_name_the_agents_steps() {
     assert_eq!(crate::varos::agents::history_icon(rows.first(), egui::Color32::WHITE), egui::Color32::WHITE);
 }
 
-/// An agent that came in through Varos' always-on port (the transport marks it `guarded`).
+/// An agent that came in through Varos' always-on port (the transport marks it `guarded`),
+/// naming the board in front at its current revision (`"target": "front"`, filled in by
+/// [`on_front`] when the request is sent), as an agent that read the board first does.
 fn guarded() -> Option<Value> {
-    Some(json!({"session": "g1", "profile": "claude-code", "label": "Claude Code", "guarded": true}))
+    Some(json!({"session": "g1", "profile": "claude-code", "label": "Claude Code", "guarded": true, "target": "front"}))
+}
+
+/// `actor` with a `"target": "front"` placeholder made the board in front and its revision.
+pub(super) fn on_front(app: &mut VectorcraftApp, actor: Option<Value>) -> Option<Value> {
+    let mut actor = actor?;
+    if actor.get("target") == Some(&json!("front")) {
+        actor["target"] = match app.session.active().map(|d| (d.uid, d.doc.clone())) {
+            Some((uid, doc)) => json!({"board": varos_agents::boards::board_id(uid), "revision": app.agents.revisions.of(uid, &doc)}),
+            None => Value::Null,
+        };
+    }
+    Some(actor)
 }
 
 #[test]
@@ -473,7 +487,7 @@ fn a_capture_written_later_keeps_its_requests_guard() {
     let mut replies = vec![];
     for _ in 0..2 {
         let (req, reply) = ControlRequest::new("ui.screenshot", json!({"path": s(&shot), "focus": false}));
-        tx.send(req.with_actor(guarded())).unwrap();
+        tx.send(req.with_actor(on_front(&mut app, guarded()))).unwrap();
         replies.push(reply);
     }
     app.drain_control(&egui::Context::default());

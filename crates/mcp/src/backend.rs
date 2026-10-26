@@ -18,6 +18,22 @@ pub trait Backend {
     /// Varos: the client introduced itself (`initialize`'s `clientInfo`); a backend that reaches
     /// the desktop app names the agent to it.
     fn set_client(&mut self, _client_info: &Value) {}
+    /// Varos: the board the next calls act on (`{board, revision?}`, `None`: none named), sent
+    /// with every line (`varos_boards`). A backend that can't target a board refuses one.
+    fn set_target(&mut self, target: Option<Value>) -> Result<(), String> {
+        match target {
+            None => Ok(()),
+            Some(_) => Err("board ids need the desktop Varos (`vectorcraft-cli mcp`); this backend has no boards".into()),
+        }
+    }
+    /// Varos: where the last call ran (`varos: {board, revision, front, opened}` of its reply).
+    fn last_board(&self) -> Value {
+        Value::Null
+    }
+    /// Varos: attached to the desktop Varos, whose boards every call names (`varos_boards`).
+    fn board_scoped(&self) -> bool {
+        false
+    }
 }
 
 /// A running VectorCraft app, reached through its loopback control port.
@@ -32,6 +48,10 @@ pub struct Remote {
     /// Varos: the server key the app must prove it holds on every new connection before anything
     /// else is sent (`varos_agents::auth::handshake`).
     server_key: Option<String>,
+    /// Varos: the board the calls act on, sent with every line (`varos_boards`).
+    target: Option<Value>,
+    /// Varos: the `varos` member of the last reply (where it ran).
+    last_board: Value,
 }
 
 /// Longest accepted control-channel reply line (bytes, without the newline). The app answers
@@ -43,7 +63,16 @@ const MAX_REPLY_BYTES: usize = 256 * 1024 * 1024;
 impl Remote {
     /// Connect to `addr` (e.g. `127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, actor: Value::Null, token: None, server_key: None }; // Varos: actor, token, server_key
+        let mut r = Self {
+            addr: addr.to_string(),
+            conn: None,
+            next_id: 1,
+            actor: Value::Null,
+            token: None,
+            server_key: None,
+            target: None,
+            last_board: Value::Null,
+        }; // Varos: actor, token, server_key, target
         r.reconnect()?;
         Ok(r)
     }
@@ -52,7 +81,16 @@ impl Remote {
     /// reconnect) must first prove it is the Varos whose `server_key` the endpoint file holds;
     /// until it does, nothing (no token, no request) is sent on it.
     pub fn connect_varos(addr: &str, token: String, server_key: String) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, actor: Value::Null, token: Some(token), server_key: Some(server_key) };
+        let mut r = Self {
+            addr: addr.to_string(),
+            conn: None,
+            next_id: 1,
+            actor: Value::Null,
+            token: Some(token),
+            server_key: Some(server_key),
+            target: None,
+            last_board: Value::Null,
+        };
         r.reconnect()?;
         Ok(r)
     }
@@ -177,6 +215,10 @@ impl Backend for Remote {
         if !self.actor.is_null() {
             line["actor"] = self.actor.clone(); // Varos: who is asking
         }
+        if let Some(target) = &self.target {
+            line["target"] = target.clone(); // Varos: the board it acts on
+        }
+        self.last_board = Value::Null; // Varos
         let mut line = line.to_string();
         if let Some(token) = &self.token {
             line = varos_agents::auth::with_token(line, token); // Varos: the endpoint file's token, last on the line
@@ -208,6 +250,7 @@ impl Backend for Remote {
                 self.addr
             ));
         }
+        self.last_board = v.get("varos").cloned().unwrap_or(Value::Null); // Varos: where it ran
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {
@@ -225,5 +268,14 @@ impl Backend for Remote {
 
     fn set_client(&mut self, client_info: &Value) {
         self.actor = crate::varos_actor::actor(client_info); // Varos
+    }
+
+    fn set_target(&mut self, target: Option<Value>) -> Result<(), String> {
+        self.target = target.filter(|t| !t.is_null()); // Varos
+        Ok(())
+    }
+
+    fn last_board(&self) -> Value {
+        self.last_board.clone() // Varos
     }
 }

@@ -49,5 +49,28 @@ pub(crate) fn pdf_document(cmd: &str, doc: &Document, p: &Value) -> Result<Optio
     Ok(Some(output))
 }
 
+impl Session {
+    /// Varos: put the open document with uid `uid` in front for the rest of one agent request
+    /// (and the person's back after it, in the same UI turn), without finishing the tool's work as
+    /// a tab switch does ([`Session::set_active`]): the tool's state stays the person's, on the
+    /// person's document. The host checks first that no tool work is in progress
+    /// ([`Session::tool_busy`], text editing, an open interaction). → `false` when it isn't open.
+    pub fn varos_lend_front(&mut self, uid: u64) -> bool {
+        match self.docs.iter().position(|d| d.uid == uid) {
+            Some(i) => {
+                self.active = Some(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Varos: does the tool hold the person's work in progress (a drag, an open pen path, typing)?
+    /// Then another board must not be lent the front ([`Session::varos_lend_front`]).
+    pub fn varos_tool_working(&self) -> bool {
+        self.tool_busy() || self.tool_wants_text() || self.tool_composing() || self.active().is_some_and(|d| d.interaction.is_some())
+    }
+}
+
 #[cfg(test)]
 mod tests;

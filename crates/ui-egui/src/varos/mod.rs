@@ -1,6 +1,8 @@
 //! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
 // Varos: agents on the same document (identity, history tags, activity, presence).
 pub(crate) mod agents;
+// Varos: agent requests act on the board they name (stable id), never on the tab in front.
+pub(crate) mod boards;
 // Varos: the font menu's Arabic filter, samples and markers.
 pub(crate) mod arabic_fonts;
 pub(crate) mod cursors;
@@ -25,6 +27,8 @@ pub(crate) mod panel_stack;
 pub(crate) mod shortcuts;
 #[cfg(test)]
 mod tests_agents;
+#[cfg(test)]
+mod tests_boards;
 #[cfg(test)]
 mod tests_panel_stack;
 #[cfg(test)]

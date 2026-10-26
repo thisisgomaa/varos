@@ -33,6 +33,12 @@ pub struct VarosAttach {
     dir: Option<PathBuf>,
     remote: Option<Remote>,
     client: Value,
+    /// The board the calls act on (`varos_boards`): `Some` while a tool call names one (or
+    /// explicitly none: `Some(Null)`); `None` outside tool calls (resources, completions), which
+    /// then act on the board the agent last named, never on the tab in front.
+    target: Option<Value>,
+    /// The board the agent last named, without its revision.
+    named: Option<Value>,
 }
 
 impl Default for VarosAttach {
@@ -44,12 +50,12 @@ impl Default for VarosAttach {
 impl VarosAttach {
     /// Attach through the user's agents folder ([`endpoint::dir`]).
     pub fn new() -> Self {
-        Self { dir: endpoint::dir(), remote: None, client: Value::Null }
+        Self { dir: endpoint::dir(), remote: None, client: Value::Null, target: None, named: None }
     }
 
     /// Attach through the endpoint files in `dir` (tests, isolated profiles).
     pub fn in_dir(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: Some(dir.into()), remote: None, client: Value::Null }
+        Self { dir: Some(dir.into()), remote: None, client: Value::Null, target: None, named: None }
     }
 
     /// The attached app, looking it up when none is.
@@ -100,17 +106,48 @@ pub(crate) fn prove_server(reader: &mut impl BufRead, stream: &TcpStream, server
     proved
 }
 
+impl VarosAttach {
+    /// The target each line carries: the tool call's, else the board last named.
+    fn line_target(&self) -> Option<Value> {
+        match &self.target {
+            Some(t) => Some(t.clone()).filter(|t| !t.is_null()),
+            None => self.named.clone(),
+        }
+    }
+}
+
 impl Backend for VarosAttach {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        match self.attached()?.call(method, params.clone()) {
+        let target = self.line_target();
+        let remote = self.attached()?;
+        remote.set_target(target.clone())?;
+        match remote.call(method, params.clone()) {
             // The app quit (or restarted on a new port) since the last call: nothing was sent, so
             // look it up again and send once more.
             Err(e) if e.contains("is not reachable") => {
                 self.remote = None;
-                self.attached()?.call(method, params)
+                let remote = self.attached()?;
+                remote.set_target(target)?;
+                remote.call(method, params)
             }
             other => other,
         }
+    }
+
+    fn set_target(&mut self, target: Option<Value>) -> Result<(), String> {
+        if let Some(board) = target.as_ref().and_then(|t| t.get("board")).filter(|b| !b.is_null()) {
+            self.named = Some(serde_json::json!({ "board": board }));
+        }
+        self.target = target;
+        Ok(())
+    }
+
+    fn last_board(&self) -> Value {
+        self.remote.as_ref().map_or(Value::Null, Backend::last_board)
+    }
+
+    fn board_scoped(&self) -> bool {
+        true
     }
 
     fn has_ui(&self) -> bool {
@@ -118,10 +155,14 @@ impl Backend for VarosAttach {
     }
 
     fn describe(&self) -> String {
-        match &self.remote {
+        let at = match &self.remote {
             Some(r) => format!("Varos at {}", r.addr()),
             None => "Varos (attached on the first call)".into(),
-        }
+        };
+        // The board rule, where every agent reads it (`initialize` instructions).
+        format!(
+            "{at}. Every call is board-scoped: call capabilities, then list_boards, and pass `board` (plus `revision` to save or export) with each call"
+        )
     }
 
     fn set_client(&mut self, client_info: &Value) {

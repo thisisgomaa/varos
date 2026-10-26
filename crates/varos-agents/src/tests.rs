@@ -762,3 +762,74 @@ fn receipts_are_bounded() {
     }
     assert_eq!(r.admit(ActorKey(999), "r1", &json!({})), Err(ReceiptError::TooManyClients));
 }
+
+// ---------------------------------------------------------------- boards
+
+mod boards {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use crate::boards::*;
+
+    #[test]
+    fn board_ids_are_this_launchs_and_survive_round_trips() {
+        let id = board_id(7);
+        assert_eq!(parse_board(&id), Some((launch(), 7)));
+        assert_eq!(resolve(&json!(id)), Ok(7));
+        // Another launch's id is never one of ours, even with the same uid.
+        let other = if launch() == "00000000" { "11111111-7" } else { "00000000-7" };
+        assert!(resolve(&json!(other)).unwrap_err().starts_with(SESSION_RESET));
+        for bad in [json!("7"), json!("tab-1"), json!("zzzzzzzz-1"), json!(format!("{}-", launch())), json!(3)] {
+            let e = resolve(&bad).unwrap_err();
+            assert!(e.starts_with(BOARD_NOT_FOUND) || e.starts_with(BOARD_REQUIRED), "{bad}: {e}");
+        }
+        assert_eq!(code_of(&error(STALE_REVISION, "x")), Some(STALE_REVISION));
+        assert_eq!(code_of("no such object"), None);
+    }
+
+    #[test]
+    fn object_ids_carry_their_board_and_refuse_another() {
+        let (a, b) = (board_id(1), board_id(2));
+        let mut reply = json!({"id": 42, "ids": [1, 2], "created": [5], "layers": [{"id": 3, "name": "L", "children": [{"id": 4, "parent": 3}]}],
+            "nodes": [{"id": 9, "path": [3, 4]}], "path": "/Users/x/a.svg", "count": 2, "command": {"id": "file.save"}});
+        qualify(&mut reply, &a);
+        assert_eq!(reply["id"], json!(format!("{a}:42")));
+        assert_eq!(reply["ids"], json!([format!("{a}:1"), format!("{a}:2")]));
+        assert_eq!(reply["layers"][0]["children"][0]["parent"], json!(format!("{a}:3")));
+        assert_eq!(reply["nodes"][0]["path"][1], json!(format!("{a}:4")));
+        assert_eq!(reply["path"], "/Users/x/a.svg", "a file path is not an id");
+        assert_eq!(reply["count"], 2);
+        assert_eq!(reply["command"]["id"], "file.save", "a command id is not an object id");
+        // Back to plain ids on the board they name.
+        let mut args = json!({"ids": [format!("{a}:1"), format!("{a}:2")], "params": {"id": format!("{a}:42")}, "name": "x:1"});
+        assert_eq!(unqualify(&mut args, Some(&a)), Ok(Some(a.clone())));
+        assert_eq!(args, json!({"ids": [1, 2], "params": {"id": 42}, "name": "x:1"}));
+        // A reference of board A applied to board B.
+        let mut wrong = json!({"ids": [format!("{a}:1")]});
+        assert!(unqualify(&mut wrong, Some(&b)).unwrap_err().starts_with(WRONG_BOARD));
+        // Without a board named, the references imply it, and must agree.
+        let mut implied = json!({"id": format!("{b}:3")});
+        assert_eq!(unqualify(&mut implied, None), Ok(Some(b.clone())));
+        let mut mixed = json!({"ids": [format!("{a}:1"), format!("{b}:1")]});
+        assert!(unqualify(&mut mixed, None).unwrap_err().starts_with(WRONG_BOARD));
+        // Plain numbers pass as they are (the board the call names).
+        let mut plain = json!({"ids": [1]});
+        assert_eq!(unqualify(&mut plain, None), Ok(None));
+    }
+
+    #[test]
+    fn revisions_move_only_with_content() {
+        let mut r = Revisions::default();
+        let d1 = Arc::new(vectorcraft_doc::Document::new(10.0, 10.0));
+        assert_eq!(r.of(1, &d1), 1);
+        assert_eq!(r.of(1, &d1.clone()), 1, "same content (shared value)");
+        let d2 = Arc::new((*d1).clone());
+        assert_eq!(r.of(1, &d2), 2);
+        // Back to the first value (an undo) is a change from what was seen last.
+        assert_eq!(r.of(1, &d1), 3);
+        assert_eq!(r.of(2, &d1), 1, "per board");
+        r.retain(|uid| uid == 2);
+        assert_eq!(r.of(1, &d1), 1, "a closed board starts over");
+    }
+}
