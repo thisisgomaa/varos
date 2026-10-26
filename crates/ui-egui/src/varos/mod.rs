@@ -25,6 +25,8 @@ pub(crate) mod panel_stack;
 #[cfg(test)]
 mod tests_agents;
 #[cfg(test)]
+mod tests_control_bar;
+#[cfg(test)]
 mod tests_panel_stack;
 #[cfg(test)]
 mod tests_text_scale;

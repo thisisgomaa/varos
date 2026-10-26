@@ -32,6 +32,7 @@ pub fn open(app: &mut VectorcraftApp, category: Option<&str>) {
     fields.insert("__smartGuides".into(), json!(app.ui.view.smart_guides));
     fields.insert("__snapToGrid".into(), json!(app.ui.view.snap_to_grid));
     fields.insert("__taskBar".into(), json!(app.ui.task_bar));
+    fields.insert(crate::varos::panel_stack::PREF_KEY.into(), json!(app.ui.varos_panel_stack.enabled)); // Varos
     app.ui.dialog = Some(Dialog { kind: "preferences".into(), fields });
 }
 
@@ -47,6 +48,10 @@ pub fn confirm(app: &mut VectorcraftApp) -> Result<Value, String> {
     app.ui.view.smart_guides = d.fields.get("__smartGuides").and_then(Value::as_bool).unwrap_or(app.ui.view.smart_guides);
     app.ui.view.snap_to_grid = d.fields.get("__snapToGrid").and_then(Value::as_bool).unwrap_or(app.ui.view.snap_to_grid);
     app.ui.task_bar = d.fields.get("__taskBar").and_then(Value::as_bool).unwrap_or(app.ui.task_bar);
+    // Varos: Panel cards on or off.
+    if let Some(on) = d.fields.get(crate::varos::panel_stack::PREF_KEY).and_then(Value::as_bool) {
+        crate::varos::panel_stack::set_enabled(app, on);
+    }
     app.ui.dialog = None;
     app.ui.engine_prefs = app.session.prefs.to_json();
     app.prefs_changed = true;
@@ -286,6 +291,11 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                     // The window's decorations are chosen once, when the app starts.
                     ui.label(egui::RichText::new(tl!("Applies the next time VectorCraft starts.")).color(t.text_dim).size(11.0));
                 }
+            }
+            // Varos: Panel cards (Varos) under Auto-Collapse Iconic Panels, which it sits beside.
+            PrefKind::Bool if sp.key == "autoCollapseIconPanels" => {
+                bool_row(ui, d, sp.key, sp.label);
+                bool_row(ui, d, crate::varos::panel_stack::PREF_KEY, crate::varos::panel_stack::PREF_LABEL);
             }
             PrefKind::Bool => bool_row(ui, d, sp.key, sp.label),
             PrefKind::Num { min, max, unit } => {

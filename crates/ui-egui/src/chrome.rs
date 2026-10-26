@@ -220,7 +220,10 @@ const ARTBOARD_SNAPPING_WIDTH: f32 = 900.0;
 
 /// The Control bar's snapping quick access; every change uses its existing command.
 fn snapping_menu(app: &mut VectorcraftApp, ui: &mut Ui) {
-    ui.menu_button(tl!("Snapping"), |ui| {
+    // Varos: a link label as the bar's other menus ("Stroke:", "Opacity:"), not a framed button.
+    let t = Tokens::get(ui.ctx());
+    let resp = ui.link(egui::RichText::new(tl!("Snapping")).size(12.0).color(t.text).underline());
+    egui::Popup::menu(&resp).show(|ui| {
         for (label, cmd, on) in [
             (tl!("Smart Guides"), "view.smartGuides", app.ui.view.smart_guides),
             (tl!("Snap to Point"), "view.snapToPoint", app.ui.view.snap_to_point),
@@ -458,6 +461,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let (height, title_size) = if app.session.prefs.large_tabs { (44.0, 14.0) } else { (35.0, 12.5) };
     let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    crate::varos::panel_stack::note_tab_strip(ui.ctx(), strip); // Varos: panel cards stay under the document tabs
     ui.painter().rect_filled(strip, 0.0, t.tab_strip);
     ui.painter().line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, t.border));
     // On the Home screen no tab is the current one.
