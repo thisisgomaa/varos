@@ -6,6 +6,35 @@ use std::{
 };
 
 const ORIGINALS: &[(&str, &[u8])] = &[
+    ("varos-linear-gradient", include_bytes!("../../assets/varos/icons/vqa-linear-gradient.svg")),
+    ("varos-broken-link", include_bytes!("../../assets/varos/icons/vqa-broken-link.svg")),
+    ("varos-line-cut", include_bytes!("../../assets/varos/icons/vqa-line-cut.svg")),
+    ("varos-rect-cut", include_bytes!("../../assets/varos/icons/vqa-rect-cut.svg")),
+    ("varos-path-eraser", include_bytes!("../../assets/varos/icons/vqa-path-eraser.svg")),
+    ("varos-columnGraph", include_bytes!("../../assets/varos/icons/vqa-columnGraph.svg")),
+    ("varos-stackedColumnGraph", include_bytes!("../../assets/varos/icons/vqa-stackedColumnGraph.svg")),
+    ("varos-barGraph", include_bytes!("../../assets/varos/icons/vqa-barGraph.svg")),
+    ("varos-stackedBarGraph", include_bytes!("../../assets/varos/icons/vqa-stackedBarGraph.svg")),
+    ("varos-lineGraph", include_bytes!("../../assets/varos/icons/vqa-lineGraph.svg")),
+    ("varos-areaGraph", include_bytes!("../../assets/varos/icons/vqa-areaGraph.svg")),
+    ("varos-scatterGraph", include_bytes!("../../assets/varos/icons/vqa-scatterGraph.svg")),
+    ("varos-pieGraph", include_bytes!("../../assets/varos/icons/vqa-pieGraph.svg")),
+    ("varos-radarGraph", include_bytes!("../../assets/varos/icons/vqa-radarGraph.svg")),
+    ("varos-perspectiveGrid", include_bytes!("../../assets/varos/icons/vqa-perspectiveGrid.svg")),
+    ("varos-perspectiveSelection", include_bytes!("../../assets/varos/icons/vqa-perspectiveSelection.svg")),
+    ("varos-slice", include_bytes!("../../assets/varos/icons/vqa-slice.svg")),
+    ("varos-sliceSelection", include_bytes!("../../assets/varos/icons/vqa-sliceSelection.svg")),
+    ("varos-verticalType", include_bytes!("../../assets/varos/icons/vqa-verticalType.svg")),
+    ("varos-verticalAreaType", include_bytes!("../../assets/varos/icons/vqa-verticalAreaType.svg")),
+    ("varos-verticalTypeOnPath", include_bytes!("../../assets/varos/icons/vqa-verticalTypeOnPath.svg")),
+    ("varos-symbolSprayer", include_bytes!("../../assets/varos/icons/vqa-symbolSprayer.svg")),
+    ("varos-symbolShifter", include_bytes!("../../assets/varos/icons/vqa-symbolShifter.svg")),
+    ("varos-symbolScruncher", include_bytes!("../../assets/varos/icons/vqa-symbolScruncher.svg")),
+    ("varos-symbolSizer", include_bytes!("../../assets/varos/icons/vqa-symbolSizer.svg")),
+    ("varos-symbolSpinner", include_bytes!("../../assets/varos/icons/vqa-symbolSpinner.svg")),
+    ("varos-symbolStainer", include_bytes!("../../assets/varos/icons/vqa-symbolStainer.svg")),
+    ("varos-symbolScreener", include_bytes!("../../assets/varos/icons/vqa-symbolScreener.svg")),
+    ("varos-symbolStyler", include_bytes!("../../assets/varos/icons/vqa-symbolStyler.svg")),
     ("align-center-horizontal", include_bytes!("../../assets/varos/icons/legacy-al-m.svg")),
     ("align-center-vertical", include_bytes!("../../assets/varos/icons/legacy-al-ch.svg")),
     ("align-end-horizontal", include_bytes!("../../assets/varos/icons/legacy-al-b.svg")),
@@ -43,20 +72,20 @@ const ORIGINALS: &[(&str, &[u8])] = &[
     ("dc-ellipse", include_bytes!("../../assets/varos/icons/varos-draw-ellipse.svg")),
     ("dc-fill-none", include_bytes!("../../assets/varos/icons/varos-picker-none.svg")),
     ("dc-folder", include_bytes!("../../assets/varos/icons/folder.svg")),
-    ("dc-grad-linear", include_bytes!("../../assets/varos/icons/varos-picker-gradient.svg")),
-    ("dc-gradient", include_bytes!("../../assets/varos/icons/varos-picker-gradient.svg")),
+    ("dc-grad-linear", include_bytes!("../../assets/varos/icons/vqa-linear-gradient.svg")),
+    ("dc-gradient", include_bytes!("../../assets/varos/icons/vqa-linear-gradient.svg")),
     ("dc-grid-view", include_bytes!("../../assets/varos/icons/layout-grid.svg")),
     ("dc-join", include_bytes!("../../assets/varos/icons/link.svg")),
     ("dc-knife", include_bytes!("../../assets/varos/icons/varos-path-knife.svg")),
     ("dc-line", include_bytes!("../../assets/varos/icons/varos-draw-line.svg")),
-    ("dc-line-cut", include_bytes!("../../assets/varos/icons/varos-path-knife.svg")),
+    ("dc-line-cut", include_bytes!("../../assets/varos/icons/vqa-line-cut.svg")),
     ("dc-list-view", include_bytes!("../../assets/varos/icons/list.svg")),
     ("dc-mask-none", include_bytes!("../../assets/varos/icons/varos-picker-none.svg")),
     ("dc-measure", include_bytes!("../../assets/varos/icons/ruler.svg")),
     ("dc-new-fill", include_bytes!("../../assets/varos/icons/plus.svg")),
     ("dc-new-item", include_bytes!("../../assets/varos/icons/plus.svg")),
     ("dc-new-stroke", include_bytes!("../../assets/varos/icons/plus.svg")),
-    ("dc-path-eraser", include_bytes!("../../assets/varos/icons/varos-path-eraser.svg")),
+    ("dc-path-eraser", include_bytes!("../../assets/varos/icons/vqa-path-eraser.svg")),
     ("dc-pathfinder", include_bytes!("../../assets/varos/icons/varos-path-merge.svg")),
     ("dc-pf-divide", include_bytes!("../../assets/varos/icons/varos-path-divide.svg")),
     ("dc-pf-merge", include_bytes!("../../assets/varos/icons/varos-path-merge.svg")),
@@ -65,7 +94,7 @@ const ORIGINALS: &[(&str, &[u8])] = &[
     ("dc-pf-trim", include_bytes!("../../assets/varos/icons/varos-path-trim.svg")),
     ("dc-polar-grid", include_bytes!("../../assets/varos/icons/varos-draw-polar-grid.svg")),
     ("dc-polygon", include_bytes!("../../assets/varos/icons/varos-draw-polygon.svg")),
-    ("dc-rect-cut", include_bytes!("../../assets/varos/icons/varos-path-knife.svg")),
+    ("dc-rect-cut", include_bytes!("../../assets/varos/icons/vqa-rect-cut.svg")),
     ("dc-rect-grid", include_bytes!("../../assets/varos/icons/layout-grid.svg")),
     ("dc-remove-brush", include_bytes!("../../assets/varos/icons/trash-2.svg")),
     ("dc-reverse", include_bytes!("../../assets/varos/icons/varos-picker-swap.svg")),
@@ -96,7 +125,7 @@ const ORIGINALS: &[(&str, &[u8])] = &[
     ("lasso", include_bytes!("../../assets/varos/icons/lasso.svg")),
     ("layout-grid", include_bytes!("../../assets/varos/icons/layout-grid.svg")),
     ("link", include_bytes!("../../assets/varos/icons/link.svg")),
-    ("link-2-off", include_bytes!("../../assets/varos/icons/link.svg")),
+    ("link-2-off", include_bytes!("../../assets/varos/icons/vqa-broken-link.svg")),
     ("lock", include_bytes!("../../assets/varos/icons/legacy-l-lock.svg")),
     ("lock-open", include_bytes!("../../assets/varos/icons/legacy-l-unlock.svg")),
     ("menu", include_bytes!("../../assets/varos/icons/menu.svg")),
@@ -146,10 +175,12 @@ pub fn source(name: &str) -> Option<egui::ImageSource<'static>> {
 mod tests {
     #[test]
     fn every_override_rasterizes_and_missing_icons_fall_back() {
-        assert_eq!(super::ORIGINALS.len(), 117);
+        assert_eq!(super::ORIGINALS.len(), 146);
         // Optional contact sheet for visual QA, using the same rasterizer as the app.
         let preview = std::env::var_os("VECTORCRAFT_ICON_ATLAS");
-        let mut atlas = preview.as_ref().map(|_| image::RgbaImage::from_pixel(768, 640, image::Rgba([32, 32, 32, 255])));
+        let mut atlas = preview
+            .as_ref()
+            .map(|_| image::RgbaImage::from_pixel(768, (super::ORIGINALS.len().div_ceil(12) * 64) as u32, image::Rgba([32, 32, 32, 255])));
         let mut seen = std::collections::HashSet::new();
         for (index, (name, original)) in super::ORIGINALS.iter().enumerate() {
             assert!(seen.insert(name), "duplicate override: {name}");
@@ -236,6 +267,109 @@ mod tests {
         }
         for name in ["dc-free-transform", "dc-shear", "rotate-ccw", "dc-blend", "dc-width", "wand-sparkles", "dc-para-ltr", "dc-para-rtl"] {
             assert!(super::source(name).is_none(), "{name}: retain upstream");
+        }
+    }
+}
+
+/// A tool variant has its own glyph even when the upstream catalogue shares an icon key.
+pub(crate) fn tool(id: &str, fallback: &str) -> &'static str {
+    match id {
+        "columnGraph" => "varos-columnGraph",
+        "stackedColumnGraph" => "varos-stackedColumnGraph",
+        "barGraph" => "varos-barGraph",
+        "stackedBarGraph" => "varos-stackedBarGraph",
+        "lineGraph" => "varos-lineGraph",
+        "areaGraph" => "varos-areaGraph",
+        "scatterGraph" => "varos-scatterGraph",
+        "pieGraph" => "varos-pieGraph",
+        "radarGraph" => "varos-radarGraph",
+        "perspectiveGrid" => "varos-perspectiveGrid",
+        "perspectiveSelection" => "varos-perspectiveSelection",
+        "slice" => "varos-slice",
+        "sliceSelection" => "varos-sliceSelection",
+        "verticalType" => "varos-verticalType",
+        "verticalAreaType" => "varos-verticalAreaType",
+        "verticalTypeOnPath" => "varos-verticalTypeOnPath",
+        "symbolSprayer" => "varos-symbolSprayer",
+        "symbolShifter" => "varos-symbolShifter",
+        "symbolScruncher" => "varos-symbolScruncher",
+        "symbolSizer" => "varos-symbolSizer",
+        "symbolSpinner" => "varos-symbolSpinner",
+        "symbolStainer" => "varos-symbolStainer",
+        "symbolScreener" => "varos-symbolScreener",
+        "symbolStyler" => "varos-symbolStyler",
+        _ => crate::icons::tool_icon(fallback),
+    }
+}
+
+#[cfg(test)]
+mod variant_tests {
+    #[test]
+    fn vqa_gradient_and_unlink_and_cut_variants_are_distinct() {
+        for family in [vec!["link", "link-2-off"], vec!["dc-knife", "dc-line-cut", "dc-rect-cut"], vec!["eraser", "dc-path-eraser"]] {
+            let mut seen = std::collections::HashSet::new();
+            for name in family {
+                let Some(egui::ImageSource::Bytes { bytes, .. }) = super::source(name) else { panic!("missing {name}") };
+                assert!(seen.insert(bytes.as_ref().to_vec()), "{name} reuses another variant's artwork");
+            }
+        }
+        for name in ["dc-gradient", "link-2-off"] {
+            let Some(egui::ImageSource::Bytes { bytes, .. }) = super::source(name) else { panic!("missing {name}") };
+            for size in [16, 24] {
+                let svg = String::from_utf8_lossy(bytes.as_ref())
+                    .replace("width=\"24\"", &format!("width=\"{size}\""))
+                    .replace("height=\"24\"", &format!("height=\"{size}\""));
+                let image = egui_extras::image::load_svg_bytes(svg.as_bytes(), &Default::default()).unwrap();
+                assert_eq!(image.size, [size, size]);
+                if name == "dc-gradient" && size == 24 {
+                    assert!(image.pixels[10 * 24 + 7].a() < image.pixels[10 * 24 + 17].a(), "a visible left-to-right linear ramp");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tool_variants_have_unique_rasterized_glyphs_at_both_sizes() {
+        for family in [
+            vec![
+                "columnGraph",
+                "stackedColumnGraph",
+                "barGraph",
+                "stackedBarGraph",
+                "lineGraph",
+                "areaGraph",
+                "scatterGraph",
+                "pieGraph",
+                "radarGraph",
+            ],
+            vec![
+                "symbolSprayer",
+                "symbolShifter",
+                "symbolScruncher",
+                "symbolSizer",
+                "symbolSpinner",
+                "symbolStainer",
+                "symbolScreener",
+                "symbolStyler",
+            ],
+            vec!["verticalType", "verticalAreaType", "verticalTypeOnPath"],
+            vec!["perspectiveGrid", "perspectiveSelection"],
+            vec!["slice", "sliceSelection"],
+        ] {
+            let mut seen = std::collections::HashSet::new();
+            for id in family {
+                let name = super::tool(id, "square");
+                assert!(seen.insert(name), "shared variant: {id}");
+                let Some(egui::ImageSource::Bytes { bytes, .. }) = super::source(name) else { panic!("missing {id}") };
+                for size in [16, 24] {
+                    let svg = String::from_utf8_lossy(bytes.as_ref())
+                        .replace("width=\"24\"", &format!("width=\"{size}\""))
+                        .replace("height=\"24\"", &format!("height=\"{size}\""));
+                    let image = egui_extras::image::load_svg_bytes(svg.as_bytes(), &Default::default()).unwrap();
+                    assert_eq!(image.size, [size, size]);
+                    assert!(image.pixels.iter().any(|p| p.a() > 0));
+                }
+            }
         }
     }
 }

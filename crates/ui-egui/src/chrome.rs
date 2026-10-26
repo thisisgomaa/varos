@@ -100,6 +100,8 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 // Keep the title centered only while the interactive groups leave room for it.
                 if title_rect.left() >= menus_end + 8.0 && title_rect.right() <= ui.min_rect().left() - 8.0 {
                     ui.painter().galley(title_rect.min, title, t.text);
+                    ui.interact(title_rect, ui.scope_id().with("varos-build-identity"), Sense::hover())
+                        .on_hover_text(vectorcraft_format::VAROS_IDENTITY); // Varos
                 }
             }
         });
@@ -124,8 +126,8 @@ pub fn system_title_bar(app: &VectorcraftApp) -> bool {
 pub fn window_title(app: &VectorcraftApp) -> String {
     app.session
         .active()
-        .map(|d| format!("{}{} \u{2014} {}", if d.is_dirty() { "*" } else { "" }, d.title(), crate::brand::APP_NAME))
-        .unwrap_or_else(|| crate::brand::APP_NAME.into())
+        .map(|d| format!("{}{} \u{2014} {}", if d.is_dirty() { "*" } else { "" }, d.title(), vectorcraft_format::VAROS_IDENTITY))
+        .unwrap_or_else(|| vectorcraft_format::VAROS_IDENTITY.into()) // Varos: shared build identity.
 }
 
 /// Keep the OS window title (and the taskbar / Alt-Tab entry) on the active file. Sends
@@ -418,6 +420,10 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         }
                     }
                 }
+                // Varos: shared Make/Release; preserve upstream fields on narrow control bars.
+                if ui.available_width() >= 164.0 {
+                    crate::varos::clipping::button(app, ui);
+                }
             });
         });
 }
@@ -440,6 +446,7 @@ const CLOSE_BEFORE_TITLE: bool = cfg!(target_os = "macos");
 
 /// The first of tabs `widths` wide that the strip shows in `room`: the first one, or a later one so
 /// that the `active` tab fits.
+#[cfg(test)] // Varos: production navigation has persistent scroll state.
 fn first_tab_shown(widths: &[f32], active: Option<usize>, room: f32) -> usize {
     let Some(a) = active else { return 0 };
     let mut first = 0;
@@ -476,18 +483,32 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         .collect();
     let widths: Vec<f32> = tabs.iter().map(|(_, g)| g.size().x + 50.0).collect();
     let overflow = widths.iter().sum::<f32>() > strip.width();
-    let room = strip.width() - if overflow { MORE } else { 0.0 };
-    let first = if overflow { first_tab_shown(&widths, active, room) } else { 0 };
+    // Varos: explicit overflow navigation, with automatic reveal on activation/resize.
+    let room = (strip.width() - if overflow { 3.0 * MORE } else { 0.0 }).max(1.0);
+    let mut step = 0;
+    if overflow {
+        for (offset, icon, delta, tip) in [(3.0, "chevron-left", -1, "Previous document tabs"), (2.0, "chevron-right", 1, "Next document tabs")] {
+            let r = egui::Rect::from_min_size(egui::pos2(strip.right() - offset * MORE, strip.top()), vec2(MORE, height - 1.0));
+            let resp = ui.interact(r, ui.scope_id().with(icon), Sense::click());
+            icons::paint(ui, icon, r.shrink(8.0), t.text);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip)); // Varos: accessible overflow navigation.
+            if resp.on_hover_text(tip).clicked() {
+                step = delta;
+            }
+        }
+    }
+    let first = if overflow { crate::varos::tab_scroll::first(ui, &widths, active, app.session.active().map(|s| s.uid), room, step) } else { 0 };
     let mut x = strip.left();
     let mut activate = None;
     let mut close = None;
     let mut hovering_art = false;
     for (i, ((_, galley), w)) in tabs.iter().zip(&widths).enumerate().skip(first) {
-        if x + w > strip.left() + room && Some(i) != active {
+        let w = w.min(room); // Varos: even a single oversized title remains reachable.
+        if x + w > strip.left() + room && i != first {
             break;
         }
         let is_active = Some(i) == active;
-        let r = egui::Rect::from_min_size(egui::pos2(x, strip.top()), vec2(*w, strip.height() - 1.0));
+        let r = egui::Rect::from_min_size(egui::pos2(x, strip.top()), vec2(w, strip.height() - 1.0));
         let resp = ui.interact(r, ui.scope_id().with(("tab", i)), Sense::click());
         if is_active {
             ui.painter().rect_filled(r, 0.0, t.panel);
@@ -501,7 +522,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         let xr = egui::Rect::from_center_size(egui::pos2(x_center, r.center().y), vec2(12.0, 12.0));
         let xresp = ui.interact(xr.expand(3.0), ui.scope_id().with(("tabx", i)), Sense::click());
         icons::paint(ui, "x", xr, if xresp.hovered() { t.text_strong } else { t.text });
-        ui.painter().galley(egui::pos2(title_left, r.center().y - galley.size().y / 2.0), galley.clone(), t.text);
+        ui.painter().with_clip_rect(r.intersect(strip)).galley(egui::pos2(title_left, r.center().y - galley.size().y / 2.0), galley.clone(), t.text); // Varos: bounded long titles.
         hovering_art |= crate::document_drag::hover_tab(app, &resp, i, xr.expand(3.0));
         if xresp.clicked() {
             close = Some(i);
@@ -880,7 +901,7 @@ fn status_readouts(app: &VectorcraftApp, ui: &mut Ui, t: &Tokens) {
         .collect();
     // Reserve the spinner's space while idle too: starting a background job changes the text,
     // not its origin. Messages take priority over optional readouts in a narrow window.
-    let message = if let Some(job) = busy.first() {
+    let mut message = if let Some(job) = busy.first() {
         let spinner = egui::Rect::from_center_size(egui::pos2(area.left() + 6.0, area.center().y), vec2(12.0, 12.0));
         ui.put(spinner, egui::Spinner::new().size(12.0).color(t.accent));
         let label = crate::i18n::msg(job);
@@ -889,6 +910,11 @@ fn status_readouts(app: &VectorcraftApp, ui: &mut Ui, t: &Tokens) {
     } else {
         crate::i18n::msg(&app.ui.status)
     };
+    // Varos: keep the hidden-edge explanation visible, including during background work.
+    if !app.ui.view.edges && app.session.active().is_some_and(|s| !s.selection.is_empty()) {
+        let hint = "Edges hidden — ⌘H to show";
+        message = if message.is_empty() { hint.into() } else { format!("{hint} · {message}") };
+    }
     if !message.is_empty() {
         let rect = egui::Rect::from_min_max(egui::pos2((area.left() + 18.0).min(right), area.top()), egui::pos2(right, area.bottom()));
         status_field(ui, "message", rect, message, egui::FontId::proportional(11.0), t.text);
@@ -1221,6 +1247,21 @@ mod tests {
         clip: egui::Rect,
         bounds: egui::Rect,
         elided: bool,
+    }
+
+    #[test]
+    fn varos_hidden_edges_hint_tracks_selection_and_menu_check() {
+        let (mut app, ctx) = status_readout_app();
+        app.run("shape.rectangle", json!({"x":0,"y":0,"width":10,"height":10})).unwrap();
+        app.select_tool("directSelection");
+        app.run("view.edges", json!({})).unwrap();
+        assert_eq!(crate::menus::checked(&app, "view.edges", &json!({})), Some(true));
+        let texts = status_readout_frame(&mut app, &ctx, 1800.);
+        assert!(texts.iter().any(|t| t.text.contains("Edges hidden")));
+        app.run("select.set", json!({"ids":[]})).unwrap();
+        assert!(!status_readout_frame(&mut app, &ctx, 1800.).iter().any(|t| t.text.contains("Edges hidden")));
+        app.run("view.edges", json!({})).unwrap();
+        assert!(!status_readout_frame(&mut app, &ctx, 1800.).iter().any(|t| t.text.contains("Edges hidden")));
     }
 
     /// Collect status-bar text layout from a headless frame without pointer events.
@@ -2177,17 +2218,17 @@ mod tests {
 
     #[test]
     fn window_title_with_no_document_is_the_app_name() {
-        assert_eq!(super::window_title(&title_test_app(true)), "Varos");
+        assert_eq!(super::window_title(&title_test_app(true)), vectorcraft_format::VAROS_IDENTITY);
     }
 
     #[test]
     fn window_title_follows_the_active_file() {
         let mut app = title_test_app(true);
         app.run("file.new", json!({"width": 100, "height": 100, "name": "foo.svg"})).unwrap();
-        assert_eq!(super::window_title(&app), "foo.svg \u{2014} Varos");
+        assert_eq!(super::window_title(&app), format!("foo.svg — {}", vectorcraft_format::VAROS_IDENTITY));
         // Unsaved changes gain a `*` prefix, like the `*` in the document tabs.
         app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
-        assert_eq!(super::window_title(&app), "*foo.svg \u{2014} Varos");
+        assert_eq!(super::window_title(&app), format!("*foo.svg — {}", vectorcraft_format::VAROS_IDENTITY));
     }
 
     #[test]
@@ -2221,11 +2262,11 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         super::sync_window_title(&mut app, &ctx);
-        assert_eq!(app.last_window_title, "Varos");
+        assert_eq!(app.last_window_title, vectorcraft_format::VAROS_IDENTITY);
         let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
         out.textures_delta.clear();
         let cmds = out.viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
-        assert!(cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(t) if t == "Varos")), "{cmds:?}");
+        assert!(cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(t) if t == vectorcraft_format::VAROS_IDENTITY)), "{cmds:?}");
         // Same document state again: the cached title stops a repeat command.
         super::sync_window_title(&mut app, &ctx);
         let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
@@ -2234,7 +2275,7 @@ mod tests {
         assert!(!cmds.iter().any(|c| matches!(c, egui::ViewportCommand::Title(_))), "repeat Title: {cmds:?}");
         app.run("file.new", json!({"width": 100, "height": 100, "name": "foo.svg"})).unwrap();
         super::sync_window_title(&mut app, &ctx);
-        assert_eq!(app.last_window_title, "foo.svg \u{2014} Varos");
+        assert_eq!(app.last_window_title, format!("foo.svg — {}", vectorcraft_format::VAROS_IDENTITY));
     }
     /// Draw actual tabs, including the same per-frame view synchronization as the app.
     fn artboard_document_tabs_frame(app: &mut crate::VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<egui::Rect> {

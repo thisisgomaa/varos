@@ -416,6 +416,8 @@ fn drag_of(e: &Entry, names: Vec<String>) -> PanelDrag {
 /// What the tiles or rows saw this frame.
 #[derive(Default)]
 struct TileEvents {
+    // Varos: explicit non-modal Gradient action on a gradient swatch's context menu.
+    gradient: Option<Entry>,
     clicked: Option<(Entry, egui::Modifiers)>,
     /// Double-click opens the swatch's editor (Swatch Options, Gradient panel or pattern editing),
     /// or Edit or Apply Color Group on a colour group.
@@ -430,6 +432,10 @@ struct TileEvents {
 /// starts a [`PanelDrag`] carrying the rows it moves; see [`tile_drop`] for drags held over it.
 fn tile_input(ui: &Ui, resp: Response, e: &Entry, items: &[Entry], sel: &[String], list: bool, ev: &mut TileEvents) {
     let name = e.name();
+    // Varos: keep Swatch Options on double-click; expose the Gradient panel explicitly.
+    if matches!(e, Entry::Swatch { paint: Paint::Gradient(_), .. }) && crate::varos::picker::gradient_menu(&resp) {
+        ev.gradient = Some(e.clone());
+    }
     if matches!(e, Entry::Swatch { .. } | Entry::Folder(_)) && resp.double_clicked() {
         ev.edit = Some(e.clone());
     }
@@ -757,6 +763,11 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, salt: &'static str) {
             app.run("ui.swatchOptions", json!({"name": e.name()})).ok();
         }
         None => {}
+    }
+    if let Some(e) = ev.gradient {
+        // Varos: the panel edits this swatch on the focused Fill/Stroke target.
+        apply(app, ui, &e);
+        crate::varos::picker::open_gradient(app);
     }
     if let Some(drop) = ev.drop {
         apply_drop(app, drop);
@@ -1357,6 +1368,45 @@ mod tests {
 
     fn dialog_frame(app: &mut VectorcraftApp, ctx: &egui::Context) {
         frame(app, ctx, vec![], 2.0, |app, ui| crate::dialogs::show(app, ui.ctx()));
+    }
+
+    // Varos: the real gradient swatch context action applies the swatch and opens a panel.
+    #[test]
+    fn varos_gradient_swatch_context_opens_panel_without_modal() {
+        let mut app = app();
+        let ctx = context();
+        frame(&mut app, &ctx, vec![], 0., show);
+        let at = ctx.read_response(egui::Id::unique(("swatch-tile", "Sunset"))).unwrap().rect.center();
+        let button = |pos, kind, pressed| Event::PointerButton { pos, button: kind, pressed, modifiers: Modifiers::NONE };
+        frame(
+            &mut app,
+            &ctx,
+            vec![Event::PointerMoved(at), button(at, PointerButton::Secondary, true), button(at, PointerButton::Secondary, false)],
+            1.,
+            show,
+        );
+        let output = ctx.run_ui(
+            egui::RawInput { time: Some(2.), screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(280., 700.))), ..Default::default() },
+            |ui| show(&mut app, ui),
+        );
+        let at = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.text() == "Gradient…" => Some(t.visual_bounding_rect().center()),
+                _ => None,
+            })
+            .expect("Gradient context menu item");
+        frame(
+            &mut app,
+            &ctx,
+            vec![Event::PointerMoved(at), button(at, PointerButton::Primary, true), button(at, PointerButton::Primary, false)],
+            3.,
+            show,
+        );
+        assert!(app.ui.dialog.is_none());
+        assert!(crate::varos::panel_stack::is_open(&app, "gradient") || crate::panel_docking::showing(&app.ui, "gradient"));
+        assert!(matches!(app.session.paint.fill, Paint::Gradient(_)));
     }
 
     #[test]

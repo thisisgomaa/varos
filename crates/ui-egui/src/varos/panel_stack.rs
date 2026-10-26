@@ -26,7 +26,7 @@
 //! (wider too when a row of the panel doesn't fit its default width).
 //!
 //! Panels put together as tabs of one card stay together ([`PanelStack::groups`]): the card closed
-//! by its ×, any of its panels opened again opens the whole card, with the same tabs, the same tab
+//! by its ×, any of its panels opened again opens the whole card, with the same tabs, the requested tab
 //! in front, where it was. A tab closed alone (by its icon) opens again in its card.
 //!
 //! A shortcut or an agent's `window.panel` on a card already open only shows it (it never closes
@@ -479,7 +479,7 @@ fn opened(app: &mut VectorcraftApp, lead: &str, id: &'static str, fresh: Option<
 }
 
 /// Open panel `id` with the panels it was grouped with (`group`): as a tab of their card when one
-/// of them is open, else as their card again, its tabs in their order with the same one in front.
+/// of them is open, else as their card again, its tabs in their order with the requested panel in front.
 /// None when nothing of the group is left to open with it (it opens alone).
 fn reopen(app: &mut VectorcraftApp, id: &'static str, group: &Group) -> Option<bool> {
     if let Some(k) = group.panels.iter().filter(|p| *p != id).find_map(|p| card_index(app, p)) {
@@ -501,7 +501,7 @@ fn reopen(app: &mut VectorcraftApp, id: &'static str, group: &Group) -> Option<b
         return None;
     }
     let (rect, fresh) = spot(app, id);
-    let active = members.iter().position(|p| *p == group.active).or_else(|| members.iter().position(|p| *p == id)).unwrap_or(0);
+    let active = members.iter().position(|p| *p == id).or_else(|| members.iter().position(|p| *p == group.active)).unwrap_or(0);
     let mut card = Card { panels: members.iter().map(|p| p.to_string()).collect(), active, rect: [0.0; 4] };
     card.set_area(rect);
     let lead = card.first().to_string();
@@ -1217,7 +1217,7 @@ fn preview(ctx: &egui::Context, zone: Rect) {
 }
 
 /// The card led by `first` was let go at `at`: group it, dock it, close it, or leave it there.
-fn let_go(app: &mut VectorcraftApp, ctx: &egui::Context, first: &str, at: Pos2) {
+pub(crate) fn let_go(app: &mut VectorcraftApp, ctx: &egui::Context, first: &str, at: Pos2) {
     let Some(target) = target(app, ctx, first, at) else { return };
     let Some(k) = led_by(app, first) else { return };
     match target {
@@ -1233,6 +1233,9 @@ fn let_go(app: &mut VectorcraftApp, ctx: &egui::Context, first: &str, at: Pos2) 
             }
         }
         Target::Dock(anchor, _) => {
+            // A multi-tab card is one gesture: failed docking must not lose the card or
+            // leave half its tabs docked. craft-ui transactions cover one action only.
+            let before = app.ui.clone();
             remember(app);
             let moved = app.ui.varos_panel_stack.live.remove(k);
             for p in &moved.panels {
@@ -1242,9 +1245,19 @@ fn let_go(app: &mut VectorcraftApp, ctx: &egui::Context, first: &str, at: Pos2) 
                     placement: craft_ui::docking::Placement::Tab { before: None },
                 };
                 let action = serde_json::to_value(action).unwrap_or_default();
-                if let Some(Err(error)) = crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action })) {
-                    app.ui.status = error;
+                match crate::panel_docking::command(app, "window.panel.layout", &json!({ "action": action })) {
+                    Some(Ok(_)) => {}
+                    failure => {
+                        app.ui = before;
+                        app.ui.status = failure.and_then(Result::err).unwrap_or_else(|| "Panel docking is unavailable".into());
+                        return;
+                    }
                 }
+            }
+            if let Err(error) = crate::panel_docking::layout_of(&app.ui).validate() {
+                app.ui = before;
+                app.ui.status = error.to_string();
+                return;
             }
         }
         Target::Icons(_) => close_card(app, first),

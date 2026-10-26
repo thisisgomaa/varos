@@ -13,7 +13,7 @@ fn table() -> &'static SvgIconSet {
 }
 
 pub fn exists(name: &str) -> bool {
-    table().contains(name)
+    table().contains(name) || crate::varos::icons::source(name).is_some() // Varos: additive variant glyphs.
 }
 
 /// Map tool-catalogue icon names to SVG files.
