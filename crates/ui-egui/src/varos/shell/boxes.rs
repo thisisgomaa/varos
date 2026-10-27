@@ -1,21 +1,23 @@
 //! Box painting: an ordinary box (its tab row, its ≡ menu and its front panel's body) and the
 //! Board (the canvas). Flat: an 8-point box on the seam, a 1-point hairline, no shadow; azure is
-//! never used here (the front tab is lit, not coloured).
+//! never used here (the front tab is lit, not coloured). A tab pill is also where a tab is dragged
+//! from ([`super::drag`]) and double-clicked to collapse its box to its tab row.
 
 use egui::{Align, CornerRadius, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use super::Hit;
+use super::drag::{self, Item};
 use super::tree::PanelBox;
 use crate::VectorcraftApp;
 use crate::state::DockTab;
 use crate::theme::Tokens;
 
 /// The tab row's height.
-pub(crate) const HEADER: f32 = 32.0;
+pub(crate) const HEADER: f32 = super::tree::ROW;
 /// A box's corner radius.
 pub(crate) const RADIUS: u8 = 8;
 /// A tab pill's height (a capsule: its radius is half of it).
-const PILL_H: f32 = 22.0;
+pub(crate) const PILL_H: f32 = 22.0;
 /// Room left and right of a tab's label inside its pill.
 const PILL_PAD: f32 = 10.0;
 /// Between two pills.
@@ -33,6 +35,10 @@ const CONTROL_RADIUS: u8 = 3;
 pub(crate) struct TabRow {
     /// The tab clicked (its index), if any.
     pub clicked: Option<usize>,
+    /// The tab double-clicked (its index), if any.
+    pub double_clicked: Option<usize>,
+    /// The tab whose drag began this frame (its index), if any.
+    pub drag_started: Option<usize>,
     /// Each tab's pill, in order.
     pub tabs: Vec<Rect>,
 }
@@ -70,14 +76,16 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
 /// Draw a tab row in `row`: `tabs` (panel id, label) as capsule pills from the left, the front one
 /// lit (a brighter fill, semibold text); narrower than their labels when they don't all fit
 /// (labels are cut). A click switches at once: the clicked pill is painted in front on the very
-/// frame of the click. Stage 3 drags tabs by these same pills.
+/// frame of the click. Tabs are dragged and double-clicked by these same pills.
 pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> TabRow {
     let painter = ui.painter().clone();
     // The pills where they were drawn (with the old front tab) take the input…
     let before = pills(&painter, tabs, active, row, t);
     let responses: Vec<egui::Response> =
-        tabs.iter().zip(&before).map(|((panel, _), (pill, _))| ui.interact(*pill, tab_id(panel), Sense::click())).collect();
+        tabs.iter().zip(&before).map(|((panel, _), (pill, _))| ui.interact(*pill, tab_id(panel), Sense::click_and_drag())).collect();
     let clicked = responses.iter().position(|r| r.clicked()).filter(|i| *i != active);
+    let double_clicked = responses.iter().position(egui::Response::double_clicked);
+    let drag_started = responses.iter().position(egui::Response::drag_started);
     // … and the row is painted with the front tab that input leaves.
     let front_tab = clicked.unwrap_or(active);
     let after = if clicked.is_some() { pills(&painter, tabs, front_tab, row, t) } else { before };
@@ -98,7 +106,7 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
         painter.with_clip_rect(clip).galley(at, galley.clone(), text);
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, galley.text()));
     }
-    TabRow { clicked, tabs: after.into_iter().map(|(pill, _)| pill).collect() }
+    TabRow { clicked, double_clicked, drag_started, tabs: after.into_iter().map(|(pill, _)| pill).collect() }
 }
 
 /// Panel `id`'s tab label: its library's name, or its translated name.
@@ -138,17 +146,30 @@ pub(crate) fn board(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, fra
 pub(crate) enum Ask {
     /// Close its panel `0` (the ≡ menu's Close Panel).
     Close(String),
+    /// Collapse box `0` to its tab row, or show it whole again (a double-click on a tab).
+    Collapse(u32),
 }
 
-/// Draw ordinary box `b` in `rect`: tab row, ≡, the front panel's body. Its controls go to `hits`.
-pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, b: &PanelBox, rect: Rect, hits: &mut Vec<(Hit, Rect)>) -> Option<Ask> {
+/// Draw ordinary box `b` in `rect`: tab row, ≡, the front panel's body (none while it is collapsed).
+/// Its controls go to `hits`. `floating`: a floating panel's box ([`super::floats`]), which draws
+/// its own frame and publishes its own whole rect.
+pub(crate) fn show(
+    app: &mut VectorcraftApp,
+    ui: &mut egui::Ui,
+    b: &PanelBox,
+    rect: Rect,
+    floating: bool,
+    hits: &mut Vec<(Hit, Rect)>,
+) -> Option<Ask> {
     if !rect.is_positive() {
         return None;
     }
     let t = Tokens::get(ui.ctx());
     let painter = ui.painter().clone();
     painter.rect_filled(rect, CornerRadius::same(RADIUS), t.panel);
-    hits.push((Hit::Box(b.id), rect));
+    if !floating {
+        hits.push((Hit::Box(b.id), rect));
+    }
     let head = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + HEADER).min(rect.bottom())));
     let menu = Rect::from_min_size(pos2(head.right() - PAD - MENU.x, head.center().y - MENU.y / 2.0), MENU);
     let row = Rect::from_min_max(pos2(head.left() + PAD, head.top()), pos2((menu.left() - PAD).max(head.left() + PAD), head.bottom()));
@@ -159,16 +180,21 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, b: &PanelBox, re
     for ((panel, _), pill) in tabs.iter().zip(&out.tabs) {
         hits.push((Hit::Tab { box_id: b.id, panel: panel.clone() }, *pill));
     }
+    if let Some(i) = out.drag_started
+        && let (Some((panel, _)), Some(pill)) = (tabs.get(i), out.tabs.get(i))
+    {
+        drag::begin(app, ui.ctx(), Item::Tab(panel.clone()), *pill);
+    }
     // A click switches before the body is drawn: the new panel shows in the same frame.
     let active = match out.clicked {
         Some(i) => {
-            app.ui.varos_shell.tree.set_active(b.id, i);
+            app.ui.varos_shell.set_active(b.id, i);
             i
         }
         None => active,
     };
     let front = tabs.get(active).map(|(p, _)| p.clone());
-    let mut ask = None;
+    let mut ask = out.double_clicked.map(|_| Ask::Collapse(b.id));
     if let Some(front) = &front {
         hits.push((Hit::Menu(b.id), menu));
         if menu_button(app, ui, menu, b.id, front, &t) {
@@ -177,7 +203,10 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, b: &PanelBox, re
     }
     painter.hline((rect.left() + 1.0)..=(rect.right() - 1.0), head.bottom() - 0.5, Stroke::new(1.0, t.border));
     let inner = Rect::from_min_max(pos2(rect.left() + 1.0, head.bottom()), pos2(rect.right() - 1.0, rect.bottom() - 1.0));
+    // A collapsed box is laid out as its tab row alone (one with nothing to take its room shows
+    // whole), so the rect says whether the body shows.
     if let Some(front) = &front
+        && rect.height() > HEADER + 0.5
         && inner.is_positive()
     {
         let mut child =
@@ -185,7 +214,9 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, b: &PanelBox, re
         child.set_clip_rect(inner.intersect(ui.clip_rect()));
         body(app, &mut child, front);
     }
-    frame(&painter, rect, &t);
+    if !floating {
+        frame(&painter, rect, &t);
+    }
     ask
 }
 

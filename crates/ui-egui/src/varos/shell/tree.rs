@@ -18,6 +18,8 @@ pub(crate) const BOX_MIN: Vec2 = vec2(190.0, 120.0);
 pub(crate) const BOARD_MIN: Vec2 = vec2(240.0, 180.0);
 /// The Board's share of the window's width in the default layout.
 pub(crate) const BOARD_RATIO: f32 = 0.72;
+/// A box collapsed to its tab row ([`PanelBox::collapsed`]) is this tall: the tab row's height.
+pub(crate) const ROW: f32 = 32.0;
 /// No ratio is stored outside this range (a hand-edited file, a NaN).
 const RATIO_RANGE: std::ops::RangeInclusive<f32> = 0.02..=0.98;
 
@@ -52,6 +54,10 @@ pub struct PanelBox {
     /// The tab in front.
     #[serde(default)]
     pub active: usize,
+    /// Shown as its tab row only (a double-click on a tab); its sibling takes the rest. Never the
+    /// Board.
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
 impl PanelBox {
@@ -65,7 +71,18 @@ impl PanelBox {
     }
 
     fn min_size(&self) -> Vec2 {
-        if self.is_board() { BOARD_MIN } else { BOX_MIN }
+        if self.is_board() {
+            BOARD_MIN
+        } else if self.collapsed {
+            vec2(BOX_MIN.x, ROW)
+        } else {
+            BOX_MIN
+        }
+    }
+
+    /// Drawn as its tab row only.
+    pub(crate) fn is_collapsed(&self) -> bool {
+        self.collapsed && !self.is_board()
     }
 }
 
@@ -125,7 +142,7 @@ fn free_id(used: &[u32]) -> u32 {
 }
 
 fn leaf(id: u32, tabs: &[&str]) -> Node {
-    Node::Leaf(PanelBox { id, tabs: tabs.iter().map(|t| (*t).to_string()).collect(), active: 0 })
+    Node::Leaf(PanelBox { id, tabs: tabs.iter().map(|t| (*t).to_string()).collect(), active: 0, collapsed: false })
 }
 
 fn split(axis: Axis, ratio: f32, a: Node, b: Node) -> Node {
@@ -273,7 +290,7 @@ impl Node {
         let new_id = self.next_id();
         self.take_tab(panel);
         let ratio = if ratio.is_finite() { ratio.clamp(*RATIO_RANGE.start(), *RATIO_RANGE.end()) } else { 0.5 };
-        let fresh = Node::Leaf(PanelBox { id: new_id, tabs: vec![panel.to_string()], active: 0 });
+        let fresh = Node::Leaf(PanelBox { id: new_id, tabs: vec![panel.to_string()], active: 0, collapsed: false });
         let done = self.replace_leaf(id, &mut |old| {
             if after { split(axis, 1.0 - ratio, old, fresh.clone()) } else { split(axis, ratio, fresh.clone(), old) }
         });
@@ -322,9 +339,49 @@ impl Node {
         true
     }
 
+    /// Show box `id` as its tab row only, or whole again. False for the Board, no such box, or a
+    /// box with nothing above or below it to take its room (beside the Board alone, say): it
+    /// would leave a hole, so it stays whole.
+    pub fn toggle_collapsed(&mut self, id: u32) -> bool {
+        let Some(b) = self.box_mut_rec(id).filter(|b| !b.is_board()) else { return false };
+        b.collapsed = !b.collapsed;
+        if b.collapsed && !self.shows_collapsed(id) {
+            self.expand(id);
+            return false;
+        }
+        true
+    }
+
+    /// Is box `id` laid out as its tab row only (collapsed, and another box takes its room).
+    pub(crate) fn shows_collapsed(&self, id: u32) -> bool {
+        let big = Rect::from_min_size(pos2(0.0, 0.0), vec2(8000.0, 8000.0));
+        self.find_box(id).is_some_and(|b| b.collapsed) && self.layout(big).boxes.iter().any(|(b, r)| *b == id && r.height() <= ROW + 0.5)
+    }
+
+    /// Show box `id` whole (a panel in it asked for by the Window menu).
+    pub fn expand(&mut self, id: u32) {
+        if let Some(b) = self.box_mut_rec(id) {
+            b.collapsed = false;
+        }
+    }
+
+    /// The height this node needs when it is all collapsed boxes (their tab rows, stacked or side
+    /// by side); `None` when some box in it is whole.
+    fn collapsed_height(&self) -> Option<f32> {
+        match self {
+            Node::Leaf(b) => b.is_collapsed().then_some(ROW),
+            Node::Split { axis, a, b, .. } => {
+                let (a, b) = (a.collapsed_height()?, b.collapsed_height()?);
+                Some(match axis {
+                    Axis::Vertical => a + SEAM + b,
+                    Axis::Horizontal => a.max(b),
+                })
+            }
+        }
+    }
+
     /// What must always hold: one Board, each panel once, no empty box, unique non-zero ids, every
-    /// front tab in range.
-    #[cfg(test)]
+    /// front tab in range. Checked by the tests and, in debug builds, after every drop.
     pub(crate) fn invariants(&self) -> Result<(), String> {
         let boxes = self.boxes();
         let boards = boxes.iter().filter(|b| b.is_board()).count();
@@ -451,18 +508,33 @@ impl Node {
     /// kept within both sides' minimum sizes; positions are whole points.
     pub fn layout(&self, rect: Rect) -> Layout {
         let mut out = Layout::default();
-        self.place(rect, &mut Vec::new(), &mut out);
+        self.place(rect, false, &mut Vec::new(), &mut out);
         out
     }
 
-    fn place(&self, rect: Rect, path: &mut Path, out: &mut Layout) {
+    /// Place this node in `rect`. `shrink`: its parent gives the room it doesn't need to a
+    /// sibling, so a collapsed part of it takes only its rows; else it fills `rect` (a collapsed box
+    /// with nothing to take its room shows whole rather than leave a hole).
+    fn place(&self, rect: Rect, shrink: bool, path: &mut Path, out: &mut Layout) {
         match self {
+            // A collapsed box is its tab row at the top of its room.
+            Node::Leaf(b) if b.is_collapsed() && shrink => {
+                out.boxes.push((b.id, Rect::from_min_size(rect.min, vec2(rect.width(), ROW.min(rect.height())))))
+            }
             Node::Leaf(b) => out.boxes.push((b.id, rect)),
             Node::Split { axis, ratio, a, b, .. } => {
                 let extent = axis.of(rect.size());
                 let room = (extent - SEAM).max(0.0);
                 let r = self.clamp_ratio(&[], *ratio, extent);
-                let a_len = (room * r).round();
+                // Stacked under or over collapsed boxes, the other side takes all the room but
+                // their rows; both collapsed, the lower one fills unless this split shrinks too.
+                let (a_len, shrink_a, shrink_b) = match (axis, a.collapsed_height(), b.collapsed_height()) {
+                    (Axis::Vertical, Some(h), None) => (h.min(room), true, false),
+                    (Axis::Vertical, None, Some(h)) => ((room - h).max(0.0), false, true),
+                    (Axis::Vertical, Some(h), Some(_)) => (h.min(room), true, shrink),
+                    (Axis::Horizontal, Some(_), Some(_)) => ((room * r).round(), shrink, shrink),
+                    _ => ((room * r).round(), false, false),
+                };
                 let (ra, seam, rb) = match axis {
                     Axis::Horizontal => {
                         let x = rect.left() + a_len;
@@ -483,10 +555,10 @@ impl Node {
                 };
                 out.dividers.push(Divider { path: path.clone(), axis: *axis, rect: seam, span: rect });
                 path.push(0);
-                a.place(ra, path, out);
+                a.place(ra, shrink_a, path, out);
                 path.pop();
                 path.push(1);
-                b.place(rb, path, out);
+                b.place(rb, shrink_b, path, out);
                 path.pop();
             }
         }
@@ -755,6 +827,72 @@ mod tests {
         assert!(!tree.insert_tab(42, 0, "stroke"), "no such box");
         assert!(!tree.insert_tab(3, 0, BOARD));
         tree.invariants().unwrap();
+    }
+
+    #[test]
+    fn a_collapsed_box_keeps_its_row_and_its_sibling_takes_the_rest() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0));
+        let mut tree = Node::default_layout();
+        assert!(tree.toggle_collapsed(2));
+        let layout = tree.layout(rect);
+        let (top, bottom) = (layout.rect_of(2).unwrap(), layout.rect_of(3).unwrap());
+        assert_eq!(top.height(), ROW);
+        assert!((bottom.top() - top.bottom() - SEAM).abs() < 0.5, "{top:?} {bottom:?}");
+        assert_eq!(bottom.bottom(), rect.bottom());
+        assert_eq!(top.width(), bottom.width(), "it keeps its width");
+        let back: Node = serde_json::from_value(serde_json::to_value(&tree).unwrap()).unwrap();
+        assert!(back.find_box(2).unwrap().collapsed, "saved");
+        assert!(!tree.toggle_collapsed(1), "the Board never collapses");
+        assert!(tree.toggle_collapsed(2));
+        assert_eq!(tree.layout(rect), Node::default_layout().layout(rect), "whole again");
+        // The lower box collapsed: the upper one takes the rest.
+        assert!(tree.toggle_collapsed(3));
+        let layout = tree.layout(rect);
+        assert_eq!(layout.rect_of(3).unwrap().height(), ROW);
+        assert_eq!(layout.rect_of(3).unwrap().bottom(), rect.bottom());
+        assert!((layout.rect_of(3).unwrap().top() - layout.rect_of(2).unwrap().bottom() - SEAM).abs() < 0.5);
+        tree.invariants().unwrap();
+    }
+
+    #[test]
+    fn collapsing_never_leaves_a_hole_beside_or_under_a_box() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0));
+        // Beside the Board alone, nothing takes the room: the box stays whole.
+        let mut tree = Node::default_layout();
+        tree.remove_tab("layers");
+        tree.remove_tab("artboards");
+        assert!(!tree.toggle_collapsed(3), "nothing above or below it");
+        assert!(!tree.find_box(3).unwrap().collapsed);
+        assert_eq!(tree.layout(rect).rect_of(3).unwrap().height(), rect.height());
+        // Nested stacks: two collapsed boxes under a whole one; it takes the room of both.
+        let mut tree = Node::default_layout();
+        let low = tree.split_box(3, Axis::Vertical, "stroke", true, 0.5).unwrap();
+        assert!(tree.toggle_collapsed(3) && tree.toggle_collapsed(low));
+        let layout = tree.layout(rect);
+        let (whole, mid, bottom) = (layout.rect_of(2).unwrap(), layout.rect_of(3).unwrap(), layout.rect_of(low).unwrap());
+        assert_eq!((mid.height(), bottom.height()), (ROW, ROW));
+        assert_eq!(bottom.bottom(), rect.bottom());
+        assert!((mid.top() - whole.bottom() - SEAM).abs() < 0.5 && (bottom.top() - mid.bottom() - SEAM).abs() < 0.5, "{whole:?} {mid:?} {bottom:?}");
+        // Side by side over a box: one alone would leave a hole under it, so it stays whole; both
+        // collapsed (a saved layout), their row is one tab row and the box below takes the rest.
+        let mut tree = Node::default_layout();
+        let right = tree.split_box(2, Axis::Horizontal, "stroke", true, 0.5).unwrap();
+        assert!(!tree.toggle_collapsed(2));
+        for id in [2, right] {
+            tree.box_mut_rec(id).unwrap().collapsed = true;
+        }
+        let layout = tree.layout(rect);
+        let (a, b, below) = (layout.rect_of(2).unwrap(), layout.rect_of(right).unwrap(), layout.rect_of(3).unwrap());
+        assert_eq!((a.height(), b.height()), (ROW, ROW));
+        assert!((below.top() - a.bottom() - SEAM).abs() < 0.5 && below.bottom() == rect.bottom(), "{below:?}");
+        // A collapsed box whose neighbour goes shows whole again.
+        let mut tree = Node::default_layout();
+        assert!(tree.toggle_collapsed(2));
+        for p in ["properties", "color", "swatches"] {
+            tree.remove_tab(p);
+        }
+        assert_eq!(tree.layout(rect).rect_of(2).unwrap().height(), rect.height());
+        assert!(!tree.shows_collapsed(2));
     }
 
     #[test]

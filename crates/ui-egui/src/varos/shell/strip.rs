@@ -1,8 +1,40 @@
 //! Board-owned iconic strip. Open state is transient; group dimensions and mode are saved.
+//! Floating strips ([`super::floats`]) draw their groups with the same [`column`] and open the same
+//! [`flyout`]. An icon is dragged by itself, a group by its grip dots ([`super::drag`]).
+use super::drag::{self, Item};
 use super::{Hit, boxes, tree::Node};
 use crate::VectorcraftApp;
 use egui::{Rect, Sense, pos2, vec2};
 use serde::{Deserialize, Serialize};
+
+/// A strip: the Board's, or a floating one (a lone icon is a floating strip of one icon).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StripRef {
+    Board,
+    Float(u32),
+}
+
+impl StripRef {
+    /// The hit of this strip's group `index` (its grip dots).
+    pub(crate) fn group_hit(self, index: usize) -> Hit {
+        match self {
+            StripRef::Board => Hit::StripGroup(index),
+            StripRef::Float(strip) => Hit::FloatStripGroup { strip, index },
+        }
+    }
+
+    /// The hit of this strip's icon of `panel`.
+    pub(crate) fn icon_hit(self, panel: &str) -> Hit {
+        match self {
+            StripRef::Board => Hit::StripIcon(panel.to_string()),
+            StripRef::Float(strip) => Hit::FloatStripIcon { strip, panel: panel.to_string() },
+        }
+    }
+}
+
+/// A strip group's grip dots: their height, and an icon row's height.
+pub(crate) const GRIP: f32 = 12.0;
+pub(crate) const ICON_ROW: f32 = 26.0;
 
 /// The Board edge that owns this strip. Ordinary boxes never own strips.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -79,11 +111,29 @@ impl Strip {
     }
 
     pub fn sanitize(&mut self, tree: &Node) {
+        self.sanitize_owned(tree, &|_| false, true);
+    }
+
+    /// [`Self::sanitize`] when panels may also be owned outside the tree and this strip
+    /// (`elsewhere`: floating panels and floating strips). `legacy`: stage-2 state, whose
+    /// auxiliary panels were appended into default groups and whose temporary groups go last;
+    /// later state keeps the owner's arrangement.
+    pub fn sanitize_owned(&mut self, tree: &Node, elsewhere: &dyn Fn(&str) -> bool, legacy: bool) {
         let mut seen = std::collections::HashSet::new();
         for g in &mut self.groups {
-            g.panels.retain(|p| super::persist::known(p) && tree.find_tab(p).is_none() && seen.insert(p.clone()));
+            g.panels.retain(|p| super::persist::known(p) && tree.find_tab(p).is_none() && !elsewhere(p) && seen.insert(p.clone()));
             g.width = if g.width.is_finite() { g.width.clamp(190.0, 1200.0) } else { 260.0 };
             g.height = if g.height.is_finite() { g.height.clamp(120.0, 1600.0) } else { 360.0 };
+        }
+        if !legacy {
+            self.groups.retain(|g| !g.panels.is_empty());
+            for group in Self::default_for(tree).groups {
+                let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
+                if !panels.is_empty() {
+                    self.groups.push(Group { panels, temporary: false, width: 260.0, height: 360.0 });
+                }
+            }
+            return;
         }
         // Older stage-2 state appended auxiliary panels into a default group. Split them out.
         let mut auxiliary = Vec::new();
@@ -104,7 +154,7 @@ impl Strip {
             self.append(&p);
         }
         for group in Self::default_for(tree).groups {
-            let panels: Vec<_> = group.panels.into_iter().filter(|p| seen.insert(p.clone())).collect();
+            let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
             if !panels.is_empty() {
                 self.groups.push(Group { panels, temporary: false, width: 260.0, height: 360.0 });
             }
@@ -206,39 +256,85 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     child.set_clip_rect(rail.intersect(ui.clip_rect()));
     child.spacing_mut().item_spacing.y = 0.0;
     let mut icons = Vec::new();
+    // Icons and grips are dragged; the column scrolls by wheel and bar only (egui drags it on touch).
     egui::ScrollArea::vertical().id_salt("shell-strip-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
-        for (index, g) in groups.iter().enumerate() {
-            let (grip, _) = ui.allocate_exact_size(vec2(width, 12.0), Sense::hover());
-            tops.push(grip.top());
-            hits.push((Hit::StripGroup(index), grip));
-            if g.panels.is_empty() {
-                continue;
-            }
-            for y in [4.0, 8.0] {
-                for x in [-4.0, 0.0, 4.0] {
-                    ui.painter().circle_filled(pos2(grip.center().x + x, grip.top() + y), 0.7, t.text_dim);
-                }
-            }
-            for panel in &g.panels {
-                let (row, _) = ui.allocate_exact_size(vec2(width, 26.0), Sense::hover());
-                let rect = Rect::from_min_size(pos2(row.left() + 4.0, row.top()), vec2((width - 8.0).max(1.0), 26.0));
-                let r = ui.interact(rect, ui.scope_id().with(panel), Sense::click());
-                if clicked_once(ui.ctx(), r.id, r.clicked()) {
-                    if app.ui.varos_shell.open.as_deref() == Some(panel) {
-                        close(app);
-                    } else {
-                        open(app, panel);
-                    }
-                }
-                icons.push((panel.clone(), rect, r));
-            }
-            ui.painter().hline(rail.x_range(), ui.cursor().top(), egui::Stroke::new(1.0, t.border));
-        }
+        column(app, ui, StripRef::Board, &groups, width, rail, hits, &mut tops, &mut icons);
     });
-    flyout(app, ui, board, rail, &tops, hits);
+    flyout(app, ui, board, rail, &tops, StripRef::Board, hits);
     // Paint after all strip and flyout input: exactly one active icon on the click frame.
     let mut paint_ui = child.new_child(egui::UiBuilder::new().max_rect(rail));
     paint_ui.set_clip_rect(Rect::from_min_max(pos2(rail.left(), toggle.bottom()), rail.max).intersect(ui.clip_rect()));
+    let mode = app.ui.varos_shell.strip.mode;
+    paint_icons(app, &paint_ui, icons, mode, StripRef::Board, hits);
+    Rect::from_min_max(board.min, pos2((rail.left() - super::tree::SEAM).max(board.left()), board.bottom()))
+}
+
+/// A strip's groups, laid out down `ui` `width` wide: each group's grip dots (dragged: the whole
+/// group) and its icons (clicked: the flyout opens or closes; dragged: the icon leaves). Each
+/// group's top goes to `tops`; each icon's rect and response to `icons`, painted by
+/// [`paint_icons`] once all input is taken.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn column(
+    app: &mut VectorcraftApp,
+    ui: &mut egui::Ui,
+    sref: StripRef,
+    groups: &[Group],
+    width: f32,
+    rail: Rect,
+    hits: &mut Vec<(Hit, Rect)>,
+    tops: &mut Vec<f32>,
+    icons: &mut Vec<(String, Rect, egui::Response)>,
+) {
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let ctx = ui.ctx().clone();
+    for (index, g) in groups.iter().enumerate() {
+        let (grip, _) = ui.allocate_exact_size(vec2(width, GRIP), Sense::hover());
+        tops.push(grip.top());
+        hits.push((sref.group_hit(index), grip));
+        if g.panels.is_empty() {
+            continue;
+        }
+        let grip_response = ui.interact(grip, egui::Id::unique("varos-shell-grip").with((sref, index)), Sense::drag());
+        if grip_response.hovered() {
+            ctx.set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if grip_response.drag_started() {
+            drag::begin(app, &ctx, Item::Group { strip: sref, group: g.clone() }, grip);
+        }
+        for y in [4.0, 8.0] {
+            for x in [-4.0, 0.0, 4.0] {
+                ui.painter().circle_filled(pos2(grip.center().x + x, grip.top() + y), 0.7, t.text_dim);
+            }
+        }
+        for panel in &g.panels {
+            let (row, _) = ui.allocate_exact_size(vec2(width, ICON_ROW), Sense::hover());
+            let rect = Rect::from_min_size(pos2(row.left() + 4.0, row.top()), vec2((width - 8.0).max(1.0), ICON_ROW));
+            let r = ui.interact(rect, ui.scope_id().with(panel), Sense::click_and_drag());
+            if r.drag_started() {
+                drag::begin(app, &ctx, Item::Icon(panel.clone()), rect);
+            } else if clicked_once(&ctx, r.id, r.clicked()) {
+                if app.ui.varos_shell.open.as_deref() == Some(panel) {
+                    close(app);
+                } else {
+                    open(app, panel);
+                }
+            }
+            icons.push((panel.clone(), rect, r));
+        }
+        ui.painter().hline(rail.x_range(), ui.cursor().top(), egui::Stroke::new(1.0, t.border));
+    }
+}
+
+/// Paint the icons [`column`] laid out in `paint_ui` (the open panel's lit) and publish them.
+pub(crate) fn paint_icons(
+    app: &VectorcraftApp,
+    paint_ui: &egui::Ui,
+    icons: Vec<(String, Rect, egui::Response)>,
+    mode: Mode,
+    sref: StripRef,
+    hits: &mut Vec<(Hit, Rect)>,
+) {
+    let t = crate::theme::Tokens::get(paint_ui.ctx());
     for (panel, rect, r) in icons {
         let active = app.ui.varos_shell.open.as_deref() == Some(panel.as_str());
         r.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, boxes::label(app, &panel)));
@@ -248,8 +344,8 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
         let icon = crate::state::rail_panel(&panel).map_or("panel-left", |p| p.2);
         egui::Image::new(crate::icons::source(icon))
             .tint(if active { t.text_strong } else { t.text_dim })
-            .paint_at(&paint_ui, Rect::from_min_size(rect.min + vec2(5.0, 5.0), vec2(16.0, 16.0)));
-        if app.ui.varos_shell.strip.mode == Mode::Labels {
+            .paint_at(paint_ui, Rect::from_min_size(rect.min + vec2(5.0, 5.0), vec2(16.0, 16.0)));
+        if mode == Mode::Labels {
             paint_ui.painter().text(
                 rect.min + vec2(29.0, 13.0),
                 egui::Align2::LEFT_CENTER,
@@ -261,24 +357,40 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
             r.on_hover_text(boxes::label(app, &panel));
         }
         if paint_ui.clip_rect().intersects(rect) {
-            hits.push((Hit::StripIcon(panel.clone()), rect.intersect(paint_ui.clip_rect())));
+            hits.push((sref.icon_hit(&panel), rect.intersect(paint_ui.clip_rect())));
         }
     }
-    Rect::from_min_max(board.min, pos2((rail.left() - super::tree::SEAM).max(board.left()), board.bottom()))
 }
 
-fn flyout(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, rail: Rect, tops: &[f32], hits: &mut Vec<(Hit, Rect)>) {
+/// The flyout of the open panel when strip `sref` owns it, beside `rail` (the strip) inside
+/// `bounds`: left of the Board's strip; right of a floating strip when it fits there, else left.
+/// Its top is its group's (`tops`), moved up to fit.
+pub(crate) fn flyout(
+    app: &mut VectorcraftApp,
+    ui: &mut egui::Ui,
+    bounds: Rect,
+    rail: Rect,
+    tops: &[f32],
+    sref: StripRef,
+    hits: &mut Vec<(Hit, Rect)>,
+) {
     let Some(panel) = app.ui.varos_shell.open.clone() else { return };
-    let Some(index) = app.ui.varos_shell.strip.group(&panel) else {
-        close(app);
+    let Some(index) = app.ui.varos_shell.strip_groups(sref).and_then(|gs| gs.iter().position(|g| g.panels.contains(&panel))) else {
         return;
     };
-    let Some(group) = app.ui.varos_shell.strip.groups.get(index).cloned() else { return };
-    let room = (rail.left() - board.left()).max(1.0);
+    let Some(group) = app.ui.varos_shell.strip_groups(sref).and_then(|gs| gs.get(index)).cloned() else { return };
+    let right_room = (bounds.right() - rail.right()).max(1.0);
+    let left_room = (rail.left() - bounds.left()).max(1.0);
+    let on_right = sref != StripRef::Board && (right_room >= group.width.min(bounds.width()) || right_room > left_room);
+    let room = if on_right { right_room } else { left_room };
     let mut width = group.width.min(room);
-    let height = group.height.min(board.height());
-    let top = tops.get(index).copied().unwrap_or(board.top()).min(board.bottom() - height).max(board.top());
-    let mut rect = Rect::from_min_size(pos2(rail.left() - width, top), vec2(width, height));
+    let height = group.height.min(bounds.height());
+    let top = tops.get(index).copied().unwrap_or(bounds.top()).min(bounds.bottom() - height).max(bounds.top());
+    let place = |width: f32| {
+        let x = if on_right { rail.right() } else { rail.left() - width };
+        Rect::from_min_size(pos2(x, top), vec2(width, height))
+    };
+    let mut rect = place(width);
     let ctx = ui.ctx().clone();
     if app.session.prefs.auto_collapse_icon_panels
         && !egui::Popup::is_any_open(&ctx)
@@ -289,23 +401,33 @@ fn flyout(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, rail: Rect, 
     }
     let area_id = egui::Id::unique("shell-flyout");
     let layer = egui::LayerId::new(egui::Order::Middle, area_id);
-    let resize_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(board));
-    let edge = Rect::from_min_max(rect.min, pos2(rect.left() + 5.0, rect.bottom()));
-    let r = resize_ui.interact(edge, area_id.with("resize"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    let resize_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(bounds));
+    // The edge away from the strip resizes.
+    let edge_of = |rect: Rect| {
+        if on_right {
+            Rect::from_min_max(pos2(rect.right() - 5.0, rect.top()), rect.max)
+        } else {
+            Rect::from_min_max(rect.min, pos2(rect.left() + 5.0, rect.bottom()))
+        }
+    };
+    let r = resize_ui.interact(edge_of(rect), area_id.with("resize"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     if r.dragged()
         && let Some(p) = r.interact_pointer_pos()
     {
-        width = (rail.left() - p.x).clamp(190.0_f32.min(room), room);
-        rect.min.x = rail.left() - width;
-        if let Some(g) = app.ui.varos_shell.strip.groups.get_mut(index) {
+        let wanted = if on_right { p.x - rail.right() } else { rail.left() - p.x };
+        width = wanted.clamp(190.0_f32.min(room), room);
+        rect = place(width);
+        if let Some(g) = app.ui.varos_shell.strip_groups_mut(sref).and_then(|gs| gs.get_mut(index)) {
             g.width = width;
         }
     }
+    // Over the boxes and floating panels.
+    ctx.move_to_top(layer);
     // Known geometry avoids egui's invisible first sizing pass and blocks the canvas immediately.
     ctx.memory_mut(|m| m.areas_mut().set_state(layer, egui::AreaState { pivot_pos: Some(rect.min), size: Some(rect.size()), ..Default::default() }));
     egui::Area::new(area_id).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).fade_in(false).movable(false).show(&ctx, |ui| {
         ui.set_min_size(rect.size());
-        ui.set_clip_rect(board);
+        ui.set_clip_rect(bounds);
         let t = crate::theme::Tokens::get(&ctx);
         let head = Rect::from_min_size(rect.min, vec2(width, boxes::HEADER));
         let collapse = Rect::from_min_size(pos2(head.right() - 48.0, head.top() + 4.0), vec2(22.0, 24.0));
@@ -321,6 +443,13 @@ fn flyout(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, rail: Rect, 
         let tabs: Vec<_> = group.panels.iter().map(|p| (p.clone(), boxes::label(app, p))).collect();
         let active = group.panels.iter().position(|p| p == &panel).unwrap_or(0);
         let out = boxes::tab_row(ui, &tabs, active, row, &t);
+        // A flyout's tab dragged out: the panel leaves the strip.
+        if let Some(i) = out.drag_started
+            && let (Some((p, _)), Some(pill)) = (tabs.get(i), out.tabs.get(i))
+        {
+            drag::begin(app, &ctx, Item::Tab(p.clone()), *pill);
+            return;
+        }
         let front = group.panels.get(out.clicked.unwrap_or(active)).cloned().unwrap_or(panel.clone());
         if out.clicked.is_some() {
             open(app, &front);
@@ -337,20 +466,20 @@ fn flyout(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, rail: Rect, 
             return;
         }
         hits.push((Hit::FlyoutClose, collapse));
-        hits.push((Hit::FlyoutResize, Rect::from_min_max(rect.min, pos2(rect.left() + 5.0, rect.bottom()))));
+        hits.push((Hit::FlyoutResize, edge_of(rect)));
         hits.push((Hit::Flyout, rect));
         ui.painter().hline((rect.left() + 1.0)..=(rect.right() - 1.0), head.bottom() - 0.5, egui::Stroke::new(1.0, t.border));
         let inner = Rect::from_min_max(pos2(rect.left() + 6.0, head.bottom()), rect.max - vec2(1.0, 1.0));
         let mut body = ui.new_child(egui::UiBuilder::new().id_salt("shell-flyout-body").max_rect(inner));
-        body.set_clip_rect(inner.intersect(board));
-        let output = egui::ScrollArea::vertical().id_salt(("shell-flyout-scroll", index)).auto_shrink([false, false]).show(&mut body, |ui| {
+        body.set_clip_rect(inner.intersect(bounds));
+        let output = egui::ScrollArea::vertical().id_salt(("shell-flyout-scroll", sref, index)).auto_shrink([false, false]).show(&mut body, |ui| {
             crate::dock::panel_body(app, ui, &front, width - 7.0, (inner.height() - 20.0).max(0.0));
         });
-        let wanted = (output.content_size.y + boxes::HEADER + 1.0).clamp(120.0, 1600.0).min(board.height());
+        let wanted = (output.content_size.y + boxes::HEADER + 1.0).clamp(120.0, 1600.0).min(bounds.height());
         let wanted_width = (output.content_size.x + 7.0).max(width).min(room);
         #[cfg(test)]
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique("shell-flyout-content"), output.content_size));
-        if let Some(g) = app.ui.varos_shell.strip.groups.get_mut(index)
+        if let Some(g) = app.ui.varos_shell.strip_groups_mut(sref).and_then(|gs| gs.get_mut(index))
             && ((height - wanted).abs() > 1.0 || wanted_width > width + 1.0)
         {
             g.height = wanted;
@@ -368,7 +497,7 @@ fn flyout(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, rail: Rect, 
 
 pub(crate) fn close_panel(app: &mut VectorcraftApp, panel: &str) {
     if !Strip::is_default(panel) {
-        app.ui.varos_shell.strip.remove(panel);
+        app.ui.varos_shell.take(panel);
     }
     close(app);
 }
