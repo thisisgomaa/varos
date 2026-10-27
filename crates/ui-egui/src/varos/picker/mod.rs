@@ -1,7 +1,7 @@
 // Varos colour picker v3 — ported from thisisgomaa/varos (MIT OR Apache-2.0).
 //! The Color panel's body in Varos: colour picker v3 (owner 2026-10-09; work order
 //! `docs/foundation/work_orders/COLOR_PICKER_V3.md` in the old repo). Tabs Wheel · Sliders ·
-//! Harmony · Gradient (opens the Gradient panel), the frameless Fill/Stroke cluster, the
+//! Harmony · Gradient, the frameless Fill/Stroke cluster, the
 //! hex and alpha row and the recent colours with their drawer.
 //!
 //! It edits what upstream's Color panel edits (the active proxy's colour, or a selected gradient
@@ -50,7 +50,7 @@ const SAME: f32 = 0.5 / 255.0;
 /// The panel the picker is the body of.
 pub(crate) const PANEL: &str = "color";
 
-/// The picker's local tab, kept with its preferences. Gradient opens the upstream panel.
+/// The picker mode, kept with its preferences.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tab {
@@ -58,6 +58,7 @@ pub enum Tab {
     Wheel,
     Sliders,
     Harmony,
+    Gradient,
 }
 
 /// The picker's preferences, kept with the UI state (`ui.json`, `UiState::varos_picker`). Each
@@ -264,7 +265,7 @@ pub(crate) enum Action {
     NoneTarget,
     Eyedropper,
     Gradient,
-    Close,
+    Solid,
 }
 
 fn state_id() -> egui::Id {
@@ -275,20 +276,51 @@ fn rect_id() -> egui::Id {
     egui::Id::unique("varos-picker-rect")
 }
 
+/// The well-opened popover's layer.
+fn popover_id() -> egui::Id {
+    egui::Id::unique("varos-picker-popover")
+}
+
+/// The gesture state of the picker drawn in `ui`. The popover keeps its own: a docked Color panel
+/// drawn earlier in the same frame must not finish (or move) the popover's gesture, or the reverse.
+fn instance_id(ui: &Ui) -> egui::Id {
+    if ui.layer_id().id == popover_id() { state_id().with("popover") } else { state_id() }
+}
+
+/// Every picker instance's state id (see [`instance_id`]).
+fn instances() -> [egui::Id; 2] {
+    [state_id(), state_id().with("popover")]
+}
+
 /// The picker's height for `prefs`.
 pub(crate) fn height(prefs: &Prefs) -> f32 {
+    if prefs.tab == Tab::Gradient {
+        return HEADER_H + 420.0;
+    }
     let body = match prefs.tab {
         Tab::Wheel => wheel::BODY_H,
         Tab::Sliders => sliders::body_height(prefs.mode),
         Tab::Harmony => wheel::BODY_H + harmony::extra_height(prefs.harmony),
+        Tab::Gradient => 420.0,
     };
     HEADER_H + body + fields::ROW_H + drawer::ROW_H + if prefs.drawer_open { drawer::DRAWER_H } else { 0.0 }
+}
+
+/// A stop's nested colour editor keeps the parent gradient mode, and edits only that stop.
+pub(crate) fn show_stop(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let parent_mode = app.ui.varos_picker.tab;
+    let key = egui::Id::unique("varos-picker-stop-mode");
+    app.ui.varos_picker.tab = ui.ctx().data(|d| d.get_temp::<Tab>(key)).filter(|t| *t != Tab::Gradient).unwrap_or_default();
+    show(app, ui);
+    ui.ctx().data_mut(|d| d.insert_temp(key, app.ui.varos_picker.tab));
+    app.ui.varos_picker.tab = parent_mode;
 }
 
 /// The Color panel's body (the `// Varos` hook at the top of [`crate::panels::color::show`]).
 pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
-    let mut st = ctx.data_mut(|d| d.remove_temp::<State>(state_id())).unwrap_or_default();
+    let sid = instance_id(ui);
+    let mut st = ctx.data_mut(|d| d.remove_temp::<State>(sid)).unwrap_or_default();
     drawer::sync_recent(app);
     let mut prefs = app.ui.varos_picker.clone();
     let v = View::read(app, &ctx);
@@ -296,18 +328,36 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         st.follow(&v);
     }
     let mut acts = Vec::new();
-    let gradient = matches!(if v.fill_active { &v.paints.0 } else { &v.paints.1 }, Paint::Gradient(_));
-    let key = egui::Id::unique("varos-picker-gradient-focus");
-    let focused = gradient.then(|| (v.fill_active, format!("{:?}", app.session.active().map(|s| (s.uid, &s.selection.objects)))));
-    let previous = ctx.data_mut(|d| d.get_temp::<Option<(bool, String)>>(key)).flatten();
-    if focused.is_some() && previous != focused {
-        acts.push(Action::Gradient);
-    }
-    ctx.data_mut(|d| d.insert_temp(key, focused));
     let tall = height(&prefs);
     let (outer, _) = ui.allocate_exact_size(vec2(ui.available_width().max(W), tall), Sense::hover());
     let origin = pos2(outer.left() + ((outer.width() - W) / 2.0).max(0.0).round(), outer.top());
-    header(ui, origin, &mut prefs, app.session.tool_id() == "eyedropper", &mut acts);
+    header(
+        ui,
+        origin,
+        &mut prefs,
+        app.session.tool_id() == "eyedropper",
+        app.ui.dialog.as_ref().is_some_and(|d| d.kind == "gradientStop"),
+        &mut acts,
+    );
+    if prefs.tab == Tab::Gradient {
+        if prefs != app.ui.varos_picker {
+            app.ui.varos_picker = prefs;
+        }
+        settle(app, &ctx, &mut st, &v, acts);
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(Rect::from_min_size(origin + vec2(PAD, HEADER_H + 4.0), vec2(W - PAD * 2.0, 420.0))),
+            |ui| {
+                crate::panels::gradient::show_picker(app, ui);
+            },
+        );
+        let frame_nr = ctx.cumulative_frame_nr();
+        ctx.data_mut(|d| {
+            d.insert_temp(rect_id(), (Rect::from_min_size(origin, vec2(W, tall)), frame_nr));
+            d.insert_temp(sid.with("drawn"), frame_nr);
+            d.insert_temp(sid, st);
+        });
+        return;
+    }
     let mut y = origin.y + HEADER_H;
     match prefs.tab {
         Tab::Wheel => {
@@ -326,18 +376,22 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             harmony::chips(ui, pos2(origin.x, y), &st, &prefs, &mut acts);
             y += harmony::extra_height(prefs.harmony) - harmony::STRIP_H;
         }
+        Tab::Gradient => {}
     }
     fields::row(ui, pos2(origin.x, y), &mut st, &v, prefs.tab == Tab::Sliders, &mut acts);
     y += fields::ROW_H;
     drawer::show(app, ui, pos2(origin.x, y), &mut prefs, &mut acts);
     // Read before `data_mut`: the context's lock is not re-entrant.
     let frame_nr = ctx.cumulative_frame_nr();
-    ctx.data_mut(|d| d.insert_temp(rect_id(), (Rect::from_min_size(origin, vec2(W, tall)), frame_nr)));
+    ctx.data_mut(|d| {
+        d.insert_temp(rect_id(), (Rect::from_min_size(origin, vec2(W, tall)), frame_nr));
+        d.insert_temp(sid.with("drawn"), frame_nr);
+    });
     if prefs != app.ui.varos_picker {
         app.ui.varos_picker = prefs;
     }
     settle(app, &ctx, &mut st, &v, acts);
-    ctx.data_mut(|d| d.insert_temp(state_id(), st));
+    ctx.data_mut(|d| d.insert_temp(sid, st));
 }
 
 /// The upstream swatch tiles' explicit, non-modal Gradient action.
@@ -359,56 +413,36 @@ pub(crate) fn open_gradient(app: &mut VectorcraftApp) {
     }
 }
 
-/// The tab strip, the eyedropper and ×.
-fn header(ui: &mut Ui, origin: Pos2, prefs: &mut Prefs, eyedropper: bool, acts: &mut Vec<Action>) {
+/// Equal-sized mode icons and the eyedropper, without a title bar or close button.
+fn header(ui: &mut Ui, origin: Pos2, prefs: &mut Prefs, eyedropper: bool, stop_editor: bool, acts: &mut Vec<Action>) {
     let t = Tokens::get(ui.ctx());
-    let tabs = [
-        (Some(Tab::Wheel), "palette", tl!("Wheel")),
-        (Some(Tab::Sliders), icons::SLIDERS, tl!("Sliders")),
-        (Some(Tab::Harmony), "dc-color-guide", tl!("Harmony")),
-        (None, "dc-gradient", "Gradient… — open Gradient panel"),
-    ];
-    for (i, (tab, icon, tip)) in tabs.into_iter().enumerate() {
-        let r = Rect::from_min_size(
-            origin + vec2(PAD + i as f32 * (TAB_W + TAB_GAP), (HEADER_H - TAB_H) / 2.0),
-            vec2(if tab.is_none() { 86.0 } else { TAB_W }, TAB_H),
-        );
-        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-tab", i)), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
-        if tab.is_none() {
-            if resp.hovered() {
-                ui.painter().rect_filled(r, CTRL_R, t.hover);
-            }
-            let glyph = Rect::from_center_size(r.left_center() + vec2(TAB_W / 2., 0.), egui::Vec2::splat(GLYPH));
-            icons::paint(ui, icon, glyph, t.text);
-            ui.painter().text(
-                r.left_center() + vec2(TAB_W + 2., 0.),
-                egui::Align2::LEFT_CENTER,
-                format!("{}…", tl!("Gradient")),
-                egui::FontId::proportional(11.),
-                t.text,
-            );
-        } else {
-            tab_button(ui, &t, r, icon, tab == Some(prefs.tab), resp.hovered(), true);
+    for (i, (tab, icon, tip)) in [
+        (Tab::Wheel, "palette", tl!("Wheel")),
+        (Tab::Sliders, icons::SLIDERS, tl!("Sliders")),
+        (Tab::Harmony, "dc-color-guide", tl!("Harmony")),
+        (Tab::Gradient, "dc-gradient", tl!("Gradient")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if stop_editor && tab == Tab::Gradient {
+            continue;
         }
+        let r = Rect::from_min_size(origin + vec2(PAD + i as f32 * (TAB_W + TAB_GAP), (HEADER_H - TAB_H) / 2.0), vec2(TAB_W, TAB_H));
+        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-tab", i)), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, tab == prefs.tab, tip));
+        tab_button(ui, &t, r, icon, tab == prefs.tab, resp.hovered(), true);
         if resp.on_hover_text(tip).clicked() {
-            if let Some(tab) = tab {
-                prefs.tab = tab;
-            } else {
-                acts.push(Action::Gradient);
-            }
+            acts.push(if tab == Tab::Gradient { Action::Gradient } else { Action::Solid });
+            prefs.tab = tab;
         }
     }
-    let close = Rect::from_min_size(origin + vec2(W - PAD - TAB_W, (HEADER_H - TAB_H) / 2.0), vec2(TAB_W, TAB_H));
-    let eye = close.translate(vec2(-(TAB_W + TAB_GAP), 0.0));
-    for (r, icon, tip, on, action) in
-        [(eye, "pipette", tl!("Eyedropper Tool"), eyedropper, Action::Eyedropper), (close, "x", tl!("Close"), false, Action::Close)]
-    {
-        let resp = ui.interact(r, ui.scope_id().with(("varos-picker-header", icon)), Sense::click());
-        tab_button(ui, &t, r, icon, on, resp.hovered(), true);
-        if resp.on_hover_text(tip).clicked() {
-            acts.push(action);
-        }
+    let eye = Rect::from_min_size(origin + vec2(W - PAD - TAB_W, (HEADER_H - TAB_H) / 2.0), vec2(TAB_W, TAB_H));
+    let resp = ui.interact(eye, ui.scope_id().with(("varos-picker-header", "pipette")), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Eyedropper Tool")));
+    tab_button(ui, &t, eye, "pipette", eyedropper, resp.hovered(), true);
+    if resp.on_hover_text(tl!("Eyedropper Tool")).clicked() {
+        acts.push(Action::Eyedropper);
     }
     ui.painter().hline(origin.x..=origin.x + W, origin.y + HEADER_H, Stroke::new(1.0, t.divider));
 }
@@ -488,14 +522,34 @@ fn settle(app: &mut VectorcraftApp, ctx: &egui::Context, st: &mut State, v: &Vie
             Action::NoneTarget => {
                 let _ = app.run("paint.none", json!({}));
             }
-            Action::Eyedropper => app.select_tool("eyedropper"),
+            Action::Eyedropper => {
+                close(app);
+                app.select_tool("eyedropper");
+            }
             Action::Gradient => {
                 finish(app, st);
-                open_gradient(app);
+                if !matches!(crate::panels::active_paint(app), Paint::Gradient(_)) {
+                    crate::panels::live_run(
+                        app,
+                        "Gradient",
+                        "paint.editGradient",
+                        json!({"stroke": !app.session.fill_active, "kind": "linear"}),
+                        Live::Released,
+                    );
+                    if let Err(e) = app.run("gradient.selectStop", json!({"index": 0})) {
+                        app.status(e);
+                    }
+                }
             }
-            Action::Close => {
+            Action::Solid => {
                 finish(app, st);
-                close(app);
+                if !app.ui.dialog.as_ref().is_some_and(|d| d.kind == "gradientStop") && matches!(crate::panels::active_paint(app), Paint::Gradient(_))
+                {
+                    let command = if app.session.fill_active { "paint.setFill" } else { "paint.setStroke" };
+                    if let Err(e) = app.run(command, json!({"color": crate::panels::color_json(&st.out_color())})) {
+                        app.status(e);
+                    }
+                }
             }
         }
     }
@@ -531,7 +585,7 @@ fn settle(app: &mut VectorcraftApp, ctx: &egui::Context, st: &mut State, v: &Vie
 }
 
 /// End the gesture: commit what it previewed (one undo step) on the target it began on, and
-/// clear it. Called on release, and before the picker is hidden mid-gesture (Escape, ×, the panel
+/// clear it. Called on release, and before the picker is hidden mid-gesture (Escape, the panel
 /// put away), so no live interaction is left open.
 fn finish(app: &mut VectorcraftApp, st: &mut State) {
     if let (Some(g), true, Some(origin)) = (st.gesture, st.edited, st.origin.clone()) {
@@ -559,13 +613,23 @@ fn on_origin(app: &mut VectorcraftApp, origin: &Origin, f: impl FnOnce(&mut Vect
     app.session.fill_active = now;
 }
 
-/// Finish the stored gesture, if any (the picker is going away or was not drawn).
+/// Finish every stored gesture, if any (the picker is going away).
 fn finish_pending(app: &mut VectorcraftApp, ctx: &egui::Context) {
-    let Some(mut st) = ctx.data_mut(|d| d.remove_temp::<State>(state_id())) else { return };
+    if app.ui.varos_picker_anchor.is_some() && app.ui.varos_picker.tab == Tab::Gradient {
+        crate::panels::gradient::finish_picker_drag(app, ctx);
+    }
+    for sid in instances() {
+        finish_instance(app, ctx, sid);
+    }
+}
+
+/// Finish the gesture stored for picker instance `sid`, if any.
+fn finish_instance(app: &mut VectorcraftApp, ctx: &egui::Context, sid: egui::Id) {
+    let Some(mut st) = ctx.data_mut(|d| d.remove_temp::<State>(sid)) else { return };
     if st.gesture.is_some() {
         finish(app, &mut st);
     }
-    ctx.data_mut(|d| d.insert_temp(state_id(), st));
+    ctx.data_mut(|d| d.insert_temp(sid, st));
 }
 
 /// Write colour `c` to the target as one step, unless it is the colour there already.
@@ -647,54 +711,133 @@ fn apply_alpha(app: &mut VectorcraftApp, fill: bool, a: f32, phase: Live) {
     }
 }
 
-/// Show the Color panel for the Fill (`stroke` false) or Stroke: a double-click on a proxy square.
-/// It focuses that proxy and opens the panel when it isn't showing (never the modal Color Picker).
-pub(crate) fn open_for(app: &mut VectorcraftApp, stroke: bool) {
-    if app.session.fill_active == stroke {
-        let _ = app.run("paint.toggleActive", json!({ "fill": !stroke }));
+/// Open a transient picker at a well, independently of the docked Color panel.
+pub(crate) fn open_for(app: &mut VectorcraftApp, stroke: bool, anchor: Rect) {
+    if let Err(e) = app.run("paint.toggleActive", json!({"fill": !stroke})) {
+        app.status(e);
     }
-    if crate::menus::checked(app, "window.panel", &json!({ "panel": PANEL })) != Some(true) {
-        let _ = app.run("window.panel", json!({ "panel": PANEL }));
-    }
+    app.ui.varos_picker_anchor = Some(anchor);
+    app.ui.varos_picker.tab = if matches!(crate::panels::active_paint(app), Paint::Gradient(_)) {
+        Tab::Gradient
+    } else if app.ui.varos_picker.tab == Tab::Gradient {
+        Tab::Wheel
+    } else {
+        app.ui.varos_picker.tab
+    };
 }
 
-/// Put the Color panel away (× and Escape), from wherever it shows: its card, a floating group,
-/// the docked layout or upstream's pop-out. It never undoes anything.
 pub(crate) fn close(app: &mut VectorcraftApp) {
-    if crate::menus::checked(app, "window.panel", &json!({ "panel": PANEL })) != Some(true) {
+    app.ui.varos_picker_anchor = None;
+}
+
+/// Wells remain switchable through the modal backdrop; their geometry is refreshed every frame.
+pub(crate) fn register_well(ctx: &egui::Context, rect: Rect, stroke: bool) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| {
+        let wells = d.get_temp_mut_or_default::<Vec<(Rect, bool, u64)>>(egui::Id::unique("picker-wells"));
+        wells.retain(|(_, _, f)| *f == frame);
+        wells.push((rect, stroke, frame));
+    });
+}
+
+/// How near a sibling well must be to count as the anchor's pair (see [`popover`]).
+const WELL_GAP: f32 = 12.0;
+
+/// The tallest the picker gets in any mode with `prefs`' drawer and slider settings: the popover is
+/// placed for it, so switching modes keeps the header where it opened.
+fn tallest(prefs: &Prefs) -> f32 {
+    [Tab::Wheel, Tab::Sliders, Tab::Harmony, Tab::Gradient].into_iter().map(|tab| height(&Prefs { tab, ..prefs.clone() })).fold(0.0, f32::max)
+}
+
+/// Render after the shell, before dialogs. The transparent backdrop owns outside clicks. Its
+/// release closes the picker after the canvas has been gated for the entire gesture. While an
+/// application dialog is open the picker stays visible but takes no input.
+pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    let Some(anchor) = app.ui.varos_picker_anchor else { return };
+    let screen = ctx.content_rect();
+    let h = height(&app.ui.varos_picker).min(screen.height());
+    let tall = tallest(&app.ui.varos_picker).min(screen.height());
+    let frame_nr = ctx.cumulative_frame_nr();
+    // This frame's wells, bottom-most first (the order they are drawn in).
+    let wells: Vec<(Rect, bool)> = ctx
+        .data(|d| d.get_temp::<Vec<(Rect, bool, u64)>>(egui::Id::unique("picker-wells")))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, _, f)| *f == frame_nr)
+        .map(|(r, stroke, _)| (r, stroke))
+        .collect();
+    // The well and its Fill/Stroke sibling (overlapping proxy squares, stacked or side-by-side
+    // chips) stay uncovered, so the other well remains one click away.
+    let pair = wells.iter().filter(|(r, _)| r.intersects(anchor.expand(WELL_GAP))).fold(anchor, |pair, (r, _)| pair.union(*r));
+    let (x, y) = if pair.bottom() + 4.0 + tall <= screen.bottom() {
+        // Below the wells.
+        (pair.left(), pair.bottom() + 4.0)
+    } else {
+        // Beside them (right, else left) when the window has no room below.
+        let x = if pair.right() + 4.0 + W <= screen.right() { pair.right() + 4.0 } else { pair.left() - 4.0 - W };
+        (x, pair.top().min(screen.bottom() - tall))
+    };
+    let x = x.clamp(screen.left(), (screen.right() - W).max(screen.left()));
+    let y = y.min(screen.bottom() - h).max(screen.top());
+    let id = popover_id();
+    let area = egui::Area::new(id).kind(egui::UiKind::Modal).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).movable(false).fade_in(false);
+    let frame = egui::Frame::NONE.fill(Tokens::get(ctx).panel);
+    let body = |app: &mut VectorcraftApp, ui: &mut Ui| {
+        ui.set_width(W);
+        egui::ScrollArea::vertical().max_height(screen.height()).show(ui, |ui| show(app, ui));
+    };
+    if app.ui.dialog.is_some() {
+        // Under an application dialog (its own backdrop takes the clicks): shown, inert.
+        area.interactable(false).show(ctx, |ui| {
+            ui.disable();
+            frame.show(ui, |ui| body(app, ui));
+        });
         return;
     }
-    if crate::varos::panel_stack::in_card(app, PANEL) {
-        // Its card closes (the panel only, when others share it).
-        crate::varos::panel_stack::toggle(app, PANEL);
-    } else if app.ui.open_panel.as_deref() == Some(PANEL) {
-        app.ui.open_panel = None;
-    } else if let Err(e) = app.run("window.panel.close", json!({ "panel": PANEL })) {
-        // A floating group or the docked layout: upstream's removal for its place.
-        app.ui.status = e;
+    let modal = egui::Modal::new(id).area(area).backdrop_color(Color32::TRANSPARENT).frame(frame).show(ctx, |ui| body(app, ui));
+    let click = ctx.input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()).flatten());
+    if !modal.any_popup_open
+        && !egui::Popup::is_any_open(ctx)
+        && let Some(p) = click.filter(|p| !modal.response.rect.contains(*p))
+    {
+        // The topmost well under the click (the one drawn last) is the one seen there.
+        let well = wells.iter().rev().find(|(r, _)| r.contains(p)).copied();
+        let current = (anchor, !app.session.fill_active);
+        if well == Some(current) {
+            return;
+        }
+        finish_pending(app, ctx);
+        if let Some((r, stroke)) = well {
+            open_for(app, stroke, r);
+        } else {
+            close(app);
+        }
     }
 }
 
 /// Called every frame before the shortcuts and the tools. A gesture whose picker was not drawn
-/// last frame (the panel was put away mid-drag) is finished, so no interaction stays open. Escape
-/// with the pointer over the picker (drawn last frame) and no field or popup taking it finishes
-/// any gesture and closes the Color panel; true when it did.
+/// last frame (put away mid-drag) is finished, so no interaction stays open. While the popover is
+/// open its Escape is the picker's (true, and the caller routes it no further): it closes the
+/// popover (finishing any gesture, never undoing), or is left to a focused field or open dropdown.
 pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     let now = ctx.cumulative_frame_nr();
-    let drawn = ctx.data(|d| d.get_temp::<(Rect, u64)>(rect_id())).filter(|(_, frame)| frame + 1 >= now);
-    let Some((rect, _)) = drawn else {
-        finish_pending(app, ctx);
+    for sid in instances() {
+        if ctx.data(|d| d.get_temp::<u64>(sid.with("drawn"))).is_none_or(|frame| frame + 1 < now) {
+            finish_instance(app, ctx, sid);
+        }
+    }
+    if app.ui.varos_picker_anchor.is_none() || !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         return false;
-    };
+    }
+    // A focused field or an open dropdown in the picker takes this Escape itself (left for it);
+    // the tools and the rest of the app never see it.
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
-        return false;
+        return true;
     }
-    let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| rect.contains(p));
-    if !over || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        return false;
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        finish_pending(app, ctx);
+        close(app);
     }
-    finish_pending(app, ctx);
-    close(app);
     true
 }
 

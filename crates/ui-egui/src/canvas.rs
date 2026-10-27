@@ -330,7 +330,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let resp = ui.interact(rect, egui::Id::unique("canvas"), Sense::click_and_drag());
     // A press on the canvas while the context menu is open only closes it (a drag too, which egui
     // alone would leave open); the tool doesn't get it.
-    if app.ui.dialog.as_ref().is_some_and(crate::dialogs::revolve_gizmo::active) {
+    if app.ui.varos_picker_anchor.is_some() || app.ui.dialog.as_ref().is_some_and(crate::dialogs::revolve_gizmo::active) {
+        // The well-opened colour picker owns the pointer: a click outside it only closes it.
         // The artboard's 3D gizmo owns these gestures while its options are open.
         // Do not let a ring drag also move or deselect the editable source path.
     } else if resp.context_menu_opened() && resp.hovered() && ui.input(|i| i.pointer.any_pressed()) {

@@ -91,3 +91,9 @@ Seen in v14 (cards, old shell): the picker v3 sits inside a Color | Appearance c
 3. Remove the extra × in the picker's mode row.
 Owner-marked priority; its own lane right after shell stage 3 (one cargo lane on the Mac).
 
+Picker lane implementation (2026-10-27, gates green, owner hand test pending): colour wells now
+open a 240 pt frameless modal picker, independently of the docked Color panel, placed under the
+Fill/Stroke pair (beside it when there is no room below). Gradient is an icon mode using the shared
+Gradient editor; solid modes convert gradients back to a solid. The mode row has no close button
+or Gradient navigation text. Headless interaction tests and software captures pass. No parity
+score change. See `lanes/picker2-report.md`.

@@ -371,6 +371,12 @@ pub(crate) fn proxy(app: &mut VectorcraftApp, ui: &mut Ui, size: f32) {
     let (f, s) = current_paints(app);
     let mixed = mixed_paints(app, ui.ctx());
     let c = crate::widgets::fill_stroke_proxy(ui, &f, &s, mixed, app.session.fill_active, size);
+    // In drawing order: the square in front (the active one) last, as the picker's well
+    // switching looks for the topmost well under a click.
+    let fill_front = app.session.fill_active;
+    for stroke in [fill_front, !fill_front] {
+        crate::varos::picker::register_well(ui.ctx(), if stroke { c.stroke_rect } else { c.fill_rect }, stroke);
+    }
     if (c.fill && !app.session.fill_active) || (c.stroke && app.session.fill_active) {
         app.run("paint.toggleActive", json!({})).ok();
     }
@@ -380,10 +386,9 @@ pub(crate) fn proxy(app: &mut VectorcraftApp, ui: &mut Ui, size: f32) {
     if c.default {
         app.run("paint.default", json!({})).ok();
     }
-    if let Some(stroke) = c.pick {
-        // Varos: a double-click shows the colour picker v3 (the Color panel) for that proxy, not
-        // upstream's modal Color Picker (`ui.colorPicker` stays for agents and scripts).
-        crate::varos::picker::open_for(app, stroke);
+    if (c.fill || c.stroke || c.pick.is_some()) && ui.layer_id().id != egui::Id::unique("varos-picker-popover") {
+        let stroke = c.stroke || c.pick == Some(true);
+        crate::varos::picker::open_for(app, stroke, if stroke { c.stroke_rect } else { c.fill_rect });
     }
     if let Some(p) = c.dropped_fill {
         app.run("paint.setFill", p).ok();
@@ -395,50 +400,25 @@ pub(crate) fn proxy(app: &mut VectorcraftApp, ui: &mut Ui, size: f32) {
 
 /// The Fill (or `stroke`) chip of the Control bar and the Properties panel, `size` square (with a
 /// `chevron` after it): the proxy's paint, "?" when the selected objects' paints differ. A click
-/// brings that proxy forward and opens a popover with the Swatches panel; Shift-click (or the
-/// popover's toggle) shows the Color panel's mixer instead.
+/// brings that proxy forward and opens the shared colour picker popover.
 pub(crate) fn paint_chip(app: &mut VectorcraftApp, ui: &mut Ui, stroke: bool, size: f32, chevron: bool) {
     let (fill, stroke_paint) = current_paints(app);
     let mixed = mixed_paints(app, ui.ctx());
     let (paint, mixed) = if stroke { (stroke_paint, mixed.1) } else { (fill, mixed.0) };
-    let tip = if stroke {
-        tl!("Stroke: click for swatches, Shift-click for the color mixer")
-    } else {
-        tl!("Fill: click for swatches, Shift-click for the color mixer")
-    };
+    let tip = if stroke { tl!("Stroke") } else { tl!("Fill") };
     let resp = crate::widgets::chip_button_named(ui, size, chevron, tip, |ui, chip| {
         crate::widgets::proxy_chip(ui, chip, &paint, mixed, stroke.then_some(size * 0.25));
     });
-    if resp.clicked() {
-        app.run("paint.toggleActive", json!({ "fill": !stroke })).ok();
-        set_pstate(ui.ctx(), MIXER, ui.input(|i| i.modifiers.shift));
-    }
-    // A popover that keeps its own open state: the Swatches body opens menus of its own (Swatch
-    // Libraries, Show Swatch Kinds), which a remembered egui popup would close with them (#536).
-    crate::widgets::popover(&resp, resp.clicked(), |ui| paint_popover(app, ui));
-}
-
-/// The chip popovers' width (a narrow Swatches or Color panel).
-const POPOVER_WIDTH: f32 = 248.0;
-/// Panel state: the chip popovers show the Color panel's mixer instead of the swatches.
-const MIXER: &str = "paint-popover-mixer";
-
-/// The body of a Fill/Stroke chip popover: a Swatches / Color mixer toggle above that panel's body.
-fn paint_popover(app: &mut VectorcraftApp, ui: &mut Ui) {
-    ui.set_width(POPOVER_WIDTH);
-    let mixer: bool = pstate(ui.ctx(), MIXER);
-    ui.horizontal(|ui| {
-        for (icon, tip, m) in [("swatch-book", "Swatches", false), ("palette", "Color Mixer (Shift-click the chip)", true)] {
-            if crate::widgets::icon_button(ui, icon, tip, mixer == m, 22.0).clicked() {
-                set_pstate(ui.ctx(), MIXER, m);
-            }
-        }
-    });
-    crate::widgets::divider(ui);
-    if mixer {
-        color::show(app, ui);
-    } else {
+    // A secondary click keeps the Swatches popover one click away; it keeps its own open state, as
+    // its body opens menus of its own (Swatch Libraries), which an egui context menu closes with
+    // them (#536).
+    crate::widgets::popover(&resp, resp.secondary_clicked(), |ui| {
+        ui.set_width(248.0);
         swatches::popover(app, ui);
+    });
+    crate::varos::picker::register_well(ui.ctx(), resp.rect, stroke);
+    if resp.clicked() {
+        crate::varos::picker::open_for(app, stroke, resp.rect);
     }
 }
 

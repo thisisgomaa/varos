@@ -234,13 +234,35 @@ enum Drag {
     Mid(usize),
 }
 
+/// Commit a ramp preview when its containing picker is dismissed mid-gesture.
+pub(crate) fn finish_picker_drag(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    if pstate::<Drag>(ctx, "grad-drag") != Drag::None {
+        if app.session.in_interaction() {
+            if let Err(error) = app.session.commit_interaction() {
+                app.status(error.to_string());
+            }
+            app.sync_views();
+        }
+        set_pstate(ctx, "grad-drag", Drag::None);
+    }
+}
+
 pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
+    show_body(app, ui, false);
+}
+
+/// The picker always exposes gradient options, independently of the docked panel's menu.
+pub(crate) fn show_picker(app: &mut VectorcraftApp, ui: &mut Ui) {
+    show_body(app, ui, true);
+}
+
+fn show_body(app: &mut VectorcraftApp, ui: &mut Ui, compact: bool) {
     let t = Tokens::get(ui.ctx());
     let gp = current(app);
     let is_grad = gp.is_some();
     let g = gp.unwrap_or_else(|| GradientPaint::new(Gradient::default()));
     let kind = g.gradient.kind;
-    let hidden: bool = pstate(ui.ctx(), HIDE_OPTIONS);
+    let hidden: bool = !compact && pstate(ui.ctx(), HIDE_OPTIONS);
     // Header: thumbnail + its swatch menu, the type buttons and Edit Gradient.
     ui.horizontal(|ui| {
         thumbnail(app, ui, &g, is_grad);
@@ -254,6 +276,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             type_row(app, ui);
             if widgets::flat_button(ui, tl!("Edit Gradient"), 96.0).clicked() {
                 app.select_tool("gradient");
+                if compact {
+                    crate::varos::picker::close(app);
+                }
             }
         });
     });
@@ -411,7 +436,7 @@ fn freeform_section(app: &mut VectorcraftApp, ui: &mut Ui, g: &GradientPaint) {
             widgets::dim_label(ui, &p.color.to_hex().to_uppercase());
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_enabled_ui(sel.is_some(), |ui| {
             for (label, key, value) in [(tl!("Opacity:"), "opacity", point.map(|p| p.opacity)), (tl!("Spread:"), "spread", point.map(|p| p.spread))] {
                 widgets::dim_label(ui, label);
@@ -515,10 +540,12 @@ fn stop_fields(app: &mut VectorcraftApp, ui: &mut Ui, g: &Gradient, is_grad: boo
             }
         });
     }
+    // Narrower fields keep the row inside the 240 pt colour picker (its Gradient mode).
+    let field_w = if ui.available_width() < 240.0 { 42.0 } else { 54.0 };
     ui.horizontal(|ui| {
         ui.add_enabled_ui(sel.is_some(), |ui| {
             widgets::dim_label(ui, tl!("Opacity:"));
-            if let Some(v) = widgets::plain_field(ui, "grad-op", stop.map_or(100.0, |s| s.opacity as f64 * 100.0), "%", 0, 54.0)
+            if let Some(v) = widgets::plain_field(ui, "grad-op", stop.map_or(100.0, |s| s.opacity as f64 * 100.0), "%", 0, field_w)
                 && let Some(i) = sel
             {
                 let mut v2 = stops.clone();
@@ -533,7 +560,7 @@ fn stop_fields(app: &mut VectorcraftApp, ui: &mut Ui, g: &Gradient, is_grad: boo
                 (None, Some(s)) => s.offset as f64 * 100.0,
                 _ => 0.0,
             };
-            if let Some(v) = widgets::plain_field(ui, ("grad-loc", mid.is_some()), loc, "%", 1, 54.0) {
+            if let Some(v) = widgets::plain_field(ui, ("grad-loc", mid.is_some()), loc, "%", 1, field_w) {
                 let v = (v / 100.0) as f32;
                 if let Some(m) = mid {
                     set_stops(app, &set_midpoint(stops, m, v), None, Live::Released);
@@ -557,6 +584,7 @@ fn stop_fields(app: &mut VectorcraftApp, ui: &mut Ui, g: &Gradient, is_grad: boo
 /// The stop's eyedropper: the Eyedropper tool samples the next colour clicked on the art into the
 /// selected stop, then hands back to the current tool.
 fn stop_eyedropper(app: &mut VectorcraftApp) {
+    crate::varos::picker::close(app);
     let back = app.session.tool_id();
     app.select_tool("eyedropper");
     app.session.set_tool_option("stop", &json!(back));

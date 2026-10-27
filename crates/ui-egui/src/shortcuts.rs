@@ -562,10 +562,13 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         }
         return;
     }
-    // Varos: Escape over the colour picker v3 puts the Color panel away (it never undoes).
+    // The well-opened picker owns Escape, before strips and canvas tools: it closes the picker, or
+    // a dropdown or field in it, and never also ends a tool operation.
+    if crate::varos::picker::escape(app, ctx) {
+        return;
+    }
     if !app.session.tool_composing() {
         crate::varos::shell::strip::escape(app, ctx);
-        crate::varos::picker::escape(app, ctx);
     }
 
     if app.ui.screen_mode == 3 {
