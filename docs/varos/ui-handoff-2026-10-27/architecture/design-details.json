@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-26T23:11:51.484543+00:00",
+  "title": "Design System: Varos Workspace Study",
+  "extensions": {
+    "shadows": [
+      {
+        "name": "floating-panel",
+        "value": "0 16px 48px #0008",
+        "purpose": "Separate floating editors from docked areas."
+      },
+      {
+        "name": "popover",
+        "value": "0 15px 48px #0007",
+        "purpose": "Lift menus above editor content."
+      },
+      {
+        "name": "drag-ghost",
+        "value": "0 15px 30px #0006",
+        "purpose": "Identify the panel currently being dragged."
+      }
+    ],
+    "motion": [
+      {
+        "name": "grip-reveal",
+        "value": "opacity .14s ease-out",
+        "purpose": "Reveal the grip on top-edge approach, hover, or focus; disabled for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-panel-container",
+        "value": "310px"
+      },
+      {
+        "name": "compact-desktop-viewport",
+        "value": "1000px"
+      },
+      {
+        "name": "narrow-viewport",
+        "value": "700px"
+      }
+    ]
+  }
+}
