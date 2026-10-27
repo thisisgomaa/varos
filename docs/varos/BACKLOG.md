@@ -91,3 +91,10 @@ Seen in v14 (cards, old shell): the picker v3 sits inside a Color | Appearance c
 3. Remove the extra × in the picker's mode row.
 Owner-marked priority; its own lane right after shell stage 3 (one cargo lane on the Mac).
 
+## New shell — known after stage 3 (2026-10-27)
+- Collapse: an all-collapsed nested horizontal subtree with unequal heights (one leaf beside a
+  vertical pair, above an expanded sibling) can leave a hole under the single leaf
+  (`shell/tree.rs` `collapsed_height`/layout). Fix in stage 4 with a test.
+- Collapse beside the Board is refused with a status line (no box above/below to take the room);
+  the design notes promised collapse anywhere — revisit with the owner (narrow vertical tab strip?).
+

@@ -59,6 +59,8 @@ handoff.
   - **double-click the tab** of a floating panel → it collapses to its title bar only; double-click
     again → opens. So a panel has four presentations: icon · flyout · full · collapsed bar, and
     every one is reached by one gesture, reversible with the same gesture.
+- *Implementation note (stage 3):* double-click collapse works for stacked boxes and floats; a box
+  beside the Board refuses to collapse (status line) until the owner decides what it should become.
 - **Group look (owner):** the group's tab row holds all its panels' names; names are cut short
   when the group is narrow ("Open | Char | Paragraph | Glyph"), the active tab is lit and wider.
   `>>` and `≡` sit at the row's right. The group's iconic form is a 4-icon strip with the active
