@@ -84,3 +84,10 @@ One cargo lane at a time on the owner's Mac; gates = workspace tests (release, `
 -D warnings`, fmt, `git diff --check`; author ≠ reviewer; moderator lands the merge, bundles,
 and hands off in plain Arabic with what to test. Shell code lives under `varos/shell/` only;
 editor-side changes (S3 sections) are the exception and are listed in the lane report.
+
+## Stage 2 implementation record (2026-10-27)
+Version 2 persists the Board strip, groups, dimensions and icon/label mode; version 1 migrates.
+Flyouts use the shared tab row, panel menu and real panel bodies; open state is transient.
+Window commands and the next-frame `ui.open_panel` shim share shell ownership.
+Software captures use `VAROS_SHELL_CAPTURE` and `VAROS_SHELL_CAPTURE_FLYOUT`.
+Owner acceptance pending; dragging and floating strips remain outside this stage.

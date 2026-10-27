@@ -1,4 +1,4 @@
-//! The new Varos shell, stage 1 (`docs/varos/NEW_SHELL_PLAN.md`): Preferences › Varos shell (new)
+//! The new Varos shell, stages 1–2 (`docs/varos/NEW_SHELL_PLAN.md`): Preferences › Varos shell (new)
 //! draws the window's central region as our own split tree of boxes instead of craft-ui's dock.
 //!
 //! The Board (the canvas, with its document tabs) is one box; every other box holds panels as
@@ -13,6 +13,7 @@
 pub(crate) mod boxes;
 pub(crate) mod divider;
 pub(crate) mod persist;
+pub(crate) mod strip;
 pub(crate) mod tree;
 
 use egui::Rect;
@@ -35,6 +36,9 @@ pub(crate) fn enabled(app: &VectorcraftApp) -> bool {
 
 /// Preferences › Varos shell (new) set to `on`; the next frame draws the chosen shell.
 pub(crate) fn set_enabled(app: &mut VectorcraftApp, on: bool) {
+    if app.ui.varos_shell.enabled != on {
+        strip::close(app);
+    }
     app.ui.varos_shell.enabled = on;
 }
 
@@ -44,6 +48,14 @@ pub(crate) fn set_enabled(app: &mut VectorcraftApp, on: bool) {
 pub(crate) enum Hit {
     /// The Board (the canvas region, its document tabs included).
     Board,
+    Strip,
+    StripToggle,
+    StripIcon(String),
+    StripGroup(usize),
+    Flyout,
+    FlyoutTab(String),
+    FlyoutClose,
+    FlyoutResize,
     /// The canvas inside the Board (inside the rulers and scroll bars): where canvas gestures go.
     BoardBody,
     /// An ordinary box, whole.
@@ -51,7 +63,10 @@ pub(crate) enum Hit {
     /// A box's tab row (where its pills sit).
     TabRow(u32),
     /// A panel's tab in a box.
-    Tab { box_id: u32, panel: String },
+    Tab {
+        box_id: u32,
+        panel: String,
+    },
     /// A box's ≡ button.
     Menu(u32),
     /// The divider of the split at this path.
@@ -85,10 +100,20 @@ pub(crate) fn frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
 }
 
 fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
-    follow_open_panel(app);
+    let frame = ui.ctx().cumulative_frame_nr();
+    let follow = ui.ctx().data_mut(|d| {
+        let id = egui::Id::unique("shell-follow-frame");
+        let fresh = d.get_temp::<u64>(id) != Some(frame);
+        d.insert_temp(id, frame);
+        fresh
+    });
+    if follow {
+        follow_open_panel(app);
+    }
     let area = ui.max_rect();
     let mut hits = Vec::new();
     if crate::varos::home::is_home(app) || app.ui.screen_mode >= 1 {
+        strip::close(app);
         hits.push((Hit::Board, area));
         board(app, ui, area, false, &mut hits);
     } else {
@@ -104,7 +129,8 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             let Some(b) = app.ui.varos_shell.tree.find_box(*id).cloned() else { continue };
             if b.is_board() {
                 hits.push((Hit::Board, *rect));
-                board(app, ui, *rect, true, &mut hits);
+                let canvas = strip::show(app, ui, *rect, &mut hits);
+                board(app, ui, canvas, true, &mut hits);
             } else if let Some(ask) = boxes::show(app, ui, &b, *rect, &mut hits) {
                 asks.push(ask);
             }
@@ -112,7 +138,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         for ask in asks {
             match ask {
                 boxes::Ask::Close(panel) => {
-                    app.ui.varos_shell.tree.remove_tab(&panel);
+                    app.ui.varos_shell.close_tab(&panel);
                     ui.ctx().request_repaint();
                 }
             }
@@ -121,7 +147,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let pass = ui.ctx().cumulative_pass_nr();
     ui.ctx().data_mut(|d| d.insert_temp(hits_id(), Hits { pass, hits: std::sync::Arc::new(hits) }));
     // A panel asked for by code that sets `open_panel` while this frame drew shows on the next.
-    if app.ui.open_panel.is_some() {
+    if app.ui.open_panel != app.ui.varos_shell.open {
         ui.ctx().request_repaint();
     }
 }
@@ -138,28 +164,28 @@ fn board(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, framed: bool, 
     }
 }
 
-/// `ui.open_panel` is upstream's "the flyout open now", and code all over the app sets it to show
-/// a panel (Transparency from the control bar, Pattern Options, Separations Preview, workspace
-/// presets, …). The shell has no flyouts yet, so it is a request: the panel comes to the front of
-/// its box, or opens as a tab of the bottom-right box, and `open_panel` is cleared (what the shell
-/// shows is its tabs). Stage 2 sends icon-strip panels to their flyouts instead.
+/// Compatibility shim: external writes request a strip flyout or activate an existing box tab.
+/// The shell mirrors its transient flyout into `open_panel`; box activation clears it. An
+/// unchanged mirrored value is not a new request. Panel bodies may request another panel for
+/// the next frame, so never overwrite their writes at the end of drawing.
 fn follow_open_panel(app: &mut VectorcraftApp) {
-    let Some(raw) = app.ui.open_panel.take() else { return };
-    if let Some(panel) = crate::menus::normalize_panel(&raw) {
+    if app.ui.open_panel == app.ui.varos_shell.open {
+        return;
+    }
+    let request = app.ui.open_panel.take();
+    strip::close(app);
+    if let Some(panel) = request.as_deref().and_then(crate::menus::normalize_panel) {
         show_panel(app, panel, false);
     }
 }
 
-/// Is panel `id` a tab of some box (the Window menu's check mark).
 pub(crate) fn showing(app: &VectorcraftApp, id: &str) -> bool {
-    app.ui.varos_shell.tree.find_tab(id).is_some()
+    app.ui.varos_shell.tree.find_tab(id).is_some() || app.ui.varos_shell.open.as_deref() == Some(id)
 }
 
 /// The window commands while the shell is on; `None` for every other command (and for all of them
-/// while it is off). `window.panel {panel, toggle?}`: a panel in a box comes to the front (with
-/// `toggle`, the Window menu's item, it closes); one in no box opens as a tab of the bottom-right
-/// box, in front. `window.panel.close {panel}`: its tab closes (a box left empty goes). The dock's
-/// other commands and the workspaces are not in the shell yet: they change nothing and say so.
+/// while it is off). Strip panels open as flyouts; box tabs activate. Toggle closes either,
+/// returning a closed tab to the strip. Dock/workspace commands remain for a later stage.
 pub(crate) fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !enabled(app) {
         return None;
@@ -174,7 +200,10 @@ pub(crate) fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Opt
             show_panel(app, panel, toggle)
         })),
         "window.panel.close" => Some(panel().map(|panel| {
-            let closed = app.ui.varos_shell.tree.remove_tab(panel);
+            let closed = app.ui.varos_shell.close_tab(panel) || app.ui.varos_shell.open.as_deref() == Some(panel);
+            if app.ui.varos_shell.open.as_deref() == Some(panel) {
+                strip::close_panel(app, panel);
+            }
             json!({"panel": panel, "closed": closed})
         })),
         "window.dock" | "window.panels" | "window.collapseDock" | "ui.dock" | "ui.dock.reset" => Some(Ok(not_yet(app, id))),
@@ -184,18 +213,29 @@ pub(crate) fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Opt
 }
 
 fn show_panel(app: &mut VectorcraftApp, panel: &str, toggle: bool) -> Value {
-    let tree = &mut app.ui.varos_shell.tree;
-    if tree.find_tab(panel).is_some() {
-        if toggle {
-            tree.remove_tab(panel);
-            return json!({"panel": panel, "shown": false});
-        }
-        tree.activate(panel);
-    } else {
-        let target = tree.target_box();
-        tree.add_tab(target, panel);
+    if crate::varos::home::is_home(app) || app.ui.screen_mode >= 1 {
+        strip::close(app);
+        app.status("Panels are hidden on Home and in full screen modes");
+        return json!({"panel": panel, "shown": false});
     }
-    json!({"panel": panel, "shown": true, "box": tree.find_tab(panel)})
+    if app.ui.varos_shell.tree.find_tab(panel).is_some() {
+        strip::close(app);
+        if toggle {
+            app.ui.varos_shell.close_tab(panel);
+        } else {
+            app.ui.varos_shell.tree.activate(panel);
+        }
+    } else {
+        if app.ui.varos_shell.strip.group(panel).is_none() {
+            app.ui.varos_shell.strip.append(panel);
+        }
+        if toggle && app.ui.varos_shell.open.as_deref() == Some(panel) {
+            strip::close(app);
+        } else {
+            strip::open(app, panel);
+        }
+    }
+    json!({"panel": panel, "shown": showing(app, panel), "box": app.ui.varos_shell.tree.find_tab(panel)})
 }
 
 /// A command the shell doesn't have yet: nothing changes; the status line says so.

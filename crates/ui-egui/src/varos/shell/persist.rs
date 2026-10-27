@@ -1,4 +1,4 @@
-//! The shell's saved state: `varos_shell` in `ui.json` (version 1), apart from craft-ui's
+//! The shell's saved state: `varos_shell` in `ui.json` (version 2), apart from craft-ui's
 //! `docking` layout, which it never touches.
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::tree::Node;
 
 /// The saved layout's version.
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 2;
 
 /// Preferences › Varos shell (new) and the shell's box layout.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -18,11 +18,21 @@ pub struct VarosShell {
     pub version: u32,
     /// The boxes.
     pub tree: Node,
+    /// The sole Board owns this strip; it is independent of ordinary panel boxes.
+    pub strip: super::strip::Strip,
+    #[serde(skip)]
+    pub open: Option<String>,
 }
 
 impl Default for VarosShell {
     fn default() -> Self {
-        Self { enabled: false, version: VERSION, tree: Node::default_layout() }
+        Self {
+            enabled: false,
+            version: VERSION,
+            strip: super::strip::Strip::default_for(&Node::default_layout()),
+            tree: Node::default_layout(),
+            open: None,
+        }
     }
 }
 
@@ -35,17 +45,41 @@ pub(crate) fn known(id: &str) -> bool {
 /// another version, or one that doesn't read, is the default; unknown panel ids are dropped.
 pub(crate) fn from_value(v: &Value) -> VarosShell {
     let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(false);
-    let tree = (v.get("version").and_then(Value::as_u64) == Some(u64::from(VERSION)))
+    let tree = matches!(v.get("version").and_then(Value::as_u64), Some(1 | 2))
         .then(|| v.get("tree").and_then(|t| Node::deserialize(t).ok()))
         .flatten()
         .map_or_else(Node::default_layout, |t| t.sanitized(&known));
-    VarosShell { enabled, version: VERSION, tree }
+    let mut strip = v.get("strip").and_then(|s| super::strip::Strip::deserialize(s).ok()).unwrap_or_else(|| super::strip::Strip::default_for(&tree));
+    strip.sanitize(&tree);
+    VarosShell { enabled, version: VERSION, tree, strip, open: None }
 }
 
 /// Serde's reader for `UiState::varos_shell`: never fails the whole UI state.
 pub(crate) fn lenient<'de, D: Deserializer<'de>>(d: D) -> Result<VarosShell, D::Error> {
     let v = Value::deserialize(d)?;
     Ok(from_value(&v))
+}
+
+impl VarosShell {
+    /// Atomic ownership transfer from strip to box, ready for Stage 3.
+    #[allow(dead_code)] // Stage 3 will drive this ownership transfer through dragging.
+    pub fn add_tab(&mut self, target: u32, panel: &str) -> bool {
+        if !self.tree.add_tab(target, panel) {
+            return false;
+        }
+        self.strip.remove(panel);
+        if self.open.as_deref() == Some(panel) {
+            self.open = None;
+        }
+        true
+    }
+    pub fn close_tab(&mut self, panel: &str) -> bool {
+        if !self.tree.remove_tab(panel) {
+            return false;
+        }
+        self.strip.append(panel);
+        true
+    }
 }
 
 #[cfg(test)]
@@ -59,7 +93,7 @@ mod tests {
         let mut ui = crate::state::UiState::default();
         assert!(!ui.varos_shell.enabled, "off by default");
         ui.varos_shell.enabled = true;
-        ui.varos_shell.tree.add_tab(3, "stroke");
+        ui.varos_shell.add_tab(3, "stroke");
         ui.varos_shell.tree.set_ratio(&[], 0.61);
         let saved = serde_json::to_value(&ui).unwrap();
         assert_eq!(saved["varos_shell"]["enabled"], json!(true));
