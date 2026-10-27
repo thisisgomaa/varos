@@ -2353,13 +2353,18 @@ impl VectorcraftApp {
             varos::profile::measure("toolbar", || toolbar::show(self, ui));
         }
         varos::profile::measure("library.tidy", || panels::library_panel::tidy(self));
-        // The canvas and the panels: one docking layout. Tab hides the panels but not the canvas.
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(t.pasteboard))
-            .show(ui, |ui| varos::profile::measure("dock", || panel_docking::show(self, ui)));
-        // Varos: icon panels open as Varos-drawn cards in the window; they belong to the document.
-        if !on_home {
-            varos::profile::measure("dock.cards", || varos::panel_stack::frame(self, &ctx));
+        if varos::shell::enabled(self) {
+            // Varos: Preferences › Varos shell (new): the central region is the Varos shell's boxes.
+            varos::shell::frame(self, ui);
+        } else {
+            // The canvas and the panels: one docking layout. Tab hides the panels but not the canvas.
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE.fill(t.pasteboard))
+                .show(ui, |ui| varos::profile::measure("dock", || panel_docking::show(self, ui)));
+            // Varos: icon panels open as Varos-drawn cards in the window; they belong to the document.
+            if !on_home {
+                varos::profile::measure("dock.cards", || varos::panel_stack::frame(self, &ctx));
+            }
         }
         varos::profile::measure("dialogs", || dialogs::show(self, &ctx));
         updates_ui::show(self, &ctx);

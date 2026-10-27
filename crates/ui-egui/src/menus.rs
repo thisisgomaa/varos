@@ -1282,6 +1282,10 @@ pub fn check_params(session: &vectorcraft_engine::Session, id: &str, params: &Va
 /// handles its own way (a Window menu panel item that toggles, …) → `None` to leave it to the
 /// engine.
 pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    // Varos: with the Varos shell on, its boxes answer the panel and dock commands.
+    if let Some(result) = crate::varos::shell::command(app, id, p) {
+        return Some(result);
+    }
     // The Window menu's panel items toggle like its other checked items (#2361); the panel's
     // other ways in (shortcuts, Show Properties Panel, a tool's double-click) only show it.
     if id == "window.panel" && p.get("toggle").and_then(Value::as_bool) == Some(true) && checked(app, id, p) == Some(true) {
@@ -2044,7 +2048,13 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "window.panel" => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("");
             // Varos: an open card counts as shown.
-            normalize_panel(panel).is_some_and(|id| crate::panel_docking::showing(&app.ui, id) || crate::varos::panel_stack::is_open(app, id))
+            normalize_panel(panel).is_some_and(|id| {
+                // Varos: with the Varos shell on, a panel shows when it is a tab of one of its boxes.
+                if crate::varos::shell::enabled(app) {
+                    return crate::varos::shell::showing(app, id);
+                }
+                crate::panel_docking::showing(&app.ui, id) || crate::varos::panel_stack::is_open(app, id)
+            })
         }
         "window.collapseDock" => crate::panel_docking::dock_collapsed(&app.ui),
         "window.workspace" => p.get("name").and_then(Value::as_str) == Some(app.ui.workspace.as_str()),

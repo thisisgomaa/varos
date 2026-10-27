@@ -596,6 +596,10 @@ pub struct UiState {
     /// (`crate::varos::picker::Prefs`); a missing or malformed value reads as the defaults.
     #[serde(default, deserialize_with = "crate::varos::picker::lenient")]
     pub varos_picker: crate::varos::picker::Prefs,
+    /// Varos: Preferences › Varos shell (new) and the shell's box layout (`crate::varos::shell`),
+    /// saved apart from [`Self::docking`]; a missing or malformed value reads as the defaults.
+    #[serde(default, deserialize_with = "crate::varos::shell::persist::lenient")]
+    pub varos_shell: crate::varos::shell::persist::VarosShell,
 }
 
 /// The desktop window's geometry, kept across launches.
@@ -896,6 +900,7 @@ impl Default for UiState {
             varos_panel_stack: Default::default(),
             varos_me_folded: Default::default(),
             varos_picker: Default::default(),
+            varos_shell: Default::default(),
         }
     }
 }
