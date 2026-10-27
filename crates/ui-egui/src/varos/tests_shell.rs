@@ -1,11 +1,14 @@
-//! The Varos shell, stage 1 ([`super::shell`]): through the real frame, with real clicks and drags.
+//! The Varos shell, stages 1–3 ([`super::shell`]): through the real frame, with real clicks and
+//! drags.
 
 use egui::{Pos2, Rect, pos2, vec2};
 use serde_json::json;
 use vectorcraft_engine::Session;
 
 use crate::VectorcraftApp;
-use crate::varos::shell::{self, Hit, tree};
+use crate::varos::shell::drag::{DragMode, Side, Slot, Target};
+use crate::varos::shell::strip::StripRef;
+use crate::varos::shell::{self, Hit, boxes, floats, tree};
 
 const SCREEN: egui::Vec2 = vec2(1600.0, 1000.0);
 
@@ -14,6 +17,11 @@ struct Harness {
     ctx: egui::Context,
     time: f64,
     screen: egui::Vec2,
+    /// The modifier keys held (sent as `ModifiersChanged` when they change).
+    modifiers: egui::Modifiers,
+    sent_modifiers: egui::Modifiers,
+    /// The window has the keyboard focus.
+    focused: bool,
 }
 
 fn button(pos: Pos2, pressed: bool) -> egui::Event {
@@ -39,7 +47,7 @@ impl Harness {
         let app = VectorcraftApp::new(Session::new(), Default::default());
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let mut h = Self { app, ctx, time: 0.0, screen };
+        let mut h = Self { app, ctx, time: 0.0, screen, modifiers: egui::Modifiers::NONE, sent_modifiers: egui::Modifiers::NONE, focused: true };
         h.settle();
         h
     }
@@ -49,10 +57,14 @@ impl Harness {
     }
 
     /// One frame; all it output.
-    fn frame_full(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+    fn frame_full(&mut self, mut events: Vec<egui::Event>) -> egui::FullOutput {
         self.time += 0.05;
+        if self.modifiers != self.sent_modifiers {
+            events.insert(0, egui::Event::ModifiersChanged(self.modifiers));
+            self.sent_modifiers = self.modifiers;
+        }
         let screen = Rect::from_min_size(Pos2::ZERO, self.screen);
-        let input = egui::RawInput { time: Some(self.time), events, screen_rect: Some(screen), ..Default::default() };
+        let input = egui::RawInput { time: Some(self.time), events, screen_rect: Some(screen), focused: self.focused, ..Default::default() };
         let app = &mut self.app;
         app.begin_host_iteration();
         let mut out = self.ctx.run_ui(input, |ui| {
@@ -129,6 +141,95 @@ impl Harness {
     fn front(&self, box_id: u32) -> Option<&str> {
         self.tree().find_box(box_id).and_then(tree::PanelBox::front)
     }
+
+    fn state(&self) -> &shell::persist::VarosShell {
+        &self.app.ui.varos_shell
+    }
+
+    /// Box `id`'s tabs, in order.
+    fn box_tabs(&self, id: u32) -> Vec<String> {
+        self.tree().find_box(id).map(|b| b.tabs.clone()).unwrap_or_default()
+    }
+
+    /// Press at `from` and move to `to` in eight frames, the button held.
+    fn hold_drag(&mut self, from: Pos2, to: Pos2) {
+        self.frame(vec![egui::Event::PointerMoved(from)]);
+        self.frame(vec![button(from, true)]);
+        for k in 1..=8 {
+            self.frame(vec![egui::Event::PointerMoved(from + (to - from) * (k as f32 / 8.0))]);
+        }
+    }
+
+    /// Let go at `at`; the frames settle.
+    fn release(&mut self, at: Pos2) {
+        self.frame(vec![egui::Event::PointerMoved(at), button(at, false)]);
+        self.settle();
+    }
+
+    fn drag(&mut self, from: Pos2, to: Pos2) {
+        self.hold_drag(from, to);
+        self.release(to);
+    }
+
+    fn double_click(&mut self, at: Pos2) {
+        // Well after any earlier click: two double-clicks in a row are never read as a triple.
+        self.time += 1.0;
+        self.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+        self.frame(vec![button(at, false)]);
+        self.frame(vec![button(at, true)]);
+        self.frame(vec![button(at, false)]);
+        self.settle();
+    }
+
+    /// The drop line drawn mid-drag.
+    fn drop_line(&self) -> (Hit, Rect) {
+        self.hits().into_iter().find(|(h, _)| matches!(h, Hit::DropLine { .. })).unwrap_or_else(|| panic!("a drop line in {:?}", self.hits()))
+    }
+
+    /// Where the drag under way would land.
+    fn drop_target(&self) -> Option<Target> {
+        self.hits().into_iter().find_map(|(h, _)| match h {
+            Hit::DropLine { target, .. } | Hit::DropAt(target) => Some(target),
+            _ => None,
+        })
+    }
+
+    /// A tab dragged to `to`, empty space: → the new floating panel's id.
+    fn float_tab(&mut self, panel: &str, to: Pos2) -> u32 {
+        let from = self.tab(panel).center();
+        self.drag(from, to);
+        self.state().float_of(panel).unwrap_or_else(|| panic!("{panel} floats"))
+    }
+
+    /// A Board strip icon dragged to `to`, empty space: → the lone icon's (floating strip's) id.
+    fn lone_icon(&mut self, panel: &str, to: Pos2) -> u32 {
+        let from = self.rect(&Hit::StripIcon(panel.into())).center();
+        self.drag(from, to);
+        self.state().float_strip_of(panel).unwrap_or_else(|| panic!("{panel} is a lone icon"))
+    }
+
+    /// Every box at least its minimum size (a collapsed one its row), the Board its own.
+    fn assert_min_sizes(&self) {
+        for (hit, r) in self.hits() {
+            match hit {
+                Hit::Box(id) if !self.tree().find_box(id).unwrap().collapsed => {
+                    assert!(r.width() >= tree::BOX_MIN.x - 1.0 && r.height() >= tree::BOX_MIN.y - 1.0, "box {id}: {r:?}");
+                }
+                Hit::Board => assert!(r.width() >= tree::BOARD_MIN.x - 1.0 && r.height() >= tree::BOARD_MIN.y - 1.0, "Board: {r:?}"),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The azure rects a frame painted: (filled, outlined).
+fn azure(out: &egui::FullOutput) -> (usize, usize) {
+    let accent = crate::varos::theme::ACCENT;
+    let rects = out.shapes.iter().filter_map(|s| match &s.shape {
+        egui::Shape::Rect(r) => Some(r),
+        _ => None,
+    });
+    rects.fold((0, 0), |(f, s), r| (f + usize::from(r.fill == accent), s + usize::from(r.stroke.width > 0.0 && r.stroke.color == accent)))
 }
 
 #[test]
@@ -510,6 +611,12 @@ fn presses_on_seams_and_tab_rows_never_reach_the_canvas() {
 /// Software capture (no GPU) of the window as the app draws it into a fresh dark-themed context:
 /// 6 frames, rasterized; RGBA pixels.
 fn capture(app: &mut VectorcraftApp, width: u32, height: u32) -> Vec<u8> {
+    capture_with(app, width, height, Vec::new())
+}
+
+/// [`capture`] with `script`'s events played after the 6 frames, one frame each, and 2 more frames
+/// with none; the last is rasterized.
+fn capture_with(app: &mut VectorcraftApp, width: u32, height: u32, script: Vec<Vec<egui::Event>>) -> Vec<u8> {
     let ctx = egui::Context::default();
     crate::theme::install_fonts(&ctx);
     crate::theme::apply(&ctx, crate::theme::Brightness::Dark);
@@ -518,9 +625,15 @@ fn capture(app: &mut VectorcraftApp, width: u32, height: u32) -> Vec<u8> {
     app.canvas.worker_started = true;
     let mut textures = std::collections::HashMap::<egui::TextureId, egui::ColorImage>::new();
     let mut shot = None;
-    for frame in 0..6 {
+    let frames: Vec<Vec<egui::Event>> = std::iter::repeat_with(Vec::new)
+        .take(6)
+        .chain(script.clone())
+        .chain(std::iter::repeat_with(Vec::new).take(if script.is_empty() { 0 } else { 2 }))
+        .collect();
+    for (frame, events) in frames.into_iter().enumerate() {
         let raw = egui::RawInput {
             time: Some(100.0 + 0.05 * frame as f64),
+            events,
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32))),
             max_texture_side: Some(8192),
             ..Default::default()
@@ -593,7 +706,7 @@ fn capture_shell() {
 fn strip_defaults_migrate_and_ownership_moves() {
     let tree = tree::Node::default_layout();
     let mut shell = shell::persist::from_value(&json!({"version":1,"enabled":true,"tree":tree}));
-    assert_eq!(shell.version, 2);
+    assert_eq!(shell.version, shell::persist::VERSION);
     let expected: Vec<_> = crate::state::ICON_PANEL_GROUPS.iter().flat_map(|g| g.iter()).filter(|p| tree.find_tab(p).is_none()).copied().collect();
     assert_eq!(shell.strip.groups.iter().flat_map(|g| g.panels.iter().map(String::as_str)).collect::<Vec<_>>(), expected);
     assert!(shell.add_tab(3, "stroke"));
@@ -906,4 +1019,687 @@ fn flyouts_keep_their_first_presented_height_on_open_and_switch() {
             assert_eq!(h.rect(&Hit::Flyout), first, "{panel} must not grow each frame");
         }
     }
+}
+
+// Stage 3: drag and drop, floats, lone icons, collapse.
+
+#[test]
+fn a_tab_dragged_onto_a_tab_row_shows_a_line_between_pills_and_lands_there() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let before = h.state().clone();
+    let (props, color) = (h.tab("properties"), h.tab("color"));
+    let from = h.tab("artboards").center();
+    let to = pos2(f32::midpoint(props.right(), color.left()), color.center().y);
+    let idle = azure(&h.frame_full(vec![]));
+    h.hold_drag(from, to);
+    let (hit, line) = h.drop_line();
+    assert_eq!(hit, Hit::DropLine { vertical: true, target: Target::Tabs { box_id: 3, before: Some("color".into()) } });
+    assert!(line.width() <= 2.5 && line.height() >= 20.0, "a thin vertical line: {line:?}");
+    assert!(line.center().x >= props.right() - 1.0 && line.center().x <= color.left() + 1.0, "between the pills: {line:?}");
+    assert!(h.rect(&Hit::Ghost).contains(to), "the ghost is under the pointer");
+    let dragging = azure(&h.frame_full(vec![egui::Event::PointerMoved(to)]));
+    assert!(dragging.0 > idle.0 && dragging.1 > idle.1, "an azure line and an azure source outline: {idle:?} → {dragging:?}");
+    assert_eq!(h.state().tree, before.tree, "nothing changes before the release");
+    let out = h.frame_full(vec![]);
+    assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Grabbing);
+    h.release(to);
+    assert_eq!(h.box_tabs(3), ["properties", "artboards", "color", "swatches"]);
+    assert_eq!(h.front(3), Some("artboards"));
+    assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::DropLine { .. } | Hit::Ghost)), "the preview goes with the drag");
+    h.state().invariants().unwrap();
+    // Inside its own box: a reorder.
+    let from = h.tab("swatches").center();
+    let to = h.tab("properties").left_center() + vec2(3.0, 0.0);
+    h.drag(from, to);
+    assert_eq!(h.box_tabs(3), ["swatches", "properties", "artboards", "color"]);
+    // Box 2's last tab dropped elsewhere: box 2 goes and box 3 takes the column.
+    let column = h.rect(&Hit::Box(2)).union(h.rect(&Hit::Box(3)));
+    let from = h.tab("layers").center();
+    let to = h.tab("color").right_center() + vec2(6.0, 0.0);
+    h.drag(from, to);
+    assert_eq!(h.tree().find_box(2), None);
+    assert_eq!(h.box_tabs(3), ["swatches", "properties", "artboards", "color", "layers"]);
+    let rest = h.rect(&Hit::Box(3));
+    assert!((rest.top() - column.top()).abs() < 0.5 && (rest.bottom() - column.bottom()).abs() < 0.5, "{rest:?} fills {column:?}");
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn a_tab_dragged_onto_a_box_edge_splits_the_box_there() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let upper = h.rect(&Hit::Box(2));
+    let from = h.tab("color").center();
+    let to = pos2(upper.center().x, upper.bottom() - 8.0);
+    h.hold_drag(from, to);
+    let (hit, line) = h.drop_line();
+    assert_eq!(hit, Hit::DropLine { vertical: false, target: Target::Edge { box_id: 2, side: Side::Bottom } });
+    assert!(
+        line.height() <= 2.5 && (line.center().y - upper.bottom()).abs() <= 1.0 && line.width() >= upper.width() - 1.0,
+        "{line:?} along {upper:?}"
+    );
+    h.release(to);
+    let id = h.tree().find_tab("color").unwrap();
+    assert!(![2, 3].contains(&id), "a box of its own");
+    let (upper, new) = (h.rect(&Hit::Box(2)), h.rect(&Hit::Box(id)));
+    assert!(new.top() > upper.bottom() && (new.left() - upper.left()).abs() < 0.5, "{new:?} below {upper:?}");
+    assert!((new.height() - upper.height()).abs() <= 1.0, "half each: {new:?} {upper:?}");
+    h.state().invariants().unwrap();
+    h.assert_min_sizes();
+}
+
+#[test]
+fn the_boards_four_edges_take_a_box() {
+    // The right edge: inside the Board just left of its strip (over the canvas's scroll bar), and
+    // in the seam outside.
+    for (side, inside) in [(Side::Left, true), (Side::Top, true), (Side::Bottom, true), (Side::Right, true), (Side::Right, false)] {
+        let mut h = Harness::new();
+        h.shell(true);
+        let board = h.board();
+        let rail = h.rect(&Hit::Strip);
+        let to = match side {
+            Side::Left => pos2(board.left() + 8.0, board.center().y),
+            Side::Right if inside => pos2(rail.left() - 20.0, board.center().y),
+            Side::Right => pos2(board.right() + 3.0, board.center().y),
+            Side::Top => pos2(board.center().x - 100.0, board.top() + 6.0),
+            Side::Bottom => pos2(board.center().x, board.bottom() - 8.0),
+        };
+        if side == Side::Right && inside {
+            assert!(board.contains(to) && to.x < rail.left(), "inside the Board, left of its strip");
+        }
+        let from = h.tab("swatches").center();
+        h.hold_drag(from, to);
+        let vertical = matches!(side, Side::Left | Side::Right);
+        assert_eq!(h.drop_line().0, Hit::DropLine { vertical, target: Target::Edge { box_id: 1, side } }, "{side:?}");
+        h.release(to);
+        let id = h.tree().find_tab("swatches").unwrap();
+        let (b, new) = (h.board(), h.rect(&Hit::Box(id)));
+        let placed = match side {
+            Side::Left => new.right() < b.left(),
+            Side::Right => new.left() > b.right(),
+            Side::Top => new.bottom() < b.top(),
+            Side::Bottom => new.top() > b.bottom(),
+        };
+        assert!(placed, "{side:?}: {new:?} beside {b:?}");
+        h.state().invariants().unwrap();
+        h.assert_min_sizes();
+    }
+}
+
+#[test]
+fn a_tab_dropped_on_empty_space_floats_and_moves_resizes_and_takes_tabs() {
+    let mut h = Harness::new();
+    h.app.run("shape.rectangle", json!({"x": 40, "y": 40, "width": 120, "height": 80})).unwrap();
+    h.shell(true);
+    let selected = h.selection();
+    assert_eq!(selected.0, 1);
+    let body = h.rect(&Hit::BoardBody);
+    let to = body.left_top() + vec2(80.0, 100.0);
+    let from = h.tab("color").center();
+    h.hold_drag(from, to);
+    assert_eq!(h.drop_target(), Some(Target::Float));
+    assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::DropLine { .. })), "no line: the ghost alone");
+    h.release(to);
+    assert_eq!(h.state().floats.len(), 1);
+    let id = h.state().floats[0].panels.id;
+    assert_eq!(h.state().floats[0].panels.tabs, ["color"]);
+    assert_eq!(h.tree().find_tab("color"), None);
+    let float = h.rect(&Hit::Float(id));
+    assert!(float.contains(to), "{float:?} under {to:?}");
+    assert!(h.tab("color").intersects(float), "its tab row");
+    assert_eq!(h.selection(), selected, "the drop never reached the canvas");
+    assert!(shell::showing(&h.app, "color"));
+    h.state().invariants().unwrap();
+    // A press on it never reaches the canvas either.
+    h.click(float.center());
+    assert_eq!(h.selection(), selected);
+    // Moved by its title strip.
+    let title = h.rect(&Hit::FloatTitle(id)).center();
+    h.drag(title, title + vec2(120.0, 60.0));
+    let moved = h.rect(&Hit::Float(id));
+    assert!((moved.min - (float.min + vec2(120.0, 60.0))).length() < 1.0, "{moved:?} from {float:?}");
+    // Resized from its lower-right corner, then its right edge: drawn at the new size in the
+    // frame of each pointer move, the published geometry with it.
+    let corner = h.rect(&Hit::FloatResize(id)).center();
+    h.hold_drag(corner, corner + vec2(40.0, 30.0));
+    let grown = h.rect(&Hit::Float(id));
+    assert!((grown.size() - (moved.size() + vec2(40.0, 30.0))).length() < 0.5, "{grown:?} from {moved:?}");
+    assert!((h.rect(&Hit::FloatResize(id)).max - grown.max).length() < 0.5, "the corner follows");
+    h.frame(vec![egui::Event::PointerMoved(corner + vec2(50.0, 35.0))]);
+    let grown = h.rect(&Hit::Float(id));
+    assert!((grown.size() - (moved.size() + vec2(50.0, 35.0))).length() < 0.5, "same frame: {grown:?}");
+    h.release(corner + vec2(50.0, 35.0));
+    assert_eq!(h.rect(&Hit::Float(id)), grown);
+    let edge = h.rect(&Hit::FloatResizeRight(id)).center();
+    h.hold_drag(edge, edge + vec2(-30.0, 0.0));
+    let narrower = h.rect(&Hit::Float(id));
+    assert!((narrower.width() - (grown.width() - 30.0)).abs() < 0.5 && narrower.height() == grown.height(), "{narrower:?}");
+    h.release(edge + vec2(-30.0, 0.0));
+    // A tab dropped into its tab row joins it.
+    let row = h.rect(&Hit::TabRow(id));
+    let to = pos2(row.right() - 10.0, row.center().y);
+    let from = h.tab("swatches").center();
+    h.hold_drag(from, to);
+    assert_eq!(h.drop_target(), Some(Target::Tabs { box_id: id, before: None }));
+    h.release(to);
+    assert_eq!(h.state().floats[0].panels.tabs, ["color", "swatches"]);
+    assert_eq!(h.tabs().iter().filter(|p| p.as_str() == "swatches").count(), 1);
+    // A tab in a box's body (not its edges) floats too.
+    let b2 = h.rect(&Hit::Box(2));
+    let from = h.tab("artboards").center();
+    h.hold_drag(from, b2.center());
+    assert_eq!(h.drop_target(), Some(Target::Float));
+    h.release(b2.center());
+    assert_eq!(h.state().floats.len(), 2);
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn a_double_click_on_a_tab_collapses_its_box_or_float_and_another_restores_it() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let (top, bottom) = (h.rect(&Hit::Box(2)), h.rect(&Hit::Box(3)));
+    let at = h.tab("layers").center();
+    h.double_click(at);
+    assert!(h.tree().find_box(2).unwrap().collapsed);
+    let (row, rest) = (h.rect(&Hit::Box(2)), h.rect(&Hit::Box(3)));
+    assert_eq!(row.height(), boxes::HEADER, "its tab row only");
+    assert_eq!(row.width(), top.width(), "it keeps its width");
+    assert!(
+        (rest.top() - row.bottom() - tree::SEAM).abs() < 0.5 && (rest.bottom() - bottom.bottom()).abs() < 0.5,
+        "the sibling takes the rest: {rest:?}"
+    );
+    let saved = serde_json::to_value(h.state()).unwrap();
+    assert!(shell::persist::from_value(&saved).tree.find_box(2).unwrap().collapsed, "saved");
+    h.double_click(h.tab("layers").center());
+    assert!(!h.tree().find_box(2).unwrap().collapsed);
+    assert_eq!((h.rect(&Hit::Box(2)), h.rect(&Hit::Box(3))), (top, bottom));
+    // A float: its body hides, its title strip and tab row stay.
+    let body = h.rect(&Hit::BoardBody);
+    let id = h.float_tab("color", body.center() + vec2(-150.0, 0.0));
+    let whole = h.rect(&Hit::Float(id));
+    h.double_click(h.tab("color").center());
+    assert!(h.state().floats[0].panels.collapsed);
+    assert_eq!(h.rect(&Hit::Float(id)).height(), floats::TITLE + boxes::HEADER);
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::FloatResize(id)), "no resizing while collapsed");
+    h.double_click(h.tab("color").center());
+    assert_eq!(h.rect(&Hit::Float(id)), whole);
+    // The Window menu shows a collapsed box's panel whole.
+    h.double_click(h.tab("swatches").center());
+    assert!(h.tree().find_box(3).unwrap().collapsed);
+    h.app.run("window.panel", json!({"panel": "swatches"})).unwrap();
+    assert!(!h.tree().find_box(3).unwrap().collapsed);
+    // Alone beside the Board, nothing would take its room: it stays whole, the status says why.
+    for p in ["layers", "artboards"] {
+        h.app.run("window.panel.close", json!({"panel": p})).unwrap();
+    }
+    h.settle();
+    let whole = h.rect(&Hit::Box(3));
+    h.double_click(h.tab("swatches").center());
+    assert!(!h.tree().find_box(3).unwrap().collapsed);
+    assert_eq!(h.rect(&Hit::Box(3)), whole);
+    assert!(h.app.ui.status.contains("Collapse"), "{}", h.app.ui.status);
+}
+
+#[test]
+fn a_tab_dragged_onto_the_strip_becomes_an_icon_and_an_icon_onto_a_row_a_tab() {
+    let mut h = Harness::new();
+    h.shell(true);
+    // Over a group's grip dots: a group of its own, there.
+    let first = h.state().strip.groups[1].panels[0].clone();
+    let grip = h.rect(&Hit::StripGroup(1));
+    let from = h.tab("swatches").center();
+    h.hold_drag(from, grip.center());
+    let (hit, line) = h.drop_line();
+    assert_eq!(
+        hit,
+        Hit::DropLine { vertical: false, target: Target::Strip { strip: StripRef::Board, slot: Slot::NewGroup { before: Some(first) } } }
+    );
+    assert!(line.height() <= 2.5 && (line.center().y - grip.top()).abs() <= 1.5, "{line:?} at {grip:?}");
+    h.release(grip.center());
+    assert_eq!(h.state().strip.groups[1].panels, ["swatches"]);
+    assert_eq!(h.tree().find_tab("swatches"), None);
+    // On an icon's upper half: into its group, before it.
+    let group = h.state().strip.groups[h.state().strip.group("stroke").unwrap()].clone();
+    let stroke = h.rect(&Hit::StripIcon("stroke".into()));
+    let to = pos2(stroke.center().x, stroke.top() + 4.0);
+    let from = h.tab("color").center();
+    h.hold_drag(from, to);
+    assert_eq!(
+        h.drop_line().0,
+        Hit::DropLine {
+            vertical: false,
+            target: Target::Strip { strip: StripRef::Board, slot: Slot::Join { group_of: group.panels[0].clone(), before: Some("stroke".into()) } }
+        }
+    );
+    h.release(to);
+    let panels = &h.state().strip.groups[h.state().strip.group("stroke").unwrap()].panels;
+    let at = |p: &str| panels.iter().position(|q| q == p).unwrap();
+    assert_eq!(at("color") + 1, at("stroke"), "{panels:?}");
+    h.state().invariants().unwrap();
+    // An icon onto a tab row: a tab again.
+    let icon = h.rect(&Hit::StripIcon("gradient".into())).center();
+    let row = h.rect(&Hit::TabRow(3));
+    let to = pos2(row.right() - 8.0, row.center().y);
+    h.hold_drag(icon, to);
+    assert_eq!(h.drop_target(), Some(Target::Tabs { box_id: 3, before: None }));
+    h.release(to);
+    assert_eq!(h.tree().find_tab("gradient"), Some(3));
+    assert_eq!(h.state().strip.group("gradient"), None);
+    // An icon onto a box edge: a box of its own.
+    let icon = h.rect(&Hit::StripIcon("transparency".into())).center();
+    let upper = h.rect(&Hit::Box(2));
+    let to = pos2(upper.center().x, upper.bottom() - 8.0);
+    h.drag(icon, to);
+    let id = h.tree().find_tab("transparency").unwrap();
+    assert!(![2, 3].contains(&id));
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn an_icon_dropped_on_the_board_is_a_lone_icon_with_a_flyout_a_full_panel_and_back() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let to = h.rect(&Hit::BoardBody).center() + vec2(-150.0, 0.0);
+    let from = h.rect(&Hit::StripIcon("stroke".into())).center();
+    h.hold_drag(from, to);
+    assert_eq!(h.drop_target(), Some(Target::LoneIcon));
+    h.release(to);
+    let id = h.state().float_strip_of("stroke").expect("a lone icon");
+    assert_eq!(h.state().float_strips.len(), 1);
+    assert_eq!(h.state().float_strips[0].groups.len(), 1);
+    assert_eq!(h.state().float_strips[0].groups[0].panels, ["stroke"]);
+    assert_eq!(h.state().strip.group("stroke"), None, "it left the Board's strip");
+    let lone = h.rect(&Hit::FloatStrip(id));
+    assert!(lone.contains(to) && lone.width() == floats::STRIP_W, "{lone:?} at {to:?}");
+    for hit in [Hit::FloatStripClose(id), Hit::FloatStripExpand(id), Hit::FloatStripGroup { strip: id, index: 0 }] {
+        assert!(lone.contains_rect(h.rect(&hit)), "{hit:?}");
+    }
+    h.state().invariants().unwrap();
+    // Its icon opens the flyout beside it; the icon stays; again closes it.
+    let icon = h.rect(&Hit::FloatStripIcon { strip: id, panel: "stroke".into() }).center();
+    h.click(icon);
+    assert_eq!(h.state().open.as_deref(), Some("stroke"));
+    assert!(shell::showing(&h.app, "stroke"));
+    let flyout = h.rect(&Hit::Flyout);
+    assert!((flyout.left() - lone.right()).abs() < 1.0 || (flyout.right() - lone.left()).abs() < 1.0, "{flyout:?} beside {lone:?}");
+    h.rect(&Hit::FloatStripIcon { strip: id, panel: "stroke".into() });
+    h.click(icon);
+    assert_eq!(h.state().open, None);
+    assert_eq!(h.app.ui.open_panel, None);
+    // The Window menu opens it there too.
+    h.app.run("window.panel", json!({"panel": "stroke"})).unwrap();
+    h.settle();
+    assert_eq!(h.state().open.as_deref(), Some("stroke"));
+    assert_eq!(h.state().float_strip_of("stroke"), Some(id));
+    h.app.run("window.panel", json!({"panel": "stroke", "toggle": true})).unwrap();
+    h.settle();
+    assert_eq!(h.state().open, None);
+    // >>: a full floating panel; the lone icon goes.
+    let expand = h.rect(&Hit::FloatStripExpand(id)).center();
+    h.click(expand);
+    assert!(h.state().float_strips.is_empty());
+    assert_eq!(h.state().floats.len(), 1);
+    assert_eq!(h.state().floats[0].panels.tabs, ["stroke"]);
+    let fid = h.state().floats[0].panels.id;
+    h.rect(&Hit::Float(fid));
+    h.state().invariants().unwrap();
+    // <<: the lone icon again.
+    let back = h.rect(&Hit::FloatToIcon(fid)).center();
+    h.click(back);
+    assert!(h.state().floats.is_empty());
+    assert_eq!(h.state().float_strips.len(), 1);
+    assert_eq!(h.state().float_strips[0].groups[0].panels, ["stroke"]);
+    h.state().invariants().unwrap();
+    // ×: back to the Board's strip.
+    let id = h.state().float_strips[0].id;
+    let close = h.rect(&Hit::FloatStripClose(id)).center();
+    h.click(close);
+    assert!(h.state().float_strips.is_empty());
+    assert!(h.state().strip.group("stroke").is_some());
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn a_strip_group_dragged_by_its_grip_floats_or_moves_between_groups() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let group = h.state().strip.groups[2].clone();
+    let grip = h.rect(&Hit::StripGroup(2)).center();
+    let to = h.rect(&Hit::BoardBody).center();
+    h.hold_drag(grip, to);
+    assert_eq!(h.drop_target(), Some(Target::LoneIcon));
+    h.release(to);
+    assert_eq!(h.state().float_strips.len(), 1);
+    assert_eq!(h.state().float_strips[0].groups, std::slice::from_ref(&group));
+    let id = h.state().float_strips[0].id;
+    // Its grip dragged onto the Board strip's first group: back, first.
+    let grip = h.rect(&Hit::FloatStripGroup { strip: id, index: 0 }).center();
+    let to = h.rect(&Hit::StripGroup(0)).center();
+    h.drag(grip, to);
+    assert!(h.state().float_strips.is_empty());
+    assert_eq!(h.state().strip.groups[0], group);
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn a_floating_strip_docks_on_the_boards_strip_edge_or_between_its_groups_or_moves() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let body = h.rect(&Hit::BoardBody);
+    let id = h.lone_icon("stroke", body.center() + vec2(-150.0, 0.0));
+    let rail = h.rect(&Hit::Strip);
+    let title = h.rect(&Hit::FloatStripTitle(id)).center();
+    let to = pos2(rail.left() - 10.0, rail.center().y);
+    h.hold_drag(title, to);
+    let (hit, line) = h.drop_line();
+    assert_eq!(hit, Hit::DropLine { vertical: true, target: Target::Dock });
+    assert!((line.height() - rail.height()).abs() < 1.0 && line.width() <= 2.5, "full height along the strip: {line:?} {rail:?}");
+    h.release(to);
+    assert!(h.state().float_strips.is_empty());
+    assert_eq!(h.state().strip.groups.last().unwrap().panels, ["stroke"]);
+    h.state().invariants().unwrap();
+    // Between the strip's groups: it joins there.
+    let id = h.lone_icon("gradient", body.center() + vec2(-150.0, 0.0));
+    let first = h.state().strip.groups[1].panels[0].clone();
+    let grip = h.rect(&Hit::StripGroup(1));
+    let title = h.rect(&Hit::FloatStripTitle(id)).center();
+    h.hold_drag(title, grip.center());
+    assert_eq!(
+        h.drop_line().0,
+        Hit::DropLine { vertical: false, target: Target::Strip { strip: StripRef::Board, slot: Slot::NewGroup { before: Some(first) } } }
+    );
+    h.release(grip.center());
+    assert_eq!(h.state().strip.groups[1].panels, ["gradient"]);
+    // Elsewhere it only moves.
+    let id = h.lone_icon("transparency", body.center() + vec2(-150.0, 0.0));
+    let lone = h.rect(&Hit::FloatStrip(id));
+    let title = h.rect(&Hit::FloatStripTitle(id)).center();
+    h.hold_drag(title, title + vec2(0.0, 80.0));
+    assert_eq!(h.drop_target(), Some(Target::Move));
+    h.release(title + vec2(0.0, 80.0));
+    assert!((h.rect(&Hit::FloatStrip(id)).min - (lone.min + vec2(0.0, 80.0))).length() < 1.0);
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn escape_or_a_lost_focus_mid_drag_changes_nothing() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let body = h.rect(&Hit::BoardBody);
+    let lone = h.lone_icon("stroke", body.center() + vec2(-150.0, 0.0));
+    let before = h.state().clone();
+    let rail = h.rect(&Hit::Strip);
+    let row = h.rect(&Hit::TabRow(3));
+    let upper = h.rect(&Hit::Box(2));
+    let cases = [
+        (h.tab("artboards").center(), pos2(row.right() - 8.0, row.center().y)),
+        (h.tab("color").center(), pos2(upper.center().x, upper.bottom() - 8.0)),
+        (h.tab("color").center(), body.center()),
+        (h.tab("swatches").center(), h.rect(&Hit::StripGroup(1)).center()),
+        (h.rect(&Hit::StripIcon("gradient".into())).center(), body.center() + vec2(100.0, 80.0)),
+        (h.rect(&Hit::StripIcon("gradient".into())).center(), pos2(row.right() - 8.0, row.center().y)),
+        (h.rect(&Hit::StripGroup(0)).center(), body.center() + vec2(100.0, 80.0)),
+        (h.rect(&Hit::FloatStripTitle(lone)).center(), pos2(rail.left() - 10.0, rail.center().y)),
+    ];
+    for (k, (from, to)) in cases.into_iter().enumerate() {
+        h.hold_drag(from, to);
+        assert!(h.drop_target().is_some(), "case {k}: a target");
+        h.frame(vec![escape_key()]);
+        assert!(h.state().drag.is_none(), "case {k}");
+        h.release(to);
+        assert_eq!(*h.state(), before, "case {k}: nothing changed");
+        assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::DropLine { .. } | Hit::DropAt(_) | Hit::Ghost)), "case {k}");
+    }
+    // A pointer gone from the window cancels.
+    let (from, to) = (h.tab("color").center(), body.center());
+    h.hold_drag(from, to);
+    h.frame(vec![egui::Event::PointerGone]);
+    assert!(h.state().drag.is_none());
+    h.release(to);
+    assert_eq!(*h.state(), before);
+    // A lost window focus cancels too.
+    h.hold_drag(from, to);
+    h.focused = false;
+    h.frame(vec![egui::Event::PointerMoved(to)]);
+    h.focused = true;
+    assert!(h.state().drag.is_none());
+    h.release(to);
+    assert_eq!(*h.state(), before);
+    // So does a release where nothing applies (the app bar).
+    h.hold_drag(from, pos2(to.x, 4.0));
+    assert_eq!(h.drop_target(), None);
+    h.release(pos2(to.x, 4.0));
+    assert_eq!(*h.state(), before);
+    // Escape while a float is moved puts it back.
+    let id = h.float_tab("color", body.center());
+    let float = h.rect(&Hit::Float(id));
+    let title = h.rect(&Hit::FloatTitle(id)).center();
+    h.hold_drag(title, title + vec2(90.0, 40.0));
+    assert!((h.rect(&Hit::Float(id)).min - (float.min + vec2(90.0, 40.0))).length() < 1.0, "it moves live");
+    h.frame(vec![escape_key()]);
+    h.release(title + vec2(90.0, 40.0));
+    assert_eq!(h.rect(&Hit::Float(id)), float);
+}
+
+#[test]
+fn alt_at_the_drag_start_is_the_duplicate_hook_which_moves_for_now() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let to = h.rect(&Hit::BoardBody).center();
+    let from = h.tab("color").center();
+    h.modifiers = egui::Modifiers::ALT;
+    h.hold_drag(from, to);
+    assert_eq!(h.state().drag.as_ref().map(|d| d.mode), Some(DragMode::Duplicate));
+    assert!(h.app.ui.status.contains("duplicate: later"), "{}", h.app.ui.status);
+    h.modifiers = egui::Modifiers::NONE;
+    h.release(to);
+    assert_eq!(h.state().floats.len(), 1);
+    assert_eq!(h.tree().find_tab("color"), None, "moved, not copied");
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn floats_and_lone_icons_round_trip_through_ui_json_and_version_2_migrates() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let body = h.rect(&Hit::BoardBody);
+    let id = h.float_tab("color", body.center() + vec2(-150.0, 0.0));
+    h.lone_icon("stroke", body.center() + vec2(150.0, 0.0));
+    h.app.ui.varos_shell.toggle_collapsed(id);
+    h.app.ui.varos_shell.toggle_collapsed(2);
+    h.settle();
+    let saved = serde_json::to_value(&h.app.ui).unwrap();
+    assert_eq!(saved["varos_shell"]["version"], json!(3));
+    assert_eq!(saved["varos_shell"]["floats"][0]["box"]["tabs"], json!(["color"]));
+    assert_eq!(saved["varos_shell"]["float_strips"][0]["groups"][0]["panels"], json!(["stroke"]));
+    let back: crate::state::UiState = serde_json::from_value(saved.clone()).unwrap();
+    assert_eq!(back.varos_shell.tree, h.state().tree);
+    assert_eq!(back.varos_shell.strip, h.state().strip);
+    assert_eq!(back.varos_shell.floats, h.state().floats);
+    assert_eq!(back.varos_shell.float_strips, h.state().float_strips);
+    assert!(back.varos_shell.floats[0].panels.collapsed && back.varos_shell.tree.find_box(2).unwrap().collapsed);
+    back.varos_shell.invariants().unwrap();
+    // Version 2 (stage 2) has no floats: the boxes and the strip load, the panels a float held
+    // are icons again, and the version is 3.
+    let mut v2 = saved["varos_shell"].clone();
+    v2["version"] = json!(2);
+    let migrated = shell::persist::from_value(&v2);
+    assert_eq!(migrated.version, 3);
+    assert!(migrated.floats.is_empty() && migrated.float_strips.is_empty());
+    assert_eq!(migrated.tree, h.state().tree);
+    assert!(migrated.strip.group("color").is_some() && migrated.strip.group("stroke").is_some());
+    migrated.invariants().unwrap();
+    // A float that doesn't read is dropped alone; a panel owned twice keeps its first owner.
+    let mut bad = saved["varos_shell"].clone();
+    bad["floats"].as_array_mut().unwrap().push(json!({"box": "nope"}));
+    bad["float_strips"][0]["groups"][0]["panels"].as_array_mut().unwrap().extend([json!("layers"), json!("color"), json!("nope")]);
+    let loaded = shell::persist::from_value(&bad);
+    assert_eq!(loaded.floats.len(), 1);
+    assert_eq!(loaded.float_strips[0].groups[0].panels, ["stroke"]);
+    loaded.invariants().unwrap();
+}
+
+#[test]
+fn window_panel_reaches_floats_and_lone_icons() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let checked = |app: &VectorcraftApp, p: &str| crate::menus::checked(app, "window.panel", &json!({"panel": p}));
+    let body = h.rect(&Hit::BoardBody);
+    let id = h.float_tab("color", body.center() + vec2(-150.0, 0.0));
+    h.lone_icon("stroke", body.center() + vec2(150.0, 0.0));
+    assert_eq!(checked(&h.app, "color"), Some(true));
+    assert_eq!(checked(&h.app, "stroke"), Some(false), "an icon only");
+    // The float's collapsed tab comes forward whole.
+    h.app.ui.varos_shell.toggle_collapsed(id);
+    let out = h.app.run("window.panel", json!({"panel": "color"})).unwrap();
+    assert_eq!(out["box"], json!(id));
+    assert!(!h.state().floats[0].panels.collapsed);
+    // Toggled: it closes back to the Board's strip, and the empty float goes.
+    h.app.run("window.panel", json!({"panel": "color", "toggle": true})).unwrap();
+    assert!(h.state().floats.is_empty());
+    assert!(h.state().strip.group("color").is_some());
+    assert!(!shell::showing(&h.app, "color"));
+    // A lone icon's panel opens as its flyout; Close Panel closes the flyout, the icon stays.
+    h.app.run("window.panel", json!({"panel": "stroke"})).unwrap();
+    h.settle();
+    assert!(shell::showing(&h.app, "stroke"));
+    h.rect(&Hit::Flyout);
+    let out = h.app.run("window.panel.close", json!({"panel": "stroke"})).unwrap();
+    assert_eq!(out["closed"], true);
+    h.settle();
+    assert!(!shell::showing(&h.app, "stroke"));
+    assert!(h.state().float_strip_of("stroke").is_some());
+    h.state().invariants().unwrap();
+}
+
+/// Software capture (no GPU) mid-drag: the Artboards tab held over the lower box's tab row, the
+/// azure insertion line between Properties and Color, the ghost pill under the pointer:
+/// `VAROS_SHELL_CAPTURE_DRAG=<file.png>`.
+#[test]
+#[ignore = "optional software visual capture; set VAROS_SHELL_CAPTURE_DRAG"]
+fn capture_shell_drag() {
+    let Some(file) = std::env::var_os("VAROS_SHELL_CAPTURE_DRAG").map(std::path::PathBuf::from) else { return };
+    let (width, height) = (1440_u32, 900_u32);
+    let mut h = Harness::sized_without_document(vec2(width as f32, height as f32));
+    h.app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
+    h.app.ui.control_bar = true;
+    h.settle();
+    h.shell(true);
+    let (props, color) = (h.tab("properties"), h.tab("color"));
+    let from = h.tab("artboards").center();
+    let to = pos2(f32::midpoint(props.right(), color.left()), color.center().y + 6.0);
+    let mut script = vec![vec![egui::Event::PointerMoved(from)], vec![button(from, true)]];
+    script.extend((1..=8).map(|k| vec![egui::Event::PointerMoved(from + (to - from) * (k as f32 / 8.0))]));
+    let pixels = capture_with(&mut h.app, width, height, script);
+    assert!(h.app.ui.varos_shell.drag.is_some(), "captured mid-drag");
+    image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+}
+
+/// Software capture (no GPU) with a floating panel (Color) and a lone floating icon (Stroke):
+/// `VAROS_SHELL_CAPTURE_FLOAT=<file.png>`.
+#[test]
+#[ignore = "optional software visual capture; set VAROS_SHELL_CAPTURE_FLOAT"]
+fn capture_shell_float() {
+    let Some(file) = std::env::var_os("VAROS_SHELL_CAPTURE_FLOAT").map(std::path::PathBuf::from) else { return };
+    let (width, height) = (1440_u32, 900_u32);
+    let mut h = Harness::sized_without_document(vec2(width as f32, height as f32));
+    h.app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
+    h.app.ui.control_bar = true;
+    h.settle();
+    h.shell(true);
+    let body = h.rect(&Hit::BoardBody);
+    h.float_tab("color", body.left_top() + vec2(120.0, 140.0));
+    h.lone_icon("stroke", body.right_top() + vec2(-60.0, 120.0));
+    assert_eq!((h.state().floats.len(), h.state().float_strips.len()), (1, 1));
+    let pixels = capture(&mut h.app, width, height);
+    image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+}
+
+#[test]
+fn a_float_resize_is_undone_by_escape_a_lost_focus_or_a_gone_pointer() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let body = h.rect(&Hit::BoardBody);
+    let id = h.float_tab("color", body.left_top() + vec2(80.0, 100.0));
+    let float = h.rect(&Hit::Float(id));
+    let saved = h.state().floats[0].rect;
+    for (k, cancel) in [vec![escape_key()], vec![egui::Event::PointerGone], vec![]].into_iter().enumerate() {
+        let corner = h.rect(&Hit::FloatResize(id)).center();
+        h.hold_drag(corner, corner + vec2(60.0, 40.0));
+        assert!(h.rect(&Hit::Float(id)).width() > float.width() + 50.0, "case {k}: resizing");
+        if k == 2 {
+            h.focused = false;
+        }
+        h.frame(cancel);
+        h.focused = true;
+        assert!(h.state().drag.is_none(), "case {k}");
+        assert_eq!(h.state().floats[0].rect, saved, "case {k}: the old size is back");
+        h.release(corner + vec2(60.0, 40.0));
+        assert_eq!(h.rect(&Hit::Float(id)), float, "case {k}");
+    }
+}
+
+#[test]
+fn a_release_after_the_window_changed_lands_on_what_is_drawn_then() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let rail = h.rect(&Hit::Strip);
+    let to = pos2(rail.left() - 20.0, h.board().center().y);
+    let from = h.tab("color").center();
+    h.hold_drag(from, to);
+    assert_eq!(h.drop_line().0, Hit::DropLine { vertical: true, target: Target::Edge { box_id: 1, side: Side::Right } });
+    // The window grows in the frame of the release: the pointer is now over the canvas, far from
+    // any edge, so the drop makes a floating panel, not the split the old frame showed.
+    h.screen += vec2(400.0, 0.0);
+    h.release(to);
+    assert!(h.rect(&Hit::BoardBody).contains(to));
+    assert_eq!(h.state().floats.len(), 1, "landed on the new layout");
+    assert_eq!(h.state().floats[0].panels.tabs, ["color"]);
+    assert_eq!(h.tree().boxes().len(), 3, "no split from the stale layout");
+    h.state().invariants().unwrap();
+    // The same layout on release: it lands at once, in the release frame.
+    let from = h.tab("swatches").center();
+    let row = h.rect(&Hit::TabRow(2));
+    let to = pos2(row.right() - 8.0, row.center().y);
+    h.hold_drag(from, to);
+    h.frame(vec![egui::Event::PointerMoved(to), button(to, false)]);
+    assert_eq!(h.tree().find_tab("swatches"), Some(2));
+}
+
+#[test]
+fn a_flyout_tab_dragged_out_outlines_its_group_and_a_cancel_reopens_the_flyout() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.run("window.panel", json!({"panel": "stroke"})).unwrap();
+    h.settle();
+    let before = h.state().clone();
+    let group = h.state().strip.group("gradient").unwrap();
+    let from = h.rect(&Hit::FlyoutTab("gradient".into())).center();
+    let to = h.rect(&Hit::BoardBody).center();
+    h.hold_drag(from, to);
+    assert_eq!(h.drop_target(), Some(Target::Float));
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::Flyout), "the flyout closes while dragging");
+    let grip = h.rect(&Hit::StripGroup(group));
+    let icons = ["stroke", "gradient", "transparency"].map(|p| h.rect(&Hit::StripIcon(p.into())));
+    let outlined = icons.into_iter().fold(grip, Rect::union);
+    assert_eq!(h.rect(&Hit::DragSource), outlined, "its group in the strip is outlined");
+    h.frame(vec![escape_key()]);
+    h.release(to);
+    assert_eq!(h.state().open.as_deref(), Some("stroke"), "the flyout is back");
+    assert_eq!(h.app.ui.open_panel.as_deref(), Some("stroke"));
+    h.rect(&Hit::Flyout);
+    assert_eq!(h.state().strip, before.strip);
+    assert_eq!(h.state().tree, before.tree);
+    // A release where nothing applies reopens it too; a real drop leaves it closed.
+    let from = h.rect(&Hit::FlyoutTab("gradient".into())).center();
+    h.hold_drag(from, pos2(to.x, 4.0));
+    h.release(pos2(to.x, 4.0));
+    assert_eq!(h.state().open.as_deref(), Some("stroke"));
+    let from = h.rect(&Hit::FlyoutTab("gradient".into())).center();
+    h.drag(from, to);
+    assert!(h.state().float_of("gradient").is_some());
+    assert_eq!(h.state().open, None);
+    h.state().invariants().unwrap();
 }

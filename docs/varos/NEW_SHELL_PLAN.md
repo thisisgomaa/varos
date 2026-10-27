@@ -91,3 +91,13 @@ Flyouts use the shared tab row, panel menu and real panel bodies; open state is 
 Window commands and the next-frame `ui.open_panel` shim share shell ownership.
 Software captures use `VAROS_SHELL_CAPTURE` and `VAROS_SHELL_CAPTURE_FLYOUT`.
 Owner acceptance pending; dragging and floating strips remain outside this stage.
+
+## Stage 3 implementation record (2026-10-27)
+Drags (`shell/drag.rs`): tab, icon, strip group (grip dots), floating strip (title strip); ghost at 70 %,
+1-point azure source outline, a 2-point azure line as the only preview; release applies on a copy of
+`VarosShell` (kept only when whole), Escape / lost focus / lost pointer cancel. Targets in order: tab
+row, strip slot, Board-strip dock (floating strips), box edge band (24 pt + half seam), empty space.
+Floating panels and lone icons / floating strips (`shell/floats.rs`) persist in version 3 (1 and 2
+migrate); double-click on a tab collapses a box or float to its tab row. Alt-drag is the
+`DragMode::Duplicate` hook only (moves; status "duplicate: later"). Captures: `VAROS_SHELL_CAPTURE_DRAG`,
+`VAROS_SHELL_CAPTURE_FLOAT`. Owner acceptance pending.
