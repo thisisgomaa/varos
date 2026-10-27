@@ -33,6 +33,7 @@ pub fn open(app: &mut VectorcraftApp, category: Option<&str>) {
     fields.insert("__snapToGrid".into(), json!(app.ui.view.snap_to_grid));
     fields.insert("__taskBar".into(), json!(app.ui.task_bar));
     fields.insert(crate::varos::panel_stack::PREF_KEY.into(), json!(app.ui.varos_panel_stack.enabled)); // Varos
+    fields.insert(crate::varos::shell::PREF_KEY.into(), json!(app.ui.varos_shell.enabled)); // Varos
     app.ui.dialog = Some(Dialog { kind: "preferences".into(), fields });
 }
 
@@ -51,6 +52,10 @@ pub fn confirm(app: &mut VectorcraftApp) -> Result<Value, String> {
     // Varos: Panel cards on or off.
     if let Some(on) = d.fields.get(crate::varos::panel_stack::PREF_KEY).and_then(Value::as_bool) {
         crate::varos::panel_stack::set_enabled(app, on);
+    }
+    // Varos: the Varos shell (new) on or off.
+    if let Some(on) = d.fields.get(crate::varos::shell::PREF_KEY).and_then(Value::as_bool) {
+        crate::varos::shell::set_enabled(app, on);
     }
     app.ui.dialog = None;
     app.ui.engine_prefs = app.session.prefs.to_json();
@@ -296,6 +301,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
             PrefKind::Bool if sp.key == "autoCollapseIconPanels" => {
                 bool_row(ui, d, sp.key, sp.label);
                 bool_row(ui, d, crate::varos::panel_stack::PREF_KEY, crate::varos::panel_stack::PREF_LABEL);
+                bool_row(ui, d, crate::varos::shell::PREF_KEY, crate::varos::shell::PREF_LABEL);
             }
             PrefKind::Bool => bool_row(ui, d, sp.key, sp.label),
             PrefKind::Num { min, max, unit } => {
