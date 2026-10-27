@@ -29,7 +29,10 @@ fn frame(
 ) -> Vec<Shape> {
     let events = std::iter::once(Event::ModifiersChanged(modifiers)).chain(events).collect();
     let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 1000.0)));
-    let mut out = ctx.run_ui(egui::RawInput { events, screen_rect, ..Default::default() }, |ui| draw(app, ui));
+    let mut out = ctx.run_ui(egui::RawInput { events, screen_rect, ..Default::default() }, |ui| {
+        draw(app, ui);
+        crate::varos::picker::popover(app, ui.ctx());
+    });
     out.textures_delta.clear();
     out.shapes.into_iter().map(|c| c.shape).collect()
 }
@@ -96,7 +99,7 @@ fn the_chips_show_a_question_mark_for_mixed_fills() {
 }
 
 #[test]
-fn a_popover_tile_click_sets_the_fill() {
+fn the_fill_chip_opens_the_picker_that_sets_the_fill() {
     let mut app = app();
     app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
     app.run("paint.toggleActive", json!({"fill": false})).unwrap();
@@ -105,11 +108,10 @@ fn a_popover_tile_click_sets_the_fill() {
     let (fill, stroke) = chips(&ctx);
     click(&mut app, &ctx, fill.center(), Modifiers::NONE, control_bar);
     assert!(app.session.fill_active, "the Fill chip brings its proxy forward");
-    let tile = ctx.read_response(egui::Id::unique(("swatch-pop-tile", "Red"))).expect("the popover shows the swatches").rect;
-    click(&mut app, &ctx, tile.center(), Modifiers::NONE, control_bar);
+    set_picker_hex(&mut app, &ctx, "ED1C24", control_bar);
     assert_eq!(fill_hex(&app), "#ed1c24");
-    assert_eq!(app.session.doc().unwrap().history.undo.last().unwrap().label, "Fill Color", "through paint.setFill");
-    // The Stroke chip: its proxy comes forward; Shift-click shows the mixer instead of swatches.
+    assert_eq!(app.session.doc().unwrap().history.undo.last().unwrap().label, "Color", "through the picker");
+    // The Stroke chip: its proxy comes forward and the same picker (never the swatches) shows.
     click(&mut app, &ctx, Pos2::new(1300.0, 900.0), Modifiers::NONE, control_bar);
     click(&mut app, &ctx, stroke.center(), Modifiers::SHIFT, control_bar);
     assert!(!app.session.fill_active);
@@ -143,8 +145,7 @@ fn the_properties_panel_has_the_control_bars_fill_and_stroke() {
     let (fill, stroke) = chips(&ctx);
     assert!(stroke.top() > fill.bottom(), "Fill above Stroke");
     click(&mut app, &ctx, fill.center(), Modifiers::NONE, props);
-    let tile = ctx.read_response(egui::Id::unique(("swatch-pop-tile", "Red"))).expect("the popover shows the swatches").rect;
-    click(&mut app, &ctx, tile.center(), Modifiers::NONE, props);
+    set_picker_hex(&mut app, &ctx, "ED1C24", props);
     assert_eq!(fill_hex(&app), "#ed1c24", "the next object's fill");
     app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
     assert_eq!(fill_hex(&app), "#ed1c24", "the new rectangle (selected) has it");
@@ -153,10 +154,9 @@ fn the_properties_panel_has_the_control_bars_fill_and_stroke() {
     frame(&mut app, &ctx, vec![], Modifiers::NONE, props);
     let (fill, _) = chips(&ctx);
     click(&mut app, &ctx, fill.center(), Modifiers::NONE, props);
-    let tile = ctx.read_response(egui::Id::unique(("swatch-pop-tile", "Black"))).expect("the popover shows the swatches").rect;
-    click(&mut app, &ctx, tile.center(), Modifiers::NONE, props);
+    set_picker_hex(&mut app, &ctx, "000000", props);
     assert_eq!(fill_hex(&app), "#000000");
-    assert_eq!(app.session.doc().unwrap().history.undo.last().unwrap().label, "Fill Color");
+    assert_eq!(app.session.doc().unwrap().history.undo.last().unwrap().label, "Color");
 }
 
 #[test]
@@ -300,9 +300,10 @@ fn menu_item_rect(shapes: &[Shape], s: &str) -> Option<Rect> {
     })
 }
 
-/// #536: the Swatch Libraries Menu button at the foot of a Fill chip's popover opens the
-/// libraries menu (it used to close the popover and show nothing), and a library chosen there
-/// opens in the library panel.
+/// #536: the Swatch Libraries Menu button at the foot of a Fill chip's Swatches popover (a
+/// secondary click on the chip; a primary click opens the colour picker) opens the libraries menu
+/// (it used to close the popover and show nothing), and a library chosen there opens in the library
+/// panel.
 #[test]
 fn the_popover_swatch_libraries_button_opens_the_libraries_menu() {
     let mut app = app();
@@ -310,7 +311,11 @@ fn the_popover_swatch_libraries_button_opens_the_libraries_menu() {
     let ctx = context();
     frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
     let (fill, _) = chips(&ctx);
-    click(&mut app, &ctx, fill.center(), Modifiers::NONE, control_bar);
+    let secondary = |pressed| Event::PointerButton { pos: fill.center(), button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE };
+    frame(&mut app, &ctx, vec![Event::PointerMoved(fill.center()), secondary(true)], Modifiers::NONE, control_bar);
+    frame(&mut app, &ctx, vec![secondary(false)], Modifiers::NONE, control_bar);
+    frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
+    assert!(app.ui.varos_picker_anchor.is_none(), "a secondary click opens no colour picker");
     let libraries = *popover_bottom_buttons(&ctx).first().expect("the popover has a bottom bar");
     click(&mut app, &ctx, libraries.center(), Modifiers::NONE, control_bar);
     let shapes = frame(&mut app, &ctx, vec![], Modifiers::NONE, control_bar);
@@ -322,4 +327,14 @@ fn the_popover_swatch_libraries_button_opens_the_libraries_menu() {
     click(&mut app, &ctx, earth.center(), Modifiers::NONE, control_bar);
     let open = crate::panels::library_panel::last_open(&app.ui).map(|o| (o.kind.clone(), o.id.clone()));
     assert_eq!(open, Some(("swatches".into(), "earth-tones".into())));
+}
+
+fn set_picker_hex(app: &mut VectorcraftApp, ctx: &egui::Context, hex: &str, draw: fn(&mut VectorcraftApp, &mut egui::Ui)) {
+    let shown = fill_hex(app).trim_start_matches('#').to_uppercase();
+    let shapes = frame(app, ctx, vec![], Modifiers::NONE, draw);
+    let field = text_rect(&shapes, &shown).expect("picker hex field");
+    click(app, ctx, field.center(), Modifiers::NONE, draw);
+    let key = |key, modifiers| Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers };
+    frame(app, ctx, vec![key(egui::Key::A, Modifiers::COMMAND), Event::Text(hex.into())], Modifiers::COMMAND, draw);
+    frame(app, ctx, vec![key(egui::Key::Enter, Modifiers::NONE)], Modifiers::NONE, draw);
 }

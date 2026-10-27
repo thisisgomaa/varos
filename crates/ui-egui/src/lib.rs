@@ -2366,6 +2366,7 @@ impl VectorcraftApp {
                 varos::profile::measure("dock.cards", || varos::panel_stack::frame(self, &ctx));
             }
         }
+        varos::picker::popover(self, &ctx);
         varos::profile::measure("dialogs", || dialogs::show(self, &ctx));
         updates_ui::show(self, &ctx);
         varos::profile::measure("export_progress", || export_progress::show(self, &ctx));

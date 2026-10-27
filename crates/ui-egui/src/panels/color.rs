@@ -543,6 +543,9 @@ fn spectrum(ui: &mut Ui, mode: Mode, size: egui::Vec2) -> Option<SpectrumHit> {
 pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Varos: the colour picker v3 is the panel's body; panel menu › Classic brings this one back.
     if !app.ui.varos_picker.classic {
+        if app.ui.dialog.as_ref().is_some_and(|d| d.kind == "gradientStop") {
+            return crate::varos::picker::show_stop(app, ui);
+        }
         return crate::varos::picker::show(app, ui);
     }
     let t = Tokens::get(ui.ctx());
@@ -1124,11 +1127,10 @@ mod tests {
         assert!(app.ui.dialog.is_none());
         run(&mut app, 0.2, vec![button(true)]);
         run(&mut app, 0.25, vec![button(false)]);
-        // Varos: a double-click shows the Color panel (the colour picker v3) for the stroke, never
-        // the modal Color Picker.
+        // Varos: the well opens the shared picker popover for the stroke.
         assert!(app.ui.dialog.is_none(), "no modal");
         assert!(!app.session.fill_active, "the stroke is the target");
-        assert_eq!(crate::menus::checked(&app, "window.panel", &json!({"panel": "color"})), Some(true), "the Color panel shows");
+        assert!(app.ui.varos_picker_anchor.is_some(), "the colour well opens a popover");
     }
 
     #[test]

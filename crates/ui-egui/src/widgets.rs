@@ -1116,7 +1116,7 @@ pub fn chip_button_named(ui: &mut Ui, size: f32, chevron: bool, tip: &str, draw:
 }
 
 /// What the user did on a [`fill_stroke_proxy`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProxyClicks {
     pub fill: bool,
     pub stroke: bool,
@@ -1124,6 +1124,8 @@ pub struct ProxyClicks {
     pub default: bool,
     /// Double-clicked a square: open the Color Picker for it (`true` = the stroke).
     pub pick: Option<bool>,
+    pub fill_rect: Rect,
+    pub stroke_rect: Rect,
     /// A paint dragged from the other proxy (or a swatch) dropped on the fill square.
     pub dropped_fill: Option<serde_json::Value>,
     /// A paint dropped on the stroke square.
@@ -1186,17 +1188,18 @@ pub fn fill_stroke_proxy(ui: &mut Ui, fill: &Paint, stroke: &Paint, mixed: (bool
         None
     };
     let on = ui.is_enabled();
-    fill_resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, on, fill_active, tl!("Fill (X), double-click for the Color Picker")));
-    stroke_resp
-        .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, on, !fill_active, tl!("Stroke (X), double-click for the Color Picker")));
+    fill_resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, on, fill_active, format!("{} (X)", tl!("Fill"))));
+    stroke_resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, on, !fill_active, format!("{} (X)", tl!("Stroke"))));
     swap.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, on, tl!("Swap Fill and Stroke (Shift+X)")));
     def.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, on, tl!("Default Fill and Stroke (D)")));
     ProxyClicks {
-        fill: fill_resp.on_hover_text(tl!("Fill (X), double-click for the Color Picker")).clicked(),
-        stroke: stroke_resp.on_hover_text(tl!("Stroke (X), double-click for the Color Picker")).clicked(),
+        fill: fill_resp.on_hover_text(format!("{} (X)", tl!("Fill"))).clicked(),
+        stroke: stroke_resp.on_hover_text(format!("{} (X)", tl!("Stroke"))).clicked(),
         swap: swap.on_hover_text(tl!("Swap Fill and Stroke (Shift+X)")).clicked(),
         default: def.on_hover_text(tl!("Default Fill and Stroke (D)")).clicked(),
         pick,
+        fill_rect: fill_r,
+        stroke_rect: stroke_r,
         dropped_fill,
         dropped_stroke,
     }
@@ -3093,8 +3096,8 @@ pub(crate) mod accessibility_tests {
             assert_eq!(role_and_state(&tree, label), (Role::Button, None), "{label}");
         }
         assert_eq!(role_and_state(&tree, "Default Fill and Stroke (D)"), (Role::Button, None));
-        assert_eq!(role_and_state(&tree, "Fill (X), double-click for the Color Picker"), (Role::Button, Some(Toggled::True)));
-        assert_eq!(role_and_state(&tree, "Stroke (X), double-click for the Color Picker"), (Role::Button, Some(Toggled::False)));
+        assert_eq!(role_and_state(&tree, "Fill (X)"), (Role::Button, Some(Toggled::True)));
+        assert_eq!(role_and_state(&tree, "Stroke (X)"), (Role::Button, Some(Toggled::False)));
         assert!(named(&tree, "Create").is_disabled(), "a primary button that is not enabled");
         assert!(named(&tree, "Delete Brush").is_disabled(), "an icon button that is not enabled");
         assert!(!named(&tree, "OK").is_disabled());

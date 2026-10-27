@@ -596,6 +596,9 @@ pub struct UiState {
     /// (`crate::varos::picker::Prefs`); a missing or malformed value reads as the defaults.
     #[serde(default, deserialize_with = "crate::varos::picker::lenient")]
     pub varos_picker: crate::varos::picker::Prefs,
+    /// Transient colour well anchor, never restored on launch.
+    #[serde(skip)]
+    pub varos_picker_anchor: Option<egui::Rect>,
     /// Varos: Preferences › Varos shell (new) and the shell's box layout (`crate::varos::shell`),
     /// saved apart from [`Self::docking`]; a missing or malformed value reads as the defaults.
     #[serde(default, deserialize_with = "crate::varos::shell::persist::lenient")]
@@ -900,6 +903,7 @@ impl Default for UiState {
             varos_panel_stack: Default::default(),
             varos_me_folded: Default::default(),
             varos_picker: Default::default(),
+            varos_picker_anchor: None,
             varos_shell: Default::default(),
         }
     }
