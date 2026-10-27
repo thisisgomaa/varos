@@ -65,7 +65,7 @@ fn stdout_failed(e: std::io::Error) -> ! {
 }
 
 const USAGE: &str = "\
-vectorcraft-cli — VectorCraft automation
+vectorcraft-cli — Varos automation
 
 USAGE:
   vectorcraft-cli mcp [--connect ADDR | --headless] [--automation-read-root DIR]... [--automation-write-root DIR]...
@@ -87,6 +87,9 @@ USAGE:
       --cmd and --export steps: a JSON array of {\"command\": ID, \"params\": {...}} (or \"id\" for
       \"command\"), or one such object per line (JSON Lines), at most 64 MiB and 100000 steps.
       Errors name the step, counting from 0 as \"$N\" references do.
+
+  vectorcraft-cli kashida-diagnostics FONT TEXT
+      Explain each word's font-specific kashida candidates and rejections.
 
   vectorcraft-cli commands
       Print the command catalogue as JSON.
@@ -172,10 +175,27 @@ fn main() -> ExitCode {
     let r = match args.first().map(String::as_str) {
         // `commands` and `info` take no options, so `--help` or `-h` anywhere after them prints the
         // usage. The other subcommands check for it themselves.
-        Some("commands" | "info") if help_requested(&args[1..], &[]) => help(),
+        Some("commands" | "info" | "kashida-diagnostics") if help_requested(&args[1..], &[]) => help(),
         Some("mcp") => mcp(&args[1..]),
         Some("run") => run(&args[1..]),
         Some("commands") => commands(),
+        Some("kashida-diagnostics") => {
+            if let [family, text] = &args[1..] {
+                let style = vectorcraft_doc::CharStyle { font_family: family.clone(), size: 72.0, ..Default::default() };
+                let words: Vec<_> = vectorcraft_text::kashida_diagnostics(vectorcraft_text::FontDb::global(), text, &style)
+                    .into_iter().map(|d| {
+                        let available = d.slots.iter().any(|(_, reason)| *reason == "accepted");
+                        let font_rejected = d.slots.iter().any(|(_, reason)| !reason.starts_with("policy:"));
+                        serde_json::json!({ "word": d.word, "morx": d.morx, "resolved_font": d.font,
+                            "candidate_slots": d.slots.iter().map(|(byte, reason)| serde_json::json!({"byte": byte, "result": reason})).collect::<Vec<_>>(),
+                            "note": if available || !font_rejected { None } else { Some("No kashida slots in this font") } })
+                    }).collect();
+                outln!("{}", serde_json::json!({"kashida_diagnostics": words}));
+                Ok(())
+            } else {
+                Err("usage: vectorcraft-cli kashida-diagnostics FONT TEXT".into())
+            }
+        }
         Some("convert") => convert(&args[1..]),
         Some("info") => info(&args[1..]),
         Some("bench") => bench(&args[1..]),
@@ -346,7 +366,7 @@ fn convert(args: &[String]) -> Result<(), String> {
         let skipped = vectorcraft_engine::cmd::fileio::pdf::EDITING_NEEDS_EVERY_ARTBOARD;
         let embedded = !obj.get("warnings").and_then(Value::as_array).is_some_and(|w| w.iter().any(|w| w.as_str() == Some(skipped)));
         if embedded {
-            let note = "The PDF embeds the native VectorCraft document as an attachment (preserveEditing).";
+            let note = "The PDF embeds the native Varos document as an attachment (preserveEditing).";
             if let Some(Value::Array(w)) = obj.get_mut("warnings") {
                 if !w.iter().any(|w| w.as_str() == Some(note)) {
                     w.push(json!(note));

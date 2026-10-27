@@ -70,3 +70,18 @@ fn a_word_with_a_ligature_reads_back_in_order() {
     let got = round_trip(&[arabic("بسم الله الرحمن الرحيم", 80.0, Digits::Default)]);
     assert!(got.iter().any(|t| t == "بسم الله الرحمن الرحيم"), "{got:?}");
 }
+
+#[test]
+fn stroked_force_kashida_keeps_authored_searchable_text() {
+    use vectorcraft_doc::text::{KashidaMode, KashidaOptions};
+    let sentence = "بسم الرحمن الرحيم";
+    let mut t = arabic(sentence, 100.0, Digits::Default);
+    t.para.kashida = KashidaOptions { mode: KashidaMode::Force, strength: 100 };
+    t.runs[0].style.stroke = t.runs[0].style.fill.clone();
+    t.runs[0].style.stroke_width = 0.25;
+    FontDb::global().add_font(NOTO.to_vec());
+    assert!(vectorcraft_text::layout(FontDb::global(), &t).glyphs.iter().any(|g| g.len == 0));
+    let got = round_trip(&[t]);
+    assert!(got.iter().any(|s| s == sentence), "unioned PDF outlines retain authored text: {got:?}");
+    assert!(got.iter().all(|s| !s.contains('\u{0640}')), "virtual tatweels never enter copied text");
+}

@@ -466,13 +466,23 @@ fn installed_morx_fonts_take_kashida_and_keep_their_marks() {
             let tatweels = on.glyphs.iter().filter(|g| g.gid == tat.1 && g.len == 0).count();
             row += &format!(", {name}: {tatweels} tatweels ({:.1} pt)", total as f64 / 100.0);
             assert!(on.glyphs.iter().all(|g| g.font_id == face.id() && g.gid != 0), "{family}: its own glyphs");
-            // Marks keep their offsets from their pen positions in words kashida left alone, and
-            // in stretched words (each trial keeps every authored glyph's offset).
+            // Unstretched words remain glyph-for-glyph identical. A stretched ligature may
+            // decompose only after the engine's per-glyph stability and ink-contact checks.
+            let stretched: Vec<_> = on
+                .glyphs
+                .iter()
+                .filter(|g| g.len == 0)
+                .map(|g| {
+                    let start = text[..g.byte].rfind(' ').map_or(0, |i| i + 1);
+                    let end = g.byte + text[g.byte..].find(' ').unwrap_or(text.len() - g.byte);
+                    start..end
+                })
+                .collect();
             let offsets = |l: &TextLayout| {
                 let mut v: Vec<(usize, u32, i64, i64)> = l
                     .glyphs
                     .iter()
-                    .filter(|g| g.len > 0)
+                    .filter(|g| g.len > 0 && !stretched.iter().any(|r| r.contains(&g.byte)))
                     .map(|g| {
                         let d = g.xf.translation() - kurbo::Vec2::new(g.origin.x, l.lines[g.line].baseline);
                         (g.byte, g.gid, (d.x * 1000.0).round() as i64, (d.y * 1000.0).round() as i64)
@@ -493,4 +503,80 @@ fn installed_morx_fonts_take_kashida_and_keep_their_marks() {
         report.push(row);
     }
     eprintln!("{report:#?}");
+}
+
+/// VQA-12/13: installed fonts are read locally, never copied into the repository.
+#[test]
+fn production_fonts_vocalised_force() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    for (family, path) in [
+        ("Amiri", format!("{home}/Library/Fonts/Amiri-Regular.ttf")),
+        ("Noto Naskh Arabic", format!("{home}/Library/Fonts/Noto Naskh Arabic-Regular.ttf")),
+        ("Diwan Thuluth", "/System/Library/Fonts/Supplemental/Diwan Thuluth.ttf".into()),
+    ] {
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("SKIP absent font: {family}");
+            continue;
+        };
+        let db = db_with(&[&bytes]);
+        let face = db.face(family, "Regular").expect("installed family");
+        let mut counts = Vec::new();
+        for word in ["أثر", "أثرٌ", "العجل", "العَجَلُ"] {
+            let st = CharStyle { font_family: family.into(), size: 72.0, ..Default::default() };
+
+            let t = area(word, st.clone(), 2000.0, Justify::Right, opts(KashidaMode::Force, 100));
+            let l = layout(&db, &t);
+            let n = l.glyphs.iter().filter(|g| g.len == 0).count();
+            assert!(l.glyphs.iter().all(|g| g.font_id == face.id() && g.gid != 0));
+            counts.push(n);
+            assert!(n > 0, "{family}: {word} must elongate: {:?}", super::diagnostics(&db, word, &st));
+            eprintln!(
+                "{family} {word}: morx={} candidates={:?} inserted={n}",
+                crate::kashida::morx_shaped(&face),
+                vectorcraft_text_arabic::kashida_candidates(word, 0..word.len())
+            );
+        }
+        assert_eq!(counts[0], counts[1], "{family}: tanwin does not reduce elongation");
+        assert_eq!(counts[2], counts[3], "{family}: harakat do not reduce elongation");
+    }
+}
+
+#[test]
+fn force_connections_have_no_internal_vertical_seams() {
+    use kurbo::PathSeg;
+    let home = std::env::var("HOME").unwrap_or_default();
+    for (family, path) in [
+        ("Amiri", format!("{home}/Library/Fonts/Amiri-Regular.ttf")),
+        ("Noto Naskh Arabic", format!("{home}/Library/Fonts/Noto Naskh Arabic-Regular.ttf")),
+        ("Diwan Thuluth", "/System/Library/Fonts/Supplemental/Diwan Thuluth.ttf".into()),
+    ] {
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("SKIP absent font: {family}");
+            continue;
+        };
+        let db = db_with(&[&bytes]);
+        let face = db.face(family, "Regular").unwrap();
+        let mut st = CharStyle { font_family: family.into(), size: 72.0, ..Default::default() };
+        st.stroke = st.fill.clone();
+        st.stroke_width = 0.25;
+        let l = layout(&db, &area("العجل", st, 2000.0, Justify::Right, opts(KashidaMode::Force, 100)));
+        let bar = db.outline(&face, face.glyph_for('\u{0640}'));
+        let virtuals: Vec<_> = l.glyphs.iter().filter(|g| g.len == 0).collect();
+        assert!(virtuals.len() >= 2, "{family}");
+        let outline = l.to_bezpath();
+        for t in &virtuals {
+            let b =
+                virtuals.iter().filter(|g| g.byte == t.byte).map(|g| (g.xf * bar.as_ref().clone()).bounding_box()).reduce(|a, b| a.union(b)).unwrap();
+            let mid_y = (b.y0 + b.y1) * 0.5;
+            for seg in outline.segments() {
+                if let PathSeg::Line(edge) = seg {
+                    let interior = edge.p0.x > b.x0 + 0.05 && edge.p0.x < b.x1 - 0.05;
+                    assert!(
+                        !(interior && (edge.p0.x - edge.p1.x).abs() < 1e-5 && edge.p0.y.min(edge.p1.y) < mid_y && edge.p0.y.max(edge.p1.y) > mid_y),
+                        "{family}: internal seam {edge:?}"
+                    );
+                }
+            }
+        }
+    }
 }

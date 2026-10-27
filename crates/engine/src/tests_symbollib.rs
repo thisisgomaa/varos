@@ -102,7 +102,7 @@ fn a_saved_library_reopens_and_its_symbols_join_another_document_in_one_step() {
     s.symbol_libraries.set_user_dir(Some(dir.to_string_lossy().to_string()));
     // Saving the Badge brings the Star it nests, not Dots.
     let r = run(&mut s, "symbol.saveLibrary", json!({"user": true, "name": "Signs", "names": ["Badge"]}));
-    assert_eq!((r["library"].as_str(), r["count"].as_u64()), (Some("user/Signs.vectorcraft"), Some(2)));
+    assert_eq!((r["library"].as_str(), r["count"].as_u64()), (Some("user/Signs.varos"), Some(2)));
     let path = r["path"].as_str().unwrap().to_string();
     let list = run(&mut s, "symbol.libraries", json!({}));
     let user: Vec<&Value> = list["libraries"].as_array().unwrap().iter().filter(|l| l["category"] == "user").collect();
@@ -115,7 +115,7 @@ fn a_saved_library_reopens_and_its_symbols_join_another_document_in_one_step() {
     assert!(saved.layers.iter().all(|l| l.children().is_none_or(|c| c.is_empty())));
     // Loading the file gives that User Defined library.
     let r = run(&mut s, "symbol.loadLibrary", json!({ "path": path }));
-    assert_eq!((r["library"].as_str(), r["name"].as_str()), (Some("user/Signs.vectorcraft"), Some("Signs")));
+    assert_eq!((r["library"].as_str(), r["name"].as_str()), (Some("user/Signs.varos"), Some("Signs")));
 
     // Into a new document: Badge and the Star in it, with Badge's registration, as one step.
     run(&mut s, "file.new", json!({"width": 100, "height": 100}));
@@ -136,7 +136,7 @@ fn a_saved_library_reopens_and_its_symbols_join_another_document_in_one_step() {
     run(&mut s, "edit.redo", json!({}));
     // Again: already there, so no step.
     let before = undo_len(&s);
-    let r = run(&mut s, "symbol.addFromLibrary", json!({"library": "user/Signs.vectorcraft", "names": ["Badge", "Star", "Badge"]}));
+    let r = run(&mut s, "symbol.addFromLibrary", json!({"library": "user/Signs.varos", "names": ["Badge", "Star", "Badge"]}));
     assert_eq!((strs(&r["names"]), strs(&r["existing"])), (vec!["Badge", "Star"], vec!["Badge", "Star"]));
     assert_eq!((undo_len(&s), symbols(&s).len()), (before, 2));
     assert_eq!(run(&mut s, "symbol.list", json!({}))["current"], "Badge");

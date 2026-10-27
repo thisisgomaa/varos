@@ -45,8 +45,10 @@ storytold/vectorcraft. The fork has no public repository yet.
 3. **General fixes go upstream** as PRs to storytold/vectorcraft (bugs, performance, anything not
    Varos-specific). Opening a PR is a publish action: the owner approves each one.
 4. **Naming:** the product name is Varos. Crate names (`vectorcraft-*`), the binary
-   (`vectorcraft`), the bundle executable/icon resource (`VectorCraft`), document extensions and
-   persisted identifiers stay upstream's for now, to keep merges cheap and files compatible.
+   (`vectorcraft`) and bundle executable/icon resource (`VectorCraft`) stay upstream's.
+   VQA-16 (2026-10-26): native saves default to `.varos`; `.vectorcraft` and `.drawcraft`
+   remain readable. The serialized `format` identifier stays `vectorcraft` for compatibility;
+   the generator identifies Varos. Save a Copy also offers the upstream suffix.
 5. **Attribution:** keep upstream's copyright, `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE` and the
    contributor screens. Every new asset gets a row in `ASSETS.md` (path, author, source, licence)
    and a summary in `NOTICE`; licence texts sit next to the assets. The About screens show the fork

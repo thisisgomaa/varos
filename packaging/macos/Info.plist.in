@@ -84,6 +84,7 @@
   <array>
     <dict>
       <key>CFBundleTypeName</key><string>Varos Document</string>
+      <key>CFBundleTypeExtensions</key><array><string>varos</string><string>vectorcraft</string><string>drawcraft</string></array>
       <key>LSItemContentTypes</key><array><string>ai.storyteller.vectorcraft.document</string></array>
       <key>CFBundleTypeRole</key><string>Editor</string>
       <key>LSHandlerRank</key><string>Owner</string>
@@ -148,7 +149,7 @@
     </dict>
   </array>
 
-  <!-- VectorCraft's own format (.drawcraft is its name from before the rename). -->
+  <!-- Varos saves .varos; .vectorcraft and .drawcraft migrate without changing file contents. -->
   <key>UTExportedTypeDeclarations</key>
   <array>
     <dict>
@@ -166,7 +167,7 @@
       <key>UTTypeTagSpecification</key>
       <dict>
         <key>public.filename-extension</key>
-        <array><string>vectorcraft</string><string>drawcraft</string></array>
+        <array><string>varos</string><string>vectorcraft</string><string>drawcraft</string></array>
         <key>public.mime-type</key>
         <array><string>application/x-vectorcraft</string></array>
       </dict>

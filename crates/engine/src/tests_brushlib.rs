@@ -148,7 +148,7 @@ fn a_saved_library_reopens_and_its_brushes_join_another_document_in_one_step() {
     let mut s = kit();
     s.brush_libraries.set_user_dir(Some(dir.to_string_lossy().to_string()));
     let r = run(&mut s, "brush.saveLibrary", json!({"user": true, "name": "Inks", "names": ["My Nib", "Dotted Band"]}));
-    assert_eq!((r["library"].as_str(), r["count"].as_u64()), (Some("user/Inks.vectorcraft"), Some(2)));
+    assert_eq!((r["library"].as_str(), r["count"].as_u64()), (Some("user/Inks.varos"), Some(2)));
     let path = r["path"].as_str().unwrap().to_string();
     let list = run(&mut s, "brush.libraries", json!({}));
     let user: Vec<&Value> = list["libraries"].as_array().unwrap().iter().filter(|l| l["category"] == "user").collect();
@@ -162,7 +162,7 @@ fn a_saved_library_reopens_and_its_brushes_join_another_document_in_one_step() {
     assert!(saved.layers.iter().all(|l| l.children().is_none_or(|c| c.is_empty())));
     // Loading the file gives that User Defined library.
     let r = run(&mut s, "brush.loadLibrary", json!({ "path": path }));
-    assert_eq!((r["library"].as_str(), r["name"].as_str()), (Some("user/Inks.vectorcraft"), Some("Inks")));
+    assert_eq!((r["library"].as_str(), r["name"].as_str()), (Some("user/Inks.varos"), Some("Inks")));
 
     // Into a new document: Dotted Band and its pattern, as one step.
     run(&mut s, "file.new", json!({"width": 100, "height": 100}));
@@ -184,7 +184,7 @@ fn a_saved_library_reopens_and_its_brushes_join_another_document_in_one_step() {
     run(&mut s, "edit.redo", json!({}));
     // Again: already there, so no step and no copy.
     let before = undo_len(&s);
-    let r = run(&mut s, "brush.addFromLibrary", json!({"library": "user/Inks.vectorcraft", "names": ["Dotted Band", "My Nib", "Dotted Band"]}));
+    let r = run(&mut s, "brush.addFromLibrary", json!({"library": "user/Inks.varos", "names": ["Dotted Band", "My Nib", "Dotted Band"]}));
     assert_eq!((strs(&r["names"]), strs(&r["existing"]), strs(&r["added"])), (vec!["Dotted Band", "My Nib"], vec!["Dotted Band"], vec!["My Nib"]));
     assert_eq!(undo_len(&s), before + 1, "My Nib was new");
     let before = undo_len(&s);

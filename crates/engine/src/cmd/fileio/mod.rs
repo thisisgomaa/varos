@@ -74,7 +74,7 @@ pub use native::with_compression_pref;
 pub use pdfimport::{LoadOptions, page_document};
 pub(crate) use save::job_for;
 pub use save::{
-    SAVE_FORMATS, SaveJob, SaveMode, SavePlan, StreamWrite, TEMPLATE_FORMATS, export_folder, reads_option as save_reads_option,
+    SAVE_FORMATS, SaveJob, SaveMode, SavePlan, StreamWrite, TEMPLATE_FORMATS, copy_filters, export_folder, reads_option as save_reads_option,
     remembered_save_options, save_filters, save_format, save_job, save_plan, save_with, stamp_save_dates, template_filters, templates_dialog_folder,
     templates_folder,
 };
@@ -525,8 +525,8 @@ const fn reader(id: &'static str, label: &'static str, extensions: &'static [&'s
 pub const FORMATS: &[Format] = &[
     Format {
         id: "vectorcraft",
-        label: "VectorCraft",
-        extensions: &[vectorcraft_format::EXTENSION, vectorcraft_format::LEGACY_EXTENSION],
+        label: "Varos",
+        extensions: &[vectorcraft_format::EXTENSION, vectorcraft_format::UPSTREAM_EXTENSION, vectorcraft_format::LEGACY_EXTENSION],
         mime: "application/json",
         read: true,
         write: true,
@@ -627,7 +627,7 @@ pub const FORMATS: &[Format] = &[
     Format { id: "bmp", label: "BMP", extensions: &["bmp"], mime: "image/bmp", read: true, write: true, raster: true, options: BMP_OPTIONS },
     Format {
         id: "template",
-        label: "VectorCraft Template",
+        label: "Varos Template",
         extensions: &["vctemplate"],
         mime: "application/json",
         read: true,
@@ -672,6 +672,7 @@ pub const FORMATS: &[Format] = &[
 
 /// Every extension `document.open` reads (the "All readable files" filter of open dialogs).
 pub const OPEN_EXTS: &[&str] = &[
+    "varos",
     "vectorcraft",
     "drawcraft",
     "svg",
@@ -737,6 +738,7 @@ pub const DOCX_EXTS: &[&str] = &["docx"];
 /// Every extension File → Place reads: [`OPEN_EXTS`], [`TEXT_EXTS`], [`RTF_EXTS`] and
 /// [`DOCX_EXTS`].
 pub const PLACE_EXTS: &[&str] = &[
+    "varos",
     "vectorcraft",
     "drawcraft",
     "svg",

@@ -420,7 +420,7 @@ impl Server {
                         "logging": {},
                     },
                     // Varos: the product name agents read (the server's name stays upstream's id).
-                    "serverInfo": {"name": "vectorcraft", "title": vectorcraft_format::VAROS_IDENTITY, "version": vectorcraft_format::VAROS_IDENTITY},
+                    "serverInfo": {"name": "varos", "title": vectorcraft_format::VAROS_IDENTITY, "version": vectorcraft_format::VAROS_IDENTITY},
                     "instructions": format!("{} Backend: {}.", crate::varos_brand::text(INSTRUCTIONS), self.backend.describe()),
                 }))
             }

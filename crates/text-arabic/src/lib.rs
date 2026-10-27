@@ -13,7 +13,37 @@
 //! - a virtual tatweel glyph has zero source length, at the boundary byte it fills, so
 //!   carets, selection and exported text see only the authored characters.
 use unicode_script::{Script, UnicodeScript};
-pub use varos_text::kashida::{Candidate, Kashida, Measured, Plan, Width, WorkingText, candidates, is_harakat, joining_allows, plan};
+pub use varos_text::kashida::{Candidate, Kashida, Measured, Plan, Width, WorkingText, is_harakat, joining_allows, plan};
+
+/// Varos: joining candidates read through harakat, inserting after the previous base's
+/// marks and before the next base. Join controls and punctuation still break the pair.
+pub fn candidates(text: &str, range: std::ops::Range<usize>) -> Result<Vec<Candidate>, &'static str> {
+    let part = text.get(range.clone()).ok_or("invalid kashida text range")?;
+    let mut previous = None;
+    let mut word = range.start;
+    let mut out = Vec::new();
+    for (offset, c) in part.char_indices() {
+        let byte = range.start + offset;
+        if is_harakat(c) {
+            continue;
+        }
+        if let Some(prev) = previous
+            && joining_allows(prev, c)
+        {
+            let priority = match prev {
+                'س' | 'ش' => 0,
+                'ص' | 'ض' => 1,
+                _ => 2,
+            };
+            out.push(Candidate { byte, priority, word });
+        }
+        if c.is_whitespace() {
+            word = byte + c.len_utf8();
+        }
+        previous = Some(c);
+    }
+    Ok(out)
+}
 
 /// `varos-text`'s Balanced policy: what every justified right-to-left Arabic paragraph took
 /// before the paragraph setting existed, and still takes at Auto, strength 50 ([`policy`]).
@@ -210,7 +240,7 @@ pub fn kashida_candidates(text: &str, range: std::ops::Range<usize>) -> Result<V
             if w.stem_letters <= 2 || w.sacred.is_some_and(|from| c.byte > from) || w.stem_start.is_some_and(|stem| c.byte == stem) {
                 return None;
             }
-            let prev = text[..c.byte].chars().next_back().unwrap_or(' ');
+            let prev = text[..c.byte].chars().rev().find(|c| !is_harakat(*c)).unwrap_or(' ');
             let priority = if Some(c.byte) == w.last_letter {
                 0
             } else {
@@ -444,12 +474,12 @@ mod tests {
         assert!(!all("الله").is_empty() && kept("الله").is_empty(), "the joining rules alone allow ل‍ل and ل‍ه");
         assert!(kept("بسم الله").iter().all(|c| c.byte < 7), "{:?}", kept("بسم الله"));
         assert!(kept(w).iter().all(|c| c.byte <= w.find('ا').unwrap()) && !kept(w).is_empty());
-        // Lam-alef and a letter before its harakat never take one (the joining rules).
+        // Lam-alef and a base before its own harakat never take one (the joining rules).
         let t = "سلام بَسَمَ";
         let lam_alef = t.find("ا").unwrap();
         assert!(kept(t).iter().all(|c| c.byte != lam_alef));
         assert!(kept(t).iter().all(|c| !is_harakat(t[c.byte..].chars().next().unwrap())));
-        assert!(kept(t).iter().all(|c| !is_harakat(t[..c.byte].chars().next_back().unwrap())));
+        assert!(kept(t).iter().any(|c| is_harakat(t[..c.byte].chars().next_back().unwrap())));
     }
 
     /// No tatweel right after the definite article's lam, none in a stem of two letters, and the
@@ -474,8 +504,8 @@ mod tests {
             let at = word.find(stem).unwrap();
             let c = kept(word);
             assert!(c.iter().all(|c| c.byte != at), "{word}: a tatweel after the article: {c:?}");
-            // (A fully vocalized word takes none: no tatweel goes next to harakat.)
-            assert!(!c.is_empty() || word.chars().any(is_harakat), "{word}: the stem still takes kashida");
+            // Fully vocalised words keep their base-letter joining slots.
+            assert!(!c.is_empty(), "{word}: the stem still takes kashida");
         }
         // Stems of two letters take none.
         for word in ["رب", "من", "بالحق", "الحق", "في"] {
@@ -610,5 +640,31 @@ mod tests {
         let w = WorkingText::new(text, &p.slots).unwrap();
         assert_eq!(w.text.chars().filter(|&c| c == TATWEEL).count(), 4);
         assert_eq!(w.text.replace(TATWEEL, ""), text);
+    }
+}
+
+#[cfg(test)]
+mod vocalised_regressions {
+    use super::*;
+    #[test]
+    fn marks_do_not_change_base_pair_candidates_or_split_marks_from_base() {
+        for (plain, marked) in [("أثر", "أثرٌ"), ("العجل", "العَجَلُ"), ("بسم", "بِسْمِ")] {
+            let pairs = |text: &str| {
+                kashida_candidates(text, 0..text.len())
+                    .unwrap()
+                    .iter()
+                    .map(|c| {
+                        assert!(!is_harakat(text[c.byte..].chars().next().unwrap()));
+                        (text[..c.byte].chars().rev().find(|c| !is_harakat(*c)).unwrap(), text[c.byte..].chars().next().unwrap(), c.priority)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(pairs(plain), pairs(marked));
+        }
+        for text in ["اللَّهِ", "وَاللَّهِ"] {
+            assert!(kashida_candidates(text, 0..text.len()).unwrap().is_empty());
+        }
+        assert!(candidates("ب\u{200c}ب", 0..7).unwrap().is_empty());
+        assert!(candidates("بِسْم", 1..4).is_err());
     }
 }

@@ -175,13 +175,21 @@ fn save_brushes_writes_a_user_library_that_reopens_and_adds_to_another_document(
     // Reopened in a library panel, its brush goes into another document.
     app.run("file.new", json!({"width": 100, "height": 100})).unwrap();
     app.run("window.userBrushLibrary1", json!({})).unwrap();
-    assert_eq!(last_open(&app.ui).map(|p| p.id.as_str()), Some("user/Pens.vectorcraft"));
-    let (name, lib) = BrushLibraries::get(&app, "user/Pens.vectorcraft").unwrap();
+    assert_eq!(last_open(&app.ui).map(|p| p.id.as_str()), Some("user/Pens.varos"));
+    let (name, lib) = BrushLibraries::get(&app, "user/Pens.varos").unwrap();
     assert_eq!((name.as_str(), lib.len()), ("Pens", 1), "only the selected brush");
     let undo = undo_len(&app);
     click(&mut app, &ctx, "Quill", Modifiers::NONE, 1.0);
     assert!(has(&app, "Quill"));
     assert_eq!(undo_len(&app), undo + 1);
+    // New writes use .varos; a legacy-suffixed user library is still discovered and opened.
+    assert!(dir.join("Pens.varos").is_file());
+    std::fs::rename(dir.join("Pens.varos"), dir.join("Pens.vectorcraft")).unwrap();
+    app.session.brush_libraries.rescan();
+    app.run("window.userBrushLibrary1", json!({})).unwrap();
+    assert_eq!(last_open(&app.ui).map(|p| p.id.as_str()), Some("user/Pens.vectorcraft"));
+    let (name, lib) = BrushLibraries::get(&app, "user/Pens.vectorcraft").unwrap();
+    assert_eq!((name.as_str(), lib.len()), ("Pens", 1));
     let _ = std::fs::remove_dir_all(dir);
 }
 

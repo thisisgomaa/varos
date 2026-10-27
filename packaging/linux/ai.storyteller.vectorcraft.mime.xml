@@ -4,13 +4,14 @@
      apps/vectorcraft/src/main.rs checks both files. -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-vectorcraft">
-    <comment>VectorCraft document</comment>
+    <comment>Varos document</comment>
     <icon name="ai.storyteller.vectorcraft"/>
+    <glob pattern="*.varos"/>
     <glob pattern="*.vectorcraft"/>
     <glob pattern="*.drawcraft"/>
   </mime-type>
   <mime-type type="application/x-vectorcraft-template">
-    <comment>VectorCraft template</comment>
+    <comment>Varos template</comment>
     <sub-class-of type="application/x-vectorcraft"/>
     <glob pattern="*.vctemplate"/>
   </mime-type>

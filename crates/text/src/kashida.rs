@@ -17,7 +17,7 @@
 //! Arabic fonts. Fonts it shapes with `morx` tables never get that flag ([`morx_shaped`]: Geeza
 //! Pro, Al Nile, Baghdad, Damascus, KufiStandardGK, DecoType Naskh...); for them the joining rules
 //! propose the boundaries (`varos-text`'s candidates: between two joining letters, never inside
-//! لا, never next to harakat, never after a letter that doesn't join to the left) and every trial
+//! لا, never before a base's own harakat, never after a letter that doesn't join to the left) and every trial
 //! re-shape is verified against the word as the paragraph set it ([`morx_trial_ok`]) before it
 //! can be kept. A virtual tatweel glyph has zero source length at the
 //! boundary byte it fills: the caret, selection and exported text see only the authored
@@ -98,7 +98,7 @@ pub(crate) fn reshape_word(sh: &Shaper<'_>, word: Range<usize>, slots: &[usize])
     let working = WorkingText::new(source, &local).ok()?;
     // Where source byte `b` (word-local) lies in the working text: each tatweel before it moves it.
     let tatweel = arabic::TATWEEL.len_utf8();
-    let at = |b: usize| b + local.iter().filter(|&&s| s <= b).count() * tatweel;
+    let at = |b: usize| b + local.iter().filter(|&&s| s < b).count() * tatweel;
     let mut runs = Vec::new();
     let mut global = Vec::new();
     for (k, (r, st)) in sh.runs.iter().enumerate() {
@@ -201,18 +201,22 @@ fn joins_letters(face: &crate::fontdb::FontFace) -> bool {
 /// (d) every authored glyph keeps its advance (within a font unit), and the word grew by the
 ///     tatweels' advances, within a font unit each.
 pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usize]) -> bool {
+    morx_rejection(original, trial, slots).is_none()
+}
+
+fn morx_rejection(original: &[SGlyph], trial: &[SGlyph], slots: &[usize]) -> Option<&'static str> {
     let k = slots.len();
     if trial.len() != original.len() + k || trial.iter().any(|g| g.gid == 0) {
-        return false;
+        return Some("morx verification: glyph count changed (ligature decomposition) or missing glyph");
     }
     let tatweels: Vec<&SGlyph> = trial.iter().filter(|g| g.len == 0).collect();
     if tatweels.len() != k || tatweels.iter().any(|g| g.ch != arabic::TATWEEL || g.adv <= 0.0) {
-        return false;
+        return Some("morx verification: tatweel not a separate positive-advance glyph");
     }
     let mut at: Vec<usize> = tatweels.iter().map(|g| g.byte).collect();
     at.sort_unstable();
     if at != slots {
-        return false;
+        return Some("morx verification: tatweel moved from requested slot");
     }
     let authored = trial.iter().filter(|g| g.len > 0);
     // One font unit, in points.
@@ -222,6 +226,7 @@ pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usiz
     let same = authored.clone().count() == original.len()
         && authored.zip(original).all(|(a, b)| {
             a.gid == b.gid
+                && a.face.id() == b.face.id()
                 && a.byte == b.byte
                 && a.len == b.len
                 && a.run == b.run
@@ -232,7 +237,134 @@ pub(crate) fn morx_trial_ok(original: &[SGlyph], trial: &[SGlyph], slots: &[usiz
     let grown: f64 = trial.iter().map(|g| g.adv).sum::<f64>() - original.iter().map(|g| g.adv).sum::<f64>();
     let added: f64 = tatweels.iter().map(|g| g.adv).sum();
     let unit: f64 = tatweels.iter().map(|g| g.sx.abs()).sum();
-    same && (grown - added).abs() <= unit + EPS
+    if !same {
+        Some("morx verification: authored glyph, cluster, mark offset or advance changed")
+    } else if (grown - added).abs() > unit + EPS {
+        Some("morx verification: growth differs from tatweel advances")
+    } else {
+        None
+    }
+}
+
+/// AAT ligatures may split at a legal join. Require stable contextual forms on a
+/// second insertion, unchanged glyphs outside that ligature, and actual ink contact
+/// at both ends of every inserted bar. No font-specific glyph IDs are hard-coded.
+fn verified_morx_trial(sh: &Shaper<'_>, word: Range<usize>, original: &[SGlyph], trial: &[SGlyph], slots: &[usize]) -> bool {
+    if morx_trial_ok(original, trial, slots) {
+        return true;
+    }
+    let split: Vec<_> =
+        original.iter().filter(|g| slots.iter().any(|s| g.byte < *s && *s < g.byte + g.len)).map(|g| g.byte..g.byte + g.len).collect();
+    if split.is_empty() || slots.len() >= 64 {
+        return false;
+    }
+    let outside = |g: &SGlyph| g.len > 0 && !split.iter().any(|r| r.start <= g.byte && g.byte < r.end);
+    let unchanged: Vec<_> = original.iter().filter(|g| outside(g)).cloned().collect();
+    let kept: Vec<_> = trial.iter().filter(|g| outside(g)).cloned().collect();
+    if !same_setting(&unchanged, &kept) {
+        return false;
+    }
+    // Every authored byte is still covered, and no mark was swallowed by a virtual glyph.
+    let coverage = |glyphs: &[SGlyph]| {
+        let mut ranges: Vec<_> = glyphs.iter().filter(|g| g.len > 0).map(|g| (g.byte, g.byte + g.len)).collect();
+        ranges.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (a, b) in ranges {
+            if let Some(last) = merged.last_mut()
+                && a <= last.1
+            {
+                last.1 = last.1.max(b);
+            } else {
+                merged.push((a, b));
+            }
+        }
+        merged
+    };
+    if coverage(original) != coverage(trial) {
+        return false;
+    }
+    // Contextual mark glyphs may change when the ligature splits (Diwan's dammatan),
+    // but their source cluster must still contain their base, or be the mark's own
+    // character-level cluster. They must never become a zero-length virtual glyph.
+    let Some(source) = sh.text.get(word.clone()) else { return false };
+    let mut base = word.start;
+    for (offset, ch) in source.char_indices() {
+        let byte = word.start + offset;
+        if arabic::is_harakat(ch) {
+            if !trial.iter().any(|g| g.len > 0 && (g.byte <= base || g.byte == byte) && g.byte + g.len >= byte + ch.len_utf8()) {
+                return false;
+            }
+        } else {
+            base = byte;
+        }
+    }
+    let Some(&slot) = slots.last() else { return false };
+    let mut deeper_slots = slots.to_vec();
+    deeper_slots.push(slot);
+    let Some(deeper) = reshape_word(sh, word, &deeper_slots) else { return false };
+    let authored: Vec<_> = trial.iter().filter(|g| g.len > 0).cloned().collect();
+    let stable = morx_trial_ok(&authored, &deeper, &deeper_slots);
+    let connected = bars_touch_neighbours(sh.db, trial);
+    stable && connected
+}
+
+fn bars_touch_neighbours(db: &FontDb, glyphs: &[SGlyph]) -> bool {
+    use kurbo::{Affine, Point, Shape};
+    if glyphs.len() > 512 || glyphs.iter().any(|g| !g.adv.is_finite() || g.rotation != 0.0 || g.bshift != 0.0) {
+        return false;
+    }
+    let mut clusters: Vec<&[SGlyph]> = Vec::new();
+    let mut start = 0;
+    while let Some(first) = glyphs.get(start) {
+        let count = glyphs.iter().skip(start).take_while(|g| g.byte == first.byte).count();
+        let Some(cluster) = glyphs.get(start..start + count) else { return false };
+        clusters.push(cluster);
+        start += count;
+    }
+    let mut placed = Vec::new();
+    let mut pen = 0.0;
+    for g in clusters.into_iter().rev().flatten() {
+        if g.adv > 0.0 {
+            let path = (Affine::translate((pen + g.dx, g.dy)) * Affine::scale_non_uniform(g.sx, g.sy)) * db.outline(&g.face, g.gid).as_ref().clone();
+            if path.elements().len() > 2048 || !path.is_finite() {
+                return false;
+            }
+            placed.push((g.len == 0, pen, g.adv, path));
+        }
+        pen += g.adv;
+    }
+    for (i, (virtual_, _x, advance, path)) in placed.iter().enumerate() {
+        if !virtual_ {
+            continue;
+        }
+        let Some(left) = i.checked_sub(1).and_then(|i| placed.get(i)) else { return false };
+        let Some(right) = placed.get(i + 1) else { return false };
+        let bounds = path.bounding_box();
+        let touches = |neighbour: &kurbo::BezPath, left: bool| {
+            let other = neighbour.bounding_box();
+            let delta = 0.001_f64.min(advance * 0.01);
+            let x0 = bounds.x0.max(other.x0) - delta;
+            let x1 = bounds.x1.min(other.x1) + delta;
+            let y0 = bounds.y0.max(other.y0);
+            let y1 = bounds.y1.min(other.y1);
+            if x1 < x0 || y1 <= y0 {
+                return false;
+            }
+            (0..=16).any(|column| {
+                (1..32).any(|row| {
+                    let x = x0 + (x1 - x0) * f64::from(column) / 16.0;
+                    let y = y0 + (y1 - y0) * f64::from(row) / 32.0;
+                    let side = if left { -delta } else { delta };
+                    (neighbour.winding(Point::new(x, y)) != 0 && path.winding(Point::new(x, y)) != 0)
+                        || (neighbour.winding(Point::new(x + side, y)) != 0 && path.winding(Point::new(x - side, y)) != 0)
+                })
+            })
+        };
+        if !touches(&left.3, true) || !touches(&right.3, false) {
+            return false;
+        }
+    }
+    true
 }
 
 /// The same glyphs set the same way, each in the same run (re-shaping a word apart must
@@ -365,9 +497,37 @@ pub(crate) fn stretch_line(
     }
     let safe = |glyphs: &[SGlyph]| glyphs.iter().filter(|g| g.tatweel && g.len > 0).map(|g| g.byte).collect::<Vec<_>>();
     // A morx-only face's boundaries: the joining rules', each trial verified below.
-    let joining =
-        |w: &Word| arabic::kashida_candidates(sh.text, w.bytes.clone()).map(|c| c.into_iter().map(|c| c.byte).collect()).unwrap_or_default();
-    let native_safe: Vec<Vec<usize>> = words.iter().map(|w| if w.morx { joining(w) } else { safe(&sg[w.glyphs.clone()]) }).collect();
+    let joining = |w: &Word| {
+        arabic::kashida_candidates(sh.text, w.bytes.clone()).map(|c| c.into_iter().map(|c| c.byte).collect::<Vec<_>>()).unwrap_or_default()
+    };
+    let mut preflight_remaining = 64usize;
+    let native_safe: Vec<Vec<usize>> = words
+        .iter()
+        .map(|w| {
+            if w.morx {
+                return joining(w);
+            }
+            let mut slots = safe(&sg[w.glyphs.clone()]);
+            // HarfRust can withhold the initial flag on a marked ligature (Amiri أثرٌ),
+            // yet flag the re-shaped join. Accept only that explicit post-insertion flag,
+            // with every mark still in its authored base cluster.
+            if sh.text.get(w.bytes.clone()).is_some_and(|t| t.chars().any(arabic::is_harakat)) {
+                for at in joining(w).into_iter().take(8) {
+                    if preflight_remaining == 0 {
+                        break;
+                    }
+                    preflight_remaining -= 1;
+                    if !slots.contains(&at)
+                        && reshape_word(sh, w.bytes.clone(), &[at])
+                            .is_some_and(|trial| safe(&trial).contains(&at) && marks_keep_base(&sg[w.glyphs.clone()], &trial))
+                    {
+                        slots.push(at);
+                    }
+                }
+            }
+            slots
+        })
+        .collect();
     let originals: Vec<Vec<SGlyph>> = words.iter().map(|w| if w.morx || w.painted { sg[w.glyphs.clone()].to_vec() } else { vec![] }).collect();
     let leading: Vec<f64> = words.iter().map(|w| sg[w.glyphs.start].leading).collect();
     let line_bytes = words[0].bytes.start.min(sg[i].byte)..words.iter().map(|w| w.bytes.end).max().unwrap_or(0);
@@ -384,7 +544,10 @@ pub(crate) fn stretch_line(
                 continue;
             }
             let set = cache.entry((k, mine.clone())).or_insert_with(|| reshaped(sh, word, &mine, options, leading[k])).clone()?;
-            if word.morx && !morx_trial_ok(&originals[k], &set.0, &mine) {
+            if word.morx && !verified_morx_trial(sh, word.bytes.clone(), &originals[k], &set.0, &mine) {
+                return None;
+            }
+            if !word.morx && !marks_keep_base(&sg[word.glyphs.clone()], &set.0) {
                 return None;
             }
             // Varos: a coloured harakat keeps its colour in the stretched word.
@@ -423,3 +586,129 @@ pub(crate) fn stretch_line(
 #[cfg(test)]
 #[path = "tests_kashida_policy.rs"]
 mod tests;
+
+/// Varos: headless explanation of font eligibility, independent of line slack/strength.
+#[derive(Debug)]
+pub struct KashidaDiagnostic {
+    pub word: String,
+    pub morx: bool,
+    pub font: String,
+    pub slots: Vec<(usize, &'static str)>,
+}
+
+/// Inspect each word in the requested face, without fallback or mutation of authored text.
+pub fn diagnostics(db: &FontDb, text: &str, style: &CharStyle) -> Vec<KashidaDiagnostic> {
+    let mut result = Vec::new();
+    let mut offset = 0;
+    for word in text.split_whitespace() {
+        let Some(local) = text.get(offset..).and_then(|s| s.find(word)) else { break };
+        offset += local;
+        let runs = [(0..word.len(), style)];
+        let levels = vec![Level::rtl(); word.len()];
+        let feats = OtFeatures::default();
+        let sh = Shaper { db, text: word, runs: &runs, feats: &feats, levels: &levels, para_start: 0 };
+        let original = reshape_word(&sh, 0..word.len(), &[]).unwrap_or_default();
+        let face = original.first().map(|g| &g.face);
+        let morx = face.is_some_and(|f| morx_shaped(f));
+        let allowed = arabic::kashida_candidates(word, 0..word.len()).unwrap_or_default();
+        let slots = arabic::candidates(word, 0..word.len())
+            .unwrap_or_default()
+            .iter()
+            .map(|c| {
+                let reason = if !allowed.iter().any(|a| a.byte == c.byte) {
+                    "policy: sacred name, article or short stem"
+                } else if face.is_none_or(|f| f.glyph_for(arabic::TATWEEL) == 0) {
+                    "font has no tatweel"
+                } else if !morx
+                    && !original.iter().any(|g| g.byte == c.byte && g.tatweel)
+                    && !reshape_word(&sh, 0..word.len(), &[c.byte]).is_some_and(|trial| {
+                        word.chars().any(arabic::is_harakat)
+                            && trial.iter().any(|g| g.byte == c.byte && g.tatweel && g.len > 0)
+                            && marks_keep_base(&original, &trial)
+                    })
+                {
+                    "shaper did not mark slot safe"
+                } else if let Some(trial) = reshape_word(&sh, 0..word.len(), &[c.byte]) {
+                    if trial.iter().any(|g| g.gid == 0 || face.is_none_or(|f| f.id() != g.face.id())) {
+                        "missing glyph or fallback face"
+                    } else if morx && !verified_morx_trial(&sh, 0..word.len(), &original, &trial, &[c.byte]) {
+                        morx_rejection(&original, &trial, &[c.byte]).unwrap_or("accepted")
+                    } else if trial.iter().map(|g| g.adv).sum::<f64>() <= original.iter().map(|g| g.adv).sum::<f64>() + EPS {
+                        "no positive elongation"
+                    } else {
+                        "accepted"
+                    }
+                } else {
+                    "word could not be reshaped"
+                };
+                (offset + c.byte, reason)
+            })
+            .collect();
+        result.push(KashidaDiagnostic { word: word.into(), morx, font: face.map_or_else(String::new, |f| f.family.clone()), slots });
+        offset += word.len();
+    }
+    result
+}
+
+/// Varos: join the outlines of an elongated word, preserving glyph metadata for carets and
+/// text extraction. Paint boundaries are never crossed. A bounded failed union keeps the art.
+pub(crate) fn continuous_outlines(layout: &mut crate::TextLayout, text: &str, db: &FontDb) {
+    use kurbo::BezPath;
+    use linesweeper::topology::Topology;
+    let mut groups: std::collections::BTreeSet<(usize, usize, usize, usize)> = Default::default();
+    for (index, g) in layout.glyphs.iter().enumerate() {
+        if layout.marker_of(index).is_some() || g.len != 0 || !db.face_by_id(g.font_id).is_some_and(|f| f.glyph_for(arabic::TATWEEL) == g.gid) {
+            continue;
+        }
+        let Some(before) = text.get(..g.byte) else { continue };
+        let Some(after) = text.get(g.byte..) else { continue };
+        let start = before.rfind(char::is_whitespace).map_or(0, |i| i + before.get(i..).and_then(|s| s.chars().next()).map_or(0, char::len_utf8));
+        let end = g.byte + after.find(char::is_whitespace).unwrap_or(after.len());
+        groups.insert((start, end, g.line, g.run));
+    }
+    for (start, end, line, run) in groups {
+        let indices: Vec<_> = layout
+            .glyphs
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.byte >= start && g.byte < end && g.line == line && g.run == run && g.advance > 0.0)
+            .map(|(i, _)| i)
+            .collect();
+        let mut path = BezPath::new();
+        for &i in &indices {
+            if let Some(g) = layout.glyphs.get(i) {
+                path.extend(g.outline.iter());
+            }
+        }
+        // Bound quadratic sweep work on untrusted font outlines.
+        if path.elements().len() > 2048 || !path.is_finite() {
+            continue;
+        }
+        let Ok(top) = Topology::<i32>::from_path(&path, 1e-7) else {
+            log::warn!("kashida outline union refused font geometry");
+            continue;
+        };
+        let mut merged = BezPath::new();
+        for contour in top.contours(|w| *w != 0).contours() {
+            merged.extend(contour.path.iter());
+        }
+        if merged.is_empty() {
+            continue;
+        }
+        for (n, i) in indices.into_iter().enumerate() {
+            if let Some(g) = layout.glyphs.get_mut(i) {
+                g.outline = if n == 0 { merged.clone() } else { BezPath::new() };
+            }
+        }
+    }
+}
+
+/// Marks may reposition for a new contextual base form, but cannot move to a virtual tatweel.
+fn marks_keep_base(original: &[SGlyph], trial: &[SGlyph]) -> bool {
+    let marks = |glyphs: &[SGlyph]| {
+        let mut marks: Vec<_> = glyphs.iter().filter(|g| g.len > 0 && g.adv.abs() < EPS).map(|g| (g.gid, g.byte, g.len, g.run)).collect();
+        marks.sort_unstable();
+        marks
+    };
+    marks(original) == marks(trial)
+}

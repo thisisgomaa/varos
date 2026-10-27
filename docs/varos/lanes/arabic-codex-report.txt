@@ -1,0 +1,118 @@
+Varos Arabic Codex lane — 2026-10-26
+WORK IN PROGRESS — gates and exact file references will be appended after verification.
+
+Scope: VQA-12/13/14/16. No git add/commit, no desktop automation, no panel/agents/colour-picker/craft-ui edits.
+Local plan/ is absent; followed the checked-in fork/state and upstream-merge handoff.
+
+Observed root causes (local system fonts, headless):
+VQA-12: Diwan Thuluth uses morx. In أثر, original ثر is glyph 2049 spanning
+four UTF-8 bytes. Inserting tatweel decomposes it into glyphs 1333 + 2382;
+strict morx glyph-count/identity verification rejected it. Fixed with a bounded
+ligature-decomposition path: unchanged glyphs outside the split cluster, identical
+source coverage, authored mark clusters, stable per-glyph forms/offsets/advances
+under another insertion, and ink contact with both neighbours. ZWJ was evaluated
+and rejected as a reference because this font shapes it differently; no ZWJ
+fallback remains. العجل also elongates in the same font.
+VQA-13: the dependency's candidate_index remembers a grapheme's final mark as
+its previous character and rejects any pair next to harakat. A second problem:
+Amiri أثرٌ has no initial safe-insert flag, but its correctly reshaped trial does.
+A bounded preflight accepts only the post-insertion flag with marks still in their
+base clusters. Insertion at a paint-run boundary now belongs to the following
+base run, not the preceding mark run. Diwan's dammatan changes contextual glyph
+when a ligature decomposes; verify its authored cluster and stable placement,
+not equality with the pre-decomposition glyph ID.
+VQA-14: virtual tatweels and neighbours retain separate filled outlines, so a
+stroke paints each internal boundary. Union the elongated word's outlines by
+line and paint run; glyph identity/cluster/advance metadata remains intact.
+
+Pending: final regression results, build/test/clippy/wasm/fmt gates; panel note
+belongs to another lane and is explicitly out of scope under the user's final
+instruction to leave panel code untouched.
+
+Focused regression evidence (before final full gates):
+/tmp/arabic-focused4.log: test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 410 filtered out; finished in 2.60s
+All three requested fonts were present; no skips. At 72 pt, Force 100, width 2000:
+                       أثر / أثرٌ     العجل / العَجَلُ   (inserted glyph count)
+Amiri                     1 / 1             8 / 8
+Noto Naskh Arabic          4 / 4             8 / 8
+Diwan Thuluth              8 / 8             8 / 8
+Continuous-path regression with a 0.25 pt stroke passes in all three fonts;
+checks vertical edges inside the combined bar span, including tatweel boundaries.
+Carets, selection, no fallback, sacred-name/article rules, and coloured-harakat
+regressions pass in the focused run.
+
+CLI: vectorcraft-cli kashida-diagnostics 'Diwan Thuluth' 'أثرٌ العَجَلُ'
+JSON field kashida_diagnostics gives words, resolved_font, morx, candidate_slots
+(byte + result). The no-slots note is omitted for policy-only rejections.
+
+Native format: .varos is the default; .vectorcraft/.drawcraft remain readable.
+The JSON format identifier remains vectorcraft; generator becomes Varos.
+Save a Copy has an explicit legacy filter. Recent-file paths remain generic;
+the template picker accepts both native suffixes. Existing explicitly named
+legacy files keep their paths on Save. No directories, crate/module names,
+environment variables, or the VectorCraft Save for Web folder were renamed.
+English catalogue added for product labels; locale lookup keys remain compatible,
+with Varos display values and alias keys for newly branded call sites. About
+retains upstream attribution. MCP name is varos, title/description are Varos.
+
+GATES
+2026-10-27 follow-up: scoped to the four ui-egui failures; no staging or commit.
+The i18n rule is unchanged: removed the synthetic Varos -> Varos entry injected
+into every catalog (catalog.rs and its theme.rs helper). Untranslated product
+names now use the existing source-string fallback.
+Brush/symbol writers and readers already supported the required behavior.
+Updated exact expected new filenames to .varos, retained insertion/undo checks,
+and added legacy .vectorcraft rename/rescan/reopen assertions.
+Save-a-Copy's SVG case now saves the source through file.saveAs, so both its
+path and format are SVG; changing the path alone left its format native.
+The legacy selection behavior and exact expected output paths remain unchanged.
+
+Focused command:
+cargo test -j 4 --offline --release -p vectorcraft-ui-egui --lib -- --test-threads=4 kept_menu_names varos_copy_can_choose save_brushes_writes save_symbols_writes
+First attempt after edits: test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 2389 filtered out; finished in 1.09s
+The two failures were the added legacy checks needing a rescan after an external
+rename; corrected by explicitly rescanning the user library directory.
+Final focused result (exit 0; /tmp/arabic-four-fixes-focused.log):
+    Finished `release` profile [optimized] target(s) in 6m 09s
+test tests_saveext::varos_copy_can_choose_the_legacy_native_suffix ... ok
+test panels::tests_symbol_libraries::save_symbols_writes_a_user_library_that_reopens_and_adds_to_another_document ... ok
+test panels::tests_brush_libraries::save_brushes_writes_a_user_library_that_reopens_and_adds_to_another_document ... ok
+test i18n::tests::kept_menu_names_are_menu_labels_left_in_english ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2389 filtered out; finished in 1.22s
+
+Full gate (one run; exit 101; /tmp/arabic-four-fixes-full.log):
+cargo test -j 4 --offline --release -p vectorcraft-ui-egui -- --test-threads=4
+failures:
+    panels::gradient::tests::a_color_dropped_on_the_ramp_keeps_its_model_in_a_cmyk_document
+    panels::gradient::tests::a_dropped_swatch_adds_or_recolours_a_stop
+    panels::gradient::tests::a_selected_diamond_shows_and_sets_its_midpoint_in_location
+    panels::gradient::tests::alt_drag_copies_a_stop_and_alt_dropping_on_a_stop_swaps_colours
+    panels::gradient::tests::double_clicking_a_stop_opens_the_shared_popover_beside_it
+    panels::gradient::tests::the_dither_box_dithers_the_gradient_fill_and_is_off_for_strokes
+    panels::gradient::tests::the_proxy_toggles_fill_and_stroke_and_stays_with_options_hidden
+    panels::gradient::tests::the_stroke_buttons_lay_the_gradient_within_along_or_across_the_stroke
+    panels::gradient::tests::the_thumbnail_menu_applies_gradient_swatches_and_saves_one
+    tests_rotateview::escape_after_closing_a_popup_or_during_a_ruler_origin_drag_keeps_the_rotation
+
+test result: FAILED. 2376 passed; 10 failed; 7 ignored; 0 measured; 0 filtered out; finished in 11.30s
+
+error: test failed, to rerun pass `-p vectorcraft-ui-egui --lib`
+Verified: exactly nine panels::gradient::tests failures and the specified
+rotate-view failure; no other failures. The four requested tests pass here too.
+
+Clippy (exit 0; /tmp/arabic-four-fixes-clippy.log):
+cargo clippy -j 4 --offline --release -p vectorcraft-ui-egui --all-targets -- -D warnings
+    Finished `release` profile [optimized] target(s) in 21.34s
+
+Formatting/whitespace (exit 0, no output):
+cargo fmt --all && git diff --check
+
+FIX crates/ui-egui/src/i18n/catalog.rs:177 (+ varos/theme.rs:123): remove injected product-name translation; keep the unchanged kept-name rule.
+FIX crates/ui-egui/src/panels/tests_brush_libraries.rs:178: assert .varos writes/reopen and .vectorcraft legacy rescan/reopen; insertion and undo checks retained.
+FIX crates/ui-egui/src/panels/tests_symbol_libraries.rs:162: assert .varos writes/reopen and .vectorcraft legacy rescan/reopen; insertion and undo checks retained.
+FIX crates/ui-egui/src/tests_saveext.rs:467: establish a real SVG source before selecting the legacy native Save-a-Copy suffix.
+GATE focused: test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2389 filtered out; finished in 1.22s
+GATE full: test result: FAILED. 2376 passed; 10 failed; 7 ignored; 0 measured; 0 filtered out; finished in 11.30s
+GATE clippy: exit 0; Finished `release` profile [optimized] target(s) in 21.34s
+GATE cargo fmt --all && git diff --check: exit 0, no output.
+LEFT: only the ten explicitly excluded upstream release-only failures; no requested fixes remain. No git add/commit or desktop automation performed.

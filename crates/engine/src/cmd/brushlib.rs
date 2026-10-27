@@ -34,7 +34,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Brush Libraries",
             [],
             None,
-            "{} → {libraries: [{id, name, category: \"builtIn\"|\"user\" (User Defined: the .vectorcraft files in the user library folder, rescanned now)|\"loaded\" (brush.loadLibrary), count, path?}], userFolder} every brush library the library panel opens, in menu order",
+            "{} → {libraries: [{id, name, category: \"builtIn\"|\"user\" (User Defined: the .varos/.vectorcraft files in the user library folder, rescanned now)|\"loaded\" (brush.loadLibrary), count, path?}], userFolder} every brush library the library panel opens, in menu order",
             always,
             list
         ),
@@ -61,7 +61,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Brush Library…",
             ["Window", "Brushes"],
             None,
-            "{path?, names?: [brush names] (default: all), name?: library name (default: the document's), user?: false (save into the user library folder, listed under User Defined)} save the document's brushes, with the resources their art uses, as a brush library: a .vectorcraft document holding only them → {path, count, library?: id when saved to the user folder}; without path or user → {dataBase64: the file's bytes, count}",
+            "{path?, names?: [brush names] (default: all), name?: library name (default: the document's), user?: false (save into the user library folder, listed under User Defined)} save the document's brushes, with the resources their art uses, as a brush library: a .varos document holding only them → {path, count, library?: id when saved to the user folder}; without path or user → {dataBase64: the file's bytes, count}",
             has_doc,
             save
         ),
@@ -128,7 +128,7 @@ impl BrushLibrary {
 }
 
 impl LibraryFile for BrushLibrary {
-    const EXTS: &'static [&'static str] = &[BRUSHES_EXT];
+    const EXTS: &'static [&'static str] = &[BRUSHES_EXT, vectorcraft_format::UPSTREAM_EXTENSION, vectorcraft_format::LEGACY_EXTENSION];
     fn read(bytes: &[u8], stem: &str) -> std::result::Result<Self, String> {
         let doc = vectorcraft_format::load(bytes).map_err(|e| e.to_string())?;
         BrushLibrary::from_document(&doc, &[], stem.to_string())

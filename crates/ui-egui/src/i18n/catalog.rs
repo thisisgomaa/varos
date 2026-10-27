@@ -174,7 +174,6 @@ impl Catalog {
         }
         // Most literal text first, so `Couldn't open {name}: {e}` wins over `{path}: {e}`.
         c.templates.sort_by_key(|t| std::cmp::Reverse(t.literal));
-        crate::varos::theme::extend_catalog(&mut c.plain);
         c
     }
 

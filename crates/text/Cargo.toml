@@ -9,6 +9,8 @@ description = "VectorCraft text: font database, shaping, layout, glyph outlines"
 workspace = true
 
 [dependencies]
+# Varos: union overlapping elongation outlines without an L2 crate dependency.
+linesweeper = { workspace = true }
 vectorcraft-text-arabic.workspace = true
 vectorcraft-geom = { workspace = true }
 vectorcraft-doc = { workspace = true }

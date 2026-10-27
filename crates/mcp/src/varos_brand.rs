@@ -58,7 +58,7 @@ mod tests {
         let r = &reply["result"];
         assert_eq!(r["serverInfo"]["title"], vectorcraft_format::VAROS_IDENTITY);
         assert_eq!(r["serverInfo"]["version"], vectorcraft_format::VAROS_IDENTITY);
-        assert_eq!(r["serverInfo"]["name"], "vectorcraft", "the server's id stays upstream's");
+        assert_eq!(r["serverInfo"]["name"], "varos", "the server identifies the fork");
         let instructions = r["instructions"].as_str().unwrap();
         assert!(instructions.starts_with("Varos is a professional vector illustration app."), "{instructions}");
         assert!(!instructions.contains("VectorCraft") && instructions.contains("vectorcraft://object/{id}"), "{instructions}");
