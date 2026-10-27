@@ -903,7 +903,7 @@ const KEEPS_MENU_NAMES: [&str; 18] = ["cs", "de", "el", "es", "fr", "hu", "it", 
 /// names and the perspective grid presets (names, shown untranslated wherever else they appear).
 /// Each language's own name in the Language menu is left alone too.
 const MENU_KEEP_AS_IS: &[&str] = &[
-    "VectorCraft",
+    "Varos",
     "OpenType",
     "Essentials",
     "Essentials Classic",

@@ -31,6 +31,15 @@ pub const TEMPLATE_FORMATS: &[&str] = &["template", "ait"];
 /// extension names one): when Save writes that format, one per [`SAVE_FORMATS`] entry with it
 /// leading (the panel's default type), else none (an export picks its own). Only the extension a
 /// save writes (never the former native name).
+/// Varos: Save a Copy also offers the upstream extension for interchange.
+pub fn copy_filters(first: &str) -> Vec<(&'static str, &'static [&'static str])> {
+    let mut filters = save_filters(first);
+    if !filters.is_empty() {
+        filters.insert(1, ("Varos (legacy .vectorcraft)", &["vectorcraft"]));
+    }
+    filters
+}
+
 pub fn save_filters(first: &str) -> Vec<(&'static str, &'static [&'static str])> {
     filters(SAVE_FORMATS, first)
 }
@@ -457,7 +466,7 @@ fn doc_to_save(st: &DocState, f: &Format) -> Arc<Document> {
 fn fidelity_warning(f: &Format) -> Option<String> {
     (!is_native(f)).then(|| {
         format!(
-            "{} keeps the artwork but not everything a VectorCraft document holds (editable effects, symbols, swatches, styles): save as VectorCraft to keep it all editable",
+            "{} keeps the artwork but not everything a Varos document holds (editable effects, symbols, swatches, styles): save as Varos to keep it all editable",
             f.label
         )
     })
@@ -565,7 +574,7 @@ fn blank_pages(doc: &Document) -> Document {
 }
 
 /// Why a `.ai` file saved without PDF content looks empty elsewhere.
-const NOT_PDF_COMPATIBLE: &str = "saved without PDF content: VectorCraft opens it as before, other apps show empty pages";
+const NOT_PDF_COMPATIBLE: &str = "saved without PDF content: Varos opens it as before, other apps show empty pages";
 
 /// `e`, an error of the export encoders, under the save command `cmd` instead of
 /// `document.export`.

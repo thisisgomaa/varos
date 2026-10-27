@@ -9,7 +9,7 @@
 	Paste Design	Tempel desain
 	Select Unused	Seleksi yang tidak digunakan
 	Glowing Edges…	Tepi berpendar…
-	About VectorCraft	Tentang VectorCraft
+	About VectorCraft	Tentang Varos
 	Align to Path	Sejajarkan ke jalur
 	Cut Path at Selected Anchor Points	Potong jalur pada titik jangkar terseleksi
 	Join Our Discord	Gabung ke Discord kami
@@ -19,7 +19,7 @@
 	Medium Dark	Agak gelap
 	Medium Light	Agak terang
 	Light	Terang
-	Quit VectorCraft	Keluar dari VectorCraft
+	Quit VectorCraft	Keluar dari Varos
 # Artwork drag between document tabs.
 	Drop Artwork	Letakkan karya
 @msg	{key} must be [x, y] with finite coordinates	{key} harus berupa [x, y] dengan koordinat berhingga
@@ -107,7 +107,7 @@
 	Keyboard Shortcuts…	Pintasan papan tik…
 	Import Shortcut Set	Impor set pintasan
 	Import Shortcut Set…	Impor set pintasan…
-	Each entry of the file is matched to a VectorCraft tool, command or panel. Check the matches and answer what is left.	Setiap entri dalam berkas dicocokkan dengan alat, perintah, atau panel VectorCraft. Periksa kecocokannya dan jawab sisanya.
+	Each entry of the file is matched to a VectorCraft tool, command or panel. Check the matches and answer what is left.	Setiap entri dalam berkas dicocokkan dengan alat, perintah, atau panel Varos. Periksa kecocokannya dan jawab sisanya.
 	Keys	Tombol
 	The file writes keys and modifiers as codes. Check the proposed meanings and answer the codes that are not known yet.	Berkas menulis tombol dan pengubah sebagai kode. Periksa makna yang diusulkan dan jawab kode yang belum diketahui.
 	Click, then press the key this code stands for (Esc cancels)	Klik, lalu tekan tombol yang diwakili kode ini (Esc membatalkan)
@@ -117,7 +117,7 @@
 	not known yet	belum diketahui
 	Shortcuts	Pintasan
 	In the File	Dalam berkas
-	In VectorCraft	Dalam VectorCraft
+	In VectorCraft	Dalam Varos
 	Needs Attention Only	Perlu perhatian saja
 	Ready	Siap
 	Needs a choice	Perlu pilihan
@@ -126,7 +126,7 @@
 	Tools take a single key (optionally with Shift)	Alat menggunakan satu tombol (opsional dengan Shift)
 	A later row takes this shortcut	Baris selanjutnya menggunakan pintasan ini
 	Same item as a later row	Item yang sama dengan baris selanjutnya
-	Start from VectorCraft Defaults	Mulai dari default VectorCraft
+	Start from VectorCraft Defaults	Mulai dari default Varos
 	Add to the Current Shortcuts	Tambahkan ke pintasan saat ini
 	Remember My Choices	Ingat pilihan saya
 	{ready} of {total} ready	{ready} dari {total} siap
@@ -140,7 +140,7 @@
 	Forget Import Matches	Lupakan kecocokan impor
 @plural	agrees with {n} default shortcut|agrees with {n} default shortcuts	sesuai dengan {n} pintasan default
 @plural	{n} part of the file wasn't read|{n} parts of the file weren't read	{n} bagian berkas tidak dibaca
-@msg	This shortcut file is in a form VectorCraft can't read.	Berkas pintasan ini dalam bentuk yang tidak dapat dibaca oleh VectorCraft.
+@msg	This shortcut file is in a form VectorCraft can't read.	Berkas pintasan ini dalam bentuk yang tidak dapat dibaca oleh Varos.
 @msg	not a shortcut set: the text doesn't start with a slash name and an opening brace	bukan set pintasan: teks tidak diawali dengan nama garis miring dan kurung kurawal buka
 	Preferences…	Preferensi…
 	Object	Objek
@@ -476,7 +476,7 @@
 	Working CMYK	CMYK kerja
 	RGB	RGB
 	sRGB IEC61966-2.1	sRGB IEC61966-2.1
-	VectorCraft Generic CMYK (SWOP-like)	CMYK generik VectorCraft (mirip SWOP)
+	VectorCraft Generic CMYK (SWOP-like)	CMYK generik Varos (mirip SWOP)
 	Legacy Macintosh RGB (Gamma 1.8)	RGB Macintosh lama (Gamma 1.8)
 	Internet Standard RGB (sRGB)	RGB standar Internet (sRGB)
 	Monitor RGB	RGB monitor
@@ -663,10 +663,10 @@
 	Symbol Libraries	Pustaka simbol
 	Help	Bantuan
 	ArtCraft Website	Situs web ArtCraft
-	VectorCraft on getartcraft.com	VectorCraft di getartcraft.com
-	VectorCraft on GitHub	VectorCraft di GitHub
+	VectorCraft on getartcraft.com	Varos di getartcraft.com
+	VectorCraft on GitHub	Varos di GitHub
 	Search Commands…	Cari perintah…
-	VectorCraft Help…	Bantuan VectorCraft…
+	VectorCraft Help…	Bantuan Varos…
 	Auto Color	Warna otomatis
 	Automatic	Otomatis
 	Isolate Selected Group	Isolasi grup terseleksi
@@ -715,7 +715,7 @@
 	Dock Panel	Tambatkan panel
 	Float Tool Group	Mengambangkan grup alat
 	Services	Layanan
-	Hide VectorCraft	Sembunyikan VectorCraft
+	Hide VectorCraft	Sembunyikan Varos
 	Hide Others	Sembunyikan yang lain
 	Minimize	Minimalkan
 	Zoom	Zum
@@ -1842,8 +1842,8 @@ lighting	Light	Cahaya
 	Select All Bound Objects	Pilih semua objek terikat
 	Multiple objects	Beberapa objek
 	Graphics: {adapter}	Grafis: {adapter}
-	Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + VectorCraft.	Bagian dari ArtCraft. MIT OR Apache-2.0. Font: Source Sans 3, Inter, JetBrains Mono (OFL). Ikon: Lucide (ISC) + VectorCraft.
-	Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono, Noto Sans SC (OFL). Icons: Lucide (ISC) + VectorCraft.	Bagian dari ArtCraft. MIT OR Apache-2.0. Font: Source Sans 3, Inter, JetBrains Mono, Noto Sans SC (OFL). Ikon: Lucide (ISC) + VectorCraft.
+	Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + VectorCraft.	Bagian dari ArtCraft. MIT OR Apache-2.0. Font: Source Sans 3, Inter, JetBrains Mono (OFL). Ikon: Lucide (ISC) + Varos.
+	Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono, Noto Sans SC (OFL). Icons: Lucide (ISC) + VectorCraft.	Bagian dari ArtCraft. MIT OR Apache-2.0. Font: Source Sans 3, Inter, JetBrains Mono, Noto Sans SC (OFL). Ikon: Lucide (ISC) + Varos.
 	Version {version} — open-source vector illustration in pure Rust.	Versi {version} — ilustrasi vektor sumber terbuka dalam Rust murni.
 	Align to Page	Ratakan ke halaman
 	Smooth Color	Warna mulus
@@ -2154,7 +2154,7 @@ lighting	Light	Cahaya
 	{count} folder(s) or file(s) couldn't be read	{count} folder atau file tidak dapat dibaca
 	The search stopped at its limit: search a smaller folder.	Pencarian berhenti pada batasnya: cari folder yang lebih kecil.
 	Copy only fonts you own or are licensed to install.	Salin hanya font yang Anda miliki atau yang dilisensikan untuk dipasang.
-	VectorCraft copies the fonts to {folder}.	VectorCraft menyalin font ke {folder}.
+	VectorCraft copies the fonts to {folder}.	Varos menyalin font ke {folder}.
 	Apply to All ({count} more missing)	Terapkan ke semua ({count} lagi hilang)
 	Ignore	Abaikan
 	Linked File Not Found	File tertaut tidak ditemukan
@@ -2243,7 +2243,7 @@ lighting	Light	Cahaya
 	On: one locked object showing the document, updated when it changes.	Aktif: satu objek terkunci yang menampilkan dokumen, diperbarui saat dokumen berubah.
 	Off: an editable copy of its art, embedded in this document.	Nonaktif: salinan karya seninya yang dapat diedit, tersemat dalam dokumen ini.
 	Images: link to the file instead of only embedding it.	Gambar: tautkan ke file alih-alih hanya menyematkannya.
-	VectorCraft documents: one locked object, updated when the file changes.	Dokumen VectorCraft: satu objek terkunci, diperbarui saat file berubah.
+	VectorCraft documents: one locked object, updated when the file changes.	Dokumen Varos: satu objek terkunci, diperbarui saat file berubah.
 	Alignment:	Perataan:
 	Applies when the linked file is relinked or updated.	Berlaku saat file tertaut ditautkan ulang atau diperbarui.
 	Bounds (Fill Proportionally)	Batas (isi proporsional)
@@ -2329,7 +2329,7 @@ lighting	Light	Cahaya
 	A new preset starting from the selected one	Preset baru yang dimulai dari preset terpilih
 	Differences from {preset}:	Perbedaan dari {preset}:
 	Differences from [Default]:	Perbedaan dari [Default]:
-	Differences from VectorCraft Default:	Perbedaan dari VectorCraft Default:
+	Differences from VectorCraft Default:	Perbedaan dari Varos Default:
 	Edit…	Edit…
 	None.	Tidak ada.
 	Presets:	Preset:
@@ -2379,7 +2379,7 @@ lighting	Light	Cahaya
 	3 Color Job	Pekerjaan 3 warna
 	Recover Documents	Pulihkan dokumen
 	Restored documents open unsaved: save them to keep them.	Dokumen yang dipulihkan terbuka dalam keadaan belum disimpan: simpan untuk mempertahankannya.
-	VectorCraft didn't quit normally last time. These documents had unsaved changes:	VectorCraft terakhir kali tidak keluar secara normal. Dokumen berikut memiliki perubahan yang belum disimpan:
+	VectorCraft didn't quit normally last time. These documents had unsaved changes:	Varos terakhir kali tidak keluar secara normal. Dokumen berikut memiliki perubahan yang belum disimpan:
 	Do you want to save the changes you made to “{name}”?	Apakah Anda ingin menyimpan perubahan yang Anda buat pada “{name}”?
 	Don't Save	Jangan Simpan
 	Your changes will be lost if you don't save them.	Perubahan Anda akan hilang jika tidak disimpan.
@@ -2446,7 +2446,7 @@ lighting	Light	Cahaya
 	Color images	Gambar berwarna
 	Compatibility:	Kompatibilitas:
 	PDF 1.7	PDF 1.7
-	VectorCraft Default	VectorCraft Default
+	VectorCraft Default	Varos Default
 	High Quality Print	Cetak kualitas tinggi
 	[High Quality Print]	[Cetak kualitas tinggi]
 	Press Quality	Kualitas cetak
@@ -2459,7 +2459,7 @@ lighting	Light	Cahaya
 	[PDF/X-3:2002]	[PDF/X-3:2002]
 	PDF/X-4:2010	PDF/X-4:2010
 	[PDF/X-4:2010]	[PDF/X-4:2010]
-	Keeps the document editable: VectorCraft reopens the PDF with nothing lost. For files you'll edit again.	Menjaga dokumen tetap dapat diedit: VectorCraft membuka kembali PDF tanpa kehilangan apa pun. Untuk file yang akan Anda edit lagi.
+	Keeps the document editable: VectorCraft reopens the PDF with nothing lost. For files you'll edit again.	Menjaga dokumen tetap dapat diedit: Varos membuka kembali PDF tanpa kehilangan apa pun. Untuk file yang akan Anda edit lagi.
 	Compress text and line art	Kompres teks dan seni garis
 	Compression	Kompresi
 	Compression › Color › Above Ppi	Kompresi › Warna › Di atas Ppi
@@ -2537,14 +2537,14 @@ lighting	Light	Cahaya
 	A File…	File…
 	GPL palettes keep solid colours only, as RGB.	Palet GPL hanya menyimpan warna solid, sebagai RGB.
 	Save Swatch Library	Simpan pustaka swatch
-	VectorCraft Swatches (.vcswatches)	VectorCraft Swatches (.vcswatches)
+	VectorCraft Swatches (.vcswatches)	Varos Swatches (.vcswatches)
 	Save To:	Simpan ke:
 	Saved to User Defined: {}	Disimpan ke Buatan Pengguna: {}
 	Selected Swatches Only	Hanya swatch terpilih
 	Selected Swatches Only (0)	Hanya swatch terpilih (0)
 	User Defined Libraries	Pustaka buatan pengguna
 	Copy Report	Salin laporan
-	VectorCraft read this script without running it.	VectorCraft membaca skrip ini tanpa menjalankannya.
+	VectorCraft read this script without running it.	Varos membaca skrip ini tanpa menjalankannya.
 	Needs nothing beyond plain JavaScript	Tidak memerlukan apa pun selain JavaScript biasa
 	Needs the script language's own objects or directives	Memerlukan objek atau direktif milik bahasa skrip itu sendiri
 	Needs the document model	Memerlukan model dokumen
@@ -3456,7 +3456,7 @@ axis	Both	Keduanya
 	Print as Bitmap	Cetak sebagai bitmap
 	Draft	Draf
 	Default	Default
-	[VectorCraft Default]	[Default VectorCraft]
+	[VectorCraft Default]	[Default Varos]
 	Magenta	Magenta
 	Page	Halaman
 	Print Tiling	Pengubinan cetak
@@ -3558,7 +3558,7 @@ effect	Regular	Reguler
 	Quickly start a new file	Mulai file baru dengan cepat
 	Recent Files	File terkini
 	Vector illustration — fast, open, scriptable.	Ilustrasi vektor — cepat, terbuka, mendukung skrip.
-	Welcome to VectorCraft	Selamat datang di VectorCraft
+	Welcome to VectorCraft	Selamat datang di Varos
 	ArtCraft website	Situs web ArtCraft
 	Discord	Discord
 	Join our Discord	Gabung ke Discord kami
@@ -3607,7 +3607,7 @@ font-technology	Variable	Variabel
 	Opened with {} note(s): {}	Dibuka dengan {} catatan: {}
 	Revert to the saved version of “{name}”?	Kembalikan ke versi tersimpan dari “{name}”?
 	Replace “{name}”, the file this document was opened from?	Ganti “{name}”, file asal dokumen ini?
-	Opening it left out what VectorCraft can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Saat membukanya, VectorCraft meninggalkan bagian yang belum dapat dibacanya ({what}), sehingga mengganti file akan membuat bagian itu hilang permanen. Simpan dengan nama lain untuk mempertahankannya.
+	Opening it left out what VectorCraft can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Saat membukanya, Varos meninggalkan bagian yang belum dapat dibacanya ({what}), sehingga mengganti file akan membuat bagian itu hilang permanen. Simpan dengan nama lain untuk mempertahankannya.
 	Saved {path}	Berhasil menyimpan {path}
 	Saved {path} with {} note(s): {first}	Berhasil menyimpan {path} dengan {} catatan: {first}
 	Saving	Menyimpan
@@ -3616,7 +3616,7 @@ font-technology	Variable	Variabel
 	Dashed Line	Garis putus-putus
 	Panel menu	Menu panel
 	Unembed…	Lepaskan sematan…
-	Applies the next time VectorCraft starts.	Berlaku saat VectorCraft dimulai berikutnya.
+	Applies the next time VectorCraft starts.	Berlaku saat Varos dimulai berikutnya.
 	Enable Contextual Task Bar	Aktifkan bilah tugas kontekstual
 	Next	Berikutnya
 	OK	OK
@@ -4014,7 +4014,7 @@ imageTrace	Outline	Kontur
 @msg	can't encode the document: {0}	tidak dapat mengodekan dokumen: {0}
 @msg	can't parse shortcut `{c}`	tidak dapat mengurai pintasan `{c}`
 @msg	can't parse shortcut `{s}` for `{k}`	tidak dapat mengurai pintasan `{s}` untuk `{k}`
-@msg	can't save version {0}: VectorCraft writes versions {MIN_VERSION} to {VERSION}	tidak dapat menyimpan versi {0}: VectorCraft menulis versi {MIN_VERSION} hingga {VERSION}
+@msg	can't save version {0}: VectorCraft writes versions {MIN_VERSION} to {VERSION}	tidak dapat menyimpan versi {0}: Varos menulis versi {MIN_VERSION} hingga {VERSION}
 @msg	can't write .{ext} images	tidak dapat menulis gambar .{ext}
 @msg	cannot distort a zero-size bounding box	tidak dapat mendistorsi kotak pembatas berukuran nol
 @msg	cannot read PDF: {0}	tidak dapat membaca PDF: {0}
@@ -4038,7 +4038,7 @@ imageTrace	Outline	Kontur
 @msg	empty brush stroke	sapuan kuas kosong
 @msg	empty cutter	pemotong kosong
 @msg	empty path	jalur kosong
-@msg	file version {0} is newer than this VectorCraft supports ({VERSION})	versi file {0} lebih baru daripada yang didukung VectorCraft ini ({VERSION})
+@msg	file version {0} is newer than this VectorCraft supports ({VERSION})	versi file {0} lebih baru daripada yang didukung Varos ini ({VERSION})
 @msg	freeform point {i} needs `at` [x, y] and a valid `color`	titik bentuk bebas {i} memerlukan `at` [x, y] dan `color` yang valid
 @msg	freeform line {i} must be an array of point indices	garis bentuk bebas {i} harus berupa larik indeks titik
 @msg	give both `start` and `end` [x, y] (or neither)	berikan `start` dan `end` [x, y] keduanya (atau tidak sama sekali)
@@ -4057,9 +4057,9 @@ imageTrace	Outline	Kontur
 @msg	invalid PDF setting: {0}	pengaturan PDF tidak valid: {0}
 @msg	invalid image data for `{0}`	data gambar tidak valid untuk `{0}`
 @msg	invalid parameters for `{cmd}`: {msg}	parameter tidak valid untuk `{cmd}`: {msg}
-@msg	is not an image VectorCraft reads	bukan gambar yang dapat dibaca VectorCraft
-@msg	it uses `{at}`, which VectorCraft's PostScript reader doesn't know	menggunakan `{at}`, yang tidak dikenali pembaca PostScript VectorCraft
-@msg	it uses `{at}`, which VectorCraft's PostScript reader doesn't know, in {procs}	menggunakan `{at}`, yang tidak dikenali pembaca PostScript VectorCraft, dalam {procs}
+@msg	is not an image VectorCraft reads	bukan gambar yang dapat dibaca Varos
+@msg	it uses `{at}`, which VectorCraft's PostScript reader doesn't know	menggunakan `{at}`, yang tidak dikenali pembaca PostScript Varos
+@msg	it uses `{at}`, which VectorCraft's PostScript reader doesn't know, in {procs}	menggunakan `{at}`, yang tidak dikenali pembaca PostScript Varos, dalam {procs}
 @msg	its Windows metafile preview was opened instead, which may simplify the art	yang dibuka adalah pratinjau metafile Windows-nya, yang mungkin menyederhanakan karya seni
 @msg	its preview was placed instead, at screen resolution	yang ditempatkan adalah pratinjaunya, pada resolusi layar
 @msg	join needs open paths	penggabungan memerlukan jalur terbuka
@@ -4165,8 +4165,8 @@ imageTrace	Outline	Kontur
 @msg	no user workspace `{from}`	tidak ada ruang kerja pengguna `{from}`
 @msg	node {_1} is not text	simpul {_1} bukan teks
 @msg	not a DXF drawing	bukan gambar DXF
-@msg	not a VectorCraft file: {0}	bukan berkas VectorCraft: {0}
-@msg	not a VectorCraft shortcut set (missing `overrides`)	bukan set pintasan VectorCraft (tidak ada `overrides`)
+@msg	not a VectorCraft file: {0}	bukan berkas Varos: {0}
+@msg	not a VectorCraft shortcut set (missing `overrides`)	bukan set pintasan Varos (tidak ada `overrides`)
 @msg	not a graphic style library (format `{_1}`)	bukan pustaka gaya grafis (format `{_1}`)
 @msg	not a stored central record	bukan rekaman pusat yang tersimpan
 @msg	not a valid plug-in module: {0}	bukan modul plug-in yang valid: {0}
@@ -4398,9 +4398,9 @@ imageTrace	Outline	Kontur
 @msg	Sent to {_1}	Dikirim ke {_1}
 @msg	{_1} files	berkas {_1}
 @msg	The graphics were lost and have been restarted	Grafis hilang dan telah dimulai ulang
-@msg	The graphics processor tried first couldn't show the window, so VectorCraft started again on {summary}	Prosesor grafis yang dicoba pertama kali tidak dapat menampilkan jendela, jadi VectorCraft memulai ulang dengan {summary}
-@msg	Loading VectorCraft…	Memuat VectorCraft…
-@msg	VectorCraft failed to start: {e}	VectorCraft gagal dimulai: {e}
+@msg	The graphics processor tried first couldn't show the window, so VectorCraft started again on {summary}	Prosesor grafis yang dicoba pertama kali tidak dapat menampilkan jendela, jadi Varos memulai ulang dengan {summary}
+@msg	Loading VectorCraft…	Memuat Varos…
+@msg	VectorCraft failed to start: {e}	Varos gagal dimulai: {e}
 @msg	A browser with WebGPU or WebGL2 is required.	Diperlukan browser dengan WebGPU atau WebGL2.
 @msg	The graphics were lost and couldn't be restarted.	Grafis hilang dan tidak dapat dimulai ulang.
 @msg	Your unsaved changes are kept in this browser: reload the page to get them back.	Perubahan Anda yang belum disimpan tetap ada di browser ini: muat ulang halaman untuk mengambilnya kembali.
@@ -4422,25 +4422,25 @@ imageTrace	Outline	Kontur
 @msg	it has more than {MAX_NODES} objects	memiliki lebih dari {MAX_NODES} objek
 @msg	it has no layers	tidak memiliki lapisan
 @msg	it has too many values in a row	memiliki terlalu banyak nilai berturut-turut
-@msg	it has {_1}, which VectorCraft doesn't read from it yet	memiliki {_1}, yang belum dibaca VectorCraft dari berkas tersebut
+@msg	it has {_1}, which VectorCraft doesn't read from it yet	memiliki {_1}, yang belum dibaca Varos dari berkas tersebut
 @msg	its objects are nested too deeply	objeknya bersarang terlalu dalam
 @msg	its section ending with `%{end}` doesn't end	bagian yang berakhir dengan `%{end}` tidak berakhir
 @msg	objects with several fills or strokes, effects or brushes came in as their drawn look ({_1}): their appearance isn't editable yet	objek dengan beberapa isian atau goresan, efek, atau kuas masuk sebagai tampilan gambarnya ({_1}): penampilannya belum dapat diedit
 @msg	gradient “{name}” isn't defined in the file: a plain colour stands in for it	gradien “{name}” tidak didefinisikan dalam berkas: warna polos dipakai sebagai pengganti
-@msg	an image VectorCraft can't read was left out	gambar yang tidak dapat dibaca VectorCraft tidak disertakan
+@msg	an image VectorCraft can't read was left out	gambar yang tidak dapat dibaca Varos tidak disertakan
 @msg	an image whose data is cut short was left out	gambar yang datanya terpotong tidak disertakan
 @msg	linked pictures show the low-resolution preview saved in the file until their files are found: relink them in the Links panel	gambar tertaut menampilkan pratinjau resolusi rendah yang tersimpan dalam berkas sampai berkasnya ditemukan: tautkan ulang di panel Tautan
 @msg	area type in frames too short for a line of the font it shows in got taller frames ({_1}): their type wouldn't show otherwise	teks area dalam bingkai yang terlalu pendek untuk satu baris font yang ditampilkannya mendapat bingkai yang lebih tinggi ({_1}): tanpa itu teksnya tidak akan tampil
 @msg	its editing data doesn't say where its art is	data pengeditannya tidak menyatakan di mana karya seninya berada
 @msg	this file was saved without PDF compatibility, and its editing data can't be read ({why})	berkas ini disimpan tanpa kompatibilitas PDF, dan data pengeditannya tidak dapat dibaca ({why})
 @msg	No fonts are missing in this document	Tidak ada font yang hilang dalam dokumen ini
-@msg	VectorCraft doesn't search other apps' or the system's folders: {path}	VectorCraft tidak mencari di folder aplikasi lain atau folder sistem: {path}
-@msg	VectorCraft doesn't search the Shared or Public folder in Users: {path}	VectorCraft tidak mencari di folder Shared atau Public di Users: {path}
+@msg	VectorCraft doesn't search other apps' or the system's folders: {path}	Varos tidak mencari di folder aplikasi lain atau folder sistem: {path}
+@msg	VectorCraft doesn't search the Shared or Public folder in Users: {path}	Varos tidak mencari di folder Shared atau Public di Users: {path}
 @msg	{path} is not a folder	{path} bukan folder
 @msg	the search couldn't start: try again in a moment	pencarian tidak dapat dimulai: coba lagi sebentar lagi
 @msg	searching a folder isn't available on the web	mencari di folder tidak tersedia di web
 @msg	every search thread stopped on an internal error (please report this bug)	semua utas pencarian berhenti karena kesalahan internal (mohon laporkan bug ini)
-@msg	VectorCraft's Fonts folder isn't set here: the desktop app and vectorcraft-cli set it	folder Fonts VectorCraft tidak diatur di sini: aplikasi desktop dan vectorcraft-cli yang mengaturnya
+@msg	VectorCraft's Fonts folder isn't set here: the desktop app and vectorcraft-cli set it	folder Fonts Varos tidak diatur di sini: aplikasi desktop dan vectorcraft-cli yang mengaturnya
 @msg	choose the font files to add	pilih berkas font yang akan ditambahkan
 @msg	{n} font file(s) are now in {folder}	{n} berkas font kini berada di {folder}
 @msg	{n} font file(s) are now in {folder}; {failed} couldn't be added: {reason}	{n} berkas font kini berada di {folder}; {failed} tidak dapat ditambahkan: {reason}
@@ -4583,7 +4583,7 @@ imageTrace	Outline	Kontur
 	All shortcuts reset to defaults.	Semua pintasan diatur ulang ke default.
 	Imported. Press OK to keep the imported set.	Terimpor. Tekan OK untuk mempertahankan set yang diimpor.
 	⚠ {chord} was already used by {names} — it has been removed there.	Peringatan: {chord} sudah digunakan oleh {names} — pintasan tersebut telah dihapus di sana.
-	VectorCraft Defaults	Default VectorCraft
+	VectorCraft Defaults	Default Varos
 @plural	{n} shortcut is assigned more than once|{n} shortcuts are assigned more than once	{n} pintasan ditetapkan lebih dari satu kali
 	Simulate prints overprints as Overprint Preview shows them; separations always keep them. A preset flattens transparency before printing (PostScript files always flatten it).	Simulasi mencetak overprint sebagaimana ditampilkan Pratinjau Overprint; separasi selalu mempertahankannya. Preset meratakan transparansi sebelum mencetak (berkas PostScript selalu meratakannya).
 	Preserve	Pertahankan
@@ -4797,7 +4797,7 @@ file-filter	PDF presets	Preset PDF
 file-filter	Print presets	Preset cetak
 file-filter	SVG Compressed	SVG terkompresi
 file-filter	PDF-compatible .ai	.ai kompatibel PDF
-file-filter	VectorCraft Template	Templat VectorCraft
+file-filter	VectorCraft Template	Templat Varos
 file-filter	Templates	Templat
 diagnostics	render	Render
 diagnostics	ui	UI
@@ -4808,7 +4808,7 @@ diagnostics	ui	UI
 @plural	{n} commit|{n} commits	{n} commit
 gradient-kind	Radial	Radial
 mark-style	Japanese	Jepang
-@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	berkas terkompresi ini hasil ekstraksinya melebihi yang dibaca VectorCraft ({_1} MB dokumen, {_2} MB per gambar)
+@msg	the compressed file unpacks to more than VectorCraft reads ({_1} MB of document, {_2} MB per image)	berkas terkompresi ini hasil ekstraksinya melebihi yang dibaca Varos ({_1} MB dokumen, {_2} MB per gambar)
 @msg	the document is too large to save compressed ({0}): save it with Use Compression off	dokumen terlalu besar untuk disimpan terkompresi ({0}): simpan dengan Gunakan Kompresi nonaktif
 @msg	the file stopped being read (please report this bug)	pembacaan berkas terhenti (mohon laporkan bug ini)
 	Concentric Dividers:	Pembagi konsentris:
@@ -4932,7 +4932,7 @@ mark-style	Japanese	Jepang
 	Tracing	Tracing
 	Touch	Touch
 	Typography	Typography
-	VectorCraft	VectorCraft
+	VectorCraft	Varos
 	Web	Web
 	Decrease Font Size by Five Steps	Perkecil ukuran font lima langkah
 	Increase Font Size by Five Steps	Perbesar ukuran font lima langkah
@@ -4941,8 +4941,8 @@ mark-style	Japanese	Jepang
 	Rotate View to Selection	Putar tampilan ke seleksi
 @msg	select an Intertwine group	pilih grup jalin
 @msg	this is a PostScript file (an .ai saved in an older format or without PDF compatibility, or an EPS file), not a PDF: File › Open and File › Place read it as EPS	ini adalah file PostScript (file .ai yang disimpan dalam format lama atau tanpa kompatibilitas PDF, atau file EPS), bukan PDF: File › Open dan File › Place membacanya sebagai EPS
-@msg	The last start of VectorCraft ended on {name} before its window appeared, so it started on {summary}. To try that graphics processor again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Peluncuran terakhir VectorCraft berakhir pada {name} sebelum jendelanya muncul, sehingga dimulai pada {summary}. Untuk mencoba prosesor grafis itu lagi, ubah Preferences › Performance › Graphics Processor atau mulai dengan WGPU_BACKEND diatur
-@msg	The last start of VectorCraft ended while it listed the graphics processors, so it started on {summary} with OpenGL alone. To try the other graphics backends again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Peluncuran terakhir VectorCraft berakhir saat mencantumkan prosesor grafis, sehingga dimulai pada {summary} dengan OpenGL saja. Untuk mencoba backend grafis lainnya lagi, ubah Preferences › Performance › Graphics Processor atau mulai dengan WGPU_BACKEND diatur
+@msg	The last start of VectorCraft ended on {name} before its window appeared, so it started on {summary}. To try that graphics processor again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Peluncuran terakhir Varos berakhir pada {name} sebelum jendelanya muncul, sehingga dimulai pada {summary}. Untuk mencoba prosesor grafis itu lagi, ubah Preferences › Performance › Graphics Processor atau mulai dengan WGPU_BACKEND diatur
+@msg	The last start of VectorCraft ended while it listed the graphics processors, so it started on {summary} with OpenGL alone. To try the other graphics backends again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Peluncuran terakhir Varos berakhir saat mencantumkan prosesor grafis, sehingga dimulai pada {summary} dengan OpenGL saja. Untuk mencoba backend grafis lainnya lagi, ubah Preferences › Performance › Graphics Processor atau mulai dengan WGPU_BACKEND diatur
 	Loaded Texture	Tekstur yang dimuat
 	Load Texture…	Muat tekstur…
 	Texture Image	Gambar tekstur
@@ -5230,7 +5230,7 @@ swatch	Bright Violet	Violet cerah
 	Resize	Ubah ukuran
 	Scale Design	Skalakan desain
 	Sliding	Bergeser
-	The name in the save panel was “{typed}”; VectorCraft added the file type's extension. Replacing the file overwrites its contents.	Nama di dialog simpan adalah “{typed}”, lalu VectorCraft menambahkan ekstensi jenis file. Mengganti file akan menimpa kontennya.
+	The name in the save panel was “{typed}”; VectorCraft added the file type's extension. Replacing the file overwrites its contents.	Nama di dialog simpan adalah “{typed}”, lalu Varos menambahkan ekstensi jenis file. Mengganti file akan menimpa kontennya.
 	Uniformly Scaled	Diskalakan seragam
 	Vertically Scaled	Diskalakan vertikal
 	“{name}” already exists. Replace it?	“{name}” sudah ada. Ganti?
@@ -5609,3 +5609,52 @@ axis	Y Axis	Sumbu Y
 	Sliders	Penggeser
 	Harmony	Harmoni
 	Gradient (coming soon)	Gradien (segera hadir)
+
+	About Varos	Tentang Varos
+	Quit Varos	Keluar dari Varos
+	Varos Help…	Bantuan Varos…
+	Varos	Varos
+
+	Each entry of the file is matched to a Varos tool, command or panel. Check the matches and answer what is left.	Setiap entri dalam berkas dicocokkan dengan alat, perintah, atau panel Varos. Periksa kecocokannya dan jawab sisanya.
+	In Varos	Dalam Varos
+	Start from Varos Defaults	Mulai dari default Varos
+@msg	This shortcut file is in a form Varos can't read.	Berkas pintasan ini dalam bentuk yang tidak dapat dibaca oleh Varos.
+	Varos Generic CMYK (SWOP-like)	CMYK generik Varos (mirip SWOP)
+	Varos on getartcraft.com	Varos di getartcraft.com
+	Varos on GitHub	Varos di GitHub
+	Hide Varos	Sembunyikan Varos
+	Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + Varos.	Bagian dari ArtCraft. MIT OR Apache-2.0. Font: Source Sans 3, Inter, JetBrains Mono (OFL). Ikon: Lucide (ISC) + Varos.
+	Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono, Noto Sans SC (OFL). Icons: Lucide (ISC) + Varos.	Bagian dari ArtCraft. MIT OR Apache-2.0. Font: Source Sans 3, Inter, JetBrains Mono, Noto Sans SC (OFL). Ikon: Lucide (ISC) + Varos.
+	Varos copies the fonts to {folder}.	Varos menyalin font ke {folder}.
+	Varos documents: one locked object, updated when the file changes.	Dokumen Varos: satu objek terkunci, diperbarui saat file berubah.
+	Differences from Varos Default:	Perbedaan dari Varos Default:
+	Varos didn't quit normally last time. These documents had unsaved changes:	Varos terakhir kali tidak keluar secara normal. Dokumen berikut memiliki perubahan yang belum disimpan:
+	Varos Default	Varos Default
+	Keeps the document editable: Varos reopens the PDF with nothing lost. For files you'll edit again.	Menjaga dokumen tetap dapat diedit: Varos membuka kembali PDF tanpa kehilangan apa pun. Untuk file yang akan Anda edit lagi.
+	Varos Swatches (.vcswatches)	Varos Swatches (.vcswatches)
+	Varos read this script without running it.	Varos membaca skrip ini tanpa menjalankannya.
+	[Varos Default]	[Default Varos]
+	Welcome to Varos	Selamat datang di Varos
+	Opening it left out what Varos can't read yet ({what}), so replacing it loses that for good. Save under another name to keep it.	Saat membukanya, Varos meninggalkan bagian yang belum dapat dibacanya ({what}), sehingga mengganti file akan membuat bagian itu hilang permanen. Simpan dengan nama lain untuk mempertahankannya.
+	Applies the next time Varos starts.	Berlaku saat Varos dimulai berikutnya.
+@msg	can't save version {0}: Varos writes versions {MIN_VERSION} to {VERSION}	tidak dapat menyimpan versi {0}: Varos menulis versi {MIN_VERSION} hingga {VERSION}
+@msg	file version {0} is newer than this Varos supports ({VERSION})	versi file {0} lebih baru daripada yang didukung Varos ini ({VERSION})
+@msg	is not an image Varos reads	bukan gambar yang dapat dibaca Varos
+@msg	it uses `{at}`, which Varos's PostScript reader doesn't know	menggunakan `{at}`, yang tidak dikenali pembaca PostScript Varos
+@msg	it uses `{at}`, which Varos's PostScript reader doesn't know, in {procs}	menggunakan `{at}`, yang tidak dikenali pembaca PostScript Varos, dalam {procs}
+@msg	not a Varos file: {0}	bukan berkas Varos: {0}
+@msg	not a Varos shortcut set (missing `overrides`)	bukan set pintasan Varos (tidak ada `overrides`)
+@msg	The graphics processor tried first couldn't show the window, so Varos started again on {summary}	Prosesor grafis yang dicoba pertama kali tidak dapat menampilkan jendela, jadi Varos memulai ulang dengan {summary}
+@msg	Loading Varos…	Memuat Varos…
+@msg	Varos failed to start: {e}	Varos gagal dimulai: {e}
+@msg	it has {_1}, which Varos doesn't read from it yet	memiliki {_1}, yang belum dibaca Varos dari berkas tersebut
+@msg	an image Varos can't read was left out	gambar yang tidak dapat dibaca Varos tidak disertakan
+@msg	Varos doesn't search other apps' or the system's folders: {path}	Varos tidak mencari di folder aplikasi lain atau folder sistem: {path}
+@msg	Varos doesn't search the Shared or Public folder in Users: {path}	Varos tidak mencari di folder Shared atau Public di Users: {path}
+@msg	Varos's Fonts folder isn't set here: the desktop app and vectorcraft-cli set it	folder Fonts Varos tidak diatur di sini: aplikasi desktop dan vectorcraft-cli yang mengaturnya
+	Varos Defaults	Default Varos
+file-filter	Varos Template	Templat Varos
+@msg	the compressed file unpacks to more than Varos reads ({_1} MB of document, {_2} MB per image)	berkas terkompresi ini hasil ekstraksinya melebihi yang dibaca Varos ({_1} MB dokumen, {_2} MB per gambar)
+@msg	The last start of Varos ended on {name} before its window appeared, so it started on {summary}. To try that graphics processor again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Peluncuran terakhir Varos berakhir pada {name} sebelum jendelanya muncul, sehingga dimulai pada {summary}. Untuk mencoba prosesor grafis itu lagi, ubah Preferences › Performance › Graphics Processor atau mulai dengan WGPU_BACKEND diatur
+@msg	The last start of Varos ended while it listed the graphics processors, so it started on {summary} with OpenGL alone. To try the other graphics backends again, change Preferences › Performance › Graphics Processor or start with WGPU_BACKEND set	Peluncuran terakhir Varos berakhir saat mencantumkan prosesor grafis, sehingga dimulai pada {summary} dengan OpenGL saja. Untuk mencoba backend grafis lainnya lagi, ubah Preferences › Performance › Graphics Processor atau mulai dengan WGPU_BACKEND diatur
+	The name in the save panel was “{typed}”; Varos added the file type's extension. Replacing the file overwrites its contents.	Nama di dialog simpan adalah “{typed}”, lalu Varos menambahkan ekstensi jenis file. Mengganti file akan menimpa kontennya.

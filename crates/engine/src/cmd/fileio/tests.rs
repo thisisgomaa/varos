@@ -400,7 +400,7 @@ fn export_extensions_name_every_writable_format() {
     assert_eq!(
         exts,
         [
-            "vectorcraft",
+            "varos",
             "svg",
             "svgz",
             "pdf",
@@ -606,7 +606,7 @@ fn export_for_screens_one_page_per_pdf_unique_names() {
     assert_eq!(image::load_from_memory(&b64(&r["files"][0])).unwrap().width(), 50);
     // A native row: each artboard as a document of its own to edit.
     let r = s.execute("document.exportForScreens", &json!({"range": "1", "formats": [{"format": "vectorcraft"}]})).unwrap();
-    assert!(r["files"][0]["name"].as_str().unwrap().ends_with(".vectorcraft"), "{r}");
+    assert!(r["files"][0]["name"].as_str().unwrap().ends_with(".varos"), "{r}");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -836,4 +836,29 @@ fn a_failed_save_does_not_stamp_the_documents_dates() {
     // Undoing the edit is back at what the file holds.
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(!s.doc().unwrap().is_dirty());
+}
+
+#[test]
+fn varos_native_default_and_legacy_copy_filter() {
+    assert_eq!(super::save_filters("vectorcraft")[0], ("Varos", &["varos"][..]));
+    assert!(super::copy_filters("vectorcraft").iter().any(|(_, exts)| exts.contains(&"vectorcraft")));
+    for name in ["art.varos", "art.vectorcraft", "art.drawcraft"] {
+        assert_eq!(super::format_for_name(name).unwrap().id, "vectorcraft");
+    }
+}
+
+#[test]
+fn varos_save_default_and_open_legacy_round_trip() {
+    let mut s = session(240.0, 120.0, 1);
+    s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 30, "height": 40})).unwrap();
+    let saved = s.execute("document.save", &json!({"modified": null, "preview": false})).unwrap();
+    assert!(saved["name"].as_str().unwrap().ends_with(".varos"));
+    let bytes = b64(&saved);
+    let mut contents = Vec::new();
+    for name in ["art.varos", "art.vectorcraft"] {
+        let mut opened = Session::new();
+        open(&mut opened, name, &bytes);
+        contents.push(vectorcraft_format::save(&opened.doc().unwrap().doc, false));
+    }
+    assert_eq!(contents[0], contents[1], "suffix does not alter the document structure");
 }

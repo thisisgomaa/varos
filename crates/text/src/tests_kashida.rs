@@ -86,7 +86,10 @@ fn justified_arabic_lines_take_kashida_in_the_paragraph_face_only() {
                 // Zero length, at a boundary between two authored letters of the line.
                 assert_eq!(g.len, 0);
                 assert!(g.byte > line.start && g.byte < line.end && TEXT.is_char_boundary(g.byte));
-                assert!(!g.outline.is_empty());
+                // Varos: the elongation is now part of the word's continuous outline.
+                let face = db.face_by_id(g.font_id).unwrap();
+                let bar = g.xf * db.outline(&face, g.gid).as_ref().clone();
+                assert_ne!(l.to_bezpath().winding(bar.bounding_box().center()), 0);
             }
             let src = &TEXT[line.start..line.end];
             if src.trim().contains(' ') {

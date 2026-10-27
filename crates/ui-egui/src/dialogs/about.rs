@@ -9,7 +9,7 @@ pub(super) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         return;
     }
     let mut open = true;
-    egui::Window::new(tl!("About VectorCraft"))
+    egui::Window::new(tl!("About Varos"))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -63,7 +63,7 @@ fn about_tab(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     ui.add_space(12.0);
     ui.label(
         egui::RichText::new(
-            "Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + VectorCraft.",
+            "Varos, based on VectorCraft (ArtCraft). MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + VectorCraft.",
         )
         .size(11.0),
     );

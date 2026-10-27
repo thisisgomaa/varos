@@ -540,6 +540,8 @@ fn layout_once(db: &FontDb, t: &TextObject, opts: &LayoutOptions) -> TextLayout 
         cx.out.vertical = true;
         cx.out.line_xf = line_xf;
     }
+    // Varos: one contour across virtual tatweels for strokes and Create Outlines.
+    kashida::continuous_outlines(&mut cx.out, cx.text, cx.db);
     finish_bounds(&mut cx.out);
     cx.out
 }

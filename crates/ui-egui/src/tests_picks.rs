@@ -430,7 +430,7 @@ fn preset_dialogs_export_asks_off_the_ui_thread() {
 #[test]
 fn a_sheets_answer_given_its_extension_asks_before_replacing() {
     let (mut app, shown, written) = app();
-    app.services.exists = Some(Box::new(|p: &str| p == "/art/card.vectorcraft"));
+    app.services.exists = Some(Box::new(|p: &str| p == "/art/card.varos"));
     app.run("file.new", json!({"width": 100, "height": 80})).unwrap();
     assert!(app.run("file.save", json!({})).is_err());
     shown.answer(&["/art/card"]);
@@ -440,7 +440,7 @@ fn a_sheets_answer_given_its_extension_asks_before_replacing() {
     poll(&mut app);
     assert_eq!(app.ui.status, "");
     crate::dialogs::confirm(&mut app).unwrap();
-    assert_eq!(*written.borrow(), ["/art/card.vectorcraft"]);
+    assert_eq!(*written.borrow(), ["/art/card.varos"]);
     assert!(shown.requests().is_empty(), "{:?}", shown.requests());
 }
 

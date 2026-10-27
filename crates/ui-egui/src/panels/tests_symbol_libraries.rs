@@ -159,12 +159,20 @@ fn save_symbols_writes_a_user_library_that_reopens_and_adds_to_another_document(
     // Reopened in a library panel, its symbol goes into another document.
     app.run("file.new", json!({"width": 100, "height": 100})).unwrap();
     app.run("window.userSymbolLibrary1", json!({})).unwrap();
-    assert_eq!(last_open(&app.ui).map(|p| p.id.as_str()), Some("user/Masonry.vectorcraft"));
-    let (name, lib) = SymbolLibraries::get(&app, "user/Masonry.vectorcraft").unwrap();
+    assert_eq!(last_open(&app.ui).map(|p| p.id.as_str()), Some("user/Masonry.varos"));
+    let (name, lib) = SymbolLibraries::get(&app, "user/Masonry.varos").unwrap();
     assert_eq!((name.as_str(), lib.len()), ("Masonry", 1), "only the selected symbol");
     let undo = undo_len(&app);
     click(&mut app, &ctx, "Brick", Modifiers::NONE, 1.0);
     assert_eq!((symbols(&app), undo_len(&app)), (vec!["Brick".to_string()], undo + 1));
+    // New writes use .varos; a legacy-suffixed user library is still discovered and opened.
+    assert!(dir.join("Masonry.varos").is_file());
+    std::fs::rename(dir.join("Masonry.varos"), dir.join("Masonry.vectorcraft")).unwrap();
+    app.session.symbol_libraries.rescan();
+    app.run("window.userSymbolLibrary1", json!({})).unwrap();
+    assert_eq!(last_open(&app.ui).map(|p| p.id.as_str()), Some("user/Masonry.vectorcraft"));
+    let (name, lib) = SymbolLibraries::get(&app, "user/Masonry.vectorcraft").unwrap();
+    assert_eq!((name.as_str(), lib.len()), ("Masonry", 1));
     let _ = std::fs::remove_dir_all(dir);
 }
 

@@ -146,3 +146,16 @@ mod tests {
         assert_eq!(label("my VectorCraft artwork.svg"), "my VectorCraft artwork.svg");
     }
 }
+
+#[cfg(test)]
+mod production_brand_tests {
+    #[test]
+    fn english_and_menu_display_strings_have_no_upstream_brand() {
+        // Grep-equivalent source regression; comments and attribution are not display strings.
+        for (file, source) in [("en.tsv", include_str!("../i18n/en.tsv")), ("menus.rs", include_str!("../menus.rs"))] {
+            for line in source.lines().filter(|l| !l.trim_start().starts_with("//")) {
+                assert!(!line.contains("VectorCraft") || line.contains("based on VectorCraft"), "{file}: {line}");
+            }
+        }
+    }
+}

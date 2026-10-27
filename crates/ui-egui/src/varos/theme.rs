@@ -120,10 +120,6 @@ pub fn chrome_shadow(_t: &Tokens, _offset: [i8; 2], _blur: u8, _alpha: u8) -> eg
     egui::epaint::Shadow::NONE
 }
 
-pub fn extend_catalog(plain: &mut std::collections::HashMap<String, String>) {
-    plain.insert("Varos".into(), "Varos".into());
-}
-
 /// Build Varos fonts independently, leaving upstream font-only consumers unchanged.
 fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(crate::theme::interface_fonts());

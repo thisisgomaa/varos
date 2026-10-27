@@ -14,7 +14,7 @@ use crate::state::Dialog;
 use crate::{FilePick, Services, VectorcraftApp, dialogs};
 
 /// Template extensions New from Template's open dialog lists first.
-const TEMPLATE_EXTS: &[&str] = &["vctemplate", "ait", "vectorcraft", "drawcraft"];
+const TEMPLATE_EXTS: &[&str] = &["vctemplate", "ait", "varos", "vectorcraft", "drawcraft"];
 
 /// Open bytes of any readable format as a new document (templates open untitled); swatch and
 /// graphic style library files open in the library panel, Libraries panel files are added to it,
@@ -506,6 +506,17 @@ fn with_save_extension(path: &str, f: &Format, mode: SaveMode) -> String {
 /// the picked type's; such a path stays as typed. Without a picked type, or with one the panel did not
 /// offer, [`with_save_extension`] with `f`.
 fn with_picked_type(path: &str, suggested: &str, picked: Option<&str>, f: &Format, mode: SaveMode) -> String {
+    // Varos: both native spellings share one format id, but a Copy filter chooses its suffix.
+    if mode == SaveMode::Copy
+        && let Some(ext @ ("varos" | "vectorcraft")) = picked
+    {
+        let has = fileio::extension(path);
+        return if vectorcraft_format::is_native_ext(&has) || (!has.is_empty() && has == fileio::extension(suggested)) {
+            std::path::Path::new(path).with_extension(ext).to_string_lossy().into_owned()
+        } else {
+            format!("{path}.{ext}")
+        };
+    }
     let formats = if mode == SaveMode::Template { TEMPLATE_FORMATS } else { SAVE_FORMATS };
     let Some(g) = picked.and_then(fileio::format).filter(|g| formats.contains(&g.id)) else {
         return with_save_extension(path, f, mode);
@@ -561,6 +572,7 @@ pub fn save(app: &mut VectorcraftApp, mode: SaveMode, p: &Value, ask_options: bo
     }
     let filters = FilePick::filters(match mode {
         SaveMode::Template => fileio::template_filters(first.format.id),
+        SaveMode::Copy => fileio::copy_filters(first.format.id),
         _ => fileio::save_filters(first.format.id),
     });
     let pick = FilePick { name: first.name.clone(), folder: first.folder.clone(), filters };

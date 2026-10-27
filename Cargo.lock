@@ -6311,6 +6311,7 @@ dependencies = [
  "harfrust 0.13.3",
  "icu_segmenter",
  "kurbo 0.13.1",
+ "linesweeper",
  "log",
  "skrifa 0.47.0",
  "subsetter",

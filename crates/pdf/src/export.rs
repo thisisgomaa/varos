@@ -313,8 +313,8 @@ impl Writer {
         let info = &doc.metadata;
         let given = |s: &str| Some(s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
         let metadata = Metadata {
-            creator: "VectorCraft".into(),
-            producer: "VectorCraft".into(),
+            creator: "Varos".into(),
+            producer: "Varos".into(),
             title: Some(title.to_owned()),
             authors: given(&info.author).into_iter().collect(),
             description: given(&info.description),
@@ -1641,6 +1641,12 @@ impl Exporter<'_> {
         // Ruby can't be real text in one run (it isn't characters of the base text): the type's
         // characters go out as outlines where ruby is present, ruby included.
         let plain = (!self.outline_text && t.ruby.is_empty()).then(|| t.plain_text());
+        // Varos: elongated words use the unioned outlines; retain searchable authored text.
+        let elongated = layout.glyphs.iter().enumerate().any(|(index, g)| {
+            layout.marker_of(index).is_none()
+                && g.len == 0
+                && vectorcraft_text::FontDb::global().face_by_id(g.font_id).is_some_and(|f| f.glyph_for('\u{0640}') == g.gid)
+        });
         let bars = vectorcraft_text::decorations(&layout, vectorcraft_text::FontDb::global(), t);
         for (i, run) in t.runs.iter().enumerate() {
             let mut bp = BezPath::new();
@@ -1659,7 +1665,7 @@ impl Exporter<'_> {
             self.overprinting(s, run.style.overprint_fill, fill, |ex, s| {
                 s.push_transform(&text_space);
                 // The outlines left to fill as paths: all of them, or those real text leaves.
-                let outlines = match plain.as_deref().filter(|_| !fill.is_none() && !ex.area_paint(fill, true)) {
+                let outlines = match plain.as_deref().filter(|_| !elongated && !fill.is_none() && !ex.area_paint(fill, true)) {
                     Some(text) => {
                         let (mut left, unwritten) = ex.glyph_text(s, &layout, i, text, fill, true, Some(false));
                         images = Some(unwritten);
@@ -1695,7 +1701,7 @@ impl Exporter<'_> {
             // are still text: written invisible (rendering mode 3), so they can still be selected
             // and searched.
             let unpainted = fill.is_none() && !run.style.has_stroke();
-            if let Some(text) = plain.as_deref().filter(|_| unpainted || self.area_paint(fill, true)) {
+            if let Some(text) = plain.as_deref().filter(|_| elongated || unpainted || self.area_paint(fill, true)) {
                 self.invisible = true;
                 crate::forms::form(s, Mark::Invisible, |s| {
                     s.push_transform(&text_space);
@@ -1823,7 +1829,7 @@ impl Exporter<'_> {
             // Spaces are written too (text extraction needs them); control characters and soft
             // hyphens draw nothing.
             let blank = g.outline.elements().is_empty() && !coloured;
-            if blank && !ch.is_some_and(|c| c.is_whitespace() && !c.is_control()) {
+            if blank && !(self.invisible && g.len > 0) && !ch.is_some_and(|c| c.is_whitespace() && !c.is_control()) {
                 continue;
             }
             // The glyph at the font size of its vertical scale: `frame` maps that size's glyph

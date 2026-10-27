@@ -27,6 +27,8 @@ pub mod hyphen;
 mod justify;
 // Varos: kashida (tatweel) justification of right-to-left Arabic lines.
 mod kashida;
+// Varos: font diagnostics shared with the CLI.
+pub use kashida::{KashidaDiagnostic, diagnostics as kashida_diagnostics};
 mod layout;
 mod shape;
 #[cfg(not(target_arch = "wasm32"))]

@@ -61,7 +61,9 @@ pub const MIN_VERSION: u32 = 1;
 pub const COMPRESSED_SINCE: u32 = 3;
 /// Most pixels on the longer side of an embedded preview.
 pub const PREVIEW_MAX: u32 = 256;
-pub const EXTENSION: &str = "vectorcraft";
+pub const EXTENSION: &str = "varos";
+/// Varos: persisted format id and upstream extension remain compatible.
+pub const UPSTREAM_EXTENSION: &str = "vectorcraft";
 /// Extension and format name from before the project was renamed (DrawCraft): still opened.
 pub const LEGACY_EXTENSION: &str = "drawcraft";
 /// Most bytes the JSON of a compressed file may unpack to (a guard against decompression bombs,
@@ -81,7 +83,7 @@ const MAX_UNPACKED: u64 = 512 << 20;
 
 /// Is `ext` (without the dot, any case) a native document extension?
 pub fn is_native_ext(ext: &str) -> bool {
-    ext.eq_ignore_ascii_case(EXTENSION) || ext.eq_ignore_ascii_case(LEGACY_EXTENSION)
+    ext.eq_ignore_ascii_case(EXTENSION) || ext.eq_ignore_ascii_case(UPSTREAM_EXTENSION) || ext.eq_ignore_ascii_case(LEGACY_EXTENSION)
 }
 
 /// Does the file name or path end in a native document extension?
@@ -91,17 +93,17 @@ pub fn is_native_name(name: &str) -> bool {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
-    #[error("not a VectorCraft file: {0}")]
+    #[error("not a Varos file: {0}")]
     NotVectorcraft(String),
-    #[error("file version {0} is newer than this VectorCraft supports ({VERSION})")]
+    #[error("file version {0} is newer than this Varos supports ({VERSION})")]
     TooNew(u32),
     #[error("invalid image data for `{0}`")]
     BadImage(String),
-    #[error("can't save version {0}: VectorCraft writes versions {MIN_VERSION} to {VERSION}")]
+    #[error("can't save version {0}: Varos writes versions {MIN_VERSION} to {VERSION}")]
     BadVersion(u32),
     #[error("version {0} files can't be compressed: only version {COMPRESSED_SINCE} and later open compressed files")]
     CompressedTooOld(u32),
-    #[error("the compressed file unpacks to more than VectorCraft reads ({} MB of document, {} MB per image)", MAX_JSON >> 20, MAX_BLOB >> 20)]
+    #[error("the compressed file unpacks to more than Varos reads ({} MB of document, {} MB per image)", MAX_JSON >> 20, MAX_BLOB >> 20)]
     TooBig,
     #[error("the document is too large to save compressed ({0}): save it with Use Compression off")]
     TooBigToCompress(String),
@@ -384,9 +386,9 @@ pub fn save_to(doc: &Document, o: &SaveOptions, w: impl Write) -> Result<(), For
     let mut out = if o.compress { Out::Gz(Box::new(Gz::new(w).map_err(encode_err)?)) } else { Out::Plain(w) };
     let mut env = Envelope { pretty, first: true };
     // Older apps only know the name from before the rename.
-    env.field(&mut out, "format", &if o.version < 3 { LEGACY_EXTENSION } else { EXTENSION })?;
+    env.field(&mut out, "format", &if o.version < 3 { LEGACY_EXTENSION } else { UPSTREAM_EXTENSION })?;
     env.field(&mut out, "version", &o.version)?;
-    env.field(&mut out, "generator", &format!("VectorCraft {}", env!("CARGO_PKG_VERSION")))?;
+    env.field(&mut out, "generator", &format!("Varos {}", env!("CARGO_PKG_VERSION")))?;
     if let Some(png) = &o.preview {
         env.field(&mut out, "preview", &blob("image/png", png))?;
     }
@@ -558,7 +560,7 @@ pub fn load_file(bytes: &[u8]) -> Result<NativeFile, FormatError> {
         let why = if e.to_string().contains("recursion limit") { format!("its objects are nested too deep ({e})") } else { e.to_string() };
         FormatError::NotVectorcraft(why)
     })?;
-    if f.format != EXTENSION && f.format != LEGACY_EXTENSION {
+    if f.format != UPSTREAM_EXTENSION && f.format != EXTENSION && f.format != LEGACY_EXTENSION {
         return Err(FormatError::NotVectorcraft(format!("format is `{}`", f.format)));
     }
     if f.version > VERSION {
@@ -797,5 +799,23 @@ mod tests {
         assert_eq!(base64_decode("QQ=="), Some(vec![0x41]));
         assert_eq!(base64_decode("QUI="), Some(vec![0x41, 0x42]));
         assert_eq!(base64_decode("QUJD"), Some(vec![0x41, 0x42, 0x43]));
+    }
+}
+
+#[cfg(test)]
+mod varos_native_tests {
+    use super::*;
+    #[test]
+    fn varos_and_legacy_extensions_share_identical_serialization() {
+        assert_eq!(EXTENSION, "varos");
+        for name in ["new.varos", "old.vectorcraft", "older.drawcraft", "UPPER.VAROS"] {
+            assert!(is_native_name(name));
+        }
+        let bytes = save(&Document::new(100.0, 50.0), false);
+        let decoded = load(&bytes).unwrap();
+        assert_eq!(save(&decoded, false), bytes);
+        let json = String::from_utf8(bytes).unwrap();
+        assert!(json.contains("\"format\":\"vectorcraft\""));
+        assert!(json.contains("\"generator\":\"Varos "));
     }
 }
