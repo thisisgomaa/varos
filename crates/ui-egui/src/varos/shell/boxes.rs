@@ -110,7 +110,7 @@ pub(crate) fn label(app: &VectorcraftApp, id: &str) -> String {
 
 /// Paint over the parts of `rect` outside its rounded corners in the seam's colour, then its
 /// hairline: content drawn edge to edge (the canvas, a scroll bar) gets the box's rounded corners.
-fn frame(painter: &egui::Painter, rect: Rect, t: &Tokens) {
+pub(crate) fn frame(painter: &egui::Painter, rect: Rect, t: &Tokens) {
     // A stroke whose inner edge is the rounded box covers the corners' outside (6 points reach
     // past the corner of an 8-point radius) and stays inside the 12-point seam.
     const COVER: f32 = 6.0;
@@ -191,7 +191,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, b: &PanelBox, re
 
 /// The ≡ button: the panel's own menu items (`panels::panel_menu_items`) and Close Panel; true when
 /// Close Panel was chosen.
-fn menu_button(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, box_id: u32, panel: &str, t: &Tokens) -> bool {
+pub(crate) fn menu_button(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, box_id: u32, panel: &str, t: &Tokens) -> bool {
     let response = ui.interact(rect, egui::Id::unique("varos-shell-menu").with(box_id), Sense::click());
     if response.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(CONTROL_RADIUS), t.hover);

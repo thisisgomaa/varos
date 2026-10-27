@@ -363,24 +363,6 @@ impl Node {
         }
     }
 
-    /// Where a panel opened from the Window menu goes: the bottom-right ordinary box. With none (only
-    /// the Board is left), a new box is made right of everything, in the default share.
-    pub fn target_box(&mut self) -> u32 {
-        fn bottom_right(node: &Node) -> Option<u32> {
-            match node {
-                Node::Leaf(b) => (!b.is_board()).then_some(b.id),
-                Node::Split { a, b, .. } => bottom_right(b).or_else(|| bottom_right(a)),
-            }
-        }
-        if let Some(id) = bottom_right(self) {
-            return id;
-        }
-        let id = self.next_id();
-        let old = std::mem::replace(self, leaf(0, &[]));
-        *self = split(Axis::Horizontal, BOARD_RATIO, old, Node::Leaf(PanelBox { id, tabs: Vec::new(), active: 0 }));
-        id
-    }
-
     /// The smallest this node can be laid out at, its seams included.
     pub fn min_size(&self) -> Vec2 {
         match self {
@@ -611,17 +593,11 @@ mod tests {
         assert_eq!(tabs(&tree), [vec![BOARD]]);
         assert!(!tree.remove_tab(BOARD), "the Board never goes");
         assert!(!tree.remove_tab("stroke"));
-        // A panel opened with only the Board left gets a new box at the right.
-        let id = tree.target_box();
-        assert!(tree.add_tab(id, "stroke"));
-        assert_eq!(tabs(&tree), [vec![BOARD], vec!["stroke"]]);
-        assert!(matches!(&tree, Node::Split { ratio, .. } if *ratio == BOARD_RATIO));
     }
 
     #[test]
     fn tabs_activate_add_and_remove_keep_the_front_tab() {
         let mut tree = Node::default_layout();
-        assert_eq!(tree.target_box(), 3, "the bottom-right box");
         assert!(tree.add_tab(3, "stroke"));
         assert_eq!(tree.find_box(3).unwrap().front(), Some("stroke"));
         assert!(tree.activate("color"));
@@ -736,7 +712,7 @@ mod tests {
         // Only the Board, at u32::MAX: a new box still gets an id.
         let raw = serde_json::json!({"leaf": {"id": u32::MAX, "tabs": ["board"]}});
         let mut tree = serde_json::from_value::<Node>(raw).unwrap().sanitized(&known);
-        let id = tree.target_box();
+        let id = tree.split_box(u32::MAX, Axis::Horizontal, "stroke", true, BOARD_RATIO).unwrap();
         assert_eq!(id, 1);
         assert!(tree.add_tab(id, "stroke"));
         tree.invariants().unwrap();
