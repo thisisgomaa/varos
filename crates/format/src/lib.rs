@@ -36,6 +36,8 @@ mod atomic;
 mod legacy;
 mod stream;
 mod unpack;
+// Varos: why the last file write failed, by kind (a Save to a read-only location goes on as Save As).
+mod write_failure;
 
 /// Varos: shared build-time product, engine and source revision identity.
 pub const VAROS_IDENTITY: &str = env!("VAROS_IDENTITY");
@@ -51,6 +53,7 @@ use vectorcraft_doc::{Document, ImageBlob};
 #[cfg(not(target_arch = "wasm32"))]
 pub use atomic::{sync_file, write_atomic, write_atomic_with, write_new_with};
 use stream::{Gz, Indent, KeyScan, Out};
+pub use write_failure::{refuses_writes, take_write_failure}; // Varos
 
 /// v4: large data after the JSON (v1 to v3 files still load).
 pub const VERSION: u32 = 4;

@@ -20,6 +20,8 @@ pub mod names;
 #[cfg(test)]
 mod perf_tests;
 pub(crate) mod profile;
+// Varos: a Save to a read-only location goes on as Save As in a folder that takes the file.
+pub(crate) mod read_only_save;
 // Varos: the colour picker v3, the Color panel's body.
 pub(crate) mod picker;
 // Varos: icon panels open as independent cards beside the icon column.
@@ -36,6 +38,8 @@ mod tests_control_bar;
 mod tests_identity;
 #[cfg(test)]
 mod tests_panel_stack;
+#[cfg(test)]
+mod tests_read_only_save;
 #[cfg(test)]
 mod tests_text_scale;
 #[cfg(test)]

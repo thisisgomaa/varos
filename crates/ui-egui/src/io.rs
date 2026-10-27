@@ -554,6 +554,18 @@ fn plan(app: &VectorcraftApp, mode: SaveMode, p: &Value) -> Result<SavePlan, Str
 /// → `{path, format, warnings…}` once written, or `{pending: <dialog kind>,
 /// path?}` while a dialog is open.
 pub fn save(app: &mut VectorcraftApp, mode: SaveMode, p: &Value, ask_options: bool) -> Result<Value, String> {
+    save_suggesting(app, mode, p, ask_options, None)
+}
+
+/// [`save`], with a save panel that asks for the path suggesting `folder` instead of the
+/// document's own (Varos: a Save its location refused, [`crate::varos::read_only_save`]).
+pub(crate) fn save_suggesting(
+    app: &mut VectorcraftApp,
+    mode: SaveMode,
+    p: &Value,
+    ask_options: bool,
+    folder: Option<String>,
+) -> Result<Value, String> {
     remember_view(app);
     // Writing over the file the document was read from is asked about here, not refused.
     let first = plan(app, mode, &acknowledged(p))?;
@@ -575,7 +587,7 @@ pub fn save(app: &mut VectorcraftApp, mode: SaveMode, p: &Value, ask_options: bo
         SaveMode::Copy => fileio::copy_filters(first.format.id),
         _ => fileio::save_filters(first.format.id),
     });
-    let pick = FilePick { name: first.name.clone(), folder: first.folder.clone(), filters };
+    let pick = FilePick { name: first.name.clone(), folder: folder.or_else(|| first.folder.clone()), filters };
     let picked = pick_finished(app, &pick, |picked, file_type| with_picked_type(picked, &first.name, file_type, first.format, mode))?;
     // The picked file type wins over a `format` param.
     let mut q = if p.is_object() { p.clone() } else { json!({}) };
@@ -720,6 +732,9 @@ fn write_plan(app: &mut VectorcraftApp, plan: SavePlan) -> Result<Value, String>
     if app.background.busy_with(uid) {
         background::wait_all(app);
     }
+    // Varos: a Save its location refuses (a read-only volume) goes on as Save As.
+    let retry = crate::varos::read_only_save::Retry::of(app, &plan);
+    let watch = retry.watch();
     let job = fileio::save_job(&mut app.session, plan).map_err(|e| e.to_string())?;
     let (retargets, target) = (job.plan().retargets(), job.plan().path.clone());
     let (format, warnings) = (job.plan().format.id, job.known_warnings());
@@ -734,14 +749,23 @@ fn write_plan(app: &mut VectorcraftApp, plan: SavePlan) -> Result<Value, String>
     // A native file streams into the file as it is encoded (desktop; not to a download).
     let stream = app.services.stream_shared.clone().filter(|_| job.streams() && !is_web(app));
     let work = move |write: Writer| {
-        match stream {
-            Some(stream) => job.write_streamed(&mut |p, fill| stream(p, fill).map_err(EngineError::Other)),
-            None => job.write(|p, b| write(p, b).map_err(EngineError::Other)),
-        }
-        .map_err(|e| e.to_string())
+        // Varos: watched for why the write failed, by kind.
+        watch.run(|| {
+            match stream {
+                Some(stream) => job.write_streamed(&mut |p, fill| stream(p, fill).map_err(EngineError::Other)),
+                None => job.write(|p, b| write(p, b).map_err(EngineError::Other)),
+            }
+            .map_err(|e| e.to_string())
+        })
     };
     let failed = target.clone().unwrap_or_default();
     let then = move |app: &mut VectorcraftApp, r: Result<Value, String>| {
+        // Varos: the location takes no file: Save goes on as Save As, an agent gets a typed error.
+        if let Err(e) = &r
+            && let Some(r) = retry.instead(app, uid, &failed, e)
+        {
+            return r;
+        }
         // Not written: the document keeps its file, format and modified state, and the user is told.
         let r = r.inspect_err(|e| report_write_error(app, false, &failed, e))?;
         // The document may have closed meanwhile: the file is written all the same.

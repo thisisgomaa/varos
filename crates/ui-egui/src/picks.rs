@@ -172,6 +172,15 @@ pub(crate) fn as_entry<R>(app: &mut VectorcraftApp, entry: impl FnOnce() -> Entr
     r
 }
 
+/// Varos: run `f` as `entry` even inside another entry (which then doesn't run again for the
+/// dialogs `f` asks for): what goes on after a refused Save asks for its own path.
+pub(crate) fn as_own_entry<R>(app: &mut VectorcraftApp, entry: Entry, f: impl FnOnce(&mut VectorcraftApp) -> R) -> R {
+    let outer = app.picks.entry.replace(entry);
+    let r = f(app);
+    app.picks.entry = outer;
+    r
+}
+
 /// [`as_entry`] for a panel's or a dialog's button that `f` handles.
 pub(crate) fn button(app: &mut VectorcraftApp, f: impl Fn(&mut VectorcraftApp) + 'static) {
     let f = Rc::new(f);

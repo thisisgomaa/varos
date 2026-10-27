@@ -54,6 +54,9 @@ pub const NEEDS_DIALOG: &str = "needs_dialog";
 /// A batch writes a file. Saves and exports go in a request of their own, after the batch, with
 /// the revision it answered.
 pub const WRITE_IN_BATCH: &str = "write_in_batch";
+/// A save or an export couldn't write its file: the folder or volume takes none (a read-only disk,
+/// no permission). Nothing was written; the board keeps its file and stays modified.
+pub const READ_ONLY_LOCATION: &str = "read_only_location";
 
 /// Every error code with what it means and what the agent does next, for `capabilities`.
 pub const ERRORS: &[(&str, &str)] = &[
@@ -75,6 +78,10 @@ pub const ERRORS: &[(&str, &str)] = &[
     (
         WRITE_IN_BATCH,
         "a batch may not save or export: run the batch, then save or export in a call of its own with the revision the batch answered. Nothing was run.",
+    ),
+    (
+        READ_ONLY_LOCATION,
+        "the file's folder or volume can't be written (a read-only disk, no permission); save_as to a folder that can be written. Nothing was written.",
     ),
 ];
 

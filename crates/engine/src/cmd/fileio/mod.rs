@@ -72,6 +72,7 @@ pub use naming::{NameParts as FileNameParts, parse_date as parse_file_date, rend
 pub(crate) use native::preview_png;
 pub use native::with_compression_pref;
 pub use pdfimport::{LoadOptions, page_document};
+pub use save::documents_dialog_folder; // Varos
 pub(crate) use save::job_for;
 pub use save::{
     SAVE_FORMATS, SaveJob, SaveMode, SavePlan, StreamWrite, TEMPLATE_FORMATS, copy_filters, export_folder, reads_option as save_reads_option,
@@ -1009,7 +1010,15 @@ pub(crate) fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
     vectorcraft_doc::cancel::check()?;
     may_write(path)?;
     // Never a half-written file: see [`write_atomic`].
-    write_atomic(std::path::Path::new(path), bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    write_atomic(std::path::Path::new(path), bytes).map_err(|e| write_error(path, &e))
+}
+
+/// Varos: `path`'s write failure `e` as an error: [`EngineError::ReadOnlyLocation`] when the
+/// location takes no file (by `e`'s kind), else [`EngineError::Other`]; the same message either way.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_error(path: &str, e: &std::io::Error) -> EngineError {
+    let message = format!("{path}: {e}");
+    if vectorcraft_format::refuses_writes(e.kind()) { EngineError::ReadOnlyLocation(message) } else { EngineError::Other(message) }
 }
 
 /// [`write_file`] with what `fill` writes into the file (a save streamed into it).
@@ -1017,7 +1026,7 @@ pub(crate) fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
 pub fn write_file_with(path: &str, fill: &mut dyn FnMut(&mut dyn std::io::Write) -> std::io::Result<()>) -> Result<()> {
     vectorcraft_doc::cancel::check()?;
     may_write(path)?;
-    vectorcraft_format::write_atomic_with(std::path::Path::new(path), |f| fill(f)).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    vectorcraft_format::write_atomic_with(std::path::Path::new(path), |f| fill(f)).map_err(|e| write_error(path, &e))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1530,3 +1539,7 @@ mod tests_pdfwebview;
 
 #[cfg(test)]
 mod tests_pdf13;
+
+// Varos: a write to a location that takes no file is a typed error.
+#[cfg(test)]
+mod tests_readonly;
