@@ -23,7 +23,7 @@ fn boardless_renders_hit_tests_and_roundtrips_without_a_page() {
     assert!(hit.is_some());
     let opts = vectorcraft_render::RenderOptions { artboards: false, trim: true, ..Default::default() };
     let image = vectorcraft_render::Renderer::new().render(doc, 160, 100, Affine::translate((260.0, 150.0)), &opts);
-    assert!(image.pixels.chunks_exact(4).any(|p| p[3] != 0));
+    assert!(image.pixels.as_chunks::<4>().0.iter().any(|p| p[3] != 0));
     let data = vectorcraft_format::save(doc, false);
     let restored = vectorcraft_format::load(&data).unwrap();
     assert_eq!(restored.artboards.len(), 0);

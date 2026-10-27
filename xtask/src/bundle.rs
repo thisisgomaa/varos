@@ -50,9 +50,23 @@ mod tests {
             if p.is_dir() {
                 text_files(&p, out);
             } else if let Ok(t) = std::fs::read_to_string(&p) {
-                out.push((p.display().to_string(), t.to_ascii_lowercase()));
+                out.push((p.display().to_string(), without_base64(&t).to_ascii_lowercase()));
             }
         }
+    }
+
+    /// Varos: `base64,…` payloads (the DMG background's embedded image) are not words.
+    fn without_base64(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(i) = rest.find("base64,") {
+            out.push_str(&rest[..i + 7]);
+            rest = &rest[i + 7..];
+            let end = rest.find(['"', '\'', ')', '<']).unwrap_or(rest.len());
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        out
     }
 
     #[test]
@@ -67,7 +81,10 @@ mod tests {
         }
         let read = |p: &str| std::fs::read_to_string(crate::root().join(p)).unwrap();
         let plist = read("packaging/macos/Info.plist.in");
-        assert!(plist.contains("<array><string>vectorcraft</string><string>drawcraft</string></array>"), "native format extensions");
+        assert!(
+            plist.contains("<array><string>varos</string><string>vectorcraft</string><string>drawcraft</string></array>"),
+            "native format extensions"
+        ); // Varos
         assert!(read("packaging/linux/ai.storyteller.vectorcraft.desktop").contains("Categories=Graphics;2DGraphics;VectorGraphics;"));
         assert!(read("packaging/linux/ai.storyteller.vectorcraft.metainfo.xml.in").contains("<category>VectorGraphics</category>"));
     }

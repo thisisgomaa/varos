@@ -74,3 +74,9 @@ See `docs/varos/AI_PANEL_PLAN.md` — A0 mockup → A1 Ask via Codex → A2 Clau
 3. picker header: Gradient button (x 98–184) overlaps Eyedropper (176–202) by 8 px.
 4. clipping eligibility recomputed every frame in Properties + control bar; cache by (doc, revision, selection).
 Owner direction 2026-10-27: no further investment in craft-ui chrome while the new UI is designed on the Varos box system; fix these only if cheap or when the new shell lands.
+
+## Known after lane-arabic-codex (2026-10-27)
+- PDF copy-back of a **stroked Force-kashida** word reads back with spaces at the unioned
+  elongation bars ("بس م الرحم ن") — the continuous-outline fix (VQA-14) splits the text map.
+  Test `crates/pdf/tests/arabic_copy_back.rs::stroked_force_kashida_keeps_authored_searchable_text`
+  is `#[ignore]` until the text map spans the unioned glyphs. Unstroked text is unaffected.

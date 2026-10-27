@@ -98,6 +98,10 @@ enum Kind {
 }
 
 fn kind_of(path: &str) -> Option<Kind> {
+    // Varos: the fork's own notes, reports and mockups compare against other apps by name.
+    if path.starts_with("docs/varos/") {
+        return None;
+    }
     if (path.starts_with("docs/") && !path.ends_with(".md")) || path.starts_with("packaging/") || path == CURSOR_MANIFEST {
         Some(Kind::Text)
     } else if path == "Cargo.toml" || path.ends_with("/Cargo.toml") {

@@ -80,7 +80,7 @@ impl Mcp {
         let v =
             self.request("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "0"}}));
         let r = &v["result"];
-        assert_eq!(r["serverInfo"]["name"], "vectorcraft");
+        assert_eq!(r["serverInfo"]["name"], "varos"); // Varos
         assert!(r["protocolVersion"].is_string());
         assert!(r["capabilities"]["tools"].is_object());
         self.notify("notifications/initialized");
