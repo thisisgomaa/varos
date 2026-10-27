@@ -80,3 +80,14 @@ Owner direction 2026-10-27: no further investment in craft-ui chrome while the n
   elongation bars ("بس م الرحم ن") — the continuous-outline fix (VQA-14) splits the text map.
   Test `crates/pdf/tests/arabic_copy_back.rs::stroked_force_kashida_keeps_authored_searchable_text`
   is `#[ignore]` until the text map spans the unioned glyphs. Unstroked text is unaffected.
+
+## Colour picker integration — owner feedback 2026-10-27 («دي بايظة خالص»)
+Seen in v14 (cards, old shell): the picker v3 sits inside a Color | Appearance card with a
+"Gradient…" text button and an extra × in its mode row.
+1. The colour panel must be a **modal/popover** opened from the colour well (Figma-like), closed
+   by clicking outside — not a docked panel/menu with tabs.
+2. **Gradient is a mode inside the picker**, in the same icon row as Wheel / Sliders / Harmony —
+   not a "Gradient…" button that opens a separate Gradient panel.
+3. Remove the extra × in the picker's mode row.
+Owner-marked priority; its own lane right after shell stage 3 (one cargo lane on the Mac).
+
