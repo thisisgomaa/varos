@@ -1357,6 +1357,8 @@ fn capture_cards4() {
     }
     let pixels = crate::varos::home::capture::raster(&shot.unwrap(), &textures, width, height);
     image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+}
+
 #[test]
 fn vqa_requested_character_wins_after_group_close_for_command_and_icon() {
     let mut h = Harness::new();

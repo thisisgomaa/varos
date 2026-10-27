@@ -30,7 +30,9 @@ pub(crate) mod tab_scroll;
 mod tests_agents;
 #[cfg(test)]
 mod tests_boards;
+#[cfg(test)]
 mod tests_control_bar;
+#[cfg(test)]
 mod tests_identity;
 #[cfg(test)]
 mod tests_panel_stack;
