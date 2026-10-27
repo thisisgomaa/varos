@@ -31,7 +31,12 @@ pub fn write_atomic_with(path: &Path, fill: impl FnOnce(&mut File) -> io::Result
     // beside the target before `keep_permissions` has run (#1712). A new file keeps the default mode.
     let replacing = path.exists();
     let create = |tmp: &Path| if replacing { create_private(tmp) } else { create_new(tmp) };
-    write_atomic_stepping(path, fill, create, |tmp, target| std::fs::rename(tmp, target))
+    let written = write_atomic_stepping(path, fill, create, |tmp, target| std::fs::rename(tmp, target));
+    // Varos: why it failed, by kind, for the app (a Save to a read-only location goes on as Save As).
+    if let Err(e) = &written {
+        crate::write_failure::note(e);
+    }
+    written
 }
 
 fn create_new(path: &Path) -> io::Result<File> {

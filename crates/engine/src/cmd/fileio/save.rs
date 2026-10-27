@@ -164,6 +164,13 @@ fn documents_folder() -> Option<std::path::PathBuf> {
     Some(home.join("Documents"))
 }
 
+/// Varos: the folder a save panel suggests for a document whose own folder can't be written (a
+/// read-only volume): the user's documents folder when it is there, else the home folder (none on
+/// the web).
+pub fn documents_dialog_folder() -> Option<String> {
+    documents_folder().filter(|d| d.is_dir()).map(|d| d.to_string_lossy().into_owned()).or_else(home_folder)
+}
+
 /// `XDG_DOCUMENTS_DIR` in a `user-dirs.dirs` file's `text`, `$HOME` being `home`. None when it isn't
 /// set, is relative, or is the home folder itself (the spec's way of turning it off).
 fn xdg_documents(text: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {

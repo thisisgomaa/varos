@@ -57,6 +57,11 @@ pub enum EngineError {
     NoNode(NodeId),
     #[error("{0}")]
     Other(String),
+    /// Varos: a file couldn't be written because its location takes none: a read-only volume or a
+    /// folder (or file) the user may not write ([`vectorcraft_format::refuses_writes`]). The
+    /// message is the one [`EngineError::Other`] would carry.
+    #[error("{0}")]
+    ReadOnlyLocation(String),
     /// The caller asked for the command to stop ([`cancel`]). It changed nothing.
     #[error("cancelled; nothing was changed")]
     Cancelled,
