@@ -1,21 +1,30 @@
-//! The shell's saved state: `varos_shell` in `ui.json` (version 3: the boxes, the Board's strip,
-//! floating panels and floating strips), apart from craft-ui's `docking` layout, which it never
-//! touches. Versions 1 and 2 load (no floats then).
+//! The shell's saved state: `varos_shell` in `ui.json` (version 4: the boxes, the Board's strip,
+//! floating panels and floating strips, the Properties editors' section views, the maximized box
+//! and the workspaces), apart from craft-ui's `docking` layout, which it never touches. Versions
+//! 1, 2 and 3 load through the migrations [`migrate_1_to_2`], [`migrate_2_to_3`] and
+//! [`migrate_3_to_4`], each a pure function of the saved JSON.
 //!
 //! Every panel has at most one owner: a box of the tree, the Board's strip, a floating panel or a
-//! floating strip ([`VarosShell::invariants`]).
+//! floating strip ([`VarosShell::invariants`]). A panel id is a panel the app knows or a second
+//! (third, …) Properties editor, `properties@2` ([`instance_kind`]).
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::floats::{Float, FloatStrip};
 use super::strip::{Group, StripRef};
 use super::tree::{BOX_MIN, Node, PanelBox};
+use super::workspace::Arrangement;
+use crate::panels::properties::PropertiesView;
 
 /// The saved layout's version.
-pub(crate) const VERSION: u32 = 3;
+pub(crate) const VERSION: u32 = 4;
 /// Floating panels' box ids start here (the tree's start at 1), so the two never meet.
 const FLOAT_IDS: u32 = 1 << 20;
+/// The Properties panel: the one editor that has more than one instance.
+pub(crate) const PROPERTIES: &str = "properties";
 
 /// Preferences › Varos shell (new) and the shell's box layout.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -34,12 +43,32 @@ pub struct VarosShell {
     /// Floating strips (a lone floating icon is a floating strip of one icon).
     #[serde(default)]
     pub float_strips: Vec<FloatStrip>,
+    /// Each Properties editor's section view (order, collapsed sections), by its panel id
+    /// (`properties`, `properties@2`, …). The pin is not saved.
+    #[serde(default)]
+    pub views: BTreeMap<String, PropertiesView>,
+    /// The box that fills the central region (the rest of the tree is kept as it is, hidden).
+    #[serde(default)]
+    pub maximized: Option<u32>,
+    /// The workspace shown (a preset or one of [`Self::workspaces`]).
+    #[serde(default = "default_workspace")]
+    pub workspace: String,
+    /// The user's own workspaces, as saved.
+    #[serde(default)]
+    pub workspaces: Vec<Arrangement>,
+    /// The layouts the workspaces were left in (the changes made in them since they were saved).
+    #[serde(default)]
+    pub workspace_changes: Vec<Arrangement>,
     /// The panel whose flyout is open (beside the strip that owns it); not saved.
     #[serde(skip)]
     pub open: Option<String>,
     /// The drag under way; not saved.
     #[serde(skip)]
     pub drag: Option<super::drag::Drag>,
+}
+
+fn default_workspace() -> String {
+    super::workspace::DESIGN.to_string()
 }
 
 impl Default for VarosShell {
@@ -51,34 +80,129 @@ impl Default for VarosShell {
             tree: Node::default_layout(),
             floats: Vec::new(),
             float_strips: Vec::new(),
+            views: BTreeMap::new(),
+            maximized: None,
+            workspace: default_workspace(),
+            workspaces: Vec::new(),
+            workspace_changes: Vec::new(),
             open: None,
             drag: None,
         }
     }
 }
 
-/// A panel id the app knows (an icon panel, a dock tab or a library panel).
-pub(crate) fn known(id: &str) -> bool {
-    crate::menus::normalize_panel(id) == Some(id)
+/// The panel kind of panel id `id`: `properties` for `properties@2`, else the id itself.
+pub(crate) fn instance_kind(id: &str) -> &str {
+    if is_extra_instance(id) { PROPERTIES } else { id }
 }
 
-/// `varos_shell` read from what `ui.json` holds: the switch kept whatever the layout; a layout of
-/// another version, or one that doesn't read, is the default; unknown panel ids are dropped.
+/// Is `id` a second (third, …) Properties editor, `properties@<n>` with `n` ≥ 2.
+pub(crate) fn is_extra_instance(id: &str) -> bool {
+    id.split_once('@').is_some_and(|(kind, n)| kind == PROPERTIES && n.parse::<u32>().is_ok_and(|n| n >= 2) && !n.starts_with('0'))
+}
+
+/// Is `id` a Properties editor (the panel or another instance of it).
+pub(crate) fn is_properties(id: &str) -> bool {
+    instance_kind(id) == PROPERTIES
+}
+
+/// A panel id the app knows (an icon panel, a dock tab or a library panel), or another Properties
+/// editor.
+pub(crate) fn known(id: &str) -> bool {
+    crate::menus::normalize_panel(id) == Some(id) || is_extra_instance(id)
+}
+
+/// Version 1 (stage 1: the boxes only) → 2: the Board's strip holds the panels no box has.
+pub(crate) fn migrate_1_to_2(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("version".into(), json!(2));
+        if !o.contains_key("strip") {
+            let tree = o.get("tree").and_then(|t| Node::deserialize(t).ok()).map_or_else(Node::default_layout, |t| t.sanitized(&known));
+            o.insert("strip".into(), serde_json::to_value(super::strip::Strip::default_for(&tree)).unwrap_or(Value::Null));
+        }
+    }
+    v
+}
+
+/// Version 2 (stage 2: boxes and the Board's strip) → 3: no floating panels nor floating strips
+/// yet (whatever a version-2 file says of them is not stage 2's).
+pub(crate) fn migrate_2_to_3(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("version".into(), json!(3));
+        o.insert("floats".into(), json!([]));
+        o.insert("float_strips".into(), json!([]));
+    }
+    v
+}
+
+/// Version 3 (stage 3: floats, floating strips, collapsed boxes) → 4: default section views,
+/// nothing maximized, the Design workspace and no saved workspaces.
+pub(crate) fn migrate_3_to_4(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("version".into(), json!(4));
+        o.insert("views".into(), json!({}));
+        o.insert("maximized".into(), Value::Null);
+        o.insert("workspace".into(), json!(super::workspace::DESIGN));
+        o.insert("workspaces".into(), json!([]));
+        o.insert("workspace_changes".into(), json!([]));
+    }
+    v
+}
+
+/// `varos_shell` read from what `ui.json` holds: the switch kept whatever the layout; an older
+/// version migrated step by step; a layout of an unknown version, or one that doesn't read, is the
+/// default; unknown panel ids are dropped; a tree with no Board is the default layout.
 pub(crate) fn from_value(v: &Value) -> VarosShell {
     let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(false);
     let version = v.get("version").and_then(Value::as_u64);
-    let tree = matches!(version, Some(1..=3))
-        .then(|| v.get("tree").and_then(|t| Node::deserialize(t).ok()))
-        .flatten()
-        .map_or_else(Node::default_layout, |t| t.sanitized(&known));
+    let mut v = v.clone();
+    if version == Some(1) {
+        v = migrate_1_to_2(v);
+    }
+    if matches!(version, Some(1 | 2)) {
+        v = migrate_2_to_3(v);
+    }
+    if matches!(version, Some(1..=3)) {
+        v = migrate_3_to_4(v);
+    }
+    let readable = matches!(version, Some(1..=4));
+    let tree =
+        readable.then(|| v.get("tree").and_then(|t| Node::deserialize(t).ok())).flatten().map_or_else(Node::default_layout, |t| t.sanitized(&known));
     let strip = v.get("strip").and_then(|s| super::strip::Strip::deserialize(s).ok()).unwrap_or_else(|| super::strip::Strip::default_for(&tree));
-    let current = version == Some(u64::from(VERSION));
-    // Each float and floating strip reads alone: one that doesn't read is dropped, not the rest.
-    let list = |key: &str| if current { v.get(key).and_then(Value::as_array).cloned().unwrap_or_default() } else { Vec::new() };
+    // Each float, floating strip, view and workspace reads alone: one that doesn't read is dropped,
+    // not the rest.
+    let list = |key: &str| if readable { v.get(key).and_then(Value::as_array).cloned().unwrap_or_default() } else { Vec::new() };
     let floats = list("floats").into_iter().filter_map(|f| Float::deserialize(f).ok()).collect();
     let float_strips = list("float_strips").into_iter().filter_map(|s| FloatStrip::deserialize(s).ok()).collect();
-    let mut shell = VarosShell { enabled, version: VERSION, tree, strip, floats, float_strips, open: None, drag: None };
-    shell.sanitize(!current);
+    let views = v
+        .get("views")
+        .and_then(Value::as_object)
+        .filter(|_| readable)
+        .map(|m| m.iter().filter_map(|(k, view)| Some((k.clone(), PropertiesView::deserialize(view).ok()?))).collect())
+        .unwrap_or_default();
+    let maximized = v.get("maximized").and_then(Value::as_u64).and_then(|m| u32::try_from(m).ok());
+    let workspace = v.get("workspace").and_then(Value::as_str).filter(|w| !w.trim().is_empty()).map_or_else(default_workspace, str::to_owned);
+    let arrangements =
+        |key: &str| list(key).into_iter().filter_map(|a| Arrangement::deserialize(a).ok()).map(Arrangement::sanitized).collect::<Vec<_>>();
+    let (workspaces, workspace_changes) = (arrangements("workspaces"), arrangements("workspace_changes"));
+    let mut shell = VarosShell {
+        enabled,
+        version: VERSION,
+        tree,
+        strip,
+        floats,
+        float_strips,
+        views,
+        maximized,
+        workspace,
+        workspaces,
+        workspace_changes,
+        open: None,
+        drag: None,
+    };
+    // Stage-2 state keeps its own strip arrangement rules (see `Strip::sanitize_owned`).
+    shell.sanitize(matches!(version, Some(1 | 2)) || !readable);
+    shell.sanitize_workspaces();
     shell
 }
 
@@ -101,12 +225,46 @@ impl VarosShell {
         }
         true
     }
-    /// Close `panel`'s tab (in a box or a floating panel): it goes back to the Board's strip.
+    /// Close `panel`'s tab (in a box or a floating panel): it goes back to the Board's strip; a
+    /// second Properties editor goes for good (its view with it).
     pub fn close_tab(&mut self, panel: &str) -> bool {
         if !self.tree.remove_tab(panel) && !self.take_float_tab(panel) {
             return false;
         }
-        self.strip.append(panel);
+        if is_extra_instance(panel) {
+            self.views.remove(panel);
+        } else {
+            self.strip.append(panel);
+        }
+        true
+    }
+
+    /// Does some owner (a box, a strip, a floating panel or strip) hold `panel`.
+    pub(crate) fn owns(&self, panel: &str) -> bool {
+        self.tree.find_tab(panel).is_some() || self.float_of(panel).is_some() || self.in_a_strip(panel)
+    }
+
+    /// An id for a new Properties editor: `properties@<n>`, the smallest `n` ≥ 2 no owner has.
+    pub(crate) fn fresh_properties_id(&self) -> String {
+        (2..=u32::MAX).map(|n| format!("{PROPERTIES}@{n}")).find(|id| !self.owns(id)).unwrap_or_else(|| format!("{PROPERTIES}@{}", u32::MAX))
+    }
+
+    /// The box that fills the central region, while it exists.
+    pub(crate) fn maximized_box(&self) -> Option<u32> {
+        self.maximized.filter(|id| self.tree.find_box(*id).is_some())
+    }
+
+    /// Box `id` fills the central region, or (maximized already) the layout comes back as it was:
+    /// the tree itself never changes. False when the tree has no box `id`.
+    pub(crate) fn toggle_maximized(&mut self, id: u32) -> bool {
+        if self.maximized_box() == Some(id) {
+            self.maximized = None;
+            return true;
+        }
+        if self.tree.find_box(id).is_none() {
+            return false;
+        }
+        self.maximized = Some(id);
         true
     }
 
@@ -301,7 +459,7 @@ impl VarosShell {
     /// Board's strip keep only known panels no earlier owner has; empty ones go; sizes and
     /// positions finite; ids unique. `legacy`: state of an older version (see
     /// [`super::strip::Strip::sanitize_owned`]).
-    fn sanitize(&mut self, legacy: bool) {
+    pub(crate) fn sanitize(&mut self, legacy: bool) {
         let mut seen: Vec<String> = self.tree.boxes().iter().flat_map(|b| b.tabs.clone()).collect();
         let mut keep = |p: &String| {
             known(p) && !seen.contains(p) && {
@@ -352,6 +510,11 @@ impl VarosShell {
             .chain(self.float_strips.iter().flat_map(|s| s.groups.iter().flat_map(|g| g.panels.clone())))
             .collect();
         self.strip.sanitize_owned(&self.tree, &|p| elsewhere.iter().any(|e| e == p), legacy);
+        // Views only for the Properties editors that are somewhere; the maximized box only while
+        // the tree has it.
+        let views = std::mem::take(&mut self.views);
+        self.views = views.into_iter().filter(|(id, _)| is_properties(id) && self.owns(id)).map(|(id, v)| (id, v.sanitized())).collect();
+        self.maximized = self.maximized_box();
     }
 
     /// What must always hold: the tree's invariants; each panel in one place among the boxes, the
@@ -431,6 +594,144 @@ mod tests {
         assert!(ui.varos_shell.enabled, "the switch is kept without a layout");
         let ui: crate::state::UiState = serde_json::from_value(json!({})).unwrap();
         assert_eq!(ui.varos_shell, VarosShell::default());
+    }
+
+    const V1: &str = include_str!("fixtures/v1.json");
+    const V2: &str = include_str!("fixtures/v2.json");
+    const V3: &str = include_str!("fixtures/v3.json");
+
+    fn fixture(raw: &str) -> Value {
+        serde_json::from_str(raw).unwrap()
+    }
+
+    /// Every panel some owner holds.
+    fn owned(shell: &VarosShell) -> Vec<String> {
+        let mut v: Vec<String> = shell.tree.boxes().iter().flat_map(|b| b.tabs.clone()).collect();
+        v.extend(shell.strip.groups.iter().flat_map(|g| g.panels.clone()));
+        v.extend(shell.floats.iter().flat_map(|f| f.panels.tabs.clone()));
+        v.extend(shell.float_strips.iter().flat_map(|s| s.groups.iter().flat_map(|g| g.panels.clone())));
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn each_migration_is_one_pure_step() {
+        let v1 = fixture(V1);
+        let v2 = migrate_1_to_2(v1.clone());
+        assert_eq!(migrate_1_to_2(v1.clone()), v2, "the same file, the same result");
+        assert_eq!(v2["version"], json!(2));
+        let strip = super::super::strip::Strip::deserialize(&v2["strip"]).unwrap();
+        let tree = Node::deserialize(&v1["tree"]).unwrap();
+        assert_eq!(strip, super::super::strip::Strip::default_for(&tree), "the panels no box has");
+        assert_eq!(v2["tree"], v1["tree"], "the boxes as they were");
+        let v3 = migrate_2_to_3(v2.clone());
+        assert_eq!((v3["version"].clone(), v3["floats"].clone(), v3["float_strips"].clone()), (json!(3), json!([]), json!([])));
+        assert_eq!((v3["tree"].clone(), v3["strip"].clone()), (v2["tree"].clone(), v2["strip"].clone()));
+        let v4 = migrate_3_to_4(v3.clone());
+        assert_eq!(v4["version"], json!(4));
+        assert_eq!((v4["views"].clone(), v4["maximized"].clone()), (json!({}), Value::Null));
+        assert_eq!((v4["workspace"].clone(), v4["workspaces"].clone(), v4["workspace_changes"].clone()), (json!("Design"), json!([]), json!([])));
+        assert_eq!((v4["tree"].clone(), v4["floats"].clone()), (v3["tree"].clone(), v3["floats"].clone()));
+        // A version-2 file's strip is kept by the first step.
+        let v2_file = fixture(V2);
+        assert_eq!(migrate_1_to_2(v2_file.clone())["strip"], v2_file["strip"]);
+    }
+
+    /// Layouts saved by stages 1, 2 and 3 open without loss: the boxes as saved, every panel still
+    /// somewhere, the strip's mode and sizes, floats, floating strips and collapsed boxes.
+    #[test]
+    fn stage_1_2_and_3_layouts_open_without_loss() {
+        for (raw, version) in [(V1, 1), (V2, 2), (V3, 3)] {
+            let v = fixture(raw);
+            let shell = from_value(&v);
+            shell.invariants().unwrap_or_else(|e| panic!("v{version}: {e}"));
+            assert_eq!(shell.version, VERSION);
+            assert!(shell.enabled, "v{version}");
+            assert_eq!(shell.tree, Node::deserialize(&v["tree"]).unwrap().sanitized(&known), "v{version}: the boxes as saved");
+            let mut saved: Vec<String> = Node::deserialize(&v["tree"]).unwrap().boxes().iter().flat_map(|b| b.tabs.clone()).collect();
+            for key in ["strip"] {
+                if let Some(groups) = v[key]["groups"].as_array() {
+                    saved.extend(groups.iter().flat_map(|g| g["panels"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string())));
+                }
+            }
+            for f in v["floats"].as_array().into_iter().flatten() {
+                saved.extend(f["box"]["tabs"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()));
+            }
+            for s in v["float_strips"].as_array().into_iter().flatten() {
+                saved.extend(s["groups"][0]["panels"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()));
+            }
+            let now = owned(&shell);
+            for p in &saved {
+                assert!(now.contains(p), "v{version}: {p} was lost");
+            }
+            assert_eq!((shell.workspace.as_str(), shell.maximized), (super::super::workspace::DESIGN, None));
+            assert!(shell.views.is_empty() && shell.workspaces.is_empty());
+        }
+        let v1 = from_value(&fixture(V1));
+        assert_eq!(v1.tree.ratio(&[]), Some(0.65));
+        assert_eq!(v1.tree.find_box(3).unwrap().front(), Some("stroke"));
+        let v2 = from_value(&fixture(V2));
+        assert_eq!(v2.strip.mode, super::super::strip::Mode::Labels);
+        assert_eq!(v2.strip.groups[0].width, 280.0);
+        assert!(v2.strip.group("tabs").is_some() && v2.strip.group("separations").is_some());
+        let v3 = from_value(&fixture(V3));
+        let file = fixture(V3);
+        assert_eq!(v3.floats, vec![Float::deserialize(&file["floats"][0]).unwrap()]);
+        assert_eq!(v3.float_strips, vec![FloatStrip::deserialize(&file["float_strips"][0]).unwrap()]);
+        assert!(v3.tree.find_box(2).unwrap().collapsed);
+        assert_eq!(v3.strip.groups[2].width, 310.0);
+        // Saved again, each is the current version and reads back the same.
+        for raw in [V1, V2, V3] {
+            let shell = from_value(&fixture(raw));
+            assert_eq!(from_value(&serde_json::to_value(&shell).unwrap()), shell);
+        }
+    }
+
+    /// Unknown or removed panel ids go from boxes, strips, floats and floating strips, unknown
+    /// sections from the section views, views of no editor go; a layout without a Board is the
+    /// default one.
+    #[test]
+    fn unknown_ids_are_dropped_everywhere_and_a_layout_without_a_board_is_the_default() {
+        let mut v = fixture(V3);
+        v["version"] = json!(4);
+        v["tree"]["split"]["b"]["split"]["b"]["leaf"]["tabs"].as_array_mut().unwrap().push(json!("removedPanel"));
+        v["strip"]["groups"][0]["panels"].as_array_mut().unwrap().push(json!("oldPanel"));
+        v["strip"]["groups"].as_array_mut().unwrap().push(json!({"panels": ["gone"], "temporary": true, "width": 260.0, "height": 360.0}));
+        v["floats"][0]["box"]["tabs"].as_array_mut().unwrap().push(json!("nope"));
+        v["floats"].as_array_mut().unwrap().push(json!({"box": {"id": 1048577, "tabs": ["nothing"]}, "rect": [0.0, 0.0, 200.0, 200.0]}));
+        v["float_strips"][0]["groups"][0]["panels"].as_array_mut().unwrap().push(json!("whatever"));
+        v["views"] = json!({
+            "properties": {"collapsed": ["transform", "noSuchSection"], "order": ["quickActions", "bogus", "transform"]},
+            "properties@7": {"collapsed": ["align"]},
+            "layers": {"collapsed": []}
+        });
+        v["maximized"] = json!(99);
+        let shell = from_value(&v);
+        shell.invariants().unwrap();
+        let all = owned(&shell);
+        for gone in ["removedPanel", "oldPanel", "gone", "nope", "nothing", "whatever"] {
+            assert!(!all.iter().any(|p| p == gone), "{gone} dropped");
+        }
+        assert_eq!(shell.floats.len(), 1, "the float left empty goes");
+        assert_eq!(shell.floats[0].panels.tabs, ["gradient"]);
+        assert_eq!(shell.float_strips[0].groups[0].panels, ["transparency"]);
+        assert_eq!(shell.views.keys().collect::<Vec<_>>(), ["properties"], "no view for an editor that is nowhere, nor for a panel that isn't one");
+        let view = &shell.views["properties"];
+        use crate::panels::properties::SectionId;
+        assert_eq!(view.collapsed.iter().copied().collect::<Vec<_>>(), [SectionId::Transform]);
+        let at = |id: SectionId| view.order.iter().position(|o| *o == id).unwrap();
+        assert!(at(SectionId::QuickActions) < at(SectionId::Transform), "the saved order kept: {:?}", view.order);
+        assert_eq!(view.order.len(), SectionId::ALL.len(), "every section once");
+        assert_eq!(shell.maximized, None, "no such box");
+        // No Board: the default layout (whatever the version).
+        for version in [1, 2, 3, 4] {
+            let mut v = fixture(V3);
+            v["version"] = json!(version);
+            v["tree"] = json!({"split": {"axis": "vertical", "ratio": 0.5, "a": {"leaf": {"id": 2, "tabs": ["layers"]}}, "b": {"leaf": {"id": 3, "tabs": ["color"]}}}});
+            let shell = from_value(&v);
+            assert_eq!(shell.tree, Node::default_layout(), "v{version}");
+            shell.invariants().unwrap();
+        }
     }
 
     #[test]

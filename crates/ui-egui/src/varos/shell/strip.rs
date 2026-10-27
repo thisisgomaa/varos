@@ -234,7 +234,9 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     let width = width_for(app).min(board.width());
     let rail = Rect::from_min_max(pos2(board.right() - width, board.top()), board.max);
     hits.push((Hit::Strip, rail));
-    let toggle = Rect::from_min_size(rail.min, vec2(width, 24.0));
+    // The Board's ≡ on top: Maximize Board, or Restore Layout.
+    let menu_row = Rect::from_min_size(rail.min, vec2(width, 24.0));
+    let toggle = Rect::from_min_size(pos2(rail.left(), menu_row.bottom()), vec2(width, 24.0));
     let toggle_response = ui.interact(toggle, toggle_id, Sense::click());
     toggle_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Toggle panel labels"));
     hits.push((Hit::StripToggle, toggle));
@@ -242,6 +244,17 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     ui.painter().rect_stroke(rail, boxes::RADIUS, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     if toggle_response.hovered() {
         ui.painter().rect_filled(toggle.shrink(3.0), 3.0, t.hover);
+    }
+    hits.push((Hit::BoardMenu, menu_row));
+    let shell = &app.ui.varos_shell;
+    let board_id = shell.tree.boxes().into_iter().find(|b| b.is_board()).map(|b| b.id);
+    let maximized = board_id.is_some_and(|id| shell.maximized_box() == Some(id));
+    if boxes::board_menu(ui, menu_row, maximized, &t)
+        && let Some(id) = board_id
+    {
+        close(app);
+        app.ui.varos_shell.toggle_maximized(id);
+        ui.ctx().request_repaint();
     }
     ui.painter().text(
         toggle.center(),
@@ -341,7 +354,7 @@ pub(crate) fn paint_icons(
         if r.hovered() || active {
             paint_ui.painter().rect_filled(rect, 3.0, if active { t.button } else { t.hover });
         }
-        let icon = crate::state::rail_panel(&panel).map_or("panel-left", |p| p.2);
+        let icon = crate::state::rail_panel(super::persist::instance_kind(&panel)).map_or("panel-left", |p| p.2);
         egui::Image::new(crate::icons::source(icon))
             .tint(if active { t.text_strong } else { t.text_dim })
             .paint_at(paint_ui, Rect::from_min_size(rect.min + vec2(5.0, 5.0), vec2(16.0, 16.0)));
@@ -473,7 +486,7 @@ pub(crate) fn flyout(
         let mut body = ui.new_child(egui::UiBuilder::new().id_salt("shell-flyout-body").max_rect(inner));
         body.set_clip_rect(inner.intersect(bounds));
         let output = egui::ScrollArea::vertical().id_salt(("shell-flyout-scroll", sref, index)).auto_shrink([false, false]).show(&mut body, |ui| {
-            crate::dock::panel_body(app, ui, &front, width - 7.0, (inner.height() - 20.0).max(0.0));
+            boxes::panel_body(app, ui, &front, width - 7.0, (inner.height() - 20.0).max(0.0));
         });
         let wanted = (output.content_size.y + boxes::HEADER + 1.0).clamp(120.0, 1600.0).min(bounds.height());
         let wanted_width = (output.content_size.x + 7.0).max(width).min(room);

@@ -61,6 +61,9 @@ handoff.
     every one is reached by one gesture, reversible with the same gesture.
 - *Implementation note (stage 3):* double-click collapse works for stacked boxes and floats; a box
   beside the Board refuses to collapse (status line) until the owner decides what it should become.
+- *Implementation note (stage 4):* a box laid out beside a taller all-collapsed stack (one tab row
+  beside two) shows whole rather than leave a hole under its row; collapsing it that way is refused
+  like a collapse beside the Board.
 - **Group look (owner):** the group's tab row holds all its panels' names; names are cut short
   when the group is narrow ("Open | Char | Paragraph | Glyph"), the active tab is lit and wider.
   `>>` and `≡` sit at the row's right. The group's iconic form is a 4-icon strip with the active

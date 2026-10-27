@@ -75,14 +75,17 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
             let ws_w = ws_w.min(room - 8.0 - gap - if search { icon } else { 0.0 }).max(64.0);
             let mut rui = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
             let ui = &mut rui;
-            // Workspace switcher: shows the current workspace, opens Window → Workspace.
-            let (wr, wresp) = ui.allocate_exact_size(vec2(ws_w, WIDGET_H), Sense::click());
-            ui.painter().rect_filled(wr, CornerRadius::same(4), if wresp.hovered() { t.hover } else { t.panel });
-            ui.painter().with_clip_rect(wr.shrink2(vec2(4.0, 0.0))).galley(wr.left_center() + vec2(10.0, -ws.size().y / 2.0), ws, t.text);
-            icons::paint(ui, "chevron-down", egui::Rect::from_center_size(wr.right_center() - vec2(12.0, 0.0), vec2(12.0, 12.0)), t.text_dim);
-            let wresp = wresp.on_hover_text(tl!("Switch workspace"));
-            egui::Popup::menu(&wresp).show(|ui| crate::workspaces::popup(app, ui));
-            ui.add_space(8.0);
+            // Workspace switcher: shows the current workspace, opens Window → Workspace. Varos: with
+            // the Varos shell on, its own row of workspace tabs takes its place.
+            if !crate::varos::shell::enabled(app) {
+                let (wr, wresp) = ui.allocate_exact_size(vec2(ws_w, WIDGET_H), Sense::click());
+                ui.painter().rect_filled(wr, CornerRadius::same(4), if wresp.hovered() { t.hover } else { t.panel });
+                ui.painter().with_clip_rect(wr.shrink2(vec2(4.0, 0.0))).galley(wr.left_center() + vec2(10.0, -ws.size().y / 2.0), ws, t.text);
+                icons::paint(ui, "chevron-down", egui::Rect::from_center_size(wr.right_center() - vec2(12.0, 0.0), vec2(12.0, 12.0)), t.text_dim);
+                let wresp = wresp.on_hover_text(tl!("Switch workspace"));
+                egui::Popup::menu(&wresp).show(|ui| crate::workspaces::popup(app, ui));
+                ui.add_space(8.0);
+            }
             // Search → command palette (its shortcut opens it too).
             if search {
                 let tip = match menus::shortcut_of("help.commandPalette") {

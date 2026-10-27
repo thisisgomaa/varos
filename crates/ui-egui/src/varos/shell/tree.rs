@@ -170,12 +170,13 @@ impl Node {
     /// The default layout: Board (left, 72 %) | right column: Layers | Artboards over
     /// Properties | Color | Swatches.
     pub fn default_layout() -> Node {
-        split(
-            Axis::Horizontal,
-            BOARD_RATIO,
-            leaf(1, &[BOARD]),
-            split(Axis::Vertical, 0.5, leaf(2, &["layers", "artboards"]), leaf(3, &["properties", "color", "swatches"])),
-        )
+        Node::board_and_column(&["layers", "artboards"], &["properties", "color", "swatches"])
+    }
+
+    /// The Board (left, 72 %) beside a column of two boxes: `top`'s tabs over `bottom`'s (the
+    /// workspace presets' shape).
+    pub fn board_and_column(top: &[&str], bottom: &[&str]) -> Node {
+        split(Axis::Horizontal, BOARD_RATIO, leaf(1, &[BOARD]), split(Axis::Vertical, 0.5, leaf(2, top), leaf(3, bottom)))
     }
 
     /// Every box, in tree order (a before b).
@@ -528,11 +529,14 @@ impl Node {
                 let r = self.clamp_ratio(&[], *ratio, extent);
                 // Stacked under or over collapsed boxes, the other side takes all the room but
                 // their rows; both collapsed, the lower one fills unless this split shrinks too.
+                // Side by side and both collapsed, the split is as tall as its taller side: only
+                // that side keeps to its rows, the shorter one fills the height rather than leave a
+                // hole under it (it shows whole).
                 let (a_len, shrink_a, shrink_b) = match (axis, a.collapsed_height(), b.collapsed_height()) {
                     (Axis::Vertical, Some(h), None) => (h.min(room), true, false),
                     (Axis::Vertical, None, Some(h)) => ((room - h).max(0.0), false, true),
                     (Axis::Vertical, Some(h), Some(_)) => (h.min(room), true, shrink),
-                    (Axis::Horizontal, Some(_), Some(_)) => ((room * r).round(), shrink, shrink),
+                    (Axis::Horizontal, Some(ha), Some(hb)) => ((room * r).round(), shrink && ha >= hb - 0.5, shrink && hb >= ha - 0.5),
                     _ => ((room * r).round(), false, false),
                 };
                 let (ra, seam, rb) = match axis {
@@ -893,6 +897,45 @@ mod tests {
         }
         assert_eq!(tree.layout(rect).rect_of(2).unwrap().height(), rect.height());
         assert!(!tree.shows_collapsed(2));
+    }
+
+    /// Stage-3 P2: an all-collapsed side-by-side subtree of unequal heights (one box beside a
+    /// stacked pair) above a whole box. The pair keeps its two rows; the single box beside it
+    /// fills the pair's height instead of leaving a hole under its row; the boxes and seams tile the
+    /// rect exactly.
+    #[test]
+    fn an_all_collapsed_row_beside_a_collapsed_pair_leaves_no_hole() {
+        let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0));
+        // Board | (box 2 | (box 4 / box 5)) / box 3.
+        let mut tree = Node::default_layout();
+        let pair = tree.split_box(2, Axis::Horizontal, "stroke", true, 0.5).unwrap();
+        let low = tree.split_box(pair, Axis::Vertical, "color", true, 0.5).unwrap();
+        for id in [2, pair, low] {
+            tree.box_mut_rec(id).unwrap().collapsed = true;
+        }
+        tree.invariants().unwrap();
+        let layout = tree.layout(rect);
+        let (single, top, bottom, below) =
+            (layout.rect_of(2).unwrap(), layout.rect_of(pair).unwrap(), layout.rect_of(low).unwrap(), layout.rect_of(3).unwrap());
+        assert_eq!((top.height(), bottom.height()), (ROW, ROW), "the pair keeps its rows");
+        assert_eq!(single.top(), top.top());
+        assert_eq!(single.bottom(), bottom.bottom(), "no hole under the single box: {single:?} beside {top:?} / {bottom:?}");
+        assert!((below.top() - bottom.bottom() - SEAM).abs() < 0.5 && below.bottom() == rect.bottom(), "{below:?}");
+        let area: f32 = layout.boxes.iter().map(|(_, r)| r.area()).sum::<f32>() + layout.dividers.iter().map(|d| d.rect.area()).sum::<f32>();
+        assert!((area - rect.area()).abs() < 1.0, "the boxes and seams tile the rect: {area} of {}", rect.area());
+        // The single box doesn't show as its row: the gesture that would leave it so is refused.
+        assert!(!tree.shows_collapsed(2));
+        tree.box_mut_rec(2).unwrap().collapsed = false;
+        assert!(!tree.toggle_collapsed(2), "refused, as beside the Board");
+        assert!(!tree.find_box(2).unwrap().collapsed);
+        // Equal heights (two single boxes) still share one row, as before.
+        let mut tree = Node::default_layout();
+        let right = tree.split_box(2, Axis::Horizontal, "stroke", true, 0.5).unwrap();
+        for id in [2, right] {
+            tree.box_mut_rec(id).unwrap().collapsed = true;
+        }
+        let layout = tree.layout(rect);
+        assert_eq!((layout.rect_of(2).unwrap().height(), layout.rect_of(right).unwrap().height()), (ROW, ROW));
     }
 
     #[test]

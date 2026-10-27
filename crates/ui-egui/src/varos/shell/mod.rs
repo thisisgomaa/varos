@@ -1,5 +1,10 @@
-//! The new Varos shell, stages 1–3 (`docs/varos/NEW_SHELL_PLAN.md`): Preferences › Varos shell (new)
+//! The new Varos shell, stages 1–4 (`docs/varos/NEW_SHELL_PLAN.md`): Preferences › Varos shell (new)
 //! draws the window's central region as our own split tree of boxes instead of craft-ui's dock.
+//!
+//! A row of workspace tabs runs along the top ([`workspace`]); a box can be maximized to fill the
+//! region (a double-click on its tab row's empty space, or its ≡ menu) and restored the same way;
+//! the Properties panel is an editor of sections, and may have more than one instance
+//! (`properties@2`, …), each following the selection with its own section view.
 //!
 //! The Board (the canvas, with its document tabs) is one box; every other box holds panels as
 //! tabs ([`boxes`]); 12-point seams between them are the dividers ([`divider`]). The layout is
@@ -18,6 +23,7 @@ pub(crate) mod floats;
 pub(crate) mod persist;
 pub(crate) mod strip;
 pub(crate) mod tree;
+pub(crate) mod workspace;
 
 use egui::Rect;
 use serde_json::{Value, json};
@@ -111,6 +117,16 @@ pub(crate) enum Hit {
     Ghost,
     /// During a drag: the dragged thing's place, outlined (a flyout's tab: its group in the strip).
     DragSource,
+    /// The workspace row, a workspace's tab (as much of it as shows), `‹` (false) or `›` (true)
+    /// where tabs are out of sight, and `+`.
+    Workspaces,
+    WorkspaceTab(String),
+    WorkspaceOverflow(bool),
+    WorkspaceNew,
+    /// The Board's ≡ (Maximize Board / Restore Layout), at the top of its strip, and the empty
+    /// space of its document tabs' row (a double-click maximizes or restores).
+    BoardMenu,
+    BoardHeader,
 }
 
 fn hits_id() -> egui::Id {
@@ -165,18 +181,27 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     if alone && app.ui.varos_shell.drag.is_some() {
         drag::cancel(app, ui.ctx());
     }
+    // Boxes, floats and drags live below the workspace row (the whole region when alone).
+    let region = if alone { area } else { drag_region(area) };
     // A released drag lands before anything is laid out: this frame draws the result.
-    drag::before(app, ui.ctx(), area);
+    drag::before(app, ui.ctx(), region);
     if alone {
         strip::close(app);
         hits.push((Hit::Board, area));
         board(app, ui, area, false, &mut hits);
     } else {
-        let inner = area.shrink(OUTER);
-        let mut layout = app.ui.varos_shell.tree.layout(inner);
+        // The workspace row on top; the boxes, floats and drags below it.
+        let row = Rect::from_min_max(area.min + egui::vec2(OUTER, 0.0), egui::pos2(area.right() - OUTER, region.top()));
+        workspace::row(app, ui, row, &mut hits);
+        let inner = Rect::from_min_max(egui::pos2(region.left() + OUTER, region.top()), region.max - egui::vec2(OUTER, OUTER));
+        let lay_out = |shell: &persist::VarosShell| match shell.maximized_box() {
+            Some(id) => tree::Layout { boxes: vec![(id, inner)], dividers: Vec::new() },
+            None => shell.tree.layout(inner),
+        };
+        let mut layout = lay_out(&app.ui.varos_shell);
         if divider::interact(app, ui, &layout) {
             // The new ratio is drawn this very frame.
-            layout = app.ui.varos_shell.tree.layout(inner);
+            layout = lay_out(&app.ui.varos_shell);
         }
         hits.extend(layout.dividers.iter().map(|d| (Hit::Divider(d.path.clone()), d.rect)));
         let mut asks = Vec::new();
@@ -185,7 +210,22 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             if b.is_board() {
                 hits.push((Hit::Board, *rect));
                 let canvas = strip::show(app, ui, *rect, &mut hits);
+                // The document tabs' row: its empty space (under the tabs, which take their own
+                // input) maximizes the Board or restores the layout on a double-click.
+                let header = (app.session.active().is_some() && !crate::varos::home::is_home(app)).then(|| {
+                    let h = if app.session.prefs.large_tabs { 44.0 } else { 35.0 };
+                    Rect::from_min_size(canvas.min, egui::vec2(canvas.width(), h))
+                });
+                let header_response = header.map(|r| (r, ui.interact(r, egui::Id::unique("varos-shell-board-header"), egui::Sense::click())));
                 board(app, ui, canvas, true, &mut hits);
+                if let Some((r, response)) = header_response {
+                    hits.push((Hit::BoardHeader, r));
+                    if response.double_clicked() {
+                        strip::close(app);
+                        app.ui.varos_shell.toggle_maximized(b.id);
+                        ui.ctx().request_repaint();
+                    }
+                }
             } else if let Some(ask) = boxes::show(app, ui, &b, *rect, false, &mut hits) {
                 asks.push(ask);
             }
@@ -200,26 +240,65 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                         app.status("Collapse: no box above or below takes its room");
                     }
                 }
+                boxes::Ask::Maximize(id) => {
+                    strip::close(app);
+                    app.ui.varos_shell.toggle_maximized(id);
+                }
+                boxes::Ask::Duplicate(panel) => {
+                    duplicate_properties(app, &panel);
+                }
             }
             ui.ctx().request_repaint();
         }
-        floats::show(app, ui, area, &mut hits);
+        floats::show(app, ui, region, &mut hits);
         // A flyout belongs to a strip's panel (one that left its strip takes its flyout along).
         if let Some(open) = app.ui.varos_shell.open.clone()
             && !app.ui.varos_shell.in_a_strip(&open)
         {
             strip::close(app);
         }
-        drag::after(app, ui, area, &mut hits);
+        drag::after(app, ui, region, &mut hits);
     }
     let pass = ui.ctx().cumulative_pass_nr();
     // Only a drag needs to know the layout its targets were found in (worth a hash per frame).
-    let rev = app.ui.varos_shell.drag.as_ref().map(|_| drag::layout_rev(&app.ui.varos_shell, area));
+    let rev = app.ui.varos_shell.drag.as_ref().map(|_| drag::layout_rev(&app.ui.varos_shell, region));
     ui.ctx().data_mut(|d| d.insert_temp(hits_id(), Hits { pass, hits: std::sync::Arc::new(hits), rev }));
     // A panel asked for by code that sets `open_panel` while this frame drew shows on the next.
     if app.ui.open_panel != app.ui.varos_shell.open {
         ui.ctx().request_repaint();
     }
+}
+
+/// Where boxes, floats and drags live in the central region `area`: below the workspace row.
+pub(crate) fn drag_region(area: Rect) -> Rect {
+    Rect::from_min_max(egui::pos2(area.left(), area.top() + workspace::ROW_H), area.max)
+}
+
+/// Properties editor `panel`'s ≡ › Duplicate: another Properties editor (`properties@<n>`) with the
+/// same section view, in a box of its own below (a floating panel's: a tab beside it). Both edit
+/// the same document.
+pub(crate) fn duplicate_properties(app: &mut VectorcraftApp, panel: &str) -> Option<String> {
+    let shell = &mut app.ui.varos_shell;
+    if !persist::is_properties(panel) {
+        return None;
+    }
+    let id = shell.fresh_properties_id();
+    let mut view = shell.views.get(panel).cloned().unwrap_or_default();
+    view.pinned = None;
+    let placed = if let Some(b) = shell.tree.find_tab(panel) {
+        shell.tree.split_box(b, tree::Axis::Vertical, &id, true, 0.5).is_some()
+    } else if let Some(f) = shell.float_of(panel) {
+        shell.insert_tabs(f, None, std::slice::from_ref(&id))
+    } else {
+        false
+    };
+    if !placed {
+        return None;
+    }
+    shell.maximized = shell.maximized_box();
+    shell.views.insert(id.clone(), view);
+    shell.settle();
+    Some(id)
 }
 
 /// The Board in `rect`, and the canvas inside it when a document shows ([`Hit::BoardBody`]).
@@ -249,40 +328,53 @@ fn follow_open_panel(app: &mut VectorcraftApp) {
     }
 }
 
-/// Is panel `id` shown: a tab of a box or of a floating panel, or the open flyout.
+/// Is panel `id` shown: a tab of a box (not one hidden by a maximized box) or of a floating panel,
+/// or the open flyout.
 pub(crate) fn showing(app: &VectorcraftApp, id: &str) -> bool {
     let shell = &app.ui.varos_shell;
-    shell.tree.find_tab(id).is_some() || shell.float_of(id).is_some() || shell.open.as_deref() == Some(id)
+    shell.tree.find_tab(id).is_some_and(|b| shell.maximized_box().is_none_or(|m| m == b))
+        || shell.float_of(id).is_some()
+        || shell.open.as_deref() == Some(id)
 }
 
 /// The window commands while the shell is on; `None` for every other command (and for all of them
 /// while it is off). Strip panels (the Board's strip or a floating one) open as flyouts; tabs of
 /// boxes and floating panels activate. Toggle closes either, returning a closed tab to the strip.
-/// Dock/workspace commands remain for a later stage.
+/// The workspace commands are the shell's own ([`workspace::command`]); the dock commands are not
+/// the shell's (nothing changes; the status line says so).
 pub(crate) fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if !enabled(app) {
         return None;
     }
-    let panel = || {
-        let raw = params.get("panel").and_then(Value::as_str).unwrap_or_default();
-        crate::menus::normalize_panel(raw).ok_or_else(|| format!("unknown panel `{raw}`"))
-    };
+    let raw = params.get("panel").and_then(Value::as_str).unwrap_or_default();
+    let panel = || resolve_panel(app, raw).ok_or_else(|| format!("unknown panel `{raw}`"));
     match id {
         "window.panel" | "window.panel.activate" => Some(panel().map(|panel| {
             let toggle = id == "window.panel" && params.get("toggle").and_then(Value::as_bool) == Some(true);
-            show_panel(app, panel, toggle)
+            show_panel(app, &panel, toggle)
         })),
         "window.panel.close" => Some(panel().map(|panel| {
-            let closed = app.ui.varos_shell.close_tab(panel) || app.ui.varos_shell.open.as_deref() == Some(panel);
-            if app.ui.varos_shell.open.as_deref() == Some(panel) {
-                strip::close_panel(app, panel);
+            let closed = app.ui.varos_shell.close_tab(&panel) || app.ui.varos_shell.open.as_deref() == Some(panel.as_str());
+            if app.ui.varos_shell.open.as_deref() == Some(panel.as_str()) {
+                strip::close_panel(app, &panel);
             }
             json!({"panel": panel, "closed": closed})
         })),
         "window.dock" | "window.panels" | "window.collapseDock" | "ui.dock" | "ui.dock.reset" => Some(Ok(not_yet(app, id))),
-        _ if id.starts_with("window.panel.") || id.starts_with("window.workspace") => Some(Ok(not_yet(app, id))),
+        _ if id.starts_with("window.workspace") => Some(workspace::command(app, id, params).unwrap_or_else(|| Ok(not_yet(app, id)))),
+        _ if id.starts_with("window.panel.") => Some(Ok(not_yet(app, id))),
         _ => None,
     }
+}
+
+/// The panel `raw` names for the shell's window commands: another Properties editor the shell
+/// has (`properties@2`), else a panel the app knows (by id or label, whatever the case).
+pub(crate) fn resolve_panel(app: &VectorcraftApp, raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if persist::is_extra_instance(raw) {
+        return app.ui.varos_shell.owns(raw).then(|| raw.to_string());
+    }
+    crate::menus::normalize_panel(raw).map(str::to_string)
 }
 
 fn show_panel(app: &mut VectorcraftApp, panel: &str, toggle: bool) -> Value {
@@ -294,7 +386,12 @@ fn show_panel(app: &mut VectorcraftApp, panel: &str, toggle: bool) -> Value {
     let shell = &mut app.ui.varos_shell;
     if let Some(id) = shell.tree.find_tab(panel) {
         strip::close(app);
-        if toggle {
+        // A tab hidden by a maximized box: the layout comes back, and the tab with it.
+        let hidden = app.ui.varos_shell.maximized_box().is_some_and(|m| m != id);
+        if hidden {
+            app.ui.varos_shell.maximized = None;
+        }
+        if toggle && !hidden {
             app.ui.varos_shell.close_tab(panel);
         } else {
             app.ui.varos_shell.tree.activate(panel);

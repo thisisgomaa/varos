@@ -1,4 +1,4 @@
-//! The Varos shell, stages 1–3 ([`super::shell`]): through the real frame, with real clicks and
+//! The Varos shell, stages 1–4 ([`super::shell`]): through the real frame, with real clicks and
 //! drags.
 
 use egui::{Pos2, Rect, pos2, vec2};
@@ -406,7 +406,9 @@ fn home_and_the_full_screen_modes_show_the_board_alone() {
     assert_eq!(hits[0].0, Hit::Board);
     h.app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
     h.settle();
-    let area = h.hits().iter().map(|(_, r)| *r).reduce(|a, b| a.union(b)).unwrap().expand(shell::OUTER);
+    // The workspace row runs along the top edge; the seam void is on the other three sides.
+    let all = h.hits().iter().map(|(_, r)| *r).reduce(|a, b| a.union(b)).unwrap();
+    let area = Rect::from_min_max(pos2(all.left() - shell::OUTER, all.top()), all.max + vec2(shell::OUTER, shell::OUTER));
     for mode in 1..=3u8 {
         h.app.ui.screen_mode = mode;
         h.settle();
@@ -423,7 +425,7 @@ fn home_and_the_full_screen_modes_show_the_board_alone() {
 }
 
 #[test]
-fn dock_and_workspace_commands_change_nothing_in_the_shell() {
+fn dock_commands_change_nothing_in_the_shell() {
     let mut h = Harness::new();
     h.shell(true);
     let before = h.app.ui.varos_shell.clone();
@@ -432,7 +434,6 @@ fn dock_and_workspace_commands_change_nothing_in_the_shell() {
         ("window.dock", json!({})),
         ("window.panels", json!({})),
         ("window.collapseDock", json!({})),
-        ("window.workspace", json!({"name": "Essentials Classic"})),
         ("window.panel.float", json!({"panel": "layers"})),
     ] {
         h.app.ui.status.clear();
@@ -1511,7 +1512,7 @@ fn floats_and_lone_icons_round_trip_through_ui_json_and_version_2_migrates() {
     h.app.ui.varos_shell.toggle_collapsed(2);
     h.settle();
     let saved = serde_json::to_value(&h.app.ui).unwrap();
-    assert_eq!(saved["varos_shell"]["version"], json!(3));
+    assert_eq!(saved["varos_shell"]["version"], json!(shell::persist::VERSION));
     assert_eq!(saved["varos_shell"]["floats"][0]["box"]["tabs"], json!(["color"]));
     assert_eq!(saved["varos_shell"]["float_strips"][0]["groups"][0]["panels"], json!(["stroke"]));
     let back: crate::state::UiState = serde_json::from_value(saved.clone()).unwrap();
@@ -1526,7 +1527,7 @@ fn floats_and_lone_icons_round_trip_through_ui_json_and_version_2_migrates() {
     let mut v2 = saved["varos_shell"].clone();
     v2["version"] = json!(2);
     let migrated = shell::persist::from_value(&v2);
-    assert_eq!(migrated.version, 3);
+    assert_eq!(migrated.version, shell::persist::VERSION);
     assert!(migrated.floats.is_empty() && migrated.float_strips.is_empty());
     assert_eq!(migrated.tree, h.state().tree);
     assert!(migrated.strip.group("color").is_some() && migrated.strip.group("stroke").is_some());
@@ -1702,4 +1703,668 @@ fn a_flyout_tab_dragged_out_outlines_its_group_and_a_cancel_reopens_the_flyout()
     assert!(h.state().float_of("gradient").is_some());
     assert_eq!(h.state().open, None);
     h.state().invariants().unwrap();
+}
+
+// ---------- Stage 4: Properties sections and pin, workspaces, maximize, reset ----------
+
+use crate::panels::properties::{SectionHit, SectionId as S, section_dragging, section_hits};
+
+impl Harness {
+    /// Properties editor `instance`'s sections, in the order drawn.
+    fn sections(&self, instance: &str) -> Vec<S> {
+        section_hits(&self.ctx, instance).sections.iter().map(|s| s.id).collect()
+    }
+
+    fn section(&self, instance: &str, id: S) -> SectionHit {
+        section_hits(&self.ctx, instance).sections.into_iter().find(|s| s.id == id).unwrap_or_else(|| panic!("{instance} draws {id:?}"))
+    }
+
+    /// The texts the next frame draws.
+    fn texts(&mut self) -> Vec<String> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let out = self.frame_full(vec![]);
+        let mut texts = Vec::new();
+        for c in &out.shapes {
+            walk(&c.shape, &mut texts);
+        }
+        texts
+    }
+
+    /// The lower right box (Properties' in the default layout) given most of the column.
+    fn tall_properties(&mut self) {
+        self.app.ui.varos_shell.tree.set_ratio(&[1], 0.2);
+        self.settle();
+    }
+
+    fn id_of(out: &serde_json::Value) -> u64 {
+        out["id"].as_u64().expect("an object id")
+    }
+}
+
+fn middle(pos: Pos2, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton { pos, button: egui::PointerButton::Middle, pressed, modifiers: Default::default() }
+}
+
+#[test]
+fn properties_sections_keep_their_ids_across_selections_and_collapse_per_editor() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.tall_properties();
+    // Nothing selected: the document's sections.
+    assert_eq!(h.sections("properties"), [S::Document, S::Appearance, S::RulersGrids, S::Guides, S::Snap, S::Preferences, S::QuickActions]);
+    h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 60, "height": 40})).unwrap();
+    h.settle();
+    let ids = h.sections("properties");
+    assert_eq!((ids.first(), ids.last()), (Some(&S::Transform), Some(&S::QuickActions)), "{ids:?}");
+    assert!(ids.contains(&S::Appearance) && ids.contains(&S::Align), "{ids:?}");
+    // The header: chevron, title, grip; a hairline; the body below it, inset.
+    let appearance = h.section("properties", S::Appearance);
+    assert_eq!(appearance.header.height(), 24.0);
+    assert!(appearance.grip.right() == appearance.header.right() && appearance.grip.width() < 24.0);
+    assert!(appearance.whole.height() > appearance.header.height() + 20.0, "open: {appearance:?}");
+    // A click on its header collapses it, in this editor.
+    h.click(appearance.header.left_center() + vec2(40.0, 0.0));
+    assert!(h.state().views["properties"].collapsed.contains(&S::Appearance));
+    let appearance = h.section("properties", S::Appearance);
+    assert!(appearance.collapsed && appearance.whole.height() <= appearance.header.height() + 0.5, "{appearance:?}");
+    // The same section of the document (nothing selected) is collapsed too: the ids are stable.
+    h.app.run("select.none", json!({})).unwrap();
+    h.settle();
+    assert!(h.section("properties", S::Appearance).collapsed);
+    assert!(!h.section("properties", S::Document).collapsed);
+    // The view persists (ui.json); a click opens it again.
+    let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
+    assert!(back.varos_shell.views["properties"].collapsed.contains(&S::Appearance));
+    let header = h.section("properties", S::Appearance).header;
+    h.click(header.left_center() + vec2(40.0, 0.0));
+    assert!(!h.section("properties", S::Appearance).collapsed);
+    // The editor never touched the tree (its headers are not tabs).
+    let mut expected = tree::Node::default_layout();
+    expected.set_ratio(&[1], 0.2);
+    assert_eq!(h.tree(), &expected);
+}
+
+#[test]
+fn a_section_moves_by_its_grip_with_an_azure_line_and_escape_cancels() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.tall_properties();
+    h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 60, "height": 40})).unwrap();
+    h.settle();
+    let tree_before = h.tree().clone();
+    let order = h.sections("properties");
+    let (quick, transform) = (h.section("properties", S::QuickActions), h.section("properties", S::Transform));
+    let from = quick.grip.center();
+    let to = pos2(transform.header.center().x, transform.header.top() + 3.0);
+    // Mid-drag: the ghost under the pointer, the azure line above Transform.
+    h.hold_drag(from, to);
+    assert!(section_dragging(&h.ctx));
+    let hits = section_hits(&h.ctx, "properties");
+    let line = hits.line.expect("an insertion line");
+    assert!((line.center().y - (transform.whole.top() - 2.0)).abs() <= 1.5, "{line:?} above {transform:?}");
+    assert!(line.height() <= 2.5 && line.width() >= transform.header.width() - 1.0);
+    assert!(hits.ghost.is_some_and(|g| g.contains(to)), "{:?}", hits.ghost);
+    let out = h.frame_full(vec![egui::Event::PointerMoved(to)]);
+    assert!(azure(&out).0 >= 1, "the line is azure");
+    // Escape: nothing moves.
+    h.frame(vec![escape_key()]);
+    assert!(!section_dragging(&h.ctx));
+    h.release(to);
+    assert_eq!(h.sections("properties"), order);
+    assert!(section_hits(&h.ctx, "properties").line.is_none());
+    // Again, released: Quick Actions comes first; the panel itself stays where it was.
+    let (quick, transform) = (h.section("properties", S::QuickActions), h.section("properties", S::Transform));
+    h.drag(quick.grip.center(), pos2(transform.header.center().x, transform.header.top() + 3.0));
+    let moved = h.sections("properties");
+    assert_eq!(moved[0], S::QuickActions, "{moved:?}");
+    assert_eq!(&moved[1..], &order[..order.len() - 1]);
+    assert_eq!(h.tree(), &tree_before, "the grip is not the tab");
+    assert!(h.state().drag.is_none());
+    // Released where it is: nothing changes.
+    let align = h.section("properties", S::Align);
+    h.drag(align.grip.center(), align.grip.center() + vec2(-40.0, 4.0));
+    assert_eq!(h.sections("properties"), moved);
+}
+
+#[test]
+fn two_properties_editors_follow_the_selection_each_with_its_own_view() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let a = Harness::id_of(&h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 60, "height": 40})).unwrap());
+    let b = Harness::id_of(&h.app.run("text.create", json!({"x": 150, "y": 150, "text": "Hi", "size": 24})).unwrap());
+    h.app.run("select.set", json!({"ids": [a]})).unwrap();
+    h.settle();
+    // ≡ › Duplicate Panel: a second editor in a box of its own below.
+    let twin = shell::duplicate_properties(&mut h.app, "properties").expect("a second editor");
+    assert_eq!(twin, "properties@2");
+    h.settle();
+    h.state().invariants().unwrap();
+    assert!(h.tabs().contains(&twin));
+    let twin_box = h.tree().find_tab(&twin).unwrap();
+    assert!(h.rect(&Hit::Box(twin_box)).top() > h.rect(&Hit::Box(3)).bottom(), "below the first");
+    assert_eq!(boxes::label(&h.app, &twin), "Properties 2");
+    // No pin (deferred): both say they follow the selection.
+    let texts = h.texts();
+    assert_eq!(texts.iter().filter(|t| t.starts_with("Following selection")).count(), 2, "{texts:?}");
+    assert!(!texts.iter().any(|t| t.starts_with("Pinned")));
+    // Each has its own order and collapsed sections.
+    h.app.ui.varos_shell.views.entry(twin.clone()).or_default().move_section(S::QuickActions, Some(S::Transform), S::QuickActions);
+    h.app.ui.varos_shell.views.entry(twin.clone()).or_default().collapsed.insert(S::Transform);
+    h.settle();
+    assert_eq!(h.sections(&twin)[0], S::QuickActions);
+    assert_eq!(h.sections("properties")[0], S::Transform);
+    assert!(h.section(&twin, S::Transform).collapsed && !h.section("properties", S::Transform).collapsed);
+    // The selection changes to the text: both follow it, each in its own order.
+    h.app.run("select.set", json!({"ids": [b]})).unwrap();
+    h.settle();
+    let (mut mine, mut first) = (h.sections(&twin), h.sections("properties"));
+    assert!(first.contains(&S::Character), "{first:?}");
+    assert_ne!(mine, first, "the second editor keeps its own order");
+    mine.sort();
+    first.sort();
+    assert_eq!(mine, first, "both follow the selection");
+    // Closing the second editor removes it for good (no icon in the strip), its view with it.
+    h.app.ui.varos_shell.close_tab(&twin);
+    h.settle();
+    assert!(!h.state().owns(&twin) && !h.state().views.contains_key(&twin));
+    h.state().invariants().unwrap();
+}
+
+/// An edit made through the second editor goes to the selection, as one undo step: pressed with
+/// the pointer, and through the accessibility tree (a screen reader's press).
+///
+/// The first editor's own sections are folded: a box's content that doesn't fit runs on under its
+/// clip, and AccessKit reports those hidden widgets' bounds unclipped, so a widget of the first
+/// box can lie inside the second box's rect. Exactly one Lock is then in the second box.
+#[test]
+fn an_edit_in_the_second_properties_editor_applies_to_the_selection_in_one_undo_step() {
+    use egui::accesskit::Role;
+    let mut h = Harness::new();
+    h.shell(true);
+    let a = Harness::id_of(&h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 60, "height": 40})).unwrap());
+    h.app.run("select.set", json!({"ids": [a]})).unwrap();
+    h.app.ui.varos_shell.tree.set_ratio(&[1], 0.15);
+    let twin = shell::duplicate_properties(&mut h.app, "properties").unwrap();
+    h.app.ui.varos_shell.views.entry("properties".into()).or_default().collapsed.extend(S::ALL);
+    // Quick Actions first in the second editor, the rest folded, so Lock is in sight there.
+    let view = h.app.ui.varos_shell.views.entry(twin.clone()).or_default();
+    view.move_section(S::QuickActions, Some(S::Transform), S::QuickActions);
+    view.collapsed.extend([S::Transform, S::Appearance, S::Align]);
+    h.settle();
+    let twin_box = h.rect(&Hit::Box(h.tree().find_tab(&twin).unwrap()));
+    h.ctx.enable_accesskit();
+    h.settle();
+    // The Lock buttons centred in the second box, read from one settled frame's tree.
+    let locks = |h: &mut Harness| -> Vec<(egui::accesskit::NodeId, Rect)> {
+        let out = h.frame_full(vec![]);
+        let nodes = out.platform_output.accesskit_update.expect("accesskit is on").nodes;
+        nodes
+            .iter()
+            .filter(|(_, n)| n.role() == Role::Button && n.label().is_some_and(|l| l.trim() == "Lock"))
+            .filter_map(|(id, n)| n.bounds().map(|b| (*id, Rect::from_min_max(pos2(b.x0 as f32, b.y0 as f32), pos2(b.x1 as f32, b.y1 as f32)))))
+            .filter(|(_, r)| twin_box.contains(r.center()))
+            .collect()
+    };
+    let locked = |h: &Harness| h.app.session.active().unwrap().doc.node(vectorcraft_doc::NodeId(a)).unwrap().locked;
+    let found = locks(&mut h);
+    assert_eq!(found.len(), 1, "one Lock in the second box: {found:?}");
+    let quick = h.section(&twin, S::QuickActions).whole;
+    assert!(quick.contains_rect(found[0].1), "drawn in the second editor's Quick Actions: {found:?} in {quick:?}");
+    // The pointer, at the centre of the rect that frame published.
+    let undo = h.app.session.active().unwrap().history.undo.len();
+    h.click(found[0].1.center());
+    assert!(locked(&h), "the selected rectangle is locked: {}", h.app.ui.status);
+    assert_eq!(h.app.session.active().unwrap().history.undo.len(), undo + 1, "one undo step");
+    h.app.run("edit.undo", json!({})).unwrap();
+    h.app.run("select.set", json!({"ids": [a]})).unwrap();
+    h.settle();
+    assert!(!locked(&h));
+    // A screen reader's press of the same button.
+    let found = locks(&mut h);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let undo = h.app.session.active().unwrap().history.undo.len();
+    let click = egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+        action: egui::accesskit::Action::Click,
+        target_node: found[0].0,
+        target_tree: egui::accesskit::TreeId::ROOT,
+        data: None,
+    });
+    h.frame(vec![click]);
+    h.settle();
+    assert!(locked(&h), "{}", h.app.ui.status);
+    assert_eq!(h.app.session.active().unwrap().history.undo.len(), undo + 1, "one undo step");
+}
+
+/// `properties@2` is a panel to the window commands while the shell has it: activated, checked
+/// in the Window menu, closed; gone, it is an unknown panel.
+#[test]
+fn window_commands_reach_the_second_properties_editor() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let twin = shell::duplicate_properties(&mut h.app, "properties").unwrap();
+    h.app.ui.varos_shell.insert_tabs(3, None, std::slice::from_ref(&twin));
+    h.app.ui.varos_shell.tree.activate("properties");
+    h.settle();
+    assert_eq!(h.box_tabs(3), ["properties", "color", "swatches", "properties@2"]);
+    let checked = |app: &VectorcraftApp, p: &str| crate::menus::checked(app, "window.panel", &json!({"panel": p}));
+    assert_eq!(checked(&h.app, &twin), Some(true));
+    let out = h.app.run("window.panel.activate", json!({"panel": twin})).unwrap();
+    assert_eq!(out["box"], json!(3));
+    assert_eq!(h.front(3), Some("properties@2"));
+    h.app.run("window.panel", json!({"panel": "properties"})).unwrap();
+    assert_eq!(h.front(3), Some("properties"));
+    let out = h.app.run("window.panel.close", json!({"panel": twin})).unwrap();
+    assert_eq!(out["closed"], true);
+    h.settle();
+    assert!(!h.state().owns(&twin));
+    assert_eq!(checked(&h.app, &twin), Some(false));
+    assert!(h.app.run("window.panel.activate", json!({"panel": twin})).is_err(), "gone: unknown");
+    assert!(h.app.run("window.panel", json!({"panel": "properties@9"})).is_err());
+    h.state().invariants().unwrap();
+}
+
+/// A flyout's ≡ has no Duplicate Panel (it has nowhere to put the copy); a box's has.
+#[test]
+fn duplicate_panel_is_in_a_boxs_menu_not_a_flyouts() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let menu = h.rect(&Hit::Menu(3));
+    h.click(menu.center());
+    let texts = h.texts();
+    assert!(texts.iter().any(|t| t.contains("Duplicate Panel")), "{texts:?}");
+    h.frame(vec![escape_key()]);
+    h.settle();
+    // Properties back in the strip, opened as a flyout.
+    h.app.run("window.panel.close", json!({"panel": "properties"})).unwrap();
+    h.app.run("window.panel", json!({"panel": "properties"})).unwrap();
+    h.settle();
+    let menu = h.rect(&Hit::FlyoutClose).translate(vec2(23.0, 0.0));
+    h.click(menu.center());
+    let texts = h.texts();
+    assert!(texts.iter().any(|t| t.contains("Close Panel")), "the flyout's menu is open: {texts:?}");
+    assert!(!texts.iter().any(|t| t.contains("Duplicate Panel")), "{texts:?}");
+}
+
+#[test]
+fn an_alt_drag_of_the_properties_tab_makes_another_editor() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let to = h.rect(&Hit::BoardBody).center();
+    let from = h.tab("properties").center();
+    h.modifiers = egui::Modifiers::ALT;
+    h.hold_drag(from, to);
+    assert_eq!(h.state().drag.as_ref().map(|d| d.mode), Some(DragMode::Duplicate));
+    assert!(!h.app.ui.status.contains("duplicate: later"));
+    h.modifiers = egui::Modifiers::NONE;
+    h.release(to);
+    assert_eq!(h.tree().find_tab("properties"), Some(3), "the first stays");
+    assert_eq!(h.state().float_of("properties@2"), Some(h.state().floats[0].panels.id), "the copy floats");
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn the_workspace_row_switches_restores_and_remembers_layouts_keeping_the_documents() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let uid = h.app.session.active().unwrap().uid;
+    let row = h.rect(&Hit::Workspaces);
+    assert_eq!(row.height(), shell::workspace::ROW_H);
+    assert!(row.bottom() <= h.board().top(), "the row is above the boxes");
+    for name in shell::workspace::PRESETS {
+        h.rect(&Hit::WorkspaceTab(name.into()));
+    }
+    h.rect(&Hit::WorkspaceNew);
+    assert_eq!(h.state().workspace, "Design");
+    // Changes in Design: Stroke a tab of the upper box, Color floating.
+    h.app.ui.varos_shell.add_tab(2, "stroke");
+    let body = h.rect(&Hit::BoardBody);
+    h.float_tab("color", body.center());
+    let design = h.state().capture("Design");
+    // Typography as its preset comes; the document stays.
+    let at = h.rect(&Hit::WorkspaceTab("Typography".into())).center();
+    h.click(at);
+    assert_eq!(h.state().workspace, "Typography");
+    let typography = shell::workspace::preset("Typography").unwrap();
+    assert_eq!((&h.state().tree, &h.state().strip), (&typography.tree, &typography.strip));
+    assert!(h.state().floats.is_empty() && h.tabs().contains(&"character".to_string()));
+    assert_eq!(h.app.session.documents().len(), 1);
+    assert_eq!(h.app.session.active().unwrap().uid, uid);
+    // A change in Typography.
+    h.app.run("window.panel.close", json!({"panel": "glyphs"})).unwrap();
+    h.settle();
+    // Design comes back as it was left: tree, strip, floats, floating strips.
+    let at = h.rect(&Hit::WorkspaceTab("Design".into())).center();
+    h.click(at);
+    let now = h.state().capture("Design");
+    assert_eq!((&now.tree, &now.strip, &now.floats, &now.float_strips), (&design.tree, &design.strip, &design.floats, &design.float_strips));
+    // … and Typography with its change.
+    h.app.run("window.workspace", json!({"name": "typography"})).unwrap();
+    assert_eq!(h.tree().find_tab("glyphs"), None);
+    // Reset: Typography as its preset.
+    assert_eq!(h.app.run("window.workspace.reset", json!({})).unwrap()["workspace"], "Typography");
+    assert_eq!(h.state().tree, typography.tree);
+    // `+`: the New Workspace dialog; OK saves the layout under the name typed.
+    h.settle();
+    let at = h.rect(&Hit::WorkspaceNew).center();
+    h.click(at);
+    let d = h.app.ui.dialog.as_mut().expect("New Workspace");
+    assert_eq!(d.kind, "newWorkspace");
+    d.fields.insert("name".into(), json!("Mine"));
+    crate::workspaces::confirm(&mut h.app).unwrap();
+    h.settle();
+    assert_eq!(h.state().workspace, "Mine");
+    h.rect(&Hit::WorkspaceTab("Mine".into()));
+    assert_eq!(h.app.run("window.workspace.list", json!({})).unwrap()["custom"], json!(["Mine"]));
+    assert_eq!(crate::menus::checked(&h.app, "window.workspace", &json!({"name": "Mine"})), Some(true));
+    // Rename and delete (the tab's context menu runs these); a preset can't be deleted.
+    h.app.run("window.workspace.rename", json!({"name": "Mine", "to": "Ours"})).unwrap();
+    assert_eq!(h.state().workspace, "Ours");
+    assert!(h.app.run("window.workspace.delete", json!({"name": "Design"})).is_err());
+    h.app.run("window.workspace.delete", json!({"name": "Ours"})).unwrap();
+    assert_eq!(h.state().workspace, "Design");
+    let now = h.state().capture("Design");
+    assert_eq!(now.tree, design.tree, "Design as it was left");
+    // Unknown names are refused; everything survives ui.json.
+    assert!(h.app.run("window.workspace", json!({"name": "Essentials Classic"})).is_err());
+    h.app.run("window.workspace.new", json!({"name": "Kept"})).unwrap();
+    let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
+    assert_eq!(back.varos_shell.workspaces, h.state().workspaces);
+    assert_eq!(back.varos_shell.workspace_changes, h.state().workspace_changes);
+    assert_eq!(back.varos_shell.workspace, "Kept");
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn reset_restores_the_default_layout_and_leaves_the_document_alone() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 60, "height": 40})).unwrap();
+    h.settle();
+    let st = h.app.session.active().unwrap();
+    let (doc, selection, dirty) = (st.doc.clone(), st.selection.clone(), st.is_dirty());
+    let hash = format!("{:?}", st.doc);
+    // A changed layout: a float, a tab moved, a box maximized, a section collapsed.
+    let body = h.rect(&Hit::BoardBody);
+    h.float_tab("color", body.center());
+    h.app.ui.varos_shell.add_tab(2, "stroke");
+    h.app.ui.varos_shell.views.entry("properties".into()).or_default().collapsed.insert(S::Align);
+    h.app.ui.varos_shell.toggle_maximized(2);
+    h.settle();
+    h.app.run("window.workspace.reset", json!({})).unwrap();
+    h.settle();
+    let shell = h.state();
+    assert_eq!(shell.tree, tree::Node::default_layout());
+    assert_eq!(shell.strip, shell::strip::Strip::default_for(&shell.tree));
+    assert!(shell.floats.is_empty() && shell.float_strips.is_empty() && shell.views.is_empty() && shell.maximized.is_none());
+    let st = h.app.session.active().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&st.doc, &doc), "the document untouched");
+    assert_eq!(format!("{:?}", st.doc), hash);
+    assert_eq!((&st.selection, st.is_dirty()), (&selection, dirty));
+    // The Window menu's Reset names the shell's workspace.
+    assert_eq!(crate::menus::display_label(&h.app, "window.workspace.reset", "Reset Essentials"), "Reset Design");
+}
+
+#[test]
+fn a_box_maximizes_and_restores_to_the_identical_layout() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let before = h.tree().clone();
+    let rects: Vec<(Hit, Rect)> = h.hits().into_iter().filter(|(hit, _)| matches!(hit, Hit::Box(_) | Hit::Board)).collect();
+    // A double-click on the upper box's tab row, right of its pills.
+    let row = h.rect(&Hit::TabRow(2));
+    let pills = h.tab("artboards");
+    let at = pos2(f32::midpoint(pills.right(), row.right()), row.center().y);
+    h.double_click(at);
+    assert_eq!(h.state().maximized, Some(2));
+    assert_eq!(h.tree(), &before, "the tree is kept as it was");
+    let big = h.rect(&Hit::Box(2));
+    let region = h.rect(&Hit::Workspaces);
+    assert!((big.width() - region.width()).abs() < 1.0 && (big.top() - region.bottom()).abs() < 1.0, "{big:?} under {region:?}");
+    assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Board | Hit::Box(3) | Hit::Divider(_))), "the rest is hidden");
+    assert!(!shell::showing(&h.app, "properties"));
+    // Persisted.
+    let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
+    assert_eq!(back.varos_shell.maximized, Some(2));
+    // The same gesture restores it exactly.
+    let row = h.rect(&Hit::TabRow(2));
+    let at = pos2(row.right() - 6.0, row.center().y);
+    h.double_click(at);
+    assert_eq!(h.state().maximized, None);
+    assert_eq!(h.tree(), &before);
+    let again: Vec<(Hit, Rect)> = h.hits().into_iter().filter(|(hit, _)| matches!(hit, Hit::Box(_) | Hit::Board)).collect();
+    assert_eq!(again, rects, "every box where it was");
+    // The Board maximized by a double-click on its document tabs' empty space: it fills, with its
+    // strip; a hidden panel asked for brings the layout back.
+    let header = h.rect(&Hit::BoardHeader);
+    h.double_click(pos2(header.right() - 20.0, header.center().y));
+    assert_eq!(h.state().maximized, Some(1));
+    assert_eq!(h.tree(), &before);
+    h.settle();
+    assert!((h.board().width() - h.rect(&Hit::Workspaces).width()).abs() < 1.0, "{:?}", h.board());
+    h.rect(&Hit::Strip);
+    h.app.run("window.panel", json!({"panel": "layers"})).unwrap();
+    h.settle();
+    assert_eq!(h.state().maximized, None);
+    assert!(shell::showing(&h.app, "layers"));
+    // ⌘⇧M is Object › Transform › Move, so the gesture has no key: a double-click or the ≡ menu.
+    assert_eq!(crate::menus::shortcut_of("object.move"), Some("Cmd+Shift+M"));
+}
+
+#[test]
+fn the_workspace_row_overflows_and_scrolls_with_the_wheel_and_a_middle_drag() {
+    let mut h = Harness::new();
+    h.shell(true);
+    for i in 0..14 {
+        h.app.ui.varos_shell.save_workspace(&format!("Workspace number {i}")).unwrap();
+    }
+    h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
+    h.settle();
+    // One row: the first tabs show, the last are out of sight, `›` says so.
+    assert!(h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)));
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(false)));
+    h.rect(&Hit::WorkspaceTab("Design".into()));
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceTab("Workspace number 13".into())));
+    let row = h.rect(&Hit::Workspaces);
+    for (hit, r) in h.hits() {
+        if let Hit::WorkspaceTab(_) = hit {
+            assert!(row.contains_rect(r) && (r.center().y - row.center().y).abs() < 1.0, "one row: {r:?} in {row:?}");
+        }
+    }
+    // The wheel over the row scrolls it.
+    let p = row.center();
+    let wheel = egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -120.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Unknown,
+        modifiers: Default::default(),
+    };
+    h.frame(vec![egui::Event::PointerMoved(p), wheel]);
+    h.settle();
+    let s1 = shell::workspace::scroll(&h.ctx);
+    assert!((s1 - 120.0).abs() < 1.0, "{s1}");
+    assert!(h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(false)), "`‹` now");
+    // A middle-button drag pans it.
+    h.frame(vec![egui::Event::PointerMoved(p), middle(p, true)]);
+    for k in 1..=8 {
+        h.frame(vec![egui::Event::PointerMoved(p - vec2(25.0 * k as f32, 0.0))]);
+    }
+    h.frame(vec![middle(p - vec2(200.0, 0.0), false)]);
+    h.settle();
+    let s2 = shell::workspace::scroll(&h.ctx);
+    assert!((s2 - s1 - 200.0).abs() < 1.0, "{s1} → {s2}");
+    assert_eq!(h.state().workspace, "Design", "panning switched nothing");
+    // A click on `›` scrolls on, to the end at most; the last tab comes into sight.
+    for _ in 0..20 {
+        if let Some((_, r)) = h.hits().into_iter().find(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)) {
+            h.click(r.center());
+        }
+    }
+    h.rect(&Hit::WorkspaceTab("Workspace number 13".into()));
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)));
+}
+
+/// Software capture (no GPU): two Properties editors following the selected text, the first with
+/// Character collapsed, the second with Quick Actions moved first:
+/// `VAROS_SHELL_CAPTURE_SECTIONS=<file.png>`.
+#[test]
+#[ignore = "optional software visual capture; set VAROS_SHELL_CAPTURE_SECTIONS"]
+fn capture_shell_sections() {
+    let Some(file) = std::env::var_os("VAROS_SHELL_CAPTURE_SECTIONS").map(std::path::PathBuf::from) else { return };
+    let (width, height) = (1440_u32, 900_u32);
+    let mut h = Harness::sized_without_document(vec2(width as f32, height as f32));
+    h.app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
+    h.app.ui.control_bar = true;
+    h.app.run("shape.rectangle", json!({"x": 40, "y": 40, "width": 120, "height": 80})).unwrap();
+    let b = Harness::id_of(&h.app.run("text.create", json!({"x": 60, "y": 200, "text": "Varos", "size": 32})).unwrap());
+    h.settle();
+    h.shell(true);
+    h.app.run("select.set", json!({"ids": [b]})).unwrap();
+    h.app.ui.varos_shell.tree.set_ratio(&[1], 0.15);
+    let twin = shell::duplicate_properties(&mut h.app, "properties").unwrap();
+    h.app.ui.varos_shell.views.entry("properties".into()).or_default().collapsed.insert(S::Character);
+    h.app.ui.varos_shell.views.entry(twin).or_default().move_section(S::QuickActions, Some(S::Transform), S::QuickActions);
+    h.settle();
+    let pixels = capture(&mut h.app, width, height);
+    image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+}
+
+/// Software capture (no GPU): the workspace row with more workspaces than fit (`›` at its end):
+/// `VAROS_SHELL_CAPTURE_WORKSPACES=<file.png>`.
+#[test]
+#[ignore = "optional software visual capture; set VAROS_SHELL_CAPTURE_WORKSPACES"]
+fn capture_shell_workspaces() {
+    let Some(file) = std::env::var_os("VAROS_SHELL_CAPTURE_WORKSPACES").map(std::path::PathBuf::from) else { return };
+    let (width, height) = (1440_u32, 900_u32);
+    let mut h = Harness::sized_without_document(vec2(width as f32, height as f32));
+    h.app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
+    h.app.ui.control_bar = true;
+    h.settle();
+    h.shell(true);
+    for name in [
+        "Logo sketches",
+        "Arabic type",
+        "Packaging",
+        "Social posts",
+        "Print proofs",
+        "Icons",
+        "Brand book",
+        "Web export",
+        "Kashida tests",
+        "Review",
+        "Motion frames",
+        "Client edits",
+        "Archive 2026",
+        "Calligraphy",
+        "Posters A3",
+        "Final checks",
+    ] {
+        h.app.ui.varos_shell.save_workspace(name).unwrap();
+    }
+    h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
+    h.settle();
+    assert!(h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)), "the row overflows");
+    let pixels = capture(&mut h.app, width, height);
+    image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
+}
+
+/// The Board maximizes like a box: a double-click on its document tabs' empty space, or its ≡
+/// (at the top of its strip) › Maximize Board; the same gesture, or ≡ › Restore Layout, brings
+/// back the identical layout.
+#[test]
+fn the_board_maximizes_from_its_header_and_its_menu() {
+    use egui::accesskit::Role;
+    let mut h = Harness::new();
+    h.shell(true);
+    let before = h.tree().clone();
+    let rects: Vec<(Hit, Rect)> = h.hits().into_iter().filter(|(hit, _)| matches!(hit, Hit::Box(_) | Hit::Board)).collect();
+    let header = h.rect(&Hit::BoardHeader);
+    assert!(h.board().contains_rect(header) && header.top() <= h.rect(&Hit::BoardBody).top());
+    h.double_click(pos2(header.right() - 20.0, header.center().y));
+    assert_eq!(h.state().maximized, Some(1));
+    assert!((h.board().width() - h.rect(&Hit::Workspaces).width()).abs() < 1.0, "{:?}", h.board());
+    assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Box(_))));
+    let header = h.rect(&Hit::BoardHeader);
+    h.double_click(pos2(header.right() - 20.0, header.center().y));
+    assert_eq!(h.state().maximized, None);
+    assert_eq!(h.tree(), &before);
+    // ≡ › Maximize Board, then ≡ › Restore Layout.
+    h.ctx.enable_accesskit();
+    let pick = |h: &mut Harness, label: &str| {
+        let menu = h.rect(&Hit::BoardMenu);
+        h.click(menu.center());
+        let out = h.frame_full(vec![]);
+        let nodes = out.platform_output.accesskit_update.expect("accesskit is on").nodes;
+        let item = nodes
+            .iter()
+            .filter(|(_, n)| n.role() == Role::Button && n.label().is_some_and(|l| l.trim() == label))
+            .find_map(|(_, n)| n.bounds().map(|b| Rect::from_min_max(pos2(b.x0 as f32, b.y0 as f32), pos2(b.x1 as f32, b.y1 as f32))))
+            .unwrap_or_else(|| panic!("{label} in the Board's menu"));
+        h.click(item.center());
+    };
+    pick(&mut h, "Maximize Board");
+    assert_eq!(h.state().maximized, Some(1));
+    pick(&mut h, "Restore Layout");
+    assert_eq!(h.state().maximized, None);
+    let again: Vec<(Hit, Rect)> = h.hits().into_iter().filter(|(hit, _)| matches!(hit, Hit::Box(_) | Hit::Board)).collect();
+    assert_eq!(again, rects, "every box where it was");
+    // A double-click on the document's tab itself doesn't maximize.
+    let header = h.rect(&Hit::BoardHeader);
+    h.double_click(pos2(header.left() + 60.0, header.center().y));
+    assert_eq!(h.state().maximized, None);
+}
+
+/// Save Workspace (`+`) while Design has changes: Design remembers them (switching back shows
+/// them), the new workspace starts with them, Reset Design drops them.
+#[test]
+fn saving_a_workspace_keeps_the_changes_of_the_one_left() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.varos_shell.add_tab(2, "stroke");
+    h.app.ui.varos_shell.tree.set_ratio(&[], 0.6);
+    let design = h.state().capture("Design");
+    h.app.run("window.workspace.new", json!({"name": "Custom"})).unwrap();
+    assert_eq!(h.state().workspace, "Custom");
+    h.app.run("window.workspace", json!({"name": "Typography"})).unwrap();
+    h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
+    assert_eq!(h.state().tree, design.tree, "Design as it was left");
+    h.app.run("window.workspace", json!({"name": "Custom"})).unwrap();
+    assert_eq!(h.state().tree, design.tree, "Custom saved with it");
+    h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
+    h.app.run("window.workspace.reset", json!({})).unwrap();
+    assert_eq!(h.state().tree, tree::Node::default_layout());
+    h.state().invariants().unwrap();
+}
+
+/// Two Properties editors with different section orders and folds come back as they were after a
+/// workspace switch and back.
+#[test]
+fn two_editors_section_views_survive_a_workspace_switch() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 60, "height": 40})).unwrap();
+    let twin = shell::duplicate_properties(&mut h.app, "properties").unwrap();
+    h.app.ui.varos_shell.views.entry("properties".into()).or_default().collapsed.insert(S::Appearance);
+    h.app.ui.varos_shell.views.entry(twin.clone()).or_default().move_section(S::Align, Some(S::Transform), S::QuickActions);
+    h.settle();
+    let (first, second) = (h.sections("properties"), h.sections(&twin));
+    assert_ne!(first, second);
+    let views = h.state().views.clone();
+    h.app.run("window.workspace", json!({"name": "Typography"})).unwrap();
+    h.settle();
+    assert!(!h.state().owns(&twin), "Typography has its own editors");
+    h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
+    h.settle();
+    assert_eq!(h.state().views, views);
+    assert_eq!((h.sections("properties"), h.sections(&twin)), (first, second));
+    assert!(h.section("properties", S::Appearance).collapsed);
+    // And through ui.json.
+    let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
+    assert_eq!(back.varos_shell.views, views);
 }

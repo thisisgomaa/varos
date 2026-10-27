@@ -1,0 +1,37 @@
+{
+  "enabled": true,
+  "version": 2,
+  "tree": {
+    "split": {
+      "axis": "horizontal",
+      "ratio": 0.7,
+      "reset": 0.72,
+      "a": { "leaf": { "id": 1, "tabs": ["board"], "active": 0 } },
+      "b": {
+        "split": {
+          "axis": "vertical",
+          "ratio": 0.5,
+          "reset": 0.5,
+          "a": { "leaf": { "id": 2, "tabs": ["layers"], "active": 0 } },
+          "b": { "leaf": { "id": 3, "tabs": ["properties", "color"], "active": 0 } }
+        }
+      }
+    }
+  },
+  "strip": {
+    "edge": "Right",
+    "mode": "Labels",
+    "groups": [
+      { "panels": ["colorGuide"], "temporary": false, "width": 280.0, "height": 400.0 },
+      { "panels": ["swatches", "brushes", "symbols", "patternOptions"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["stroke", "gradient", "transparency"], "temporary": false, "width": 300.0, "height": 420.0 },
+      { "panels": ["appearance", "graphicStyles"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["artboards"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["transform", "align", "pathfinder", "tabs"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["character", "paragraph", "glyphs"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["history", "actions", "info", "navigator"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["variables"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["separations"], "temporary": true, "width": 260.0, "height": 360.0 }
+    ]
+  }
+}

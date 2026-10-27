@@ -33,8 +33,9 @@ const GHOST_ALPHA: f32 = 0.7;
 /// An icon ghost's size.
 const ICON: f32 = 26.0;
 
-/// Move, or (Alt held when the drag began) duplicate. Duplicates are not made yet: a duplicate
-/// drag moves, and the status line says so.
+/// Move, or (Alt held when the drag began) duplicate. Only a Properties editor's tab is duplicated
+/// (another editor with the same section view lands); any other duplicate drag moves, and the
+/// status line says so.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DragMode {
     Move,
@@ -144,7 +145,7 @@ pub(crate) fn begin(app: &mut VectorcraftApp, ctx: &egui::Context, item: Item, s
     let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or(source.center());
     let in_place = item.in_place();
     let mode = if !in_place && ctx.input(|i| i.modifiers.alt) { DragMode::Duplicate } else { DragMode::Move };
-    if mode == DragMode::Duplicate {
+    if mode == DragMode::Duplicate && !duplicates(&item) {
         app.status("duplicate: later");
     }
     let ghost = match item {
@@ -165,8 +166,15 @@ pub(crate) fn begin(app: &mut VectorcraftApp, ctx: &egui::Context, item: Item, s
     ctx.request_repaint();
 }
 
-/// Escape cancels a drag before anything else sees it (called first by `shortcuts::handle`).
+/// Does a duplicate drag of `item` make a copy: a Properties editor's tab.
+fn duplicates(item: &Item) -> bool {
+    matches!(item, Item::Tab(p) if super::persist::is_properties(p))
+}
+
+/// Escape cancels a drag before anything else sees it (called first by `shortcuts::handle`): a
+/// drag of the shell's, or a Properties editor's section being moved.
 pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    crate::panels::properties::escape_section_drag(ctx);
     if app.ui.varos_shell.drag.is_some() && ctx.input_mut(|i| i.key_pressed(Key::Escape) && i.consume_key(i.modifiers, Key::Escape)) {
         cancel(app, ctx);
     }
@@ -202,7 +210,7 @@ fn reopen(app: &mut VectorcraftApp, d: &Drag) {
 pub(crate) fn layout_rev(shell: &VarosShell, region: Rect) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    format!("{region:?}{:?}{:?}{:?}{:?}", shell.tree, shell.strip, shell.floats, shell.float_strips).hash(&mut h);
+    format!("{region:?}{:?}{:?}{:?}{:?}{:?}", shell.tree, shell.strip, shell.floats, shell.float_strips, shell.maximized_box()).hash(&mut h);
     h.finish()
 }
 
@@ -327,7 +335,7 @@ fn paint_ghost(app: &VectorcraftApp, ui: &mut egui::Ui, layer: LayerId, d: &Drag
     painter.rect_filled(ghost, CornerRadius::same(3), fade(t.button));
     let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(ghost));
     paint_ui.set_clip_rect(ghost);
-    let icon = crate::state::rail_panel(&panel).map_or("panel-left", |p| p.2);
+    let icon = crate::state::rail_panel(super::persist::instance_kind(&panel)).map_or("panel-left", |p| p.2);
     egui::Image::new(crate::icons::source(icon))
         .tint(fade(t.text_strong))
         .paint_at(&paint_ui, Rect::from_center_size(ghost.center(), vec2(16.0, 16.0)));
@@ -582,9 +590,20 @@ fn strip_target(shell: &VarosShell, hits: &[(Hit, Rect)], sref: StripRef, rail: 
 /// Make drop `t` of drag `d` (pointer at `p`) on a copy of the shell; keep it only when it worked.
 fn apply_drop(app: &mut VectorcraftApp, d: &Drag, t: &Target, p: Pos2, hits: &[(Hit, Rect)]) -> bool {
     let mut shell = app.ui.varos_shell.clone();
+    let mut item = d.item.clone();
     if d.mode == DragMode::Duplicate {
-        // The hook for duplicates (stage 3 makes none: the panel moves).
-        app.status("duplicate: later");
+        match &d.item {
+            // Another Properties editor, with the same section view (not the pin), lands.
+            Item::Tab(panel) if duplicates(&d.item) => {
+                let id = shell.fresh_properties_id();
+                let mut view = shell.views.get(panel).cloned().unwrap_or_default();
+                view.pinned = None;
+                shell.views.insert(id.clone(), view);
+                item = Item::Tab(id);
+            }
+            // Any other panel moves.
+            _ => app.status("duplicate: later"),
+        }
     }
     let board = shell.tree.boxes().into_iter().find(|b| b.is_board()).map_or(0, |b| b.id);
     let owner = hits
@@ -595,8 +614,14 @@ fn apply_drop(app: &mut VectorcraftApp, d: &Drag, t: &Target, p: Pos2, hits: &[(
             _ => None,
         })
         .unwrap_or(board);
-    if !apply(&mut shell, &d.item, t, p - d.grab, p, owner) {
+    if !apply(&mut shell, &item, t, p - d.grab, p, owner) {
         return false;
+    }
+    // A maximized box stays so while the boxes are the same; a new box or one gone shows the
+    // whole layout again.
+    let ids = |s: &VarosShell| s.tree.boxes().iter().map(|b| b.id).collect::<Vec<_>>();
+    if ids(&shell) != ids(&app.ui.varos_shell) {
+        shell.maximized = None;
     }
     shell.settle();
     debug_assert!(shell.invariants().is_ok(), "after a drop: {:?}", shell.invariants());

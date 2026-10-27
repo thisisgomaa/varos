@@ -101,3 +101,27 @@ Floating panels and lone icons / floating strips (`shell/floats.rs`) persist in 
 migrate); double-click on a tab collapses a box or float to its tab row. Alt-drag is the
 `DragMode::Duplicate` hook only (moves; status "duplicate: later"). Captures: `VAROS_SHELL_CAPTURE_DRAG`,
 `VAROS_SHELL_CAPTURE_FLOAT`. Owner acceptance pending.
+
+## Stage 4 implementation record (2026-10-27)
+Properties is an editor of sections (`panels/properties.rs`, the one editor-side change, used only by
+the shell): stable `SectionId`s across selection kinds (Appearance and Quick Actions are one section for
+objects and the document), one header per section (chevron, 11 pt semibold title, six grip dots, 1 pt
+hairline, body inset 8 pt); a click collapses, the grip drags (ghost + azure line, Escape cancels; the
+grip is never the tab). `PropertiesView { collapsed, order }` per editor instance, kept in
+`VarosShell.views`. Every editor follows the selection ("Following selection · Kind"). More editors:
+≡ › Duplicate Panel (a box below; not offered in flyouts) or Alt-drag of a Properties tab
+(`properties@2`, …); the window commands and the Window menu reach them by id. Pin deferred: needs
+explicit targets passed to the sections (engine commands already accept explicit targets); not a
+selection swap (`PropertiesView.pinned` stays in the model, unused).
+Workspaces (`shell/workspace.rs`): a 28 pt row on top of the central region replaces the app bar's
+switcher — Design, Typography, Print, the user's, `+`; one row, wheel/trackpad and middle-drag scroll,
+`‹ ›` mark hidden tabs; a workspace is the whole arrangement (tree, strips, floats, section views,
+maximized box), changes remembered per workspace, Reset restores the preset (documents untouched),
+rename/delete from a tab's context menu (Manage dialog); saving a workspace keeps the changes of the one
+left. Maximize: double-click a box's empty tab-row space or ≡ › Maximize Box; the Board: double-click
+its document tabs' empty space or its ≡ (top of its strip) › Maximize Board; the tree never changes,
+`maximized: Option<u32>` is saved. ⌘⇧M is Object ›
+Transform › Move (Illustrator), so maximize has no key. `VarosShell` version 4, migrations 1→2→3→4 are
+pure functions with stage 1–3 fixtures (`shell/fixtures/`). Stage-3 P2 fixed: a side-by-side all-collapsed
+pair of unequal heights shows its shorter side whole (no hole). Captures: `VAROS_SHELL_CAPTURE_SECTIONS`,
+`VAROS_SHELL_CAPTURE_WORKSPACES`. Owner acceptance pending.
