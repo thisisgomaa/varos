@@ -2045,6 +2045,12 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         }
         "window.taskBar" => app.ui.task_bar,
         "window.taskBar.pin" => app.ui.task_bar_place.pinned,
+        // Varos: with the Varos shell on, its panels, another Properties editor (`properties@2`)
+        // included.
+        "window.panel" if crate::varos::shell::enabled(app) => {
+            let panel = p.get("panel").and_then(Value::as_str).unwrap_or("");
+            crate::varos::shell::resolve_panel(app, panel).is_some_and(|id| crate::varos::shell::showing(app, &id))
+        }
         "window.panel" => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("");
             // Varos: an open card counts as shown.
@@ -2057,6 +2063,10 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
             })
         }
         "window.collapseDock" => crate::panel_docking::dock_collapsed(&app.ui),
+        // Varos: with the Varos shell on, its own current workspace.
+        "window.workspace" if crate::varos::shell::enabled(app) => {
+            p.get("name").and_then(Value::as_str) == Some(app.ui.varos_shell.workspace.as_str())
+        }
         "window.workspace" => p.get("name").and_then(Value::as_str) == Some(app.ui.workspace.as_str()),
         "window.brightness" => p.get("brightness").and_then(Value::as_str).and_then(Brightness::parse) == Some(app.ui.brightness),
         "view.slices.lock" => app.session.slices_locked(),
@@ -2088,6 +2098,8 @@ pub fn dynamic_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
     let v = &app.ui.view;
     match id {
         "view.outline" => if v.outline { "Preview" } else { "Outline" }.into(),
+        // Varos: with the Varos shell on, its own current workspace.
+        "window.workspace.reset" if crate::varos::shell::enabled(app) => format!("Reset {}", app.ui.varos_shell.workspace),
         "window.workspace.reset" => format!("Reset {}", app.ui.workspace),
         "view.edges" => if v.edges { "Hide Edges" } else { "Show Edges" }.into(),
         "view.template" => if v.templates { "Hide Template" } else { "Show Template" }.into(),
@@ -2214,6 +2226,11 @@ pub fn display_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
                 Some(h) => fmt(tl!("Redo {name}"), &[("name", &name(h))]),
                 None => tl!(if id == "edit.undo" { "Undo" } else { "Redo" }).to_string(),
             }
+        }
+        // Varos: with the Varos shell on, its own current workspace.
+        "window.workspace.reset" if crate::varos::shell::enabled(app) => {
+            let name = crate::varos::shell::workspace::label(&app.ui.varos_shell.workspace);
+            fmt(tl!("Reset {name}"), &[("name", name.as_str())])
         }
         "window.workspace.reset" => {
             let name = &app.ui.workspace;

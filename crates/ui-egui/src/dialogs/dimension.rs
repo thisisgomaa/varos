@@ -283,9 +283,17 @@ pub fn selected(app: &VectorcraftApp) -> Option<(u64, DimensionOptions)> {
 /// The Properties panel's Dimension section: the selected dimension's style, Apply to All and Set
 /// as Default. Its scale is set in the Tool Options.
 pub fn properties_section(app: &mut VectorcraftApp, ui: &mut Ui) {
+    properties_section_in(app, ui, true);
+}
+
+/// [`properties_section`], under its heading or (`header` false: the Varos shell's Properties
+/// editor draws the section's own header) without it.
+pub(crate) fn properties_section_in(app: &mut VectorcraftApp, ui: &mut Ui, header: bool) {
     let Some((id, o)) = selected(app) else { return };
     let Ok(Value::Object(mut f)) = serde_json::to_value(&o) else { return };
-    widgets::section_header(ui, tl!("Dimension"));
+    if header {
+        widgets::section_header(ui, tl!("Dimension"));
+    }
     let mut changed = false;
     ui.horizontal(|ui| {
         changed |= choose(ui, &mut f, "units", "Units:", UNITS);

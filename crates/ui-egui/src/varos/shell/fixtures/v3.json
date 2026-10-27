@@ -1,0 +1,49 @@
+{
+  "enabled": true,
+  "version": 3,
+  "tree": {
+    "split": {
+      "axis": "horizontal",
+      "ratio": 0.68,
+      "reset": 0.72,
+      "a": { "leaf": { "id": 1, "tabs": ["board"], "active": 0, "collapsed": false } },
+      "b": {
+        "split": {
+          "axis": "vertical",
+          "ratio": 0.5,
+          "reset": 0.5,
+          "a": { "leaf": { "id": 2, "tabs": ["layers", "artboards"], "active": 0, "collapsed": true } },
+          "b": { "leaf": { "id": 3, "tabs": ["properties", "color", "swatches"], "active": 0, "collapsed": false } }
+        }
+      }
+    }
+  },
+  "strip": {
+    "edge": "Right",
+    "mode": "Icons",
+    "groups": [
+      { "panels": ["colorGuide"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["brushes", "symbols", "patternOptions"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["stroke"], "temporary": false, "width": 310.0, "height": 380.0 },
+      { "panels": ["appearance", "graphicStyles"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["transform", "align", "pathfinder"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["character", "paragraph", "glyphs"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["history", "actions", "info", "navigator"], "temporary": false, "width": 260.0, "height": 360.0 },
+      { "panels": ["variables"], "temporary": false, "width": 260.0, "height": 360.0 }
+    ]
+  },
+  "floats": [
+    {
+      "box": { "id": 1048576, "tabs": ["gradient"], "active": 0, "collapsed": false },
+      "rect": [320.0, 240.0, 260.0, 360.0],
+      "owner_area": 1
+    }
+  ],
+  "float_strips": [
+    {
+      "id": 1,
+      "pos": [720.0, 300.0],
+      "groups": [{ "panels": ["transparency"], "temporary": false, "width": 260.0, "height": 360.0 }]
+    }
+  ]
+}

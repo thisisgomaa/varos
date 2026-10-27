@@ -24,13 +24,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let first = first_selected(app);
     // Edit Artboards (the Artboard tool): the active artboard, whatever is selected.
     let editing_artboards = app.session.tool_id() == "artboard";
-    let label = match (&first, n_sel) {
-        _ if editing_artboards => tl!("Artboard").to_string(),
-        (None, _) => tl!("Document").to_string(),
-        (_, n) if n > 1 => crate::i18n::tn(n as u64, "{n} Object", "{n} Objects"),
-        (Some(n), _) if crate::panels::image_trace::is_trace(n) => tl!("Image Tracing").to_string(),
-        (Some(n), _) => tl!(n.kind_label()).to_string(),
-    };
+    let label = selection_label(app, first.as_ref(), n_sel);
     ui.label(egui::RichText::new(label).size(11.5).color(t.text_dim));
     ui.add_space(4.0);
     if editing_artboards {
@@ -77,31 +71,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     appearance_section(app, ui);
     divider(ui);
     section_header(ui, tl!("Align"));
-    ui.horizontal(|ui| {
-        super::align::align_buttons(app, ui, 26.0);
-        // The rest (Distribute Objects, Distribute Spacing, Align To) is the Align panel's.
-        if widgets::icon_button(ui, "ellipsis", tl!("More Align options"), false, 26.0).clicked() {
-            app.ui.open_panel = Some("align".into());
-        }
-    });
+    align_body(app, ui);
     if n_sel > 1 {
         divider(ui);
         section_header(ui, tl!("Pathfinder"));
-        ui.horizontal(|ui| {
-            for (icon, tip, op) in [
-                ("squares-unite", tl!("Unite"), "unite"),
-                ("squares-subtract", tl!("Minus Front"), "minusFront"),
-                ("squares-intersect", tl!("Intersect"), "intersect"),
-                ("squares-exclude", tl!("Exclude"), "exclude"),
-            ] {
-                if widgets::icon_button(ui, icon, tip, false, 28.0).clicked() {
-                    app.run(&format!("object.pathfinder.{op}"), json!({})).ok();
-                }
-            }
-            if widgets::icon_button(ui, "ellipsis", tl!("More Pathfinder options"), false, 28.0).clicked() {
-                app.ui.open_panel = Some("pathfinder".into());
-            }
-        });
+        pathfinder_body(app, ui);
     }
     if anchors != crate::chrome::AnchorControls::None {
         divider(ui);
@@ -110,13 +84,61 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
+    quick_actions_body(app, ui, n_sel, first.as_ref(), is_image);
+}
+
+/// The selection's kind, the panel's heading: Artboard (the Artboard tool), Document (nothing
+/// selected), "<n> Objects", Image Tracing, or the object's kind.
+fn selection_label(app: &VectorcraftApp, first: Option<&vectorcraft_doc::Node>, n_sel: usize) -> String {
+    match (first, n_sel) {
+        _ if app.session.tool_id() == "artboard" => tl!("Artboard").to_string(),
+        (None, _) => tl!("Document").to_string(),
+        (_, n) if n > 1 => crate::i18n::tn(n as u64, "{n} Object", "{n} Objects"),
+        (Some(n), _) if crate::panels::image_trace::is_trace(n) => tl!("Image Tracing").to_string(),
+        (Some(n), _) => tl!(n.kind_label()).to_string(),
+    }
+}
+
+/// The Align section: the align buttons and the Align panel's link.
+fn align_body(app: &mut VectorcraftApp, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        super::align::align_buttons(app, ui, 26.0);
+        // The rest (Distribute Objects, Distribute Spacing, Align To) is the Align panel's.
+        if widgets::icon_button(ui, "ellipsis", tl!("More Align options"), false, 26.0).clicked() {
+            app.ui.open_panel = Some("align".into());
+        }
+    });
+}
+
+/// The Pathfinder section (two or more objects selected): its four shape modes and the
+/// Pathfinder panel's link.
+fn pathfinder_body(app: &mut VectorcraftApp, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        for (icon, tip, op) in [
+            ("squares-unite", tl!("Unite"), "unite"),
+            ("squares-subtract", tl!("Minus Front"), "minusFront"),
+            ("squares-intersect", tl!("Intersect"), "intersect"),
+            ("squares-exclude", tl!("Exclude"), "exclude"),
+        ] {
+            if widgets::icon_button(ui, icon, tip, false, 28.0).clicked() {
+                app.run(&format!("object.pathfinder.{op}"), json!({})).ok();
+            }
+        }
+        if widgets::icon_button(ui, "ellipsis", tl!("More Pathfinder options"), false, 28.0).clicked() {
+            app.ui.open_panel = Some("pathfinder".into());
+        }
+    });
+}
+
+/// The selection's Quick Actions (`n_sel` objects selected, `first` the first of them).
+fn quick_actions_body(app: &mut VectorcraftApp, ui: &mut Ui, n_sel: usize, first: Option<&vectorcraft_doc::Node>, is_image: bool) {
     crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
-    let is_group = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Group { .. }));
-    let is_live = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(**l, LiveShape::Path { .. }));
+    let is_group = matches!(first.map(|n| &n.kind), Some(NodeKind::Group { .. }));
+    let is_live = matches!(first.map(|n| &n.kind), Some(NodeKind::Path { live: Some(l), .. }) if !matches!(**l, LiveShape::Path { .. }));
     // Blend Options for one blend while the Blend tool is in use, Merge Live Paint for a Live
     // Paint group selected with more to merge into it, as the Properties panel overview lists them
     // (<https://helpx.adobe.com/illustrator/desktop/get-started/learn-the-basics/properties-panel-overview.html>).
-    let blend_options = n_sel == 1 && app.session.tool_id() == "blend" && matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Blend { .. }));
+    let blend_options = n_sel == 1 && app.session.tool_id() == "blend" && matches!(first.map(|n| &n.kind), Some(NodeKind::Blend { .. }));
     let merge_live_paint = n_sel > 1 && can_merge_live_paint(app);
     let mut actions: Vec<(&str, &str)> = vec![];
     if n_sel > 1 {
@@ -301,11 +323,18 @@ fn clip_group_buttons(app: &mut VectorcraftApp, ui: &mut Ui, has_contents: bool)
 /// The one selected image: its file (or Embedded), colour mode and resolution, and the Links
 /// panel's actions for it.
 fn image_section(app: &mut VectorcraftApp, ui: &mut Ui) {
+    image_section_in(app, ui, true);
+}
+
+/// [`image_section`], under its heading or (`header` false) without it.
+fn image_section_in(app: &mut VectorcraftApp, ui: &mut Ui, header: bool) {
     let t = Tokens::get(ui.ctx());
     let Some(i) = crate::place::selected_image_info(app) else { return };
     let (name, details) = crate::place::image_summary(i);
     let (Some(id), linked) = (i["id"].as_u64(), i["linked"] == true) else { return };
-    section_header(ui, if linked { tl!("Linked File") } else { tl!("Embedded Image") });
+    if header {
+        section_header(ui, if linked { tl!("Linked File") } else { tl!("Embedded Image") });
+    }
     ui.add(egui::Label::new(egui::RichText::new(&name).size(12.0).color(t.text_strong)).truncate());
     dim_label(ui, &details);
     ui.add_space(4.0);
@@ -326,6 +355,11 @@ fn image_section(app: &mut VectorcraftApp, ui: &mut Ui) {
 /// one), view, a button to reveal the tracing controls, Expand and Release.
 fn trace_section(app: &mut VectorcraftApp, ui: &mut Ui, preset: &str, view: vectorcraft_doc::TraceView) {
     section_header(ui, tl!("Image Trace"));
+    trace_body(app, ui, preset, view);
+}
+
+/// The Image Trace section's controls.
+fn trace_body(app: &mut VectorcraftApp, ui: &mut Ui, preset: &str, view: vectorcraft_doc::TraceView) {
     ui.horizontal(|ui| {
         dim_label(ui, tl!("Preset:"));
         crate::panels::image_trace::preset_dropdown(app, ui, preset, ui.available_width());
@@ -367,6 +401,15 @@ fn multi_color(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
 /// and Scale Artwork with Artboard, New Artboard and Delete Artboard, and Quick Actions: Rearrange All (#681) and
 /// Exit back to the Selection tool (#530).
 fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
+    artboard_body(app, ui);
+    divider(ui);
+    section_header(ui, tl!("Quick Actions"));
+    artboard_quick_actions(app, ui);
+}
+
+/// The Artboard section of Edit Artboards: the active artboard's name, position, size, preset,
+/// orientation and fill, New Artboard and Delete Artboard.
+fn artboard_body(app: &mut VectorcraftApp, ui: &mut Ui) {
     let units = app.session.general_unit();
     let origin = app.ruler_origin();
     let n = app.session.active().map_or(0, |d| d.doc.artboards.len());
@@ -427,8 +470,12 @@ fn artboard_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             super::artboards::delete_selected(app);
         }
     });
-    divider(ui);
-    section_header(ui, tl!("Quick Actions"));
+}
+
+/// Edit Artboards' Quick Actions: Rearrange All and Exit (back to the Selection tool).
+fn artboard_quick_actions(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let n = app.session.active().map_or(0, |d| d.doc.artboards.len());
+    let w = (ui.available_width() - 6.0) / 2.0;
     crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
     ui.horizontal(|ui| {
         rearrange_button(app, ui, n, w);
@@ -592,8 +639,32 @@ fn artboard_fill_row(app: &mut VectorcraftApp, ui: &mut Ui, i: usize, color: Opt
 }
 
 fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
-    let units = app.session.general_unit();
     section_header(ui, tl!("Document"));
+    document_body(app, ui);
+    divider(ui);
+    section_header(ui, tl!("Appearance"));
+    fill_stroke_rows(app, ui);
+    divider(ui);
+    section_header(ui, tl!("Rulers & Grids"));
+    rulers_body(app, ui);
+    divider(ui);
+    section_header(ui, tl!("Guides"));
+    guides_body(app, ui);
+    divider(ui);
+    section_header(ui, tl!("Snap Options"));
+    snap_body(app, ui);
+    divider(ui);
+    section_header(ui, tl!("Preferences"));
+    preferences_body(app, ui);
+    divider(ui);
+    section_header(ui, tl!("Quick Actions"));
+    document_quick_actions(app, ui);
+}
+
+/// The Document section (nothing selected): the units, Document Setup, Edit Artboards and, with
+/// two or more artboards, Rearrange All.
+fn document_body(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let units = app.session.general_unit();
     ui.horizontal(|ui| {
         dim_label(ui, tl!("Units"));
         let labels: Vec<&str> = Unit::ALL.iter().map(|u| u.label()).collect();
@@ -614,11 +685,10 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     if artboards > 1 {
         rearrange_button(app, ui, artboards, w);
     }
-    divider(ui);
-    section_header(ui, tl!("Appearance"));
-    fill_stroke_rows(app, ui);
-    divider(ui);
-    section_header(ui, tl!("Rulers & Grids"));
+}
+
+/// The Rulers & Grids section: Rulers, Grid and Transparency Grid.
+fn rulers_body(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let v = app.ui.view.clone();
         if widgets::icon_button(ui, "ruler", tl!("Show Rulers (⌘R)"), v.rulers, 26.0).clicked() {
@@ -632,8 +702,10 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             app.run("view.transparencyGrid", json!({})).ok();
         }
     });
-    divider(ui);
-    section_header(ui, tl!("Guides"));
+}
+
+/// The Guides section: Guides and Smart Guides.
+fn guides_body(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let v = app.ui.view.clone();
         if widgets::icon_button(ui, "layout-grid", tl!("Show Guides"), v.guides, 26.0).clicked() {
@@ -643,16 +715,21 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             app.run("view.smartGuides", json!({})).ok();
         }
     });
-    divider(ui);
-    section_header(ui, tl!("Snap Options"));
+}
+
+/// The Snap Options section: Snap to Point and Snap to Grid.
+fn snap_body(app: &mut VectorcraftApp, ui: &mut Ui) {
     if widgets::check(ui, tl!("Snap to Point"), app.ui.view.snap_to_point, true) {
         app.ui.view.snap_to_point ^= true;
     }
     if widgets::check(ui, tl!("Snap to Grid"), app.ui.view.snap_to_grid, true) {
         app.ui.view.snap_to_grid ^= true;
     }
-    divider(ui);
-    section_header(ui, tl!("Preferences"));
+}
+
+/// The Preferences section: Keyboard Increment and Scale Strokes & Effects.
+fn preferences_body(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let units = app.session.general_unit();
     let fw = super::field_width(ui);
     ui.horizontal(|ui| {
         dim_label(ui, tl!("Keyboard Increment"));
@@ -664,8 +741,10 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     if widgets::check(ui, tl!("Scale Strokes & Effects"), ss, true) {
         super::transform::set_pref(app, "scaleStrokes", !ss);
     }
-    divider(ui);
-    section_header(ui, tl!("Quick Actions"));
+}
+
+/// The document's Quick Actions: Document Setup and Preferences.
+fn document_quick_actions(app: &mut VectorcraftApp, ui: &mut Ui) {
     crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
     let w = (ui.available_width() - 6.0) / 2.0;
     ui.horizontal(|ui| {
@@ -679,6 +758,11 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
 }
 
 pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
+    transform_section_in(app, ui, true);
+}
+
+/// [`transform_section`], under its heading or (`header` false) without it.
+fn transform_section_in(app: &mut VectorcraftApp, ui: &mut Ui, header: bool) {
     if app.session.active().is_none() {
         return;
     }
@@ -695,7 +779,9 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     let reference = super::transform::panel_reference(app, ui, &bx);
     let (refi, rp) = (reference.index, reference.point);
     let copy = super::transform::alt_enter_copies(app, ui);
-    section_header(ui, tl!("Transform"));
+    if header {
+        section_header(ui, tl!("Transform"));
+    }
     let fw = super::field_width(ui);
     ui.horizontal(|ui| {
         if let Some(i) = widgets::reference_point(ui, refi) {
@@ -781,8 +867,15 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
 }
 
 fn appearance_section(app: &mut VectorcraftApp, ui: &mut Ui) {
+    appearance_section_in(app, ui, true);
+}
+
+/// [`appearance_section`], under its heading or (`header` false) without it.
+fn appearance_section_in(app: &mut VectorcraftApp, ui: &mut Ui, header: bool) {
     let Some(n) = first_selected(app) else { return };
-    section_header(ui, tl!("Appearance"));
+    if header {
+        section_header(ui, tl!("Appearance"));
+    }
     fill_stroke_rows(app, ui);
     width_profile_row(app, ui);
     let fw = super::field_width(ui);
@@ -888,13 +981,23 @@ pub fn type_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     };
     let s = tx.first_style();
     section_header(ui, tl!("Character"));
-    // The font, Font Size, Leading, Kerning and Tracking as in the Character panel.
-    let w = ui.available_width();
-    super::character::font_pickers(app, ui, &s, ("font", "font-style"), (w - 4.0, w - 4.0));
-    super::character::variable_font(app, ui, &s, w - 4.0);
-    super::character::metrics_grid(app, ui, "props-char", &s, w, false);
+    character_body(app, ui, &s);
     section_header(ui, tl!("Paragraph"));
-    // As in the Paragraph panel: the seven alignments and Hyphenate (#775); the rest is there.
+    paragraph_body(app, ui);
+}
+
+/// The Character section of a text object of first style `s`: the font, Font Size, Leading,
+/// Kerning and Tracking as in the Character panel.
+fn character_body(app: &mut VectorcraftApp, ui: &mut Ui, s: &vectorcraft_doc::CharStyle) {
+    let w = ui.available_width();
+    super::character::font_pickers(app, ui, s, ("font", "font-style"), (w - 4.0, w - 4.0));
+    super::character::variable_font(app, ui, s, w - 4.0);
+    super::character::metrics_grid(app, ui, "props-char", s, w, false);
+}
+
+/// The Paragraph section: as in the Paragraph panel, the seven alignments and Hyphenate (#775);
+/// the rest is there.
+fn paragraph_body(app: &mut VectorcraftApp, ui: &mut Ui) {
     if let Some((_, para)) = super::character::text_style(app) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
@@ -905,6 +1008,497 @@ pub fn type_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
         });
         super::paragraph::hyphenate_check(app, ui, &para);
     }
+}
+
+// ---------- Varos shell: Properties as an editor of sections ----------
+//
+// With Preferences › Varos shell (new) on, the shell draws each Properties editor (the panel, and
+// other instances of it, `properties@2`, …) through [`show_editor`]: the same sections as
+// [`show`], each under a header of its own (a disclosure chevron, its title, a grip) that
+// collapses it, and dragged by its grip to another place (an azure line shows where; Escape
+// cancels). Collapsed sections and the order are the editor's own ([`PropertiesView`], kept by
+// the shell). Every editor follows the selection; pinning one to an object is deferred.
+
+/// A section of the Properties editor. The ids are the same whatever is selected (the Appearance
+/// and Quick Actions of an object and of the document are one section each), so a section
+/// collapsed or moved stays so for every kind of selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SectionId {
+    #[default]
+    Document,
+    Artboard,
+    ClipGroup,
+    Transform,
+    Gradient,
+    Image,
+    ImageTrace,
+    Character,
+    Paragraph,
+    Dimension,
+    Appearance,
+    Align,
+    Pathfinder,
+    AnchorPoint,
+    RulersGrids,
+    Guides,
+    Snap,
+    Preferences,
+    QuickActions,
+}
+
+impl SectionId {
+    /// Every section, in the panel's own order (each kind of selection shows some of them, in
+    /// this order unless the editor's view moved them).
+    pub const ALL: [SectionId; 19] = [
+        SectionId::Document,
+        SectionId::Artboard,
+        SectionId::ClipGroup,
+        SectionId::Transform,
+        SectionId::Gradient,
+        SectionId::Image,
+        SectionId::ImageTrace,
+        SectionId::Character,
+        SectionId::Paragraph,
+        SectionId::Dimension,
+        SectionId::Appearance,
+        SectionId::Align,
+        SectionId::Pathfinder,
+        SectionId::AnchorPoint,
+        SectionId::RulersGrids,
+        SectionId::Guides,
+        SectionId::Snap,
+        SectionId::Preferences,
+        SectionId::QuickActions,
+    ];
+
+    /// The id as saved.
+    pub fn key(self) -> &'static str {
+        match self {
+            SectionId::Document => "document",
+            SectionId::Artboard => "artboard",
+            SectionId::ClipGroup => "clipGroup",
+            SectionId::Transform => "transform",
+            SectionId::Gradient => "gradient",
+            SectionId::Image => "image",
+            SectionId::ImageTrace => "imageTrace",
+            SectionId::Character => "character",
+            SectionId::Paragraph => "paragraph",
+            SectionId::Dimension => "dimension",
+            SectionId::Appearance => "appearance",
+            SectionId::Align => "align",
+            SectionId::Pathfinder => "pathfinder",
+            SectionId::AnchorPoint => "anchorPoint",
+            SectionId::RulersGrids => "rulersGrids",
+            SectionId::Guides => "guides",
+            SectionId::Snap => "snap",
+            SectionId::Preferences => "preferences",
+            SectionId::QuickActions => "quickActions",
+        }
+    }
+
+    /// The section saved as `key` (none for one this version doesn't have).
+    pub fn from_key(key: &str) -> Option<SectionId> {
+        SectionId::ALL.into_iter().find(|s| s.key() == key)
+    }
+}
+
+/// What a pinned Properties editor would show (pinning is deferred; nothing sets it yet): object
+/// `node` of the document whose `uid` is `doc`
+/// (`name`: as the Layers panel names it). Not saved: object ids belong to the session.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pin {
+    pub doc: u64,
+    pub node: vectorcraft_doc::NodeId,
+    pub name: String,
+}
+
+/// One Properties editor's view: the sections it shows collapsed and its order of every section,
+/// and what it is pinned to (none: it follows the selection; nothing pins one yet).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct PropertiesView {
+    pub collapsed: std::collections::BTreeSet<SectionId>,
+    pub order: Vec<SectionId>,
+    #[serde(skip)]
+    pub pinned: Option<Pin>,
+}
+
+impl Default for PropertiesView {
+    fn default() -> Self {
+        Self { collapsed: Default::default(), order: SectionId::ALL.to_vec(), pinned: None }
+    }
+}
+
+/// Reads leniently: a section id this version doesn't have is dropped; the order lists every
+/// section once ([`PropertiesView::sanitized`]).
+impl<'de> serde::Deserialize<'de> for PropertiesView {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            collapsed: Vec<String>,
+            #[serde(default)]
+            order: Vec<String>,
+        }
+        let raw = <Raw as serde::Deserialize>::deserialize(d)?;
+        let ids = |keys: &[String]| keys.iter().filter_map(|k| SectionId::from_key(k)).collect::<Vec<_>>();
+        Ok(PropertiesView { collapsed: ids(&raw.collapsed).into_iter().collect(), order: ids(&raw.order), pinned: None }.sanitized())
+    }
+}
+
+impl PropertiesView {
+    /// Every section once in the order: a repeated one keeps its first place, one missing (new in
+    /// this version) goes after the section before it in the panel's own order.
+    pub(crate) fn sanitized(mut self) -> Self {
+        let mut order: Vec<SectionId> = Vec::new();
+        for id in self.order {
+            if !order.contains(&id) {
+                order.push(id);
+            }
+        }
+        for (k, id) in SectionId::ALL.iter().enumerate() {
+            if order.contains(id) {
+                continue;
+            }
+            let at = SectionId::ALL[..k].iter().rev().find_map(|p| order.iter().position(|o| o == p)).map_or(0, |i| i + 1);
+            order.insert(at, *id);
+        }
+        self.order = order;
+        self
+    }
+
+    /// The sections `present` in this view's order.
+    pub(crate) fn ordered(&self, present: &[SectionId]) -> Vec<SectionId> {
+        let mut v = present.to_vec();
+        v.sort_by_key(|id| self.order.iter().position(|o| o == id).unwrap_or(usize::MAX));
+        v
+    }
+
+    /// Move section `id` before section `before` (none: right after `last`, the last section
+    /// shown).
+    pub(crate) fn move_section(&mut self, id: SectionId, before: Option<SectionId>, last: SectionId) {
+        let mut order = std::mem::take(&mut self.order);
+        order.retain(|o| *o != id);
+        let at = match before {
+            Some(b) => order.iter().position(|o| *o == b).unwrap_or(order.len()),
+            None => order.iter().position(|o| *o == last).map_or(order.len(), |i| i + 1),
+        };
+        order.insert(at, id);
+        self.order = order;
+        *self = std::mem::take(self).sanitized();
+    }
+}
+
+/// A section's body, drawn when it is open.
+type Body = Box<dyn FnOnce(&mut VectorcraftApp, &mut Ui)>;
+
+/// A section to show: its id, title and body.
+struct Section {
+    id: SectionId,
+    title: String,
+    body: Body,
+}
+
+fn sec(id: SectionId, title: &str, body: impl FnOnce(&mut VectorcraftApp, &mut Ui) + 'static) -> Section {
+    Section { id, title: title.to_string(), body: Box::new(body) }
+}
+
+/// The sections for what is selected, in the panel's own order, as [`show`] draws them.
+fn section_list(app: &mut VectorcraftApp) -> Vec<Section> {
+    let n_sel = app.session.active().map_or(0, |st| st.selection.len());
+    let anchors = crate::chrome::anchor_controls(app);
+    let first = first_selected(app);
+    if app.session.tool_id() == "artboard" {
+        return vec![
+            sec(SectionId::Artboard, tl!("Artboard"), artboard_body),
+            sec(SectionId::QuickActions, tl!("Quick Actions"), artboard_quick_actions),
+        ];
+    }
+    let Some(node) = first else {
+        return vec![
+            sec(SectionId::Document, tl!("Document"), document_body),
+            sec(SectionId::Appearance, tl!("Appearance"), fill_stroke_rows),
+            sec(SectionId::RulersGrids, tl!("Rulers & Grids"), rulers_body),
+            sec(SectionId::Guides, tl!("Guides"), guides_body),
+            sec(SectionId::Snap, tl!("Snap Options"), snap_body),
+            sec(SectionId::Preferences, tl!("Preferences"), preferences_body),
+            sec(SectionId::QuickActions, tl!("Quick Actions"), document_quick_actions),
+        ];
+    };
+    let mut v = Vec::new();
+    if n_sel == 1
+        && let NodeKind::Group { clip: true, children } = &node.kind
+    {
+        let has_contents = children.len() > 1;
+        v.push(sec(SectionId::ClipGroup, tl!("Clip Group"), move |app, ui| clip_group_buttons(app, ui, has_contents)));
+    }
+    v.push(sec(SectionId::Transform, tl!("Transform"), |app, ui| {
+        transform_section_in(app, ui, false);
+        corner_rows(app, ui);
+    }));
+    if app.session.tool_id() == "gradient" {
+        v.push(sec(SectionId::Gradient, tl!("Gradient"), |app, ui| {
+            super::gradient::type_row(app, ui);
+            super::gradient::draw_radios(app, ui);
+        }));
+    }
+    let is_image = n_sel == 1 && matches!(node.kind, NodeKind::Image(_));
+    if is_image {
+        let linked = crate::place::selected_image_info(app).is_some_and(|i| i["linked"] == true);
+        v.push(sec(SectionId::Image, if linked { tl!("Linked File") } else { tl!("Embedded Image") }, |app, ui| image_section_in(app, ui, false)));
+    }
+    if let Some((preset, view)) = crate::panels::image_trace::selected_trace(app) {
+        v.push(sec(SectionId::ImageTrace, tl!("Image Trace"), move |app, ui| trace_body(app, ui, &preset, view)));
+    }
+    if matches!(node.kind, NodeKind::Text(_)) {
+        v.push(sec(SectionId::Character, tl!("Character"), |app, ui| {
+            if let Some(n) = first_selected(app)
+                && let NodeKind::Text(tx) = &n.kind
+            {
+                character_body(app, ui, &tx.first_style());
+            }
+        }));
+        v.push(sec(SectionId::Paragraph, tl!("Paragraph"), paragraph_body));
+    }
+    if crate::dialogs::dimension::selected(app).is_some() {
+        v.push(sec(SectionId::Dimension, tl!("Dimension"), |app, ui| crate::dialogs::dimension::properties_section_in(app, ui, false)));
+    }
+    v.push(sec(SectionId::Appearance, tl!("Appearance"), |app, ui| appearance_section_in(app, ui, false)));
+    v.push(sec(SectionId::Align, tl!("Align"), align_body));
+    if n_sel > 1 {
+        v.push(sec(SectionId::Pathfinder, tl!("Pathfinder"), pathfinder_body));
+    }
+    if anchors != crate::chrome::AnchorControls::None {
+        v.push(sec(SectionId::AnchorPoint, tl!("Anchor Point"), move |app, ui| crate::chrome::anchor_buttons(app, ui, anchors)));
+    }
+    v.push(sec(SectionId::QuickActions, tl!("Quick Actions"), move |app, ui| quick_actions_body(app, ui, n_sel, Some(&node), is_image)));
+    v
+}
+
+/// A section's header height, and its body's inset from the left.
+const SECTION_HEAD: f32 = 24.0;
+const SECTION_INSET: i8 = 8;
+
+/// One section as drawn: its header, grip and whole extent (header and body).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SectionHit {
+    pub id: SectionId,
+    pub header: egui::Rect,
+    pub grip: egui::Rect,
+    pub whole: egui::Rect,
+    pub collapsed: bool,
+}
+
+/// An editor's sections as the last frame drew them, and during a drag of one of them the azure
+/// line where it would land and its ghost under the pointer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SectionHits {
+    pub sections: Vec<SectionHit>,
+    pub line: Option<egui::Rect>,
+    pub ghost: Option<egui::Rect>,
+}
+
+fn hits_id(instance: &str) -> egui::Id {
+    egui::Id::unique("varos-props-sections").with(instance)
+}
+
+/// Editor `instance`'s sections as last drawn.
+#[allow(dead_code)] // Varos: read by the shell's tests.
+pub(crate) fn section_hits(ctx: &egui::Context, instance: &str) -> SectionHits {
+    ctx.data(|d| d.get_temp::<SectionHits>(hits_id(instance))).unwrap_or_default()
+}
+
+/// A section being moved by its grip.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct SectionDrag {
+    instance: String,
+    id: SectionId,
+    /// Where the pointer holds the header, from its top-left corner; the header's size.
+    grab: egui::Vec2,
+    size: egui::Vec2,
+    title: String,
+}
+
+fn drag_id() -> egui::Id {
+    egui::Id::unique("varos-props-section-drag")
+}
+
+/// Is a section being moved (in any editor).
+#[allow(dead_code)] // Varos: read by the shell's tests.
+pub(crate) fn section_dragging(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<SectionDrag>(drag_id())).is_some()
+}
+
+/// Escape while a section is moved: the move is cancelled (nothing changes) and nothing else sees
+/// the key. True when it was.
+pub(crate) fn escape_section_drag(ctx: &egui::Context) -> bool {
+    if !section_dragging(ctx) || !ctx.input_mut(|i| i.key_pressed(egui::Key::Escape) && i.consume_key(i.modifiers, egui::Key::Escape)) {
+        return false;
+    }
+    ctx.data_mut(|d| d.remove_temp::<SectionDrag>(drag_id()));
+    ctx.stop_dragging();
+    ctx.request_repaint();
+    true
+}
+
+/// What a section's header did this frame.
+struct SectionOut {
+    hit: SectionHit,
+    toggled: bool,
+    drag_started: bool,
+}
+
+/// Draw section `id` of editor `instance`: its header across the panel (the disclosure chevron,
+/// `title` at 11 points semibold, six grip dots at the right, a hairline below) and, while it is
+/// open, `body` inset 8 points. A click on the header collapses or opens it; its grip drags it.
+fn section(ui: &mut Ui, instance: &str, id: SectionId, title: &str, collapsed: bool, body: impl FnOnce(&mut Ui)) -> SectionOut {
+    let t = Tokens::get(ui.ctx());
+    let (header, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), SECTION_HEAD), egui::Sense::click());
+    let grip = egui::Rect::from_min_max(egui::pos2(header.right() - 18.0, header.top()), header.max);
+    let grip_response = ui.interact(grip, egui::Id::unique("varos-props-grip").with((instance, id)), egui::Sense::click_and_drag());
+    let painter = ui.painter().clone();
+    if response.hovered() || grip_response.hovered() {
+        painter.rect_filled(header, 3.0, t.hover);
+    }
+    let chevron = egui::Rect::from_center_size(egui::pos2(header.left() + 8.0, header.center().y), egui::vec2(12.0, 12.0));
+    icons::paint(ui, if collapsed { "chevron-right" } else { "chevron-down" }, chevron, if response.hovered() { t.text_strong } else { t.icon });
+    let room = egui::Rect::from_min_max(egui::pos2(header.left() + 18.0, header.top()), egui::pos2(grip.left(), header.bottom()));
+    let galley = painter.layout_no_wrap(title.to_string(), crate::theme::semibold(11.0), t.text_strong);
+    painter.with_clip_rect(room.intersect(painter.clip_rect())).galley(
+        egui::pos2(room.left(), room.center().y - galley.size().y / 2.0),
+        galley,
+        t.text_strong,
+    );
+    for dx in [-2.0, 2.0] {
+        for dy in [-4.0, 0.0, 4.0] {
+            painter.circle_filled(grip.center() + egui::vec2(dx, dy), 0.8, t.text_dim);
+        }
+    }
+    if grip_response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    painter.hline(header.x_range(), header.bottom() - 0.5, egui::Stroke::new(1.0, t.border));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::DisclosureTriangle, true, !collapsed, title));
+    grip_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Move section")));
+    if !collapsed {
+        ui.add_space(6.0);
+        egui::Frame::NONE.inner_margin(egui::Margin { left: SECTION_INSET, right: 0, top: 0, bottom: 0 }).show(ui, body);
+    }
+    let bottom = if collapsed { header.bottom() } else { ui.cursor().top().max(header.bottom()) };
+    let whole = egui::Rect::from_min_max(header.min, egui::pos2(header.right(), bottom));
+    ui.add_space(8.0);
+    SectionOut { hit: SectionHit { id, header, grip, whole, collapsed }, toggled: response.clicked(), drag_started: grip_response.drag_started() }
+}
+
+/// Properties editor `instance` (the Varos shell): a line saying what it shows (it follows the
+/// selection), then its sections in `view`'s order, collapsed as `view` says. Every editor shows
+/// and edits the selection; pinning one to an object is deferred (it needs explicit targets passed
+/// to the sections, not a change of the selection).
+pub(crate) fn show_editor(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str, view: &mut PropertiesView) {
+    let t = Tokens::get(ui.ctx());
+    let Some(st) = app.session.active() else {
+        dim_label(ui, tl!("No document open"));
+        return;
+    };
+    let first = st.selection.objects.first().and_then(|id| st.doc.node(*id)).cloned();
+    let kind = selection_label(app, first.as_ref(), st.selection.len());
+    let line = format!("{} · {kind}", tl!("Following selection"));
+    ui.label(egui::RichText::new(line).size(11.0).color(t.text_dim));
+    ui.add_space(4.0);
+    draw_sections(app, ui, instance, view);
+}
+
+/// The sections of editor `instance` for what it shows, and the move of one of them by its grip.
+fn draw_sections(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str, view: &mut PropertiesView) {
+    let ctx = ui.ctx().clone();
+    let mut list: Vec<Option<Section>> = section_list(app).into_iter().map(Some).collect();
+    let ids: Vec<SectionId> = list.iter().flatten().map(|s| s.id).collect();
+    let mut hits = SectionHits::default();
+    let mut started = None;
+    for id in view.ordered(&ids) {
+        let Some(Section { title, body, .. }) = list.iter_mut().find(|s| s.as_ref().is_some_and(|s| s.id == id)).and_then(Option::take) else {
+            continue;
+        };
+        let collapsed = view.collapsed.contains(&id);
+        let out = section(ui, instance, id, &title, collapsed, |ui| body(app, ui));
+        if out.toggled {
+            if collapsed {
+                view.collapsed.remove(&id);
+            } else {
+                view.collapsed.insert(id);
+            }
+            ctx.request_repaint();
+        }
+        if out.drag_started {
+            started = Some((id, title, out.hit.header));
+        }
+        hits.sections.push(out.hit);
+    }
+    if let Some((id, title, header)) = started
+        && !section_dragging(&ctx)
+    {
+        let origin = ctx.input(|i| i.pointer.press_origin()).unwrap_or(header.center());
+        let grab = (origin - header.min).max(egui::Vec2::ZERO).min(header.size());
+        ctx.data_mut(|d| d.insert_temp(drag_id(), SectionDrag { instance: instance.to_string(), id, grab, size: header.size(), title }));
+    }
+    if let Some(d) = ctx.data(|d| d.get_temp::<SectionDrag>(drag_id())).filter(|d| d.instance == instance) {
+        section_drag(&ctx, view, &d, &mut hits);
+    }
+    ctx.data_mut(|d| d.insert_temp(hits_id(instance), hits));
+}
+
+/// Section drag `d` this frame: the source header outlined, the azure line between the sections
+/// where it would land, its ghost under the pointer; released, it moves there (released where it
+/// is, or away from the sections, nothing changes). A lost pointer or window focus, Escape, or
+/// its section no longer shown (the selection changed) cancels.
+fn section_drag(ctx: &egui::Context, view: &mut PropertiesView, d: &SectionDrag, hits: &mut SectionHits) {
+    let end = || ctx.data_mut(|m| m.remove_temp::<SectionDrag>(drag_id()));
+    let (pos, down, released, focused, escape) =
+        ctx.input(|i| (i.pointer.latest_pos(), i.pointer.primary_down(), i.pointer.primary_released(), i.focused, i.key_pressed(egui::Key::Escape)));
+    let sections = hits.sections.clone();
+    let (Some(p), Some(from), Some(area)) =
+        (pos, sections.iter().position(|s| s.id == d.id), sections.iter().map(|s| s.whole).reduce(egui::Rect::union))
+    else {
+        end();
+        return;
+    };
+    if !focused || escape || (!down && !released) {
+        end();
+        return;
+    }
+    // Before the first section whose middle is below the pointer; where it is changes nothing.
+    let k = sections.iter().filter(|s| s.whole.center().y < p.y).count();
+    let near = area.expand2(egui::vec2(16.0, 24.0)).contains(p);
+    let target = (near && k != from && k != from + 1).then_some(k);
+    let accent = crate::varos::theme::ACCENT;
+    let t = Tokens::get(ctx);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("varos-props-section-preview")));
+    painter.rect_stroke(sections[from].header, 3.0, egui::Stroke::new(1.0, accent), egui::StrokeKind::Inside);
+    if let Some(k) = target {
+        let y = match (k.checked_sub(1).and_then(|j| sections.get(j)), sections.get(k)) {
+            (Some(above), Some(below)) => f32::midpoint(above.whole.bottom(), below.whole.top()),
+            (None, Some(below)) => below.whole.top() - 2.0,
+            (Some(above), None) => above.whole.bottom() + 2.0,
+            (None, None) => p.y,
+        };
+        let line = egui::Rect::from_min_max(egui::pos2(area.left(), y - 1.0), egui::pos2(area.right(), y + 1.0));
+        painter.rect_filled(line, 1.0, accent);
+        hits.line = Some(line);
+    }
+    let ghost = egui::Rect::from_min_size(p - d.grab, d.size);
+    let fade = |c: egui::Color32| c.gamma_multiply(0.7);
+    painter.rect_filled(ghost, 3.0, fade(t.button));
+    let galley = painter.layout_no_wrap(d.title.clone(), crate::theme::semibold(11.0), fade(t.text_strong));
+    painter.with_clip_rect(ghost).galley(egui::pos2(ghost.left() + 18.0, ghost.center().y - galley.size().y / 2.0), galley, fade(t.text_strong));
+    hits.ghost = Some(ghost);
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    if released {
+        if let (Some(k), Some(last)) = (target, sections.last()) {
+            view.move_section(d.id, sections.get(k).map(|s| s.id), last.id);
+        }
+        end();
+    }
+    ctx.request_repaint();
 }
 
 #[cfg(test)]

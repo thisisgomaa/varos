@@ -241,7 +241,12 @@ fn float(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, f: &Float, h
             shell.toggle_collapsed(b);
             ctx.request_repaint();
         }
-        Some(Ask::Expand) | None => {}
+        Some(Ask::Box(boxes::Ask::Duplicate(panel))) => {
+            super::duplicate_properties(app, &panel);
+            ctx.request_repaint();
+        }
+        // A floating panel is never maximized (it lies above the boxes).
+        Some(Ask::Box(boxes::Ask::Maximize(_)) | Ask::Expand) | None => {}
     }
 }
 

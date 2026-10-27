@@ -1,7 +1,8 @@
 //! Box painting: an ordinary box (its tab row, its ≡ menu and its front panel's body) and the
 //! Board (the canvas). Flat: an 8-point box on the seam, a 1-point hairline, no shadow; azure is
 //! never used here (the front tab is lit, not coloured). A tab pill is also where a tab is dragged
-//! from ([`super::drag`]) and double-clicked to collapse its box to its tab row.
+//! from ([`super::drag`]) and double-clicked to collapse its box to its tab row; a double-click on
+//! the tab row's empty space maximizes the box (and restores the layout).
 
 use egui::{Align, CornerRadius, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 
@@ -109,8 +110,13 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
     TabRow { clicked, double_clicked, drag_started, tabs: after.into_iter().map(|(pill, _)| pill).collect() }
 }
 
-/// Panel `id`'s tab label: its library's name, or its translated name.
+/// Panel `id`'s tab label: its library's name, or its translated name; another Properties editor
+/// is numbered ("Properties 2").
 pub(crate) fn label(app: &VectorcraftApp, id: &str) -> String {
+    if super::persist::is_extra_instance(id) {
+        let n = id.split_once('@').map_or("", |(_, n)| n);
+        return format!("{} {n}", label(app, super::persist::PROPERTIES));
+    }
     crate::panels::library_panel::tab_label(app, id)
         .or_else(|| crate::state::all_panels().find(|p| p.0 == id).map(|p| tl!(p.1).to_string()))
         .unwrap_or_else(|| id.to_string())
@@ -148,6 +154,11 @@ pub(crate) enum Ask {
     Close(String),
     /// Collapse box `0` to its tab row, or show it whole again (a double-click on a tab).
     Collapse(u32),
+    /// Maximize box `0` (fill the central region), or restore the layout (a double-click on the
+    /// tab row's empty space, or the ≡ menu).
+    Maximize(u32),
+    /// Another Properties editor beside Properties editor `0` (the ≡ menu's Duplicate Panel).
+    Duplicate(String),
 }
 
 /// Draw ordinary box `b` in `rect`: tab row, ≡, the front panel's body (none while it is collapsed).
@@ -174,6 +185,8 @@ pub(crate) fn show(
     let menu = Rect::from_min_size(pos2(head.right() - PAD - MENU.x, head.center().y - MENU.y / 2.0), MENU);
     let row = Rect::from_min_max(pos2(head.left() + PAD, head.top()), pos2((menu.left() - PAD).max(head.left() + PAD), head.bottom()));
     hits.push((Hit::TabRow(b.id), row));
+    // The row's empty space (under the pills, which take their own input) maximizes the box.
+    let row_response = ui.interact(row, egui::Id::unique("varos-shell-row").with(b.id), Sense::click());
     let tabs: Vec<(String, String)> = b.tabs.iter().map(|p| (p.clone(), label(app, p))).collect();
     let active = b.active.min(tabs.len().saturating_sub(1));
     let out = tab_row(ui, &tabs, active, row, &t);
@@ -195,10 +208,20 @@ pub(crate) fn show(
     };
     let front = tabs.get(active).map(|(p, _)| p.clone());
     let mut ask = out.double_clicked.map(|_| Ask::Collapse(b.id));
+    if !floating
+        && row_response.double_clicked()
+        && out.tabs.iter().all(|pill| !row_response.interact_pointer_pos().is_some_and(|p| pill.contains(p)))
+    {
+        ask = Some(Ask::Maximize(b.id));
+    }
     if let Some(front) = &front {
         hits.push((Hit::Menu(b.id), menu));
-        if menu_button(app, ui, menu, b.id, front, &t) {
-            ask = Some(Ask::Close(front.clone()));
+        let extras = MenuExtras { duplicate: true, maximized: (!floating).then(|| app.ui.varos_shell.maximized_box() == Some(b.id)) };
+        match panel_menu(app, ui, menu, b.id, front, &t, extras) {
+            Some(MenuPick::Close) => ask = Some(Ask::Close(front.clone())),
+            Some(MenuPick::Maximize) => ask = Some(Ask::Maximize(b.id)),
+            Some(MenuPick::Duplicate) => ask = Some(Ask::Duplicate(front.clone())),
+            None => {}
         }
     }
     painter.hline((rect.left() + 1.0)..=(rect.right() - 1.0), head.bottom() - 0.5, Stroke::new(1.0, t.border));
@@ -220,9 +243,57 @@ pub(crate) fn show(
     ask
 }
 
-/// The ≡ button: the panel's own menu items (`panels::panel_menu_items`) and Close Panel; true when
-/// Close Panel was chosen.
+/// What the ≡ menu was asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MenuPick {
+    Close,
+    Maximize,
+    Duplicate,
+}
+
+/// The Board's ≡ (at the top of its strip): Maximize Board, or Restore Layout while it is
+/// maximized. True when chosen.
+pub(crate) fn board_menu(ui: &mut egui::Ui, rect: Rect, maximized: bool, t: &Tokens) -> bool {
+    let response = ui.interact(rect, egui::Id::unique("varos-shell-board-menu"), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect.shrink(3.0), CornerRadius::same(CONTROL_RADIUS), t.hover);
+    }
+    crate::icons::paint(
+        ui,
+        "menu",
+        Rect::from_center_size(rect.center(), vec2(14.0, 14.0)),
+        if response.hovered() { t.text_strong } else { t.text_dim },
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Board menu")));
+    let response = response.on_hover_text(tl!("Board menu"));
+    let mut chosen = false;
+    egui::Popup::menu(&response).show(|ui| {
+        ui.set_min_width(180.0);
+        if crate::widgets::menu_item(ui, if maximized { "Restore Layout" } else { "Maximize Board" }, true, false) {
+            chosen = true;
+        }
+    });
+    chosen
+}
+
+/// What a ≡ menu offers besides the panel's own items and Close Panel.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MenuExtras {
+    /// Duplicate Panel, for a Properties editor (a box's or a floating panel's; not a flyout's,
+    /// which has no place to put the copy).
+    pub duplicate: bool,
+    /// Maximize Box, or Restore Layout while it is maximized (a box of the tree).
+    pub maximized: Option<bool>,
+}
+
+/// A flyout's ≡ button: the panel's own menu items (`panels::panel_menu_items`) and Close Panel;
+/// true when Close Panel was chosen.
 pub(crate) fn menu_button(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, box_id: u32, panel: &str, t: &Tokens) -> bool {
+    panel_menu(app, ui, rect, box_id, panel, t, MenuExtras::default()) == Some(MenuPick::Close)
+}
+
+/// The ≡ button with `extras`.
+fn panel_menu(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, box_id: u32, panel: &str, t: &Tokens, extras: MenuExtras) -> Option<MenuPick> {
     let response = ui.interact(rect, egui::Id::unique("varos-shell-menu").with(box_id), Sense::click());
     if response.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(CONTROL_RADIUS), t.hover);
@@ -235,19 +306,27 @@ pub(crate) fn menu_button(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rec
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!("Panel menu")));
     let response = response.on_hover_text(tl!("Panel menu"));
-    let mut close = false;
+    let mut pick = None;
     egui::Popup::menu(&response).show(|ui| {
         crate::widgets::menu_scroll(ui, |ui| {
             ui.set_min_width(220.0);
-            if crate::panels::panel_menu_items(app, ui, panel) {
+            if crate::panels::panel_menu_items(app, ui, super::persist::instance_kind(panel)) {
                 ui.separator();
             }
+            if extras.duplicate && super::persist::is_properties(panel) && crate::widgets::menu_item(ui, "Duplicate Panel", true, false) {
+                pick = Some(MenuPick::Duplicate);
+            }
+            if let Some(max) = extras.maximized
+                && crate::widgets::menu_item(ui, if max { "Restore Layout" } else { "Maximize Box" }, true, false)
+            {
+                pick = Some(MenuPick::Maximize);
+            }
             if crate::widgets::menu_item(ui, "Close Panel", true, false) {
-                close = true;
+                pick = Some(MenuPick::Close);
             }
         });
     });
-    close
+    pick
 }
 
 /// Panel `id`'s body filling `ui`: the main column's panels size themselves (Layers fills,
@@ -255,12 +334,39 @@ pub(crate) fn menu_button(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rec
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str) {
     let width = ui.available_width();
     let height = (ui.available_height() - 20.0).max(0.0);
-    if DockTab::from_id(id).is_some() {
-        crate::dock::panel_body(app, ui, id, width, height);
+    if DockTab::from_id(id).is_some() || super::persist::is_properties(id) {
+        panel_body(app, ui, id, width, height);
     } else {
         crate::widgets::panel_scroll(ui, egui::ScrollArea::vertical().id_salt(("varos-shell-body", id)).auto_shrink([false, false]), |ui| {
             let width = ui.available_width();
-            crate::dock::panel_body(app, ui, id, width, height)
+            panel_body(app, ui, id, width, height)
         });
+    }
+}
+
+/// Panel `id`'s contents `width` wide (`dock::panel_body`, the stable host API), but a Properties
+/// editor is drawn as one: its sections (collapsed, in its order), its pin
+/// (`panels::properties::show_editor`), with its own view.
+pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: f32, tall: f32) {
+    if !super::persist::is_properties(id) {
+        crate::dock::panel_body(app, ui, id, width, tall);
+        return;
+    }
+    let _profile = crate::varos::profile::scope(super::persist::PROPERTIES);
+    let stored = app.ui.varos_shell.views.get(id).cloned();
+    let mut view = stored.clone().unwrap_or_default();
+    egui::Frame::NONE.inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        ui.set_width(width - 20.0);
+        // As the Properties panel in the dock: at least `tall` when the sections are taller.
+        crate::widgets::panel_scroll(
+            ui,
+            egui::ScrollArea::vertical().id_salt(("props-editor", id)).max_height(tall).min_scrolled_height(tall).auto_shrink([false, true]),
+            |ui| crate::panels::properties::show_editor(app, ui, id, &mut view),
+        );
+    });
+    // Kept only when it differs from what is kept (a view that was never changed stays unsaved),
+    // and only for an editor that still has an owner.
+    if stored.as_ref().unwrap_or(&Default::default()) != &view && app.ui.varos_shell.owns(id) {
+        app.ui.varos_shell.views.insert(id.to_string(), view);
     }
 }
