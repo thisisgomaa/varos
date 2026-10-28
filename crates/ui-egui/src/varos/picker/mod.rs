@@ -761,11 +761,13 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(anchor) = app.ui.varos_picker_anchor else { return };
     let mut screen = ctx.content_rect();
     let shell = crate::varos::shell::enabled(app);
+    let mut exclusions = Vec::new();
     if shell {
         for (hit, r) in crate::varos::shell::hit_rects(ctx) {
             match hit {
                 crate::varos::shell::Hit::Tools if app.ui.varos_shell.tools_pos.is_none() => screen.min.x = screen.left().max(r.right() + 6.0),
                 crate::varos::shell::Hit::Strip => screen.max.x = screen.right().min(r.left() - 6.0),
+                crate::varos::shell::Hit::Tools | crate::varos::shell::Hit::FloatStrip(_) => exclusions.push(r.expand(6.0)),
                 _ => {}
             }
         }
@@ -794,8 +796,28 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     };
     let x = x.clamp(screen.left(), (screen.right() - W).max(screen.left()));
     let y = y.min(screen.bottom() - h).max(screen.top());
+    let preferred = Rect::from_min_size(pos2(x, y), egui::vec2(W + 2.0, tall + 2.0));
+    // Try each obstacle edge, including combinations, so multiple floating strips stay clear.
+    let mut xs = vec![x, screen.left(), (screen.right() - preferred.width()).max(screen.left())];
+    let mut ys = vec![y, screen.top(), (screen.bottom() - preferred.height()).max(screen.top())];
+    for r in &exclusions {
+        xs.extend([r.right(), r.left() - preferred.width()]);
+        ys.extend([r.bottom(), r.top() - preferred.height()]);
+    }
+    let position = if exclusions.is_empty() {
+        preferred.min
+    } else {
+        xs.into_iter()
+            .flat_map(|x| ys.iter().map(move |&y| pos2(x, y)))
+            .filter(|p| {
+                let r = Rect::from_min_size(*p, preferred.size());
+                screen.contains_rect(r) && exclusions.iter().all(|e| !r.intersects(*e))
+            })
+            .min_by(|a, b| a.distance_sq(preferred.min).total_cmp(&b.distance_sq(preferred.min)))
+            .unwrap_or(preferred.min)
+    };
     let id = popover_id();
-    let area = egui::Area::new(id).kind(egui::UiKind::Modal).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).movable(false).fade_in(false);
+    let area = egui::Area::new(id).kind(egui::UiKind::Modal).order(egui::Order::Foreground).fixed_pos(position).movable(false).fade_in(false);
     let t = Tokens::get(ctx);
     let frame =
         if shell { egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(10) } else { egui::Frame::NONE.fill(t.panel) };

@@ -2336,7 +2336,7 @@ impl VectorcraftApp {
         canvas::release_over_panel(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         let on_home = varos::home::is_home(self); // Varos: Home shows only title bar + welcome content.
-        if on_home || self.ui.screen_mode < 2 {
+        if !on_home && self.ui.screen_mode < 2 {
             varos::profile::measure("app_bar", || chrome::app_bar(self, ui));
             if !on_home && self.ui.control_bar && !varos::shell::enabled(self) {
                 varos::profile::measure("control_bar", || chrome::control_bar(self, ui));

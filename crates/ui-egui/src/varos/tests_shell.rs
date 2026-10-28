@@ -3086,3 +3086,84 @@ fn simple_tools_dock_at_the_window_edge_with_a_panel_left_of_the_board() {
     assert_eq!(h.rect(&Hit::Tools).left(), 0.0);
     assert!(h.board().left() > h.rect(&Hit::Tools).right() + 190.0);
 }
+
+#[test]
+fn simple_review_home_has_one_bar_and_editor_keeps_its_bar() {
+    let mut h = Harness::without_document();
+    h.shell(true);
+    let output = h.frame_full(vec![]);
+    let lines: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::LineSegment { points, .. } if (points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x).abs() > 1500.0 => {
+                Some(points[0].y)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(lines.iter().any(|y| (*y - 40.0).abs() < 0.1), "Home bar ends at 40: {lines:?}");
+    assert!(!lines.iter().any(|y| *y > 40.1 && *y < 85.0), "no second bar: {lines:?}");
+    h.app.run("file.new", json!({})).unwrap();
+    h.settle();
+    assert!(h.rect(&Hit::Tools).top() >= 40.0);
+    assert!(h.ctx.data(|d| d.get_temp::<Rect>(egui::Id::unique("simple-tabs-rect"))).is_some());
+}
+
+#[test]
+fn simple_review_three_column_tool_flyout_clears_strip() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.varos_shell.tools_columns = 3;
+    h.settle();
+    review_open_tool_flyout(&mut h);
+    let area = egui::AreaState::load(&h.ctx, egui::Id::unique("tool-flyout")).unwrap().rect();
+    let strip = h.rect(&Hit::Tools);
+    assert!(!area.intersects(strip), "{area:?} overlaps {strip:?}");
+    assert!((area.left() - strip.right() - 6.0).abs() < 0.1);
+    assert!((area.width() - 240.0).abs() < 0.1, "{area:?}");
+}
+
+#[test]
+fn simple_review_long_workspace_does_not_overlap_tabs() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.varos_shell.workspace = "W".repeat(60);
+    h.settle();
+    let output = h.frame_full(vec![]);
+    assert!(
+        output
+            .shapes
+            .iter()
+            .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "W".repeat(60) && text.galley.elided)),
+        "workspace label is visibly ellipsized"
+    );
+    let rect = |key| h.ctx.data(|d| d.get_temp::<Rect>(egui::Id::unique(key))).unwrap();
+    let workspace = rect("simple-workspace-rect");
+    assert!(workspace.width() <= 160.0);
+    assert!(rect("simple-tabs-rect").right() <= workspace.left());
+}
+
+#[test]
+fn simple_review_picker_avoids_floating_tools_and_panel_strip() {
+    for tools in [true, false] {
+        let mut h = Harness::new();
+        h.shell(true);
+        if tools {
+            h.app.ui.varos_shell.tools_pos = Some([400.0, 200.0]);
+        } else {
+            h.app.ui.varos_shell.take("transform");
+            h.app.ui.varos_shell.float_strips.push(floats::FloatStrip {
+                id: 998,
+                pos: [400.0, 200.0],
+                groups: vec![shell::strip::Group { panels: vec!["transform".into()], temporary: false, width: 240.0, height: 360.0 }],
+            });
+        }
+        h.settle();
+        h.app.ui.varos_picker_anchor = Some(Rect::from_min_size(pos2(400.0, 170.0), vec2(20.0, 20.0)));
+        h.settle();
+        let picker = egui::AreaState::load(&h.ctx, egui::Id::unique("varos-picker-popover")).unwrap().rect();
+        let strip = h.rect(&if tools { Hit::Tools } else { Hit::FloatStrip(998) });
+        assert!(!picker.intersects(strip), "{picker:?} overlaps {strip:?}");
+    }
+}

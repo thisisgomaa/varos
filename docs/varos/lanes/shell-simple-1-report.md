@@ -1,6 +1,6 @@
-# Simple shell look — partial validation report (draft)
+# Simple shell look — PR #6 fix-round validation
 
-Branch: `lane-look`, continued from `f3a9780f` (`wip(shell-simple-1)`). Reference: the Editor view of `docs/varos/mockups/shell-simple-2026-10-28.html`, with the owner's floating/docking amendment in `SHELL_SIMPLE_DIRECTION.md`. Contributor credit stays `@thisisgomaa` as requested. The owner stopped validation and requested a draft PR with the current work; this report does not claim full acceptance.
+Branch: `lane-look`, continued from `f3a9780f` (`wip(shell-simple-1)`). Reference: the Editor view of `docs/varos/mockups/shell-simple-2026-10-28.html`, with the owner's floating/docking amendment in `SHELL_SIMPLE_DIRECTION.md`. Contributor credit stays `@thisisgomaa` as requested. This review round resumes local validation after main was merged; owner visual acceptance remains pending.
 
 ## A–F implementation and evidence
 
@@ -19,68 +19,35 @@ Persistence is version 6, with a pure 5→6 migration and `shell/fixtures/v5.jso
 
 OFF isolation: legacy panel and picker bodies execute directly, without an added UI scope or changed widget IDs. Legacy icon keys retain their original sources. No theme colour values, engine/render/text files or `home*.rs` were edited. Existing cursor tests exposed a Linux cache mismatch: the generic cursor cache now resolves the same default Varos bitmap already displayed by the canvas; displayed pixels and system-fallback behavior stay the same. Those cursor tests are unchanged (`cursors.rs:676`).
 
+## PR #6 review fixes (2026-10-28)
+
+- Home bypasses the editor app bar and gives its own 40-point header the full content rect (`lib.rs`).
+- Tool flyouts use the Tools strip's right edge plus six points, including during animation. Shell rows, shortcuts and the grab bar fit a 240-point frame; long tool labels ellipsize (`toolbar.rs`).
+- Workspace controls cap their label at 128 points (160 including padding/chevron), ellipsize, and have room reserved beside document tabs (`chrome.rs`, `varos/shell/workspace.rs`).
+- Picker placement excludes floating Tools and floating panel strips, trying nearby obstacle edges while retaining the original placement when no floating strips are present (`varos/picker/mod.rs`).
+- Four `simple_review_*` frame regressions cover these findings, including a 60-character name and both kinds of floating strip (`varos/tests_shell.rs`).
+
 ## Gates
 
-Validation runs in the Linux workspace with Rust 1.95.0, one Cargo lane, `-j 2`, `--offline`, and `--test-threads=2` for tests. The Mac target directory from the original brief is unavailable here; the local `target` directory is used. A one-time `cargo fetch --locked` supplied missing dependencies before offline validation. The owner replaced the workspace release gate with debug tests because the uncached release compilation was too slow. The release workspace compilation was stopped before test execution; its completed native `vectorcraft` binary is retained. The debug workspace compilation was also interrupted by an environment transition, resumed from cache, and then stopped at the owner’s request before test execution. Neither workspace run has a completed test result. No additional release compilation was started.
-
-Completed release test command:
-
-```sh
-cargo test -p vectorcraft-ui-egui --lib --release --offline -j 2 -- --test-threads=2
-```
-
-Stopped debug workspace command:
-
-```sh
-cargo test --workspace --no-fail-fast --offline -j 2 -- --test-threads=2
-```
+Current validation: macOS lane-look, shared target directory `~/Documents/AI workspace/lanes/_target-shared`, one Cargo command at a time, `--offline -j 2`, test execution with `--test-threads=2`. Implementation and regression tests were written before Cargo. The requested handoff marker is awaited before the first Cargo command. The earlier Linux partial run is superseded by the results below; its ten failures are no longer an accepted baseline.
 
 | Gate | Exact result / status |
 |---|---|
-| UI release library tests | Expected baseline only, exit 101: `test result: FAILED. 2533 passed; 10 failed; 16 ignored; 0 measured; 0 filtered out; finished in 77.71s` |
-| Workspace debug tests (owner-approved replacement) | Stopped at owner request during compilation; no completed test result. |
-| Two ignored 1440×900 captures | Not run; no captures generated. |
-| Clippy, workspace/all targets, warnings denied | Not run; no result line available. |
-| `cargo fmt --check` | Not run; no result line available. Source was formatted earlier, but the requested check did not complete. |
-| `git diff --check` | Not run; no result line available. |
-| Native release build | Already produced by the stopped workspace release compilation, before the owner changed the gate. Existing executable verified with exit 0: `vectorcraft 0.17.0`. No additional release build started. |
-
-The completed UI release run has exactly the permitted failures below; every other UI library test passes. There is no completed workspace result.
-
-```text
-panels::gradient::tests::a_color_dropped_on_the_ramp_keeps_its_model_in_a_cmyk_document
-panels::gradient::tests::a_dropped_swatch_adds_or_recolours_a_stop
-panels::gradient::tests::a_selected_diamond_shows_and_sets_its_midpoint_in_location
-panels::gradient::tests::alt_drag_copies_a_stop_and_alt_dropping_on_a_stop_swaps_colours
-panels::gradient::tests::double_clicking_a_stop_opens_the_shared_popover_beside_it
-panels::gradient::tests::the_dither_box_dithers_the_gradient_fill_and_is_off_for_strokes
-panels::gradient::tests::the_proxy_toggles_fill_and_stroke_and_stays_with_options_hidden
-panels::gradient::tests::the_stroke_buttons_lay_the_gradient_within_along_or_across_the_stroke
-panels::gradient::tests::the_thumbnail_menu_applies_gradient_swatches_and_saves_one
-tests_rotateview::escape_after_closing_a_popup_or_during_a_ruler_origin_drag_keeps_the_rotation
-```
-
-Supplemental targeted checks passed for all 27 cursor tests, the shared picker interaction in both shells, and all 150 icon overrides. The shell suite also caught and verified the menu-width, drawer-opening, flyout-height, overflow and window-edge docking fixes before the full release run.
+| UI release library tests | Pending handoff marker. |
+| Two ignored 1440×900 captures | Pending. |
+| Clippy, workspace/all targets, warnings denied | Pending. |
+| rustfmt check, touched Rust files | Exit 0, no output (pre-Cargo static check). |
+| `git diff --check` | Exit 0, no output (pre-Cargo static check). |
+| Native release build | Pending. |
 
 ## Captures and comparison
 
-Neither capture was generated. The following requested paths are absent, and visual comparison of the implementation is unfinished:
+Pending generation and direct PNG inspection:
 
-- `docs/varos/mockups/shell-simple-capture.png` — Design, Color flyout, one tool column, 1440×900.
-- `docs/varos/mockups/shell-simple-cols-capture.png` — the same arrangement with three tool columns, 1440×900.
+- `/tmp/varos-simple/shell-simple-capture.png` → `docs/varos/mockups/shell-simple-capture.png`.
+- `/tmp/varos-simple/shell-simple-cols-capture.png` → `docs/varos/mockups/shell-simple-cols-capture.png`.
 
-The mockup includes future Pages/Home content and a different colour ramp. This lane uses the existing real Layers/Artboards/Properties bodies and unchanged theme tokens, as required by the brief.
-
-## What did not complete
-
-- Workspace release tests: stopped during compilation after the owner replaced this gate.
-- Workspace debug tests: stopped during compilation at the owner’s request; no test result.
-- Both ignored capture runs, PNG generation, and visual inspection against the Editor mockup.
-- `cargo clippy --workspace --all-targets -- -D warnings`.
-- `cargo fmt --check` and `git diff --check`.
-- Owner hand testing and final visual acceptance.
-
-No further validation commands were run after the owner requested the draft PR. The native release executable had already been built and its version check passed; the standalone `cargo build -p vectorcraft --release` command was not run separately.
+Browser access was unavailable when opening the HTML mockup. Its source was inspected for the approved dimensions and structure. The mockup includes future Pages content; this lane retains existing Layers/Artboards/Properties bodies and unchanged theme tokens. Owner hand testing remains separate from local gates.
 
 ## Five owner hand tests
 

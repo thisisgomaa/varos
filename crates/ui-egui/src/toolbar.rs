@@ -699,7 +699,8 @@ fn flyout_body(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String], floating
     let key = tools.first().map_or("", String::as_str);
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
     ui.horizontal(|ui| {
-        let rows = if floating { ui.horizontal(|ui| tool_strip(ui, t, active, tools)) } else { ui.vertical(|ui| tool_rows(ui, t, active, tools)) };
+        let rows =
+            if floating { ui.horizontal(|ui| tool_strip(ui, t, active, tools)) } else { ui.vertical(|ui| tool_rows(ui, t, active, tools, shell)) };
         out.chosen = rows.inner;
         let (bar, _) = ui.allocate_exact_size(vec2(bar_width, rows.response.rect.height()), Sense::hover());
         ui.painter().rect_filled(bar, 0.0, t.tab_strip);
@@ -740,14 +741,22 @@ fn flyout_body(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String], floating
 }
 
 /// One row per tool: icon, name and shortcut, with a dot by the active tool. Returns the tool clicked.
-fn tool_rows(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String]) -> Option<&'static str> {
+fn tool_rows(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String], shell: bool) -> Option<&'static str> {
     let mut chosen = None;
     let lang = crate::i18n::current();
     let color = |tool: &ToolInfo| if active == tool.id { t.flyout_active } else { t.text_strong };
     let rows: Vec<(&ToolInfo, RowText)> =
         tools.iter().filter_map(|id| tool_info(id)).map(|tool| (tool, row_text(ui, lang, tool, color(tool)))).collect();
-    let w = rows_width(rows.iter().map(|(_, text)| text));
-    for (tool, (name, shortcut)) in rows {
+    let w = if shell { 222.0 } else { rows_width(rows.iter().map(|(_, text)| text)) };
+    for (tool, (mut name, shortcut)) in rows {
+        if shell {
+            let mut job = (*name.job).clone();
+            job.wrap.max_width = (w - NAME_X - ROW_END - shortcut.as_ref().map_or(0.0, |sc| NAME_GAP + sc.size().x)).max(0.0);
+            job.wrap.max_rows = 1;
+            job.wrap.break_anywhere = true;
+            job.wrap.overflow_character = Some('…');
+            name = ui.painter().layout_job(job);
+        }
         let is_active = active == tool.id;
         let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
         if resp.hovered() {
@@ -868,13 +877,21 @@ fn flyout(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let active = app.session.tool_id();
     let mut input = FlyoutInput::default();
     let id = egui::Id::unique("tool-flyout");
-    let at = anchor.right_top() + vec2(8.0 - slide, -1.0);
+    let at = if shell {
+        let edge = crate::varos::shell::hit_rects(ctx)
+            .into_iter()
+            .find_map(|(hit, r)| matches!(hit, crate::varos::shell::Hit::Tools).then_some(r.right()))
+            .unwrap_or(anchor.right());
+        pos2(edge + 6.0 + slide, anchor.top() - 1.0)
+    } else {
+        anchor.right_top() + vec2(8.0 - slide, -1.0)
+    };
     if shell {
         let layer = egui::LayerId::new(egui::Order::Foreground, id);
         ctx.memory_mut(|m| {
             m.areas_mut().set_state(
                 layer,
-                egui::AreaState { pivot_pos: Some(at), size: Some(vec2(220.0, tools.len() as f32 * PITCH + 2.0)), ..Default::default() },
+                egui::AreaState { pivot_pos: Some(at), size: Some(vec2(240.0, tools.len() as f32 * PITCH + 2.0)), ..Default::default() },
             )
         });
     }

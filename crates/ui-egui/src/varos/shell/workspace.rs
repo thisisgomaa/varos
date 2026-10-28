@@ -330,8 +330,14 @@ fn leave(app: &mut VectorcraftApp) {
 pub(crate) fn switcher(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let current = app.ui.varos_shell.workspace.clone();
     let t = crate::theme::Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(label(&current), egui::FontId::proportional(11.0), t.text);
+    let mut job = egui::text::LayoutJob::simple(label(&current), egui::FontId::proportional(11.0), t.text, 128.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    let galley = ui.painter().layout_job(job);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(galley.size().x + 32.0, 24.0), egui::Sense::click());
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("simple-workspace-rect"), rect));
     if response.hovered() {
         ui.painter().rect_filled(rect, 6.0, t.hover);
     }

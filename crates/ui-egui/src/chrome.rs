@@ -2703,11 +2703,13 @@ fn simple_app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 // MenuBar allocates the full row; use the returned end of its titles.
                 let menus_end = if app.services.native_menu.is_some() { ui.cursor().min.x } else { menus::menu_bar(app, ui) };
                 let available = egui::Rect::from_min_max(egui::pos2(menus_end + 8.0, ui.max_rect().top()), ui.max_rect().max);
-                let reserve = 270.0 + if app.custom_titlebar { titlebar::WIDTH } else { 0.0 };
+                let reserve = 340.0 + if app.custom_titlebar { titlebar::WIDTH } else { 0.0 };
                 let tabs = egui::Rect::from_min_max(
                     egui::pos2(available.left(), available.center().y - 14.0),
                     egui::pos2((available.right() - reserve).max(available.left()), available.center().y + 14.0),
                 );
+                #[cfg(test)]
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("simple-tabs-rect"), tabs));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs).layout(egui::Layout::top_down(egui::Align::Min)));
                 child.set_clip_rect(tabs);
                 doc_tabs(app, &mut child);
