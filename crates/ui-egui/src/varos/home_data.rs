@@ -160,7 +160,7 @@ struct Manifest {
 fn cached_in(root: &Path, source: &Path) -> Option<(PathBuf, usize)> {
     let png = cache_path(root, source);
     let m: Manifest = serde_json::from_slice(&std::fs::read(png.with_extension("json")).ok()?).ok()?;
-    (m.version == 2 && m.source == source && m.stamp.is_some() && m.stamp == stamp(source) && png.is_file()).then_some((png, m.artboards))
+    (m.version == 3 && m.source == source && m.stamp.is_some() && m.stamp == stamp(source) && png.is_file()).then_some((png, m.artboards))
 }
 
 pub(super) fn render_thumbnail(doc: &vectorcraft_doc::Document) -> Result<vectorcraft_render::Rendered, String> {
@@ -175,33 +175,28 @@ pub(super) fn render_thumbnail(doc: &vectorcraft_doc::Document) -> Result<vector
     Ok(vectorcraft_render::Renderer::new().render_region(doc, region, scale, true))
 }
 
-/// Keep the queued snapshot's stamp through rendering and publication. Never resample a
-/// newer stamp and attach it to old pixels. A changed source is reloaded and rendered again.
+/// Read the document and its stamp together in the worker. Callers' editor snapshots
+/// cannot establish which file version they came from. Revalidate after reading,
+/// rendering and publication; a changed source is read and rendered again.
 pub(super) fn write_thumbnail_with(
     root: &Path,
     path: &Path,
-    doc: &vectorcraft_doc::Document,
-    mut expected: Stamp,
     mut render: impl FnMut(&vectorcraft_doc::Document) -> Result<vectorcraft_render::Rendered, String>,
 ) -> Result<PathBuf, String> {
     vectorcraft_engine::file_access::check_write(&root.to_string_lossy())?;
-    let mut doc = std::borrow::Cow::Borrowed(doc);
+    vectorcraft_engine::file_access::check_read(&path.to_string_lossy())?;
     let png = cache_path(root, path);
     for _ in 0..3 {
+        let expected = stamp(path).ok_or("Thumbnail source unavailable")?;
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let loaded = vectorcraft_engine::cmd::fileio::load(&path.to_string_lossy(), &bytes);
         if stamp(path) != Some(expected) {
-            vectorcraft_engine::file_access::check_read(&path.to_string_lossy())?;
-            let before_read = stamp(path).ok_or("Thumbnail source unavailable")?;
-            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-            let loaded = vectorcraft_engine::cmd::fileio::load(&path.to_string_lossy(), &bytes).map_err(|e| e.to_string())?;
-            if stamp(path) != Some(before_read) {
-                continue;
-            }
-            doc = std::borrow::Cow::Owned(loaded.doc);
-            expected = before_read;
+            continue;
         }
+        let doc = loaded.map_err(|e| e.to_string())?.doc;
         let rendered = render(&doc)?;
         let bytes = rendered.to_png().map_err(|e| e.to_string())?;
-        let manifest = Manifest { version: 2, source: path.to_owned(), stamp: Some(expected), artboards: doc.artboards.len() };
+        let manifest = Manifest { version: 3, source: path.to_owned(), stamp: Some(expected), artboards: doc.artboards.len() };
         let metadata = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let temp = png.with_extension("png.tmp");
@@ -226,31 +221,29 @@ pub(super) fn write_thumbnail_with(
     Err("File kept changing during thumbnail rendering".into())
 }
 
-/// Open/save callers pass the saved snapshot, never a subsequently edited active tab.
+/// Open/save callers enqueue the path; the worker reads a verified on-disk snapshot.
 /// Cache errors are non-fatal and leave a placeholder; document I/O has already succeeded.
-pub(crate) fn cache_document(path: &str, doc: &vectorcraft_doc::Document) {
+pub(crate) fn cache_document(path: &str) {
     let Some(root) = cache_root() else { return };
-    let Some(expected) = stamp(Path::new(path)) else { return };
     if !Path::new(path).is_file() || vectorcraft_engine::file_access::check_write(&root.to_string_lossy()).is_err() {
         return;
     }
     #[cfg(test)]
-    if let Err(e) = write_thumbnail_with(&root, Path::new(path), doc, expected, render_thumbnail) {
+    if let Err(e) = write_thumbnail_with(&root, Path::new(path), render_thumbnail) {
         log::warn!("Home thumbnail: {e}");
     }
     #[cfg(not(test))]
     {
         use std::sync::{Mutex, OnceLock, mpsc};
-        type Job = (PathBuf, PathBuf, vectorcraft_doc::Document, Stamp, vectorcraft_engine::file_access::ScopeHandle);
+        type Job = (PathBuf, PathBuf, vectorcraft_engine::file_access::ScopeHandle);
         static WORKER: OnceLock<Option<Mutex<mpsc::SyncSender<Job>>>> = OnceLock::new();
         let worker = WORKER.get_or_init(|| {
             let (tx, rx) = mpsc::sync_channel::<Job>(16);
             std::thread::Builder::new()
                 .name("varos-home-thumbnails".into())
                 .spawn(move || {
-                    while let Ok((root, path, doc, expected, scope)) = rx.recv() {
-                        let result = scope
-                            .run(|| vectorcraft_engine::guard::catch_panic(|| write_thumbnail_with(&root, &path, &doc, expected, render_thumbnail)));
+                    while let Ok((root, path, scope)) = rx.recv() {
+                        let result = scope.run(|| vectorcraft_engine::guard::catch_panic(|| write_thumbnail_with(&root, &path, render_thumbnail)));
                         if let Err(e) = result.and_then(|r| r) {
                             log::warn!("Home thumbnail: {e}");
                         }
@@ -261,7 +254,7 @@ pub(crate) fn cache_document(path: &str, doc: &vectorcraft_doc::Document) {
         });
         if let Some(worker) = worker
             && let Ok(tx) = worker.lock()
-            && let Err(e) = tx.try_send((root, PathBuf::from(path), doc.clone(), expected, vectorcraft_engine::file_access::ScopeHandle::capture()))
+            && let Err(e) = tx.try_send((root, PathBuf::from(path), vectorcraft_engine::file_access::ScopeHandle::capture()))
         {
             log::warn!("Home thumbnail queue: {e}");
         }

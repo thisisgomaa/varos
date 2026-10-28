@@ -37,7 +37,7 @@ fn home_capture_simple() {
             .unwrap()
             .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age)))
             .unwrap();
-        cache_document(path.to_str().unwrap(), doc);
+        cache_document(path.to_str().unwrap());
         app.ui.recent_files.push(path.to_string_lossy().into_owned());
     }
     app.run("app.home", json!({})).unwrap();

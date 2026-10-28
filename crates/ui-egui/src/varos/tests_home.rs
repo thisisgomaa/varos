@@ -537,7 +537,7 @@ fn thumbnail_reloads_and_rerenders_if_the_source_changes_during_rendering() {
 }
 
 #[test]
-fn thumbnail_reloads_if_the_queued_stamp_is_already_stale() {
+fn thumbnail_reloads_if_the_file_changes_before_the_worker_starts() {
     thumbnail_source_change(false);
 }
 
@@ -560,12 +560,11 @@ fn thumbnail_source_change(during_render: bool) {
             .unwrap();
     };
     save(&old, 100);
-    let queued = data::stamp(&path).unwrap();
     if !during_render {
         save(&new, 200);
     }
     let mut renders = Vec::new();
-    let png = data::write_thumbnail_with(&root, &path, &old, queued, |doc| {
+    let png = data::write_thumbnail_with(&root, &path, |doc| {
         let pixels = data::render_thumbnail(doc)?;
         renders.push(doc.artboards[0].rect);
         if during_render && renders.len() == 1 {
@@ -578,11 +577,62 @@ fn thumbnail_source_change(during_render: bool) {
     if during_render {
         assert_eq!(renders, [old.artboards[0].rect, new.artboards[0].rect]);
     } else {
-        assert_eq!(renders, [new.artboards[0].rect], "a stale queued snapshot is never rendered as current");
+        assert_eq!(renders, [new.artboards[0].rect], "the worker reads the current file instead of an earlier editor snapshot");
     }
     let image = image::open(&png).unwrap();
     assert_eq!((image.width(), image.height()), (135, 360), "only the freshly rendered first artboard is published");
     let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(png.with_extension("json")).unwrap()).unwrap();
     assert_eq!(manifest["stamp"], json!(data::stamp(&path).unwrap()));
     assert_eq!(manifest["artboards"], 2);
+}
+
+#[test]
+fn local_hour_matches_chrono_local_at_the_same_instant() {
+    use chrono::Timelike;
+    for _ in 0..3 {
+        let before = chrono::Local::now();
+        let hour = data::local_hour();
+        let after = chrono::Local::now();
+        assert!((0..24).contains(&hour));
+        // Bracket the real call within one clock second; retry across a clock boundary.
+        if before.timestamp() == after.timestamp() && before.offset() == after.offset() {
+            assert_eq!(hour, before.hour());
+            assert_eq!(hour, after.hour());
+            return;
+        }
+    }
+    panic!("local clock changed during every sample");
+}
+
+#[test]
+fn thumbnail_rereads_a_file_replaced_between_document_load_and_cache_hook() {
+    let dir = Folder::new();
+    let path = dir.0.join("Replaced.varos");
+    let old = vectorcraft_doc::Document::new(120.0, 80.0);
+    let new = vectorcraft_doc::Document::new(60.0, 160.0);
+    let bytes = vectorcraft_format::save(&old, false);
+    std::fs::write(&path, &bytes).unwrap();
+    let mut a = app();
+    // Pause the real open path after loading the editor snapshot but before io::opened.
+    let result = vectorcraft_engine::cmd::fileio::open_bytes_with(
+        &mut a.session,
+        "Replaced.varos",
+        &bytes,
+        Some(path.to_string_lossy().into_owned()),
+        &json!({}),
+    )
+    .unwrap();
+    let replacement = dir.0.join("Replacement.varos");
+    std::fs::write(&replacement, vectorcraft_format::save(&new, false)).unwrap();
+    std::fs::rename(&replacement, &path).unwrap();
+    crate::io::opened(&mut a, &result);
+    assert_eq!(a.session.active().unwrap().doc.artboards[0].rect, old.artboards[0].rect);
+    let root = data::cache_root().unwrap();
+    let png = data::cache_path(&root, &path);
+    let image = image::open(&png).unwrap();
+    assert_eq!((image.width(), image.height()), (135, 360), "render the replacement, never the earlier editor snapshot");
+    let file = File::read(path);
+    assert_eq!(file.thumbnail.as_deref(), Some(png.as_path()), "the replacement preview is current");
+    std::fs::remove_file(&png).unwrap();
+    std::fs::remove_file(png.with_extension("json")).unwrap();
 }
