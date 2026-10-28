@@ -197,6 +197,10 @@ object: its geometry (`type`, `path`, `fillRule`, `bounds`) and its `fills` and 
 from before these give geometry only). The paints are read only: an effect may draw as wide as a stroke or use a
 fill's colour to decide its shape, but it changes only the geometry.
 
+Native v5 note (2026-10-28): exporters receive the active canvas wrapped in a single-page
+project. Read its document at `pages[0].doc` and its image table at `pages[0].images`.
+The document schema and plug-in ABI are unchanged; continue checking the envelope version.
+
 An **exporter** gets something else: the document as a native `.vectorcraft` file's JSON, as `document.save` writes it
 but without indentation (the format is documented in [`crates/format/src/lib.rs`](../crates/format/src/lib.rs)). That is every layer, object,
 appearance and effect record, artboard, swatch and symbol, so an exporter reads whatever the document holds; it checks

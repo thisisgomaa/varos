@@ -619,6 +619,12 @@ pub fn export_pdf_with_report(
     Ok(exported)
 }
 
+pub(crate) fn flatten_for_project_pdf(doc: &Document) -> (Document, Vec<String>) {
+    let mut report = FlattenReport::new(Which::All, doc);
+    let flat = flatten(doc, &mut report).unwrap_or_else(|| doc.clone());
+    (flat, report.warnings())
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

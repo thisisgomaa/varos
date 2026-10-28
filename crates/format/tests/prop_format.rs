@@ -189,24 +189,24 @@ fn rejects_newer_versions_and_other_formats() {
     v["format"] = json!("other");
     assert!(matches!(load(&serde_json::to_vec(&v).unwrap()), Err(vectorcraft_format::FormatError::NotVectorcraft(_))));
     v["format"] = json!("vectorcraft");
-    v["images"] = json!({"x": {"mime": "image/png", "data": "not base64!"}});
+    v["pages"][0]["images"] = json!({"x": {"mime": "image/png", "data": "not base64!"}});
     assert!(matches!(load(&serde_json::to_vec(&v).unwrap()), Err(vectorcraft_format::FormatError::BadImage(_))));
 }
 
 #[test]
 fn unknown_fields_are_preserved() {
     let mut v: Value = serde_json::from_slice(&save(&Document::new(1.0, 1.0), false)).unwrap();
-    v["document"]["unknown"] = json!({"futureFeature": {"a": [1, 2, 3]}});
+    v["pages"][0]["doc"]["unknown"] = json!({"futureFeature": {"a": [1, 2, 3]}});
     let d = load(&serde_json::to_vec(&v).unwrap()).unwrap();
     let again: Value = serde_json::from_slice(&save(&d, false)).unwrap();
-    assert_eq!(again["document"]["unknown"]["futureFeature"]["a"], json!([1, 2, 3]));
+    assert_eq!(again["pages"][0]["doc"]["unknown"]["futureFeature"]["a"], json!([1, 2, 3]));
 }
 
 #[test]
 fn load_repairs_next_id() {
     let d = rich_doc();
     let mut v: Value = serde_json::from_slice(&save(&d, false)).unwrap();
-    v["document"]["next_id"] = json!(1);
+    v["pages"][0]["doc"]["next_id"] = json!(1);
     let mut back = load(&serde_json::to_vec(&v).unwrap()).unwrap();
     check_document(&back).unwrap();
     let fresh = back.alloc_id();
@@ -235,7 +235,7 @@ fn bug_f64_bit_exact_roundtrip() {
 fn saved_selections_from_a_file_are_tidied() {
     let d = rich_doc();
     let mut v: Value = serde_json::from_slice(&save(&d, false)).unwrap();
-    assert!(v["document"].get("saved_selections").is_none(), "nothing written when there are none");
+    assert!(v["pages"][0]["doc"].get("saved_selections").is_none(), "nothing written when there are none");
     assert!(load(&serde_json::to_vec(&v).unwrap()).unwrap().saved_selections.is_empty());
     let id = fixtures::all_ids(&d).into_iter().next().unwrap();
     let missing = fixtures::all_ids(&d).into_iter().map(|NodeId(i)| i).max().unwrap() + 1;
@@ -246,7 +246,7 @@ fn saved_selections_from_a_file_are_tidied() {
         json!({"name": "Dup", "objects": [id.0]}),
     ];
     list.extend((0..100).map(|i| json!({"name": format!("S{i}"), "objects": [id.0]})));
-    v["document"]["saved_selections"] = json!(list);
+    v["pages"][0]["doc"]["saved_selections"] = json!(list);
     let back = load(&serde_json::to_vec(&v).unwrap()).unwrap();
     let saved = &back.saved_selections;
     assert_eq!(saved.len(), vectorcraft_doc::SavedSelection::MAX);
@@ -257,6 +257,6 @@ fn saved_selections_from_a_file_are_tidied() {
     // What loads saves and loads again unchanged.
     assert_eq!(&load(&save(&back, false)).unwrap().saved_selections, saved);
     // Junk in the member is a format error, not a crash.
-    v["document"]["saved_selections"] = json!([{"name": 5, "objects": "x"}]);
+    v["pages"][0]["doc"]["saved_selections"] = json!([{"name": 5, "objects": "x"}]);
     assert!(load(&serde_json::to_vec(&v).unwrap()).is_err());
 }

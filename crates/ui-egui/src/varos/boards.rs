@@ -59,6 +59,8 @@ pub(crate) enum Entered {
 
 /// A request in progress: whose front it was and which board it runs on.
 pub(crate) struct Scope {
+    page_before: Option<String>,
+    page_target: Option<String>,
     /// The board in front when the request came (the person's), by uid.
     person: Option<u64>,
     /// The board the request names (uid).
@@ -204,7 +206,15 @@ pub(crate) const DIALOG_WITHOUT_OPTIONS: &[&str] = &[
 /// Before a request runs: resolve its board and lend it the front, or answer it here.
 pub(crate) fn enter(app: &mut VectorcraftApp, req: &ControlRequest) -> Entered {
     if req.method == boards::LIST {
-        return Entered::Answered(json!({"ok": true, "result": list(app)}));
+        let mut value = list(app);
+        if req.params.get("pages").and_then(Value::as_bool) == Some(true)
+            && let Some(boards) = value["boards"].as_array_mut()
+        {
+            for (entry, project) in boards.iter_mut().zip(app.session.documents()) {
+                entry["pages"] = project.list_pages()["pages"].clone();
+            }
+        }
+        return Entered::Answered(json!({"ok": true, "result": value}));
     }
     let agent = is_guarded(req);
     let target = req.actor.as_ref().and_then(|a| a.get("target")).filter(|t| !t.is_null());
@@ -212,6 +222,8 @@ pub(crate) fn enter(app: &mut VectorcraftApp, req: &ControlRequest) -> Entered {
     let open_before: Vec<u64> = app.session.documents().iter().map(|d| d.uid).collect();
     let session = req.actor.as_ref().and_then(|a| a.get("session")).and_then(Value::as_str).unwrap_or("").to_string();
     let mut scope = Box::new(Scope {
+        page_before: None,
+        page_target: None,
         person,
         target: None,
         lent: false,
@@ -256,7 +268,7 @@ pub(crate) fn enter(app: &mut VectorcraftApp, req: &ControlRequest) -> Entered {
     let Some(doc) = app.session.documents().iter().find(|d| d.uid == uid).map(|d| d.doc.clone()) else {
         return refuse(error(BOARD_NOT_FOUND, format!("board `{}` is not open; call list_boards. Nothing was run.", board_id(uid))));
     };
-    let current = app.agents.revisions.of(uid, &doc);
+    let current = project_revision(app, uid).unwrap_or_else(|| app.agents.revisions.of(uid, &doc));
     match target.and_then(|t| t.get("revision")).filter(|r| !r.is_null()) {
         Some(given) => match given.as_u64() {
             Some(r) if r == current => {}
@@ -308,6 +320,25 @@ pub(crate) fn enter(app: &mut VectorcraftApp, req: &ControlRequest) -> Entered {
         }
         scope.lent = true;
     }
+    if let Some(project) = app.session.active() {
+        scope.page_target = Some(project.page_id().to_owned());
+    }
+    if let Some(page) = target.and_then(|t| t.get("page")) {
+        let result = app.session.project().and_then(|p| p.resolve_page(&json!({"page":page}), "page.target"));
+        let index = match result {
+            Ok(index) => index,
+            Err(e) => {
+                give_back(app, &scope);
+                return refuse(e.to_string());
+            }
+        };
+        scope.page_before = app.session.active().map(|p| p.page_id().to_owned());
+        if let Err(e) = app.session.switch_page(index) {
+            give_back(app, &scope);
+            return refuse(e.to_string());
+        }
+        scope.page_target = app.session.active().map(|p| p.page_id().to_owned());
+    }
     if !opens_a_board(req) {
         app.session.varos_pin(Some(uid));
         scope.pinned = true;
@@ -326,7 +357,7 @@ fn begin(app: &mut VectorcraftApp, scope: &mut Scope) {
     let Some(uid) = scope.target else { return };
     let index = app.session.documents().iter().position(|d| d.uid == uid);
     let view = index.and_then(|i| app.views.get(i)).copied();
-    let private = app.agents.private.get(&(scope.session.clone(), uid)).cloned().unwrap_or_default();
+    let private = app.agents.private.get(&(scope.session.clone(), uid, scope.page_target.clone().unwrap_or_default())).cloned().unwrap_or_default();
     let Some(st) = app.session.document_mut(uid) else { return };
     let mut selection = private.selection;
     selection.prune(&st.doc);
@@ -397,9 +428,18 @@ pub(crate) fn leave(app: &mut VectorcraftApp, scope: Box<Scope>, answer: Result<
             ),
         ));
     }
+    if let (Some(uid), Some(page)) = (scope.target, &scope.page_before)
+        && let Some(project) = app.session.document_mut(uid)
+        && let Ok(index) = project.resolve_page(&json!({"page":page}), "page.restore")
+    {
+        // The validated index belongs to this project's unchanged page list.
+        if let Err(e) = project.switch(index) {
+            refusal = Some(e.to_string());
+        }
+    }
     give_back(app, &scope);
     app.agents.revisions.retain(|uid| open.contains(&uid));
-    app.agents.private.retain(|(_, uid), _| open.contains(uid));
+    app.agents.private.retain(|(_, uid, _), _| open.contains(uid));
     if let Some(why) = refusal {
         return Ok(Outcome::Done(json!({"ok": false, "error": why, "varos": report(app, &scope, &opened)})));
     }
@@ -417,7 +457,9 @@ pub(crate) fn leave(app: &mut VectorcraftApp, scope: Box<Scope>, answer: Result<
 fn give_back_state(app: &mut VectorcraftApp, scope: &mut Scope) {
     let Some(saved) = scope.persons_state.take() else { return };
     let index = app.session.documents().iter().position(|d| d.uid == saved.uid);
-    if let Some(st) = app.session.document_mut(saved.uid) {
+    if let Some(project) = app.session.document_mut(saved.uid)
+        && let Some(st) = scope.page_target.as_deref().and_then(|id| project.page_state_mut(id))
+    {
         let private = Private { selection: st.selection.clone(), active_layer: st.active_layer };
         let mut selection = saved.selection;
         selection.prune(&st.doc);
@@ -426,7 +468,7 @@ fn give_back_state(app: &mut VectorcraftApp, scope: &mut Scope) {
         st.active_layer = saved.active_layer.filter(exists).or(st.active_layer.filter(exists));
         st.layer_rows = saved.layer_rows.into_iter().filter(exists).collect();
         st.isolation = saved.isolation.filter(exists);
-        app.agents.private.insert((scope.session.clone(), saved.uid), private);
+        app.agents.private.insert((scope.session.clone(), saved.uid, scope.page_target.clone().unwrap_or_default()), private);
     }
     if let (Some(i), Some(view)) = (index, saved.view)
         && let Some(v) = app.views.get_mut(i)
@@ -455,16 +497,24 @@ fn report(app: &mut VectorcraftApp, scope: &Scope, opened: &[u64]) -> Value {
         [one] => Some(*one),
         _ => None,
     });
-    let revision = board.and_then(|uid| {
-        let doc = app.session.documents().iter().find(|d| d.uid == uid).map(|d| d.doc.clone())?;
-        Some(app.agents.revisions.of(uid, &doc))
-    });
+    let revision = board.and_then(|uid| project_revision(app, uid));
     let mut v = json!({
         "board": board.map(board_id),
         "revision": revision,
         "front": app.session.active().map(|d| board_id(d.uid)),
         "opened": opened.iter().copied().map(board_id).collect::<Vec<_>>(),
     });
+    if scope.page_before.is_some()
+        && let (Some(uid), Some(id)) = (scope.target, &scope.page_target)
+        && let Some(project) = app.session.documents().iter().find(|p| p.uid == uid)
+    {
+        if let Some(page) = project.pages().iter().find(|p| &p.id == id) {
+            v["page_id"] = json!(page.id);
+            v["page_name"] = json!(page.name);
+            v["active"] = json!(project.page_id() == id);
+        }
+        v["pages"] = project.list_pages()["pages"].clone();
+    }
     if !app.agents.dropped.is_empty() {
         v["dropped"] = Value::Array(std::mem::take(&mut app.agents.dropped));
     }
@@ -529,7 +579,7 @@ pub(crate) fn list(app: &mut VectorcraftApp) -> Value {
     let boards: Vec<Value> = entries
         .into_iter()
         .map(|(uid, mut entry, doc)| {
-            entry["revision"] = json!(app.agents.revisions.of(uid, &doc));
+            entry["revision"] = json!(project_revision(app, uid).unwrap_or_else(|| app.agents.revisions.of(uid, &doc)));
             entry
         })
         .collect();
@@ -652,4 +702,10 @@ pub(crate) fn refused_for_agents(req: &ControlRequest) -> Option<String> {
         }
     }
     None
+}
+
+fn project_revision(app: &mut VectorcraftApp, uid: u64) -> Option<u64> {
+    let project = app.session.documents().iter().find(|p| p.uid == uid)?;
+    let pages = project.pages().iter().map(|p| (p.id.clone(), p.name.clone(), p.doc.doc.clone())).collect();
+    Some(app.agents.revisions.of_pages(uid, pages))
 }

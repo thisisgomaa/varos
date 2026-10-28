@@ -15,6 +15,7 @@ use crate::{EngineError, Prefs};
 
 /// A file read into a document, with its format and non-fatal import notes.
 pub struct Loaded {
+    pub project: Option<vectorcraft_format::Project>,
     pub doc: Document,
     pub format: &'static Format,
     pub warnings: Vec<String>,
@@ -122,14 +123,20 @@ pub const EDITING_DAMAGED: &str = "this file's editing data can't be read: it op
 /// it reads, else `import()`'s document with a first warning saying why the editing data wasn't
 /// used → (document, warnings, restored).
 fn restore_or_import(
+    project: &mut Option<vectorcraft_format::Project>,
     editing: Option<(bool, impl FnOnce() -> Option<Vec<u8>>)>,
     import: impl FnOnce() -> Result<(Document, Vec<String>)>,
 ) -> Result<(Document, Vec<String>, bool)> {
     let mut fallback = None;
     if let Some((intact, bytes)) = editing {
         let native = if intact { bytes() } else { None };
-        match native.and_then(|b| native_file(&b).ok()) {
-            Some((doc, _, warnings)) => return Ok((doc, warnings, true)),
+        match native.and_then(|b| vectorcraft_format::load_file(&b).ok()) {
+            Some(file) => {
+                let mut warnings = super::native::install_profiles(file.profiles);
+                warnings.extend(file.depth_notes);
+                *project = Some(file.project);
+                return Ok((file.doc, warnings, true));
+            }
             None => fallback = Some(if intact { EDITING_DAMAGED } else { EDITING_STALE }),
         }
     }
@@ -236,6 +243,7 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
         None => err(format!("can't open `{name}`: not a format VectorCraft reads (see document.formats)")),
     })?;
     let title = file_name(name);
+    let mut project = None;
     let mut converted = false;
     let mut preview_only = false;
     let mut editing_data = false;
@@ -243,23 +251,26 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
         // EPS, .ps and PostScript .ai: the document our EPS files carry, else the PostScript read.
         _ if matches!(format.id, "eps" | "ps") || vectorcraft_pdf::is_postscript(bytes) => {
             let editing = vectorcraft_eps::has_native(bytes).then_some((true, || vectorcraft_eps::native(bytes)));
-            restore_or_import(editing, || {
+            restore_or_import(&mut project, editing, || {
                 let r = vectorcraft_eps::import_trusting(bytes, opts.editing_data, opts.trust_editing_data)
                     .map_err(|e| err(format!("can't open `{}`: {e}", file_name(name))))?;
                 Ok((r.document, r.warnings))
             })?
         }
         "vectorcraft" | "template" => {
-            let (d, info, warnings) = native_file(bytes)?;
-            converted = info.is_old() || super::extension(name) == vectorcraft_format::LEGACY_EXTENSION;
-            (d, warnings, false)
+            let file = vectorcraft_format::load_file(bytes).map_err(err)?;
+            converted = file.info.is_old() || super::extension(name) == vectorcraft_format::LEGACY_EXTENSION;
+            let mut warnings = super::native::install_profiles(file.profiles);
+            warnings.extend(file.depth_notes);
+            project = Some(file.project);
+            (file.doc, warnings, false)
         }
         "svg" | "svgz" => {
             let text = vectorcraft_svg::text_of(bytes).map_err(err)?;
             let editing = vectorcraft_svg::editing(&text).map(|e| (e.intact, move || vectorcraft_format::base64_decode(&e.data)));
             // Relative links are found in the SVG's folder (when `name` is a path).
             let folder = std::path::Path::new(name).parent().map(|f| f.to_string_lossy()).filter(|f| !f.is_empty()).map(|f| absolute_path(&f));
-            restore_or_import(editing, || import_svg(&text, folder.as_deref()))?
+            restore_or_import(&mut project, editing, || import_svg(&text, folder.as_deref()))?
         }
         "pdf" | "ai" | "ait" => {
             // Saved with Preserve Editing: the document it carries, unless some pages are picked.
@@ -269,7 +280,7 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
                 .then(|| vectorcraft_pdf::editing_with(bytes, opts.password.as_deref()))
                 .flatten()
                 .map(|e| (e.intact, move || Some(e.data)));
-            restore_or_import(editing, || match super::pdfimport::import(bytes, opts, format.id != "pdf") {
+            restore_or_import(&mut project, editing, || match super::pdfimport::import(bytes, opts, format.id != "pdf") {
                 Ok(r) => {
                     // Pages of text alone: the editing copy alone where it reads, as for a file
                     // saved without its PDF part (#1387: else the page, which is the art).
@@ -336,7 +347,7 @@ pub fn load_with(name: &str, bytes: &[u8], opts: &LoadOptions) -> Result<Loaded>
         doc.title = title;
     }
     warnings.extend(doc.images.values().filter_map(|b| too_large_note(&b.bytes)));
-    Ok(Loaded { doc, format, warnings, restored, converted, preview_only, editing_data })
+    Ok(Loaded { project, doc, format, warnings, restored, converted, preview_only, editing_data })
 }
 
 /// Import SVG text, reading the files its images link to (relative links from `folder`, the SVG's
@@ -402,7 +413,22 @@ impl ReadFile {
 pub fn read_for_open(name: &str, bytes: &[u8], path: Option<String>, p: &Value, update_links: bool, low_res_proxy_eps: bool) -> Result<ReadFile> {
     let opts = LoadOptions::from_params("document.open", p)?;
     let mut loaded = load_with(name, bytes, &opts)?;
-    let links = crate::cmd::links::resolve(&mut loaded.doc, path.as_deref(), update_links, low_res_proxy_eps);
+    let mut links = crate::cmd::links::resolve(&mut loaded.doc, path.as_deref(), update_links, low_res_proxy_eps);
+    if let Some(project) = &mut loaded.project {
+        for (i, page) in project.pages.iter_mut().enumerate() {
+            if i != project.active {
+                let more = crate::cmd::links::resolve(&mut page.doc, path.as_deref(), update_links, low_res_proxy_eps);
+                let tagged = |mut row: Value| {
+                    row["page_id"] = json!(page.id);
+                    row
+                };
+                links.missing.extend(more.missing.into_iter().map(tagged));
+                links.modified.extend(more.modified.into_iter().map(tagged));
+                links.updated.extend(more.updated.into_iter().map(tagged));
+                Session::refresh_text_bounds(&mut page.doc);
+            }
+        }
+    }
     Session::refresh_text_bounds(&mut loaded.doc);
     Ok(ReadFile { loaded, opts, path, links })
 }
@@ -429,7 +455,7 @@ pub fn open_template(s: &mut Session, name: &str, bytes: &[u8], path: Option<&st
 /// Make a loaded file the new active document; `links` is what became of its linked files, and
 /// `opts` are the options it was read with.
 fn open_loaded(s: &mut Session, loaded: Loaded, links: Resolved, path: Option<String>, opts: &LoadOptions, as_template: bool) -> Result<Value> {
-    let Loaded { mut doc, format, warnings, restored, converted, .. } = loaded.with_grid_prefs(&s.prefs);
+    let Loaded { project, mut doc, format, warnings, restored, converted, .. } = loaded.with_grid_prefs(&s.prefs);
     // What reading the file left out of the document, if anything.
     let losses: Vec<String> = warnings.iter().filter(|w| is_loss(w)).cloned().collect();
     let source_path = path.clone().filter(|_| !losses.is_empty());
@@ -466,6 +492,15 @@ fn open_loaded(s: &mut Session, loaded: Loaded, links: Resolved, path: Option<St
     st.converted = converted;
     st.imported_from = source_path;
     st.import_losses = losses;
+    if let Some(mut project) = project {
+        if let Some(page) = project.pages.get_mut(project.active) {
+            page.doc = (*st.doc).clone();
+            page.doc.last_view = st.view.clone();
+            page.doc.layers_open = st.layers_open.saved(&st.doc);
+            page.doc.transparency_grid = st.transparency_grid;
+        }
+        s.project_mut()?.install(project)?;
+    }
     let opened = &s.documents()[index];
     let (title, file_info_title) = (opened.title(), opened.doc.title.clone());
     Ok(super::merge(

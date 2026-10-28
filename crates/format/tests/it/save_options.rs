@@ -41,10 +41,10 @@ fn linked_doc() -> Document {
 fn include_linked_files_keeps_the_files_bytes() {
     let d = linked_doc();
     let plain = save_with(&d, &SaveOptions::default()).unwrap();
-    let image = &json_of(&plain)["images"]["k"];
+    let image = &json_of(&plain)["pages"][0]["images"]["k"];
     assert_eq!(image["proxy"], true, "only the preview by default");
     let full = save_with(&d, &SaveOptions { include_linked: true, ..SaveOptions::default() }).unwrap();
-    let image = &json_of(&full)["images"]["k"];
+    let image = &json_of(&full)["pages"][0]["images"]["k"];
     assert!(image.get("proxy").is_none());
     let back = load(&full).unwrap();
     assert_eq!(back.images["k"].bytes.as_slice(), &[1, 2, 3, 4, 5, 6]);
@@ -54,7 +54,7 @@ fn include_linked_files_keeps_the_files_bytes() {
     let preview = Arc::new(vec![9, 9]);
     missing.images.insert("k".into(), ImageBlob { mime: "image/png".into(), bytes: preview.clone(), proxy: Some(preview) });
     let out = save_with(&missing, &SaveOptions { include_linked: true, ..SaveOptions::default() }).unwrap();
-    assert_eq!(json_of(&out)["images"]["k"]["proxy"], true);
+    assert_eq!(json_of(&out)["pages"][0]["images"]["k"]["proxy"], true);
 }
 
 #[test]

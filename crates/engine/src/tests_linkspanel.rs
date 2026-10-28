@@ -311,7 +311,7 @@ fn placement_options_read_set_and_round_trip() {
     save(&mut s, &doc_path);
     let saved: Value = serde_json::from_slice(&std::fs::read(&doc_path).unwrap()).unwrap();
     assert_eq!(
-        saved["document"]["layers"][0]["kind"]["children"][0]["kind"]["placement"],
+        saved["pages"][0]["doc"]["layers"][0]["kind"]["children"][0]["kind"]["placement"],
         json!({"preserve": "fill", "align": "topRight", "clip": true})
     );
     open(&mut s, &doc_path);
@@ -321,7 +321,7 @@ fn placement_options_read_set_and_round_trip() {
     run(&mut s, "links.placementOptions", json!({"preserve": "bounds", "align": "center", "clip": false}));
     save(&mut s, &doc_path);
     let saved: Value = serde_json::from_slice(&std::fs::read(&doc_path).unwrap()).unwrap();
-    assert_eq!(saved["document"]["layers"][0]["kind"]["children"][0]["kind"]["placement"], Value::Null, "the default isn't written");
+    assert_eq!(saved["pages"][0]["doc"]["layers"][0]["kind"]["children"][0]["kind"]["placement"], Value::Null, "the default isn't written");
 }
 
 #[test]

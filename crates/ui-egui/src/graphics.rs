@@ -97,7 +97,10 @@ impl VectorcraftApp {
         if let Err(e) = self.session.execute("file.recovery.save", &serde_json::json!({})) {
             log::warn!("vectorcraft: no recovery copies after losing the graphics ({why}): {e}");
         }
-        self.session.documents().iter().filter(|st| st.is_dirty()).all(|st| st.recovery.as_ref().is_some_and(|c| st.same_content(&c.doc)))
+        self.session.documents().iter().filter(|st| st.is_dirty()).all(|st| {
+            // The recovery command checks the whole project, including inactive pages.
+            vectorcraft_engine::cmd::recovery::skip_reason(&self.session, st) == Some("unchanged since its last recovery copy")
+        })
     }
 
     /// Textures live in one egui context. When the host hands the app a new one (it started again
@@ -238,5 +241,18 @@ mod tests {
         assert_eq!(store.list().unwrap().iter().filter(|n| n.ends_with(".vectorcraft")).count(), 1);
         // Without a store the work isn't safe.
         assert!(!self::app().graphics_lost("test"));
+    }
+    #[test]
+    fn graphics_loss_does_not_report_a_stale_background_page_as_recovered() {
+        let store = Arc::new(MemoryStore::default());
+        let mut app = VectorcraftApp::new(Session::new(), Services { recovery_store: Some(store), ..Default::default() });
+        app.run("file.new", json!({"width":200,"height":100})).unwrap();
+        app.run("page.add", json!({})).unwrap();
+        assert!(app.graphics_lost("initial copy"));
+        app.run("page.switch", json!({"page":1})).unwrap();
+        app.run("shape.rectangle", json!({"x":10,"y":10,"width":50,"height":20})).unwrap();
+        app.run("page.switch", json!({"page":0})).unwrap();
+        app.session.recovery = Default::default();
+        assert!(!app.graphics_lost("storage unavailable"));
     }
 }

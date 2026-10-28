@@ -411,6 +411,7 @@ pub struct Package {
     root: Option<PathBuf>,
     info: Option<String>,
     doc: std::sync::Arc<Document>,
+    project: vectorcraft_format::Project,
 }
 
 impl Session {
@@ -451,7 +452,7 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Package> {
     let root = folder.map(|f| Path::new(f).join(&name));
     let info = if o.report { Some(super::docinfo::report(s, false)?) } else { None };
     let doc = s.doc()?.doc.clone();
-    Ok(Package { o, doc_path, stem, name, root, info, doc })
+    Ok(Package { o, doc_path, stem, name, root, info, doc, project: s.project()?.snapshot() })
 }
 
 impl Package {
@@ -465,7 +466,7 @@ impl Package {
 
 /// [`Package::write`].
 fn collect_and_write(package: Package, write: &mut dyn FnMut(&str, &[u8]) -> Result<()>) -> Result<Value> {
-    let Package { o, doc_path, stem, name, root, info, doc } = package;
+    let Package { o, doc_path, stem, name, root, info, doc, mut project } = package;
     let mut doc = (*doc).clone();
     let doc_name = format!("{stem}.{}", vectorcraft_format::EXTENSION);
     // Prepare original links for the destination *before* rebasing copied links.
@@ -477,8 +478,23 @@ fn collect_and_write(package: Package, write: &mut dyn FnMut(&str, &[u8]) -> Res
     }
     let mut collector = Collector::new(&o, root.clone(), &doc_name);
     collector.collect(&mut doc, &doc_path, &doc_name, 0, false)?;
+    if let Some(page) = project.pages.get_mut(project.active) {
+        page.doc = doc.clone();
+    }
+    for (i, page) in project.pages.iter_mut().enumerate() {
+        if i == project.active {
+            continue;
+        }
+        if let Some(root) = &root
+            && let Some(d) = super::links::with_relative_paths(&page.doc, &root.join(&doc_name).to_string_lossy())
+        {
+            page.doc = d;
+        }
+        collector.collect(&mut page.doc, &doc_path, &doc_name, 0, false)?;
+    }
     let mut entries = std::mem::take(&mut collector.entries);
-    entries.insert(0, (doc_name.clone(), vectorcraft_format::save_file(&doc)));
+    let bytes = vectorcraft_format::save_project(&project, &vectorcraft_format::SaveOptions::for_doc(&doc)).map_err(|e| bad(C, e.to_string()))?;
+    entries.insert(0, (doc_name.clone(), bytes));
     let mut taken = std::mem::take(&mut collector.taken);
     let lines = collector.sections.concat();
     let missing = std::mem::take(&mut collector.missing);

@@ -100,10 +100,9 @@ fn compressed_files_load() {
     // Compressed files are compact even when pretty was asked for.
     assert!(!flate2_unpack(&packed).contains(&b'\n'));
     // A legacy (v2, pre-rename) file compressed by hand opens too.
-    let text = String::from_utf8(plain.clone()).unwrap();
-    let legacy = text.replacen(&format!("\"format\":\"vectorcraft\",\"version\":{VERSION}"), "\"format\":\"drawcraft\",\"version\":2", 1);
-    assert_ne!(legacy, text);
-    let legacy = gzip(legacy.as_bytes());
+    let text = String::from_utf8(save_with(&d, &opts(2, false)).unwrap()).unwrap();
+    assert!(text.contains("\"format\":\"drawcraft\""));
+    let legacy = gzip(text.as_bytes());
     assert!(sniff(&legacy));
     assert_eq!(doc_json(&load(&legacy).unwrap()), doc_json(&load(&plain).unwrap()));
     // Other gzip data (an SVGZ) is not a native file.
@@ -138,21 +137,21 @@ fn unused_images_are_pruned() {
     assert_eq!(keys, ["in brush", "in mask", "in symbol", "used"]);
     assert_eq!(back.images["used"].bytes.as_slice(), &[1, 2]);
     let v = json_of(&save(&d, false));
-    assert!(v["images"].get("unused").is_none() && v["document"]["images"].as_object().is_some_and(|m| m.is_empty()));
+    assert!(v["pages"][0]["images"].get("unused").is_none() && v["pages"][0]["doc"]["images"].as_object().is_some_and(|m| m.is_empty()));
 }
 
 #[test]
 fn keys_from_newer_versions_round_trip() {
     let mut v = json_of(&save(&rich_doc(), false));
-    v["document"]["futureFeature"] = json!({"a": [1, 2, 3], "b": "x"});
-    v["document"]["futureFlag"] = json!(true);
+    v["pages"][0]["doc"]["futureFeature"] = json!({"a": [1, 2, 3], "b": "x"});
+    v["pages"][0]["doc"]["futureFlag"] = json!(true);
     let d = load(&serde_json::to_vec(&v).unwrap()).unwrap();
     assert_eq!(d.extra["futureFeature"]["a"], json!([1, 2, 3]));
     assert!(!d.unknown.contains_key("futureFeature"), "kept apart from `unknown`");
     for pretty in [false, true] {
         let again = json_of(&save(&d, pretty));
-        assert_eq!(again["document"]["futureFeature"], v["document"]["futureFeature"]);
-        assert_eq!(again["document"]["futureFlag"], json!(true));
+        assert_eq!(again["pages"][0]["doc"]["futureFeature"], v["pages"][0]["doc"]["futureFeature"]);
+        assert_eq!(again["pages"][0]["doc"]["futureFlag"], json!(true));
     }
     check_native_roundtrip(&d).unwrap();
 }
@@ -235,8 +234,8 @@ fn saves_down_to_older_versions() {
     }
     let v3 = json_of(&save(&d, false));
     assert_eq!((v3["format"].as_str(), v3["version"].as_u64()), (Some("vectorcraft"), Some(VERSION as u64)));
-    assert_eq!(v3["document"]["color_profiles"], json!({"cmyk": "Coated"}));
-    assert!(v3["document"]["unknown"].get("colorProfiles").is_none());
+    assert_eq!(v3["pages"][0]["doc"]["color_profiles"], json!({"cmyk": "Coated"}));
+    assert!(v3["pages"][0]["doc"]["unknown"].get("colorProfiles").is_none());
     // Out of range, and compression older apps can't read.
     assert!(matches!(save_with(&d, &opts(0, false)), Err(FormatError::BadVersion(0))));
     assert!(matches!(save_with(&d, &opts(VERSION + 1, false)), Err(FormatError::BadVersion(_))));
@@ -262,7 +261,7 @@ fn pretty_files_are_indented_like_serde_json() {
     let bytes = save(&d, true);
     let text = String::from_utf8(bytes.clone()).unwrap();
     assert!(text.starts_with("{\n  \"format\": \"vectorcraft\",\n  \"version\": "));
-    assert!(text.contains("\n  \"document\": {\n    \""));
+    assert!(text.contains("\n      \"doc\": {\n        \""));
     assert!(text.ends_with("\n}"));
     // The same JSON as the compact file.
     assert_eq!(json_of(&bytes), json_of(&save(&d, false)));
@@ -277,9 +276,9 @@ fn artboard_guides_round_trip_and_canvas_guides_save_as_before() {
     let id = d.artboards[0].id;
     d.guides = vec![Guide::new(true, 10.0), Guide { artboard: Some(id), ..Guide::new(false, 20.0) }];
     let mut v = json_of(&save(&d, false));
-    assert_eq!(v["document"]["guides"], json!([{"vertical": true, "pos": 10.0}, {"vertical": false, "pos": 20.0, "artboard": id}]));
+    assert_eq!(v["pages"][0]["doc"]["guides"], json!([{"vertical": true, "pos": 10.0}, {"vertical": false, "pos": 20.0, "artboard": id}]));
     assert_eq!(load(&save(&d, false)).unwrap().guides, d.guides);
-    v["document"]["guides"] = json!([{"vertical": false, "pos": 20.0}]);
+    v["pages"][0]["doc"]["guides"] = json!([{"vertical": false, "pos": 20.0}]);
     let old = load(&serde_json::to_vec(&v).unwrap()).unwrap();
     assert_eq!(old.guides, [Guide::new(false, 20.0)]);
 }

@@ -542,6 +542,7 @@ pub fn leave(s: &mut Session) {
 /// A document's recovery copy: its entry and the document it holds.
 #[derive(Clone, Debug)]
 pub struct RecoveryCopy {
+    pages: Vec<(String, String, Arc<Document>)>,
     /// The copy's name in the store (`<area>/<name>`, without extension).
     pub file: String,
     /// The document as last copied (unchanged since: no new copy needed).
@@ -552,6 +553,9 @@ pub struct RecoveryCopy {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Meta {
+    generation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous: Option<Box<Meta>>,
     title: String,
     /// The document's file when it was copied, if it had one.
     path: Option<String>,
@@ -641,7 +645,11 @@ fn sweep(store: &dyn RecoveryStore, area: &str) {
     let in_area = |n: &&String| n.split_once('/').is_some_and(|(a, _)| a == area);
     let mut named = BTreeSet::new();
     for meta in names.iter().filter(in_area).filter_map(|n| n.strip_suffix(META_EXT)) {
-        named.extend(read_meta(store, meta).images.into_values().map(|r| r.blob));
+        let meta = read_meta(store, meta);
+        named.extend(meta.images.into_values().map(|r| r.blob));
+        if let Some(previous) = meta.previous {
+            named.extend(previous.images.into_values().map(|r| r.blob));
+        }
     }
     for n in names.iter().filter(in_area).filter(|n| n.ends_with(BLOB_EXT)) {
         if n.split_once('/').is_some_and(|(_, b)| !named.contains(b)) {
@@ -652,6 +660,20 @@ fn sweep(store: &dyn RecoveryStore, area: &str) {
 
 fn read_meta(store: &dyn RecoveryStore, file: &str) -> Meta {
     store.read(&format!("{file}{META_EXT}")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Legacy metadata has no generation; new metadata must match the snapshot bytes.
+fn matching_meta(mut meta: Meta, bytes: &[u8]) -> Meta {
+    let generation = blob_name(&Arc::new(bytes.to_vec()));
+    let previous = meta.previous.take();
+    if meta.generation.as_ref().is_none_or(|g| g == &generation) {
+        return meta;
+    }
+    if let Some(old) = previous.filter(|m| m.generation.as_ref() == Some(&generation)) {
+        return *old;
+    }
+    meta.images.clear();
+    meta
 }
 
 /// A copy of one document, snapshotted and ready to encode and store anywhere (the background
@@ -672,6 +694,15 @@ impl RecoveryJob {
     /// Encode the snapshot and store it with its details and the images the area doesn't have
     /// yet → `{file, title, bytes (the document's), imageBytes (images written now)}`.
     pub fn write(&self, store: &dyn RecoveryStore) -> std::result::Result<Value, String> {
+        if self.save.project_source().pages().len() > 1 {
+            let enc = self.save.encode().map_err(|e| e.to_string())?;
+            let bytes = enc.files.first().map(|f| f.1.as_slice()).ok_or("nothing encoded")?;
+            let mut meta = self.meta.clone();
+            meta.images.clear();
+            let _turn = WRITES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.write_generation(store, bytes, meta)?;
+            return Ok(json!({"file":self.file,"title":self.title,"bytes":bytes.len(),"imageBytes":0}));
+        }
         let doc = self.save.doc();
         // A linked image keeps its preview, as a save writes it.
         let linked = doc.linked_only_images();
@@ -690,7 +721,6 @@ impl RecoveryJob {
             meta.images.insert(key.clone(), ImageRef { mime: mime.into(), blob: blob.clone(), proxy });
             images.push((blob, data));
         }
-        let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?;
         let area = self.file.split_once('/').map_or("", |(a, _)| a);
         let _turn = WRITES.lock().unwrap_or_else(|e| e.into_inner());
         let have: BTreeSet<String> = if images.is_empty() { BTreeSet::new() } else { store.list()?.into_iter().collect() };
@@ -702,23 +732,38 @@ impl RecoveryJob {
                 image_bytes += data.len();
             }
         }
-        let meta_name = format!("{}{META_EXT}", self.file);
-        // The details name the images, so a crash between writing the document and its details
-        // would pair the new document with the old copy's images: when the new document has
-        // images the old details don't name, they name both until the new document is in.
-        let old = read_meta(store, &self.file).images;
-        if meta.images.iter().any(|(k, r)| old.get(k).is_none_or(|o| o.blob != r.blob)) {
-            let mut both = meta.clone();
-            for (k, r) in old {
-                both.images.entry(k).or_insert(r);
-            }
-            store.write(&meta_name, &serde_json::to_vec_pretty(&both).map_err(|e| e.to_string())?)?;
-        }
-        store.write(&format!("{}{DOC_EXT}", self.file), bytes)?;
-        store.write(&meta_name, &meta_bytes)?;
+        self.write_generation(store, bytes, meta)?;
         // Images this copy no longer shows, nor any other.
         sweep(store, area);
         Ok(json!({ "file": self.file, "title": self.title, "bytes": bytes.len(), "imageBytes": image_bytes }))
+    }
+
+    /// Stage both metadata generations, then atomically switch the document entry.
+    /// A crash on either side of that switch always has matching metadata available.
+    fn write_generation(&self, store: &dyn RecoveryStore, bytes: &[u8], mut meta: Meta) -> std::result::Result<(), String> {
+        // Include resource identity even when a lean document's JSON is unchanged (same
+        // image key, different pixels). Recovery encoding is explicitly uncompressed.
+        let images = serde_json::to_vec(&meta.images).map_err(|e| e.to_string())?;
+        let image_generation = blob_name(&Arc::new(images));
+        let Some((b'{', rest)) = bytes.split_first() else {
+            return Err("recovery snapshot is not plain native JSON".into());
+        };
+        let mut snapshot = format!("{{\"recovery_images_generation\":\"{image_generation}\",").into_bytes();
+        snapshot.extend_from_slice(rest);
+        let bytes = snapshot.as_slice();
+        meta.generation = Some(blob_name(&Arc::new(bytes.to_vec())));
+        let old_bytes = store.read(&format!("{}{DOC_EXT}", self.file)).ok();
+        let mut old = read_meta(store, &self.file);
+        if let Some(bytes) = old_bytes {
+            old = matching_meta(old, &bytes);
+            old.generation = Some(blob_name(&Arc::new(bytes)));
+            meta.previous = Some(Box::new(old));
+        }
+        let name = format!("{}{META_EXT}", self.file);
+        store.write(&name, &serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?)?;
+        store.write(&format!("{}{DOC_EXT}", self.file), bytes)?;
+        meta.previous = None;
+        store.write(&name, &serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?)
     }
 
     /// Once stored: the document (if still open) remembers the copy, so it isn't written again
@@ -726,7 +771,7 @@ impl RecoveryJob {
     /// meanwhile has nothing left to recover: its copy goes at once.
     pub fn finish(self, s: &mut Session) {
         let snapshot = self.save.snapshot().clone();
-        let copy = RecoveryCopy { file: self.file.clone(), doc: snapshot };
+        let copy = RecoveryCopy { pages: self.save.project_source().content_snapshot(), file: self.file.clone(), doc: snapshot };
         match s.document_mut(self.uid).filter(|st| st.is_dirty()) {
             Some(st) => st.recovery = Some(copy),
             None => remove_copy(s, &self.file),
@@ -742,13 +787,15 @@ fn object_count(doc: &Document) -> usize {
 /// Why document `st` gets no recovery copy now, if it doesn't: unchanged since its last copy (or
 /// never changed), or complex while the preference turns Data Recovery off for those.
 pub fn skip_reason(s: &Session, st: &DocState) -> Option<&'static str> {
-    if !st.is_dirty() {
+    let project = s.documents().iter().find(|p| p.uid == st.uid);
+    if !project.map_or_else(|| st.is_dirty(), |p| p.is_dirty()) {
         return Some("no unsaved changes");
     }
-    if st.recovery.as_ref().is_some_and(|c| st.same_content(&c.doc)) {
+    if st.recovery.as_ref().is_some_and(|c| project.map_or_else(|| st.same_content(&c.doc), |p| p.same_pages(&c.pages))) {
         return Some("unchanged since its last recovery copy");
     }
-    if s.prefs.recovery_off_for_complex && object_count(&st.doc) > COMPLEX_OBJECTS {
+    let objects = project.map_or_else(|| object_count(&st.doc), |p| p.pages().iter().map(|page| object_count(&page.doc.doc)).sum());
+    if s.prefs.recovery_off_for_complex && objects > COMPLEX_OBJECTS {
         return Some("complex document (Data Recovery is off for complex documents)");
     }
     None
@@ -812,7 +859,7 @@ pub fn jobs(s: &mut Session, store: &Arc<dyn RecoveryStore>) -> Result<(Vec<Reco
             mode: SaveMode::Copy,
             path: st.path.clone(),
             format: native,
-            options: Default::default(),
+            options: serde_json::Map::from_iter([("compress".into(), Value::Bool(false))]),
             name: format!("{file}{DOC_EXT}"),
             folder: None,
             modified: None,
@@ -828,6 +875,8 @@ pub fn jobs(s: &mut Session, store: &Arc<dyn RecoveryStore>) -> Result<(Vec<Reco
             import_losses: st.import_losses.clone(),
             // Filled in as the copy is written.
             images: BTreeMap::new(),
+            generation: None,
+            previous: None,
         };
         out.push(RecoveryJob { uid: st.uid, file, title, meta, save });
     }
@@ -994,7 +1043,8 @@ fn targets(s: &mut Session, store: &dyn RecoveryStore, cmd: &str, p: &Value) -> 
 fn restore_one(s: &mut Session, store: &Arc<dyn RecoveryStore>, file: &str) -> Result<Value> {
     let bytes = store.read(&format!("{file}{DOC_EXT}")).map_err(EngineError::Other)?;
     let meta_bytes = store.read(&format!("{file}{META_EXT}")).unwrap_or_default();
-    let meta: Meta = serde_json::from_slice(&meta_bytes).unwrap_or_default();
+    let meta = matching_meta(serde_json::from_slice(&meta_bytes).unwrap_or_default(), &bytes);
+    let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(|e| EngineError::Other(e.to_string()))?;
     let (mut doc, _, mut warnings) = fileio::native_file(&bytes).map_err(|e| EngineError::Other(format!("recovery copy `{file}`: {e}")))?;
     // A frame whose first paragraph continues from the frame before draws it without the
     // paragraph's first-line indent and list marker.
@@ -1041,6 +1091,13 @@ fn restore_one(s: &mut Session, store: &Arc<dyn RecoveryStore>, file: &str) -> R
     // Linked files are looked for from the document's own folder.
     let links = super::links::resolve(&mut doc, meta.path.as_deref(), s.prefs.update_links == "automatically", s.prefs.low_res_proxy_eps);
     let index = s.add_document(doc, meta.path.clone());
+    let mut project = vectorcraft_format::load_file(&bytes).map_err(|e| EngineError::Other(e.to_string()))?.project;
+    if let Some(page) = project.pages.get_mut(project.active) {
+        page.doc = (*s.doc()?.doc).clone();
+        page.doc.last_view = s.doc()?.view.clone();
+    }
+    s.project_mut()?.install(project)?;
+    let pages = s.project()?.content_snapshot();
     let st = s.doc_mut()?;
     st.recovered = true;
     st.imported_from = meta.imported_from.clone();
@@ -1048,7 +1105,7 @@ fn restore_one(s: &mut Session, store: &Arc<dyn RecoveryStore>, file: &str) -> R
     st.format = SAVE_FORMATS.iter().copied().find(|f| *f == meta.format).unwrap_or("vectorcraft");
     st.mark_unsaved();
     // The copy stays until the document is saved or closed.
-    st.recovery = Some(RecoveryCopy { file: mine.clone(), doc: st.doc.clone() });
+    st.recovery = Some(RecoveryCopy { pages, file: mine.clone(), doc: st.doc.clone() });
     let title = st.title();
     Ok(super::fileio::merge(json!({ "index": index, "title": title, "file": mine, "path": meta.path, "warnings": warnings }), links.to_json()))
 }

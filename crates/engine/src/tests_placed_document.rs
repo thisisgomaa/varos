@@ -172,15 +172,18 @@ fn the_preview_is_saved_so_the_document_shows_it_without_its_file() {
     std::fs::create_dir_all(dir.file("poster")).unwrap();
     save(&mut s, &doc_path);
     let saved: Value = serde_json::from_slice(&std::fs::read(&doc_path).unwrap()).unwrap();
-    let kind = &saved["document"]["layers"][0]["kind"]["children"][0]["kind"];
+    let kind = &saved["pages"][0]["doc"]["layers"][0]["kind"]["children"][0]["kind"];
     assert_eq!(kind["type"], "placeddocument");
     assert_eq!(kind["link"]["relative"], "../logo.vectorcraft");
     let key = kind["key"].as_str().unwrap();
-    let entry = &saved["images"][key];
+    let entry = &saved["pages"][0]["images"][key];
     assert_eq!((entry["proxy"].as_bool(), entry["mime"].as_str()), (Some(true), Some("image/jpeg")), "the preview, as JPEG (opaque)");
     // Include Linked Files keeps the file itself.
     let full = file_json(&decode(&s.execute("document.serialize", &json!({"format": "vectorcraft", "includeLinked": true})).unwrap()));
-    assert_eq!((full["images"][key]["proxy"].clone(), full["images"][key]["mime"].as_str()), (Value::Null, Some("application/json")));
+    assert_eq!(
+        (full["pages"][0]["images"][key]["proxy"].clone(), full["pages"][0]["images"][key]["mime"].as_str()),
+        (Value::Null, Some("application/json"))
+    );
     std::fs::remove_file(&src).unwrap();
     let r = open(&mut s, &doc_path);
     assert_eq!(r["missingLinks"].as_array().map(Vec::len), Some(1), "{r}");
@@ -367,7 +370,7 @@ fn a_document_saved_with_previews_outputs_its_files_art() {
     assert!(!text.contains("<image") && (text.contains("<path") || text.contains("<rect")), "vectors");
     // So does saving with Include Linked Files, and the document stays as it was.
     let full = file_json(&decode(&s.execute("document.serialize", &json!({"format": "vectorcraft", "includeLinked": true})).unwrap()));
-    assert_eq!(full["images"][&key]["mime"], "application/json");
+    assert_eq!(full["pages"][0]["images"][&key]["mime"], "application/json");
     assert!(s.doc().unwrap().doc.images[&key].is_proxy());
 }
 
@@ -550,7 +553,10 @@ fn a_linked_pdf_page_outputs_as_vectors_after_the_document_reopens() {
     assert!(!svg["text"].as_str().unwrap().contains("<image"), "vectors");
     // Include Linked Files keeps the PDF itself.
     let full = file_json(&decode(&s.execute("document.serialize", &json!({"format": "vectorcraft", "includeLinked": true})).unwrap()));
-    assert_eq!((full["images"][&key]["proxy"].clone(), full["images"][&key]["mime"].as_str()), (Value::Null, Some("application/pdf")));
+    assert_eq!(
+        (full["pages"][0]["images"][&key]["proxy"].clone(), full["pages"][0]["images"][&key]["mime"].as_str()),
+        (Value::Null, Some("application/pdf"))
+    );
 }
 
 #[test]
@@ -568,7 +574,7 @@ fn saving_and_reopening_keeps_a_linked_pdf_pages_number_and_box() {
     let doc_path = dir.file("poster.vectorcraft");
     save(&mut s, &doc_path);
     let saved = file_json(&std::fs::read(&doc_path).unwrap());
-    let kind = &saved["document"]["layers"][0]["kind"]["children"][0]["kind"];
+    let kind = &saved["pages"][0]["doc"]["layers"][0]["kind"]["children"][0]["kind"];
     assert_eq!((kind["type"].as_str(), kind["page_box"].as_str(), kind["link"]["page"].as_u64()), (Some("placeddocument"), Some("media"), Some(2)));
     let r = open(&mut s, &doc_path);
     assert_eq!((r["missingLinks"].clone(), r["modifiedLinks"].clone()), (json!([]), json!([])), "{r}");

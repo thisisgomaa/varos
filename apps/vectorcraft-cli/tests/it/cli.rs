@@ -708,3 +708,18 @@ fn runs_without_preferences_remember_nothing() {
     let r = run_in(&config, &[("pdf.preset.list", json!({}))]);
     assert!(r[0]["presets"].as_array().unwrap().iter().all(|p| p["builtIn"] == true));
 }
+
+#[test]
+fn pages_lists_current_and_migrated_files_and_refuses_future_versions() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for (name, count) in [("pages_v4.varos", 1), ("pages_v5.varos", 2)] {
+        let out = Command::new(BIN).arg("pages").arg(fixtures.join(name)).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let rows: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), count);
+        assert!(rows[0]["page_id"].is_string());
+        assert_eq!(rows.as_array().unwrap().iter().filter(|p| p["active"] == true).count(), 1);
+    }
+    let out = Command::new(BIN).arg("pages").arg(fixtures.join("pages_future.varos")).output().unwrap();
+    assert!(!out.status.success());
+}

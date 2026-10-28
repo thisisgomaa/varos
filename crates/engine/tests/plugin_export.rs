@@ -98,7 +98,7 @@ fn the_exporter_is_given_the_native_file_s_json() {
     assert_eq!(doc, saved_json, "the saved file's JSON");
     assert!(!given.contains(&b'\n'), "without indentation");
     assert_eq!((&doc["format"], &doc["version"]), (&json!("vectorcraft"), &json!(vectorcraft_format::VERSION)));
-    let images = doc["images"].as_object().unwrap();
+    let images = doc["pages"][0]["images"].as_object().unwrap();
     let image = images.values().next().unwrap();
     assert_eq!(images.len(), 1);
     assert!(image.get("blob").is_some() && image.get("data").is_none(), "{image}");
@@ -118,7 +118,7 @@ fn an_exporter_finds_what_filters_keep_with_the_document() {
     install(&mut s, &tpl::echo_exporter(&tpl::exporter("test.pens", r#"["tsd"]"#, "{}"), Echo::Input));
     let r = s.execute("document.export", &json!({"format": "plugin.test.pens"})).unwrap();
     let doc: Value = serde_json::from_slice(&exported(&r)).unwrap();
-    assert_eq!(doc["document"]["unknown"][vectorcraft_doc::plugin_data::PLUGIN_DATA], json!({"test.setup": pens}));
+    assert_eq!(doc["pages"][0]["doc"]["unknown"][vectorcraft_doc::plugin_data::PLUGIN_DATA], json!({"test.setup": pens}));
 }
 
 #[test]

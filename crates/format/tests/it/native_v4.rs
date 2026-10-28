@@ -29,7 +29,7 @@ fn large_data_goes_after_the_json_and_reads_back() {
     let d = doc_with_image("big", INLINE_MAX + 10);
     let pdf = vec![b'%'; INLINE_MAX * 2];
     for compress in [false, true] {
-        let o = SaveOptions { compress, pdf: Some(pdf.clone()), ..SaveOptions::default() };
+        let o = SaveOptions { compress, pdf: Some(pdf.clone()), ..v4() };
         let bytes = save_with(&d, &o).unwrap();
         if !compress {
             assert!(has_tail(&bytes), "a binary section");
@@ -44,12 +44,12 @@ fn large_data_goes_after_the_json_and_reads_back() {
 
 #[test]
 fn small_files_stay_plain_json_and_older_versions_inline() {
-    let small = save_with(&doc_with_image("small", 100), &SaveOptions::default()).unwrap();
+    let small = save_with(&doc_with_image("small", 100), &v4()).unwrap();
     assert!(!has_tail(&small));
     let v: Value = serde_json::from_slice(&small).unwrap();
     assert_eq!(v["version"], 4);
     let big = doc_with_image("big", INLINE_MAX + 10);
-    let v3 = save_with(&big, &SaveOptions { version: 3, ..SaveOptions::default() }).unwrap();
+    let v3 = save_with(&big, &SaveOptions { version: 3, ..v4() }).unwrap();
     assert!(!has_tail(&v3), "version 3 keeps everything in the JSON");
     let v: Value = serde_json::from_slice(&v3).unwrap();
     assert_eq!((v["format"].as_str(), v["version"].as_u64()), (Some("vectorcraft"), Some(3)));
@@ -60,19 +60,19 @@ fn small_files_stay_plain_json_and_older_versions_inline() {
 /// it; a file without such data is its JSON already.
 #[test]
 fn json_part_is_the_json_without_the_data_after_it() {
-    let big = save_with(&doc_with_image("big", INLINE_MAX + 10), &SaveOptions::default()).unwrap();
+    let big = save_with(&doc_with_image("big", INLINE_MAX + 10), &v4()).unwrap();
     let json = vectorcraft_format::json_part(&big);
     assert!(json.len() < big.len() - INLINE_MAX && !has_tail(json));
     let v: Value = serde_json::from_slice(json).unwrap();
     assert!(v["images"]["big"].get("blob").is_some() && v["images"]["big"].get("data").is_none(), "{}", v["images"]);
-    let small = save_with(&doc_with_image("small", 100), &SaveOptions::default()).unwrap();
+    let small = save_with(&doc_with_image("small", 100), &v4()).unwrap();
     assert_eq!(vectorcraft_format::json_part(&small), &small[..]);
 }
 
 #[test]
 fn damaged_offsets_are_refused_not_a_crash() {
     let d = doc_with_image("big", INLINE_MAX + 10);
-    let bytes = save_with(&d, &SaveOptions::default()).unwrap();
+    let bytes = save_with(&d, &v4()).unwrap();
     // The data cut short.
     let cut = &bytes[..bytes.len() - 100];
     assert!(matches!(load_file(cut), Err(FormatError::BadImage(_))));
@@ -86,4 +86,8 @@ fn damaged_offsets_are_refused_not_a_crash() {
     let json_only = &bytes[..bytes.windows(BLOB_MAGIC.len()).position(|w| w == BLOB_MAGIC).unwrap()];
     assert!(load_file(json_only).is_err());
     let _ = Arc::new(());
+}
+
+fn v4() -> SaveOptions {
+    SaveOptions { version: 4, ..Default::default() }
 }
