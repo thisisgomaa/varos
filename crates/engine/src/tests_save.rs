@@ -198,14 +198,18 @@ fn templates_suggest_a_name_in_the_templates_folder_and_open_untitled() {
 }
 
 /// A native file as an older version wrote it: under the former name, or format version 1.
+/// Version 1 is written by the format's own version 1 writer: since version 5 the current file
+/// holds pages, so relabelling a current file's version no longer gives a version 1 file.
 fn old_file(legacy: bool) -> Vec<u8> {
-    let text = String::from_utf8(vectorcraft_format::save(&vectorcraft_doc::Document::new(50.0, 50.0), false)).unwrap();
-    let text = if legacy {
-        text.replacen("\"format\":\"vectorcraft\"", "\"format\":\"drawcraft\"", 1)
+    let doc = vectorcraft_doc::Document::new(50.0, 50.0);
+    if legacy {
+        let text = String::from_utf8(vectorcraft_format::save(&doc, false)).unwrap();
+        text.replacen("\"format\":\"vectorcraft\"", "\"format\":\"drawcraft\"", 1).into_bytes()
     } else {
-        text.replacen(&format!("\"version\":{}", vectorcraft_format::VERSION), "\"version\":1", 1)
-    };
-    text.into_bytes()
+        let v1 = vectorcraft_format::save_with(&doc, &vectorcraft_format::SaveOptions { version: 1, ..Default::default() }).unwrap();
+        assert!(String::from_utf8_lossy(&v1).contains("\"version\":1"), "a version 1 file");
+        v1
+    }
 }
 
 #[test]
