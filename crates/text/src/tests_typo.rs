@@ -1287,13 +1287,18 @@ fn layout_10k_area_text_is_fast() {
         baselines.sort_unstable();
         samples.sort_unstable();
         let (baseline, elapsed) = (baselines[2], samples[2]);
-        // The former 10 ms release / 400 ms debug wall-clock limits measured runner contention
-        // as much as layout. Use medians to reject isolated scheduling stalls and allow 3x the
-        // cost of ten 1k layouts, plus 50 ms scheduling slack. This is a coarse scaling regression
-        // guard in either profile; an idle-machine benchmark should enforce interactive budgets.
-        let budget = baseline * 3 + Duration::from_millis(50);
-        eprintln!("layout of 10k chars ({justify:?}, {composer:?}, hyphenated): {elapsed:?}; 10 x 1k baseline: {baseline:?}; budget: {budget:?}");
-        assert!(elapsed < budget, "{justify:?} {composer:?}: {elapsed:?}, baseline {baseline:?}, budget {budget:?}");
+        // 2026-10-28: measured release medians were 26–52 ms; cap at 130 ms (~2.5x 52).
+        // Debug medians reached 128 ms under four concurrent runners; allow 400 ms there.
+        let cap = Duration::from_millis(if cfg!(debug_assertions) { 400 } else { 130 });
+        let relative_budget = baseline * 2 + Duration::from_millis(10);
+        let budget = relative_budget.min(cap);
+        eprintln!(
+            "layout of 10k chars ({justify:?}, {composer:?}, hyphenated): {elapsed:?}; 10 x 1k baseline: {baseline:?}; relative budget: {relative_budget:?}; absolute cap: {cap:?}"
+        );
+        assert!(
+            elapsed < budget,
+            "{justify:?} {composer:?}: {elapsed:?}, baseline {baseline:?}, relative budget {relative_budget:?}, absolute cap {cap:?}"
+        );
     }
 }
 
