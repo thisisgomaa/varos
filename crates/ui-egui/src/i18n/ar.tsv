@@ -1,0 +1,60 @@
+# Arabic Home catalog; other screens fall back to English. Original translations.
+@msg	variables that aren't text were left out: {kinds}	تم تجاهل المتغيرات غير النصية: {kinds}
+	Varos	فاروس
+	Recents	الأخيرة
+	Projects	المشاريع
+	Shared with me	تمت مشاركتها معي
+	Templates	القوالب
+	Getting started	البدء
+	Preferences	التفضيلات
+	New board	لوحة جديدة
+	Open…	فتح…
+	Open	فتح
+	Join with a code	الانضمام برمز
+	later	لاحقًا
+	Sharing comes later	ستتوفر المشاركة لاحقًا
+	Search files and templates	البحث في الملفات والقوالب
+	Good morning, {name}	صباح الخير، {name}
+	Good afternoon, {name}	طاب يومك، {name}
+	Good evening, {name}	مساء الخير، {name}
+	friend	صديقي
+	Pick up where you left off, or start something new.	تابع من حيث توقفت، أو ابدأ شيئًا جديدًا.
+	Recent	الأخيرة
+	Last modified	آخر تعديل
+	Name	الاسم
+	Date created	تاريخ الإنشاء
+	Show in Finder	إظهار في فايندر
+	Remove from Recents	إزالة من الأخيرة
+	Add project…	إضافة مشروع…
+	Not found	غير موجود
+	{n} files · {path}	{n} ملفات · {path}
+	Add a folder to keep its boards together.	أضف مجلدًا للاحتفاظ بلوحاته معًا.
+	No files to show.	لا توجد ملفات لعرضها.
+	Project folder not found	مجلد المشروع غير موجود
+	Modification date unavailable	تاريخ التعديل غير متاح
+	Edited just now	تم التعديل الآن
+	Edited {n} minute ago	تم التعديل منذ {n} دقيقة
+	Edited {n} minutes ago	تم التعديل منذ {n} دقائق
+	Edited {n} hour ago	تم التعديل منذ {n} ساعة
+	Edited {n} hours ago	تم التعديل منذ {n} ساعات
+	Edited {n} day ago	تم التعديل منذ {n} يوم
+	Edited {n} days ago	تم التعديل منذ {n} أيام
+	{edited} · {n} artboards	{edited} · {n} لوحات رسم
+	A4 poster	ملصق A4
+	Square post	منشور مربع
+	Business card	بطاقة عمل
+	210 × 297 mm	٢١٠ × ٢٩٧ مم
+	1080 × 1080 px	١٠٨٠ × ١٠٨٠ بكسل
+	85 × 55 mm	٨٥ × ٥٥ مم
+	Hide	إخفاء
+	Draw your first artboard	ارسم لوحتك الأولى
+	Pick the Artboard tool, drag on the canvas or choose a preset size.	اختر أداة لوحة الرسم، واسحب على مساحة العمل أو اختر حجمًا جاهزًا.
+	Write in Arabic	اكتب بالعربية
+	The Type tool shapes Arabic natively; Kashida lives in the Character panel.	تدعم أداة النص تشكيل العربية؛ وتجد الكشيدة في لوحة المحارف.
+	Let an agent help	دع وكيلًا يساعدك
+	Connect Claude or Codex through Bridge; their work shows in orange on the canvas.	اربط كلود أو كودكس عبر الجسر؛ ويظهر عملهما بالبرتقالي على مساحة العمل.
+	Home action needs a path	إجراء الصفحة الرئيسية يحتاج إلى مسار
+	File manager unavailable	مدير الملفات غير متاح
+	Unknown Home sort order	ترتيب فرز غير معروف
+	Unknown Home section	قسم غير معروف في الصفحة الرئيسية
+	Unknown Home action	إجراء غير معروف في الصفحة الرئيسية

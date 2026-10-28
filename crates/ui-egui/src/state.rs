@@ -455,6 +455,11 @@ pub struct UiState {
     /// File → Open Recent Files, most recent first.
     #[serde(default)]
     pub recent_files: Vec<String>,
+    /// Home projects, sort order and dismissed onboarding tips.
+    #[serde(default)]
+    pub home_preferences: crate::varos::home::Preferences,
+    #[serde(skip)]
+    pub home_view: crate::varos::home::View,
     /// Type → Recent Fonts, most recent first.
     #[serde(default)]
     pub recent_fonts: Vec<String>,
@@ -867,6 +872,8 @@ impl Default for UiState {
             custom_workspaces: vec![],
             workspace_changes: vec![],
             recent_files: vec![],
+            home_preferences: Default::default(),
+            home_view: Default::default(),
             recent_fonts: vec![],
             favorite_fonts: vec![],
             engine_prefs: Value::Null,

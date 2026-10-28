@@ -137,6 +137,11 @@ pub(crate) fn opened(app: &mut VectorcraftApp, r: &Value) {
         app.status(format!("Opened with {} note(s): {}", w.len(), w[0].as_str().unwrap_or_default()));
     }
     crate::dialogs::missing_links::after_open(app, r);
+    if let Some(st) = app.session.active()
+        && let Some(path) = &st.path
+    {
+        crate::varos::home::cache_document(path);
+    }
 }
 
 /// A path from the open dialog, or "cancelled".
@@ -773,6 +778,9 @@ fn write_plan(app: &mut VectorcraftApp, plan: SavePlan) -> Result<Value, String>
         let path = r["path"].as_str().unwrap_or_default().to_string();
         if retargets {
             note_recent(app, &path);
+        }
+        if !path.is_empty() {
+            crate::varos::home::cache_document(&path);
         }
         report_saved(app, &path, &r);
         Ok(r)

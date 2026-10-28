@@ -104,3 +104,16 @@ Fill/Stroke pair (beside it when there is no room below). Gradient is an icon mo
 Gradient editor; solid modes convert gradients back to a solid. The mode row has no close button
 or Gradient navigation text. Headless interaction tests and software captures pass. No parity
 score change. See `lanes/picker2-report.md`.
+
+## 2026-10-28 — cloud batch notes
+- FIXED (#4): PDF copy-back of ligature words (Allah) and of stroked Force-kashida words; both tests un-ignored.
+  Follow-ups from review: Auto-kashida fixture uses point text (no elongation) → add justified area text;
+  mixed Arabic/Latin with punctuation and font changes untested; AAT fonts unverified on the cloud (no fonts);
+  Hebrew/other RTL clusters share the mapping change, untested; fully vocalized Arabic extraction issue is
+  pre-existing (documented in `crates/pdf/tests/fixtures/arabic-copy-back.md`).
+- FIXED (#3): the 10 "known release-only failures" (debug-string ID lookups in test harnesses); the
+  10k-text timing test now uses medians with a relative + absolute budget.
+- Linux-only (cloud) debug failures seen by the lanes, not reproduced on the Mac: 8 tests panic dropping an
+  uncleared `TexturesDelta` (epaint textures.rs:337) — clipping/picker/tab_scroll/tests_boards/tests_shell;
+  investigate when a Linux build matters.
+- Clippy with Rust 1.99 flags `single_element_loop` at `varos/shell/persist.rs:673` (fixed on lane-look).
