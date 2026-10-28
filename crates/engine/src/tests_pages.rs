@@ -214,6 +214,25 @@ fn pages_native_dialog_defaults_save_the_project_in_the_current_version() {
 }
 
 #[test]
+fn pages_older_versions_save_one_page_as_its_document_and_refuse_several() {
+    let mut s = session();
+    rect(&mut s);
+    // One page: the single document an older version reads, with no project envelope.
+    for version in 1..vectorcraft_format::VERSION {
+        let saved = s.execute("document.serialize", &json!({"format":"vectorcraft","version":version})).unwrap();
+        let json: Value = serde_json::from_slice(vectorcraft_format::json_part(&bytes(&saved))).unwrap();
+        assert_eq!(json["version"], version);
+        assert!(json["document"].is_object() && json.get("pages").is_none(), "version {version}: {json}");
+        let file = vectorcraft_format::load_file(&bytes(&saved)).unwrap();
+        assert_eq!(file.project.pages.len(), 1);
+    }
+    // Several pages: refused rather than silently writing only one.
+    s.execute("page.add", &json!({"name":"Back"})).unwrap();
+    let e = s.execute("document.serialize", &json!({"format":"vectorcraft","version":4})).unwrap_err();
+    assert!(e.to_string().contains("multiple pages"), "{e}");
+}
+
+#[test]
 fn pages_duplicate_long_unicode_names_remains_saveable() {
     let mut s = session();
     s.execute("page.rename", &json!({"name":"🌍".repeat(1024)})).unwrap();

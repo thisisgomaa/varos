@@ -292,6 +292,19 @@ pub(super) fn encode_project(cmd: &str, f: &Format, project: &vectorcraft_format
 pub(super) fn encode_project_to(cmd: &str, f: &Format, project: &vectorcraft_format::Project, p: &Value, w: impl std::io::Write) -> Result<()> {
     let active = project.pages.get(project.active).ok_or_else(|| bad(cmd, "missing active page"))?;
     let (mut options, extras) = save_options(cmd, f, &active.doc, p)?;
+    if options.version < 5 {
+        // Versions 1–4 hold one page, written as the single document they always were: placed
+        // documents as the art they show for versions before 4 (their previews when their files
+        // are gone), Include Linked Files keeping the files' bytes.
+        let [page] = project.pages.as_slice() else {
+            return Err(bad(cmd, "versions 1–4 cannot store multiple pages: save the project as version 5"));
+        };
+        let mut doc = page.doc.clone();
+        if f.id == "template" {
+            doc.template = true;
+        }
+        return encode_to(cmd, f, &doc, p, w);
+    }
     let mut project = project.clone();
     for page in &mut project.pages {
         if options.include_linked {
