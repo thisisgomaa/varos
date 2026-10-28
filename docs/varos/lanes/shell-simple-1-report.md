@@ -31,29 +31,30 @@ OFF isolation: legacy panel and picker bodies execute directly, without an added
 
 - P1 follow-up: with the app bar gone on Home, Home's own 40-point bar takes the title-bar duties the app bar had: window drag on empty bar space (macOS and custom title bar), the brand clears the macOS window buttons (`titlebar_inset`), and the custom caption buttons sit at its right end (`varos/home.rs` `top_bar`). `chrome::app_bar_height` gives the macOS window buttons the bar they centre on (40 on Home and with the shell on, 32 for the OFF editor, unchanged) (`chrome.rs`, `apps/vectorcraft/src/main.rs`). Note: Home is shared by OFF and ON, so OFF Home also loses the old second bar (the brief's P1 rule is unconditional); the OFF editor is unchanged.
 - P3 follow-up: the app bar's right group (presence, Share, search, capped workspace control) is laid out first and the document tabs take exactly the room it leaves (8-point gap), replacing the fixed 340-point reserve, so a connected agent avatar can no longer push the group over the tabs (`chrome.rs` `simple_app_bar` / `simple_app_bar_right`).
+- Pages (after the main merge): the Design default layout puts a Pages box (top fifth) over Layers | Artboards in the left column (`varos/shell/tree.rs` `default_layout`, `PAGES_RATIO`); with the shell on, the status bar shows `varos::pages::status` ("Page 1 of 1 · Artboard 1 / 1") between the artboard arrows instead of the artboard list (`chrome.rs` `status_bar`); the Pages panel drops its duplicate "Pages" header under a shell tab (`varos/pages.rs`). Tests: `simple_default_layout_matches_the_editor_columns` (updated to the Pages box), `simple_status_bar_shows_the_page_readout_only_with_the_shell`, `simple_pages_tab_is_not_repeated_as_a_header`.
+- Flyout shadow: `toolbar::flyout_frame` calls `varos::theme::chrome_shadow`, which already returns `Shadow::NONE`; nothing to change.
 - Tests: `simple_review_home_bar_is_the_window_title_bar` (caption Close in the corner, brand past the inset, empty-bar drag sends `StartDrag`); the tool-flyout regression now checks 2 and 3 columns (`simple_review_multi_column_tool_flyout_clears_strip`).
 
 ## Gates
 
-Current validation: macOS lane-look, shared target directory `~/Documents/AI workspace/lanes/_target-shared`, one Cargo command at a time, `--offline -j 2`, test execution with `--test-threads=2`. Implementation and regression tests were written before Cargo. The Cargo handoff marker (`go-look-cargo`) did not appear within the allowed 120 one-minute waits (2026-10-28 22:19 → 2026-10-29 00:18), so no Cargo command has run on this round yet; every Cargo row below is still pending and nothing in this round is compiled or test-proven.
+Validation 2026-10-29 on macOS, lane-look after merging main (Pages), shared target directory `~/Documents/AI workspace/lanes/_target-shared`, one Cargo command at a time, `--offline -j 2`, tests with `--test-threads=2`.
 
-| Gate | Exact result / status |
+| Gate | Exact result |
 |---|---|
-| UI release library tests | Pending: Cargo marker never appeared (not run). |
-| Two ignored 1440×900 captures | Pending. |
-| Clippy, workspace/all targets, warnings denied | Pending. |
-| rustfmt check, touched Rust files | `rustfmt --edition 2024 --check` on chrome.rs, varos/home.rs, varos/tests_shell.rs, apps/vectorcraft/src/main.rs: exit 0, no output (standalone rustfmt, not `cargo fmt`). |
-| `git diff --check` | Exit 0, no output (pre-Cargo static check). |
-| Native release build | Pending. |
+| `cargo test -p vectorcraft-ui-egui --lib --release` (first run) | `test result: FAILED. 2561 passed; 2 failed; 17 ignored` — both `tests_home::*` asserted the editor `app_bar` panel on Home, which the P1 single-bar fix removes on purpose; `assert_chrome` now asserts the app bar follows the Home gate, Home's bar keeps the brand and (macOS/custom title bar) the window-drag area. |
+| same, final run | `test result: ok. 2565 passed; 0 failed; 17 ignored; 0 measured; 0 filtered out; finished in 27.80s` |
+| Captures (`capture_shell_simple`, ignored) | `test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2581 filtered out; finished in 0.26s` |
+| `cargo clippy --workspace --all-targets --offline -j 2 -- -D warnings` | exit 0, "Finished dev profile [optimized + debuginfo] target(s) in 57.89s"; only the pre-existing "patch … was not used in the crate graph" manifest notes |
+| `cargo fmt --check -p vectorcraft-ui-egui -p vectorcraft` | exit 0, no output |
+| `git diff --check` (and `main...HEAD` excluding `tr.tsv`) | exit 0, no output |
+| Native release build | Not run (the moderator bundles). |
 
 ## Captures and comparison
 
-Pending generation and direct PNG inspection:
+- `/tmp/varos-simple/shell-simple-capture.png` → `docs/varos/mockups/shell-simple-capture.png` (1440×900, Design, tools 1 column, Color flyout open from the right strip).
+- `/tmp/varos-simple/shell-simple-cols-capture.png` → `docs/varos/mockups/shell-simple-cols-capture.png` (same, tools 3 columns: the strip is 96 wide and the canvas shifts right).
 
-- `/tmp/varos-simple/shell-simple-capture.png` → `docs/varos/mockups/shell-simple-capture.png`.
-- `/tmp/varos-simple/shell-simple-cols-capture.png` → `docs/varos/mockups/shell-simple-cols-capture.png`.
-
-Browser access was unavailable when opening the HTML mockup. Its source was inspected for the approved dimensions and structure. The mockup includes future Pages content; this lane retains existing Layers/Artboards/Properties bodies and unchanged theme tokens. Owner hand testing remains separate from local gates.
+Against the mockup's Editor view: one 40-point top bar (brand, Home, in-window menus because the capture has no native menu, the document tab pill with dirty dot and `+`, then avatar, `+`, Share, search, "Design ⌄"); no Workspaces row and no fixed control-bar row; flat 40-point tool strip with 28×28 tiles and hairline separators; flat left column with Pages over Layers | Artboards and one hairline between them; Board in t.base; Properties on the right; flat right icon strip; no rounded box frames. The Color flyout sits 6 points left of the right strip, over the Properties column (the mockup shows a torn-off card over the canvas instead). Differences that remain: the legacy hint bar row above the status bar (its own preference), the contextual Edit Path bar over the selection, and the legacy canvas scroll bars. Fixed in this round from the capture: the Pages box repeated its tab name as a header (`varos/pages.rs`, shell ON only).
 
 ## Five owner hand tests
 
