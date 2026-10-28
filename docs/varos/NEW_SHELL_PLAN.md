@@ -147,3 +147,21 @@ Paragraph (`ch-hide-options` / `pa-hide-options`; glyph present in Inter); `<<` 
 Deferred: a docked tools settle can be obscured by the canvas (P3); the docked tools scrollbar is
 always hidden (wheel/trackpad reach the overflow). Capture: `mockups/shell5-capture.png`
 (`VAROS_SHELL_CAPTURE_FINAL`). 99 shell tests. Owner acceptance pending; stage 6 waits for it.
+
+## Look round — owner requirements after v15 (2026-10-28, PAUSED by the owner for the usage limit)
+Owner on v15 with the shell ON: «شغالة كويس بس شكلها بشع». Decided (in order), all shell-ON only:
+1. **Round 1 (brief `brief-look.md`, lane `lane-look`, Codex run stopped mid-build, nothing committed):**
+   one grip per strip (no `⋮⋮⋮` between groups, hairline separators); chrome controls as Lucide icon
+   textures (no `<<` `>>` `×` `≡` `◇` text); every strip icon 16 px in 28×28 tiles; no frame inside a
+   frame (legacy panel bodies get a frameless host mode); tab rows 28 pt, 11 pt medium, overflow →
+   `…` menu (never clipped); app bar 40 / status 24; control bar without underlines; flyouts and the
+   picker 240–280 pt, never over a strip, wheel ≤ 200 pt, thin auto-hide scrollbars; colours unchanged.
+2. **Round 2 (brief `brief-look2.md`):** (a) delete the Workspaces row; the switcher returns to the app
+   bar's right as a compact control; (b) the Control bar becomes a dockable panel `control` (not open
+   by default; the fixed row disappears); (c) tighten the vertical rhythm (app bar → Board directly);
+   (d) document tabs = the box tab style; (e) tools strip columns 1 / 2 / 3 from its `…` menu, per
+   workspace (34 / 62 / 90 pt); (f) **decision A — flat Illustrator look over the box tree**: no
+   rounded box frames, no 12 pt seams, one hairline between boxes, invisible dividers until hover,
+   flat `t.panel` everywhere, strips flat, floats the only cards (1 px line, radius 10), no shadows.
+3. Colour round after that (owner: clear, minimal, modern), then stage 6 only after his OK.
+Briefs live in the session scratchpad; copy them into `docs/varos/lanes/` when work resumes.
