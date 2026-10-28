@@ -2301,7 +2301,7 @@ impl VectorcraftApp {
     pub(crate) fn canvas_area(&mut self, ui: &mut egui::Ui) {
         let t = theme::Tokens::get(ui.ctx());
         ui.painter().rect_filled(ui.max_rect(), 0.0, t.pasteboard);
-        if self.ui.screen_mode < 3 && !varos::home::is_home(self) {
+        if self.ui.screen_mode < 3 && !varos::home::is_home(self) && !varos::shell::enabled(self) {
             varos::profile::measure("doc_tabs", || chrome::doc_tabs(self, ui)); // Varos: Home has no document tabs
         }
         varos::profile::measure("canvas", || canvas::show(self, ui));
@@ -2361,9 +2361,9 @@ impl VectorcraftApp {
         canvas::release_over_panel(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         let on_home = varos::home::is_home(self); // Varos: Home shows only title bar + welcome content.
-        if on_home || self.ui.screen_mode < 2 {
+        if !on_home && self.ui.screen_mode < 2 {
             varos::profile::measure("app_bar", || chrome::app_bar(self, ui));
-            if !on_home && self.ui.control_bar {
+            if !on_home && self.ui.control_bar && !varos::shell::enabled(self) {
                 varos::profile::measure("control_bar", || chrome::control_bar(self, ui));
             }
         }

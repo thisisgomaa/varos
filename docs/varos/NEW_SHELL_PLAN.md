@@ -165,3 +165,17 @@ Owner on v15 with the shell ON: «شغالة كويس بس شكلها بشع». 
    flat `t.panel` everywhere, strips flat, floats the only cards (1 px line, radius 10), no shadows.
 3. Colour round after that (owner: clear, minimal, modern), then stage 6 only after his OK.
 Briefs live in the session scratchpad; copy them into `docs/varos/lanes/` when work resumes.
+
+## Simple look — implementation record (2026-10-28)
+
+The approved `SHELL_SIMPLE_DIRECTION.md` and `brief-shell-simple-1.md` supersede the
+look-round dimensions above: flat docked groups with one-point seams, 40-point strips,
+28-point tool tiles, 40/68/96-point tool-column choices, document tabs in the 40-point top
+bar, a compact workspace popup, and a dockable Control panel instead of fixed rows.
+Floating/docking, split/swap/maximize, section reordering and stage-5 motion remain.
+Version 6 adds per-workspace tool columns without discarding old arrangements. The
+Design preset places Layers/Artboards left of the Board and Properties on the right.
+The tools docking target follows the window edge even with a group left of the Board.
+Partial validation and owner hand-test steps are recorded in
+[`lanes/shell-simple-1-report.md`](lanes/shell-simple-1-report.md). Captures and final gates remain unfinished at the owner’s request for a draft PR. Owner acceptance
+and stage 6 remain pending; this lane changes neither Home/Pages nor theme colours.

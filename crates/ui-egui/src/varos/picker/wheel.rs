@@ -169,17 +169,20 @@ fn marker(p: &egui::Painter, c: Pos2, r: f32, color: Color32) {
 /// The ring and the triangle in `rect` (the wheel area), with the press that starts a gesture.
 /// `harmony` marks the linked hues of the Harmony tab.
 pub(super) fn wheel(ui: &mut Ui, rect: Rect, st: &mut State, harmony: Option<super::Rule>) {
+    let simple = ui.stack().iter().any(|node| node.tags().contains("simple-picker"));
+    let ring_r = if simple { 90.0 } else { RING_R };
+    let triangle_r = if simple { 75.0 } else { TRIANGLE_R };
     let c = rect.min + vec2(CENTER[0], CENTER[1]);
     let hit =
-        ui.interact(Rect::from_center_size(c, egui::Vec2::splat(RING_R * 2.0)), ui.scope_id().with("varos-picker-wheel"), Sense::click_and_drag());
+        ui.interact(Rect::from_center_size(c, egui::Vec2::splat(ring_r * 2.0)), ui.scope_id().with("varos-picker-wheel"), Sense::click_and_drag());
     let pos = hit.interact_pointer_pos();
     if (hit.is_pointer_button_down_on() || hit.clicked())
         && st.gesture.is_none()
         && let Some(p) = pos
     {
-        if ring_hit(c, p, RING_R, RING_BAND) {
+        if ring_hit(c, p, ring_r, RING_BAND) {
             st.start(Gesture::Ring);
-        } else if in_triangle(st.hsva[0], TRIANGLE_R, Pos2::ZERO + (p - c)) {
+        } else if in_triangle(st.hsva[0], triangle_r, Pos2::ZERO + (p - c)) {
             st.start(Gesture::Triangle);
         }
     }
@@ -195,7 +198,7 @@ pub(super) fn wheel(ui: &mut Ui, rect: Rect, st: &mut State, harmony: Option<sup
             }
             Some(Gesture::Triangle) => {
                 st.channels = None;
-                let [s, v] = pos_sv(st.hsva[0], TRIANGLE_R, Pos2::ZERO + (p - c));
+                let [s, v] = pos_sv(st.hsva[0], triangle_r, Pos2::ZERO + (p - c));
                 st.hsva[1] = s;
                 st.hsva[2] = v;
                 st.change = true;
@@ -204,16 +207,16 @@ pub(super) fn wheel(ui: &mut Ui, rect: Rect, st: &mut State, harmony: Option<sup
         }
     }
     let painter = ui.painter();
-    painter.add(translated(st.wheel.ring(RING_R), c));
-    painter.add(translated(st.wheel.triangle(st.hsva[0], TRIANGLE_R), c));
+    painter.add(translated(st.wheel.ring(ring_r), c));
+    painter.add(translated(st.wheel.triangle(st.hsva[0], triangle_r), c));
     if let Some(rule) = harmony {
         for [h, s, v] in super::harmony::linked(rule, [st.hsva[0], st.hsva[1], st.hsva[2]]).into_iter().skip(1) {
-            let at = if rule == super::Rule::Mono { c + sv_pos(h, TRIANGLE_R, s, v).to_vec2() } else { ring_pos(c, RING_R - RING_BAND / 2.0, h) };
+            let at = if rule == super::Rule::Mono { c + sv_pos(h, triangle_r, s, v).to_vec2() } else { ring_pos(c, ring_r - RING_BAND / 2.0, h) };
             marker(painter, at, TRI_MARKER, hsv_c32(h, s, v));
         }
     }
-    marker(painter, ring_pos(c, RING_R - RING_BAND / 2.0, st.hsva[0]), RING_MARKER, hsv_c32(st.hsva[0], 1.0, 1.0));
-    marker(painter, c + sv_pos(st.hsva[0], TRIANGLE_R, st.hsva[1], st.hsva[2]).to_vec2(), TRI_MARKER, hsv_c32(st.hsva[0], st.hsva[1], st.hsva[2]));
+    marker(painter, ring_pos(c, ring_r - RING_BAND / 2.0, st.hsva[0]), RING_MARKER, hsv_c32(st.hsva[0], 1.0, 1.0));
+    marker(painter, c + sv_pos(st.hsva[0], triangle_r, st.hsva[1], st.hsva[2]).to_vec2(), TRI_MARKER, hsv_c32(st.hsva[0], st.hsva[1], st.hsva[2]));
 }
 
 /// The Wheel tab's body: the wheel, the Default button, the live readout and the Fill/Stroke

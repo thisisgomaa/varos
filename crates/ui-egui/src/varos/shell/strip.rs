@@ -34,7 +34,7 @@ impl StripRef {
 
 /// A strip group's grip dots: their height, and an icon row's height.
 pub(crate) const GRIP: f32 = 12.0;
-pub(crate) const ICON_ROW: f32 = 26.0;
+pub(crate) const ICON_ROW: f32 = 30.0;
 
 /// The Board edge that owns this strip. Ordinary boxes never own strips.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -59,7 +59,7 @@ pub struct Group {
     pub height: f32,
 }
 fn initial_width() -> f32 {
-    260.0
+    240.0
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Strip {
@@ -74,12 +74,16 @@ impl Strip {
             .map(|g| Group {
                 temporary: false,
                 panels: g.iter().filter(|p| tree.find_tab(p).is_none()).map(|p| (*p).into()).collect(),
-                width: 260.0,
+                width: 240.0,
                 height: 360.0,
             })
             .filter(|g| !g.panels.is_empty())
             .collect();
-        Self { groups, ..Self::default() }
+        let mut strip = Self { groups, ..Self::default() };
+        if tree.find_tab("control").is_none() {
+            strip.groups.push(Group { panels: vec!["control".into()], temporary: false, width: 240.0, height: 360.0 });
+        }
+        strip
     }
     pub fn group(&self, panel: &str) -> Option<usize> {
         self.groups.iter().position(|g| g.panels.iter().any(|p| p == panel))
@@ -91,7 +95,7 @@ impl Strip {
         self.groups.retain(|g| !g.panels.is_empty());
     }
     pub fn is_default(panel: &str) -> bool {
-        crate::state::ICON_PANEL_GROUPS.iter().any(|g| g.contains(&panel))
+        panel == "control" || crate::state::ICON_PANEL_GROUPS.iter().any(|g| g.contains(&panel))
     }
     pub fn append(&mut self, panel: &str) {
         self.remove(panel);
@@ -99,14 +103,11 @@ impl Strip {
         let index = if temporary { self.groups.iter().position(|g| g.temporary) } else { self.groups.iter().rposition(|g| !g.temporary) };
         let index = index.unwrap_or_else(|| {
             let index = if temporary { self.groups.len() } else { self.groups.iter().position(|g| g.temporary).unwrap_or(self.groups.len()) };
-            self.groups.insert(index, Group { temporary, panels: Vec::new(), width: 260.0, height: 360.0 });
+            self.groups.insert(index, Group { temporary, panels: Vec::new(), width: 240.0, height: 360.0 });
             index
         });
         if let Some(g) = self.groups.get_mut(index) {
             g.panels.push(panel.into());
-            if matches!(panel, "properties" | "layers" | "libraries") {
-                g.width = g.width.max(300.0);
-            }
         }
     }
 
@@ -122,7 +123,7 @@ impl Strip {
         let mut seen = std::collections::HashSet::new();
         for g in &mut self.groups {
             g.panels.retain(|p| super::persist::known(p) && tree.find_tab(p).is_none() && !elsewhere(p) && seen.insert(p.clone()));
-            g.width = if g.width.is_finite() { g.width.clamp(190.0, 1200.0) } else { 260.0 };
+            g.width = if g.width.is_finite() { g.width.clamp(190.0, 1200.0) } else { 240.0 };
             g.height = if g.height.is_finite() { g.height.clamp(120.0, 1600.0) } else { 360.0 };
         }
         if !legacy {
@@ -130,7 +131,7 @@ impl Strip {
             for group in Self::default_for(tree).groups {
                 let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
                 if !panels.is_empty() {
-                    self.groups.push(Group { panels, temporary: false, width: 260.0, height: 360.0 });
+                    self.groups.push(Group { panels, temporary: false, width: 240.0, height: 360.0 });
                 }
             }
             return;
@@ -156,7 +157,7 @@ impl Strip {
         for group in Self::default_for(tree).groups {
             let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
             if !panels.is_empty() {
-                self.groups.push(Group { panels, temporary: false, width: 260.0, height: 360.0 });
+                self.groups.push(Group { panels, temporary: false, width: 240.0, height: 360.0 });
             }
         }
         self.groups.sort_by_key(|g| g.temporary);
@@ -212,7 +213,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     let t = crate::theme::Tokens::get(ui.ctx());
     let width_for = |app: &VectorcraftApp| {
         if app.ui.varos_shell.strip.mode == Mode::Icons {
-            34.0
+            40.0
         } else {
             app.ui
                 .varos_shell
@@ -237,13 +238,13 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     let rail = Rect::from_min_max(pos2(board.right() - width, board.top()), board.max);
     hits.push((Hit::Strip, rail));
     // The Board's ≡ on top: Maximize Board, or Restore Layout.
-    let menu_row = Rect::from_min_size(rail.min, vec2(width, 24.0));
+    let menu_row = Rect::from_min_size(pos2(rail.left(), (rail.bottom() - 48.0).max(rail.top())), vec2(width, 24.0));
     let toggle = Rect::from_min_size(pos2(rail.left(), menu_row.bottom()), vec2(width, 24.0));
     let toggle_response = ui.interact(toggle, toggle_id, Sense::click());
     toggle_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Toggle panel labels"));
     hits.push((Hit::StripToggle, toggle));
-    ui.painter().rect_filled(rail, boxes::RADIUS, t.panel);
-    ui.painter().rect_stroke(rail, boxes::RADIUS, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    ui.painter().rect_filled(rail, 0.0, t.panel);
+    ui.painter().vline(rail.left() + 0.5, rail.y_range(), egui::Stroke::new(1.0, t.border));
     if toggle_response.hovered() {
         ui.painter().rect_filled(toggle.shrink(3.0), 3.0, t.hover);
     }
@@ -258,16 +259,15 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
         app.ui.varos_shell.toggle_maximized(id);
         ui.ctx().request_repaint();
     }
-    ui.painter().text(
-        toggle.center(),
-        egui::Align2::CENTER_CENTER,
-        if app.ui.varos_shell.strip.mode == Mode::Icons { "<<" } else { ">>" },
-        egui::FontId::proportional(super::tokens::CHROME_GLYPH),
-        t.text,
+    crate::icons::paint(
+        ui,
+        if app.ui.varos_shell.strip.mode == Mode::Icons { "shell-chevrons-left" } else { "shell-chevrons-right" },
+        Rect::from_center_size(toggle.center(), vec2(16.0, 16.0)),
+        t.text_dim,
     );
     let groups = app.ui.varos_shell.strip.groups.clone();
     let mut tops = Vec::new();
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(rail.left(), toggle.bottom()), rail.max)));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(rail.min, pos2(rail.right(), menu_row.top()))));
     child.set_clip_rect(rail.intersect(ui.clip_rect()));
     child.spacing_mut().item_spacing.y = 0.0;
     let mut icons = Vec::new();
@@ -275,13 +275,19 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     egui::ScrollArea::vertical().id_salt("shell-strip-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
         column(app, ui, StripRef::Board, &groups, width, rail, hits, &mut tops, &mut icons);
     });
-    flyout(app, ui, board, rail, &tops, StripRef::Board, hits);
+    let tools_width = if app.ui.toolbar && app.ui.varos_shell.tools_pos.is_none() {
+        super::tools::WIDTH + 28.0 * f32::from(app.ui.varos_shell.tools_columns.clamp(1, 3) - 1)
+    } else {
+        0.0
+    };
+    let bounds = Rect::from_min_max(board.min + vec2(tools_width, 0.0), board.max);
+    flyout(app, ui, bounds, rail, &tops, StripRef::Board, hits);
     // Paint after all strip and flyout input: exactly one active icon on the click frame.
     let mut paint_ui = child.new_child(egui::UiBuilder::new().max_rect(rail));
-    paint_ui.set_clip_rect(Rect::from_min_max(pos2(rail.left(), toggle.bottom()), rail.max).intersect(ui.clip_rect()));
+    paint_ui.set_clip_rect(Rect::from_min_max(rail.min, pos2(rail.right(), menu_row.top())).intersect(ui.clip_rect()));
     let mode = app.ui.varos_shell.strip.mode;
     paint_icons(app, &paint_ui, icons, mode, StripRef::Board, hits);
-    Rect::from_min_max(board.min, pos2((rail.left() - super::tree::SEAM).max(board.left()), board.bottom()))
+    Rect::from_min_max(board.min, pos2(rail.left().max(board.left()), board.bottom()))
 }
 
 /// A strip's groups, laid out down `ui` `width` wide: each group's grip dots (dragged: the whole
@@ -295,7 +301,7 @@ pub(crate) fn column(
     sref: StripRef,
     groups: &[Group],
     width: f32,
-    rail: Rect,
+    _rail: Rect,
     hits: &mut Vec<(Hit, Rect)>,
     tops: &mut Vec<f32>,
     icons: &mut Vec<(String, Rect, egui::Response)>,
@@ -305,25 +311,25 @@ pub(crate) fn column(
     for (index, g) in groups.iter().enumerate() {
         let (grip, _) = ui.allocate_exact_size(vec2(width, GRIP), Sense::hover());
         tops.push(grip.top());
+        // Geometry for drop slots and source outlines; only the first is draggable.
         hits.push((sref.group_hit(index), grip));
         if g.panels.is_empty() {
             continue;
         }
-        let grip_response = ui.interact(grip, egui::Id::unique("varos-shell-grip").with((sref, index)), Sense::drag());
-        if grip_response.hovered() {
-            ctx.set_cursor_icon(egui::CursorIcon::Grab);
-        }
-        if grip_response.drag_started() {
-            drag::begin(app, &ctx, Item::Group { strip: sref, group: g.clone() }, grip);
-        }
-        for y in [4.0, 8.0] {
-            for x in [-4.0, 0.0, 4.0] {
-                ui.painter().circle_filled(pos2(grip.center().x + x, grip.top() + y), 0.7, t.text_dim);
+        if index == 0 {
+            let response = ui.interact(grip, egui::Id::unique("varos-shell-grip").with(sref), Sense::drag());
+            if response.drag_started() {
+                drag::begin(app, &ctx, Item::Group { strip: sref, group: g.clone() }, grip);
             }
+            if ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| grip.expand(15.0).contains(p))) {
+                ui.painter().rect_filled(Rect::from_center_size(grip.center(), vec2(30.0, 3.0)), 1.5, t.text_dim);
+            }
+        } else {
+            ui.painter().hline((grip.center().x - 10.0)..=(grip.center().x + 10.0), grip.center().y, egui::Stroke::new(1.0, t.border));
         }
         for panel in &g.panels {
             let (row, _) = ui.allocate_exact_size(vec2(width, ICON_ROW), Sense::hover());
-            let rect = Rect::from_min_size(pos2(row.left() + 4.0, row.top()), vec2((width - 8.0).max(1.0), ICON_ROW));
+            let rect = Rect::from_center_size(row.center(), vec2((width - 12.0).max(1.0), 28.0));
             let r = ui.interact(rect, ui.scope_id().with(panel), Sense::click_and_drag());
             if r.drag_started() {
                 drag::begin(app, &ctx, Item::Icon(panel.clone()), rect);
@@ -336,7 +342,6 @@ pub(crate) fn column(
             }
             icons.push((panel.clone(), rect, r));
         }
-        ui.painter().hline(rail.x_range(), ui.cursor().top(), egui::Stroke::new(1.0, t.border));
     }
 }
 
@@ -356,10 +361,11 @@ pub(crate) fn paint_icons(
         if r.hovered() || active {
             paint_ui.painter().rect_filled(rect, 3.0, if active { t.button } else { t.hover });
         }
-        let icon = crate::state::rail_panel(super::persist::instance_kind(&panel)).map_or("panel-left", |p| p.2);
+        let icon = crate::state::rail_panel(super::persist::instance_kind(&panel))
+            .map_or(if panel == "control" { "shell-sliders-horizontal" } else { "panel-left" }, |p| p.2);
         egui::Image::new(crate::icons::source(icon))
             .tint(if active { t.text_strong } else { t.text_dim })
-            .paint_at(paint_ui, Rect::from_min_size(rect.min + vec2(5.0, 5.0), vec2(16.0, 16.0)));
+            .paint_at(paint_ui, Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(16.0, 16.0)));
         if mode == Mode::Labels {
             paint_ui.painter().text(
                 rect.min + vec2(29.0, 13.0),
@@ -405,12 +411,12 @@ pub(crate) fn flyout(
     let right_room = (bounds.right() - rail.right()).max(1.0);
     let left_room = (rail.left() - bounds.left()).max(1.0);
     let on_right = sref != StripRef::Board && (right_room >= group.width.min(bounds.width()) || right_room > left_room);
-    let room = if on_right { right_room } else { left_room };
+    let room = (if on_right { right_room } else { left_room } - 6.0).max(1.0);
     let mut width = group.width.min(room);
     let height = group.height.min(bounds.height());
     let top = tops.get(index).copied().unwrap_or(bounds.top()).min(bounds.bottom() - height).max(bounds.top());
     let place = |width: f32| {
-        let x = if on_right { rail.right() } else { rail.left() - width };
+        let x = if on_right { rail.right() + 6.0 } else { rail.left() - 6.0 - width };
         Rect::from_min_size(pos2(x, top), vec2(width, height))
     };
     let mut rect = place(width);
@@ -442,7 +448,7 @@ pub(crate) fn flyout(
     if r.dragged()
         && let Some(p) = r.interact_pointer_pos()
     {
-        let wanted = if on_right { p.x - rail.right() } else { rail.left() - p.x };
+        let wanted = if on_right { p.x - rail.right() - 6.0 } else { rail.left() - p.x - 6.0 };
         width = wanted.clamp(190.0_f32.min(room), room);
         rect = place(width);
         if let Some(g) = app.ui.varos_shell.strip_groups_mut(sref).and_then(|gs| gs.get_mut(index)) {
@@ -458,11 +464,12 @@ pub(crate) fn flyout(
         if closing {
             ui.disable();
         }
+        ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_width: 4.0, floating_width: 2.0, ..egui::style::ScrollStyle::floating() };
         ui.set_opacity(alpha);
         ui.set_min_size(rect.size());
         ui.set_clip_rect(bounds);
         let t = crate::theme::Tokens::get(&ctx);
-        let head = Rect::from_min_size(rect.min, vec2(width, boxes::HEADER));
+        let head = Rect::from_min_size(rect.min, vec2(width, boxes::FLOAT_HEADER));
         let collapse = Rect::from_min_size(pos2(head.right() - 48.0, head.top() + 4.0), vec2(22.0, 24.0));
         let collapse_response = ui.interact(collapse, area_id.with("close"), Sense::click());
         collapse_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Collapse panel"));
@@ -494,12 +501,14 @@ pub(crate) fn flyout(
             open(app, &front);
         }
         for ((p, _), r) in tabs.iter().zip(out.tabs) {
-            hits.push((Hit::FlyoutTab(p.clone()), r));
+            if r.is_positive() {
+                hits.push((Hit::FlyoutTab(p.clone()), r));
+            }
         }
         if collapse_response.hovered() {
             ui.painter().rect_filled(collapse, 3.0, t.hover);
         }
-        ui.painter().text(collapse.center(), egui::Align2::CENTER_CENTER, ">>", egui::FontId::proportional(super::tokens::CHROME_GLYPH), t.text);
+        crate::icons::paint(ui, "shell-chevrons-right", Rect::from_center_size(collapse.center(), vec2(16.0, 16.0)), t.text_dim);
         if boxes::menu_button(app, ui, menu, u32::MAX, &front, &t) {
             close_panel(app, &front);
             // A closing default panel keeps its body for the fade, but takes no input.
@@ -516,14 +525,20 @@ pub(crate) fn flyout(
         hits.push((Hit::FlyoutResize, edge_of(rect)));
         hits.push((Hit::Flyout, rect));
         ui.painter().hline((rect.left() + 1.0)..=(rect.right() - 1.0), head.bottom() - 0.5, egui::Stroke::new(1.0, t.border));
-        let inner = Rect::from_min_max(pos2(rect.left() + 6.0, head.bottom()), rect.max - vec2(1.0, 1.0));
+        let inner = Rect::from_min_max(pos2(rect.left(), head.bottom()), rect.max - vec2(1.0, 1.0));
         let mut body = ui.new_child(egui::UiBuilder::new().id_salt("shell-flyout-body").max_rect(inner));
         body.set_clip_rect(inner.intersect(bounds));
         let output = egui::ScrollArea::vertical().id_salt(("shell-flyout-scroll", sref, index)).auto_shrink([false, false]).show(&mut body, |ui| {
-            boxes::panel_body(app, ui, &front, width - 7.0, (inner.height() - 20.0).max(0.0));
+            boxes::panel_body(app, ui, &front, inner.width(), (inner.height() - 20.0).max(0.0));
         });
-        let wanted = (output.content_size.y + boxes::HEADER + 1.0).clamp(120.0, 1600.0).min(bounds.height());
-        let wanted_width = (output.content_size.x + 7.0).max(width).min(room);
+        // These bodies own a scrolling viewport. Fitting that viewport back to its own
+        // contents creates a height feedback loop; retain the group's saved height.
+        let wanted = if crate::state::DockTab::from_id(&front).is_some() || super::persist::is_properties(&front) {
+            height
+        } else {
+            (output.content_size.y + boxes::FLOAT_HEADER + 1.0).clamp(120.0, 1600.0).min(bounds.height())
+        };
+        let wanted_width = width;
         #[cfg(test)]
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique("shell-flyout-content"), output.content_size));
         if let Some(g) = app.ui.varos_shell.strip_groups_mut(sref).and_then(|gs| gs.get_mut(index))

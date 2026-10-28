@@ -23,7 +23,11 @@ pub(crate) fn interact(app: &mut VectorcraftApp, ui: &mut egui::Ui, layout: &Lay
     let ctx = ui.ctx().clone();
     let mut changed = false;
     for d in &layout.dividers {
-        let response = ui.interact(d.rect, id(&d.path), Sense::click_and_drag());
+        let hit = match d.axis {
+            Axis::Horizontal => d.rect.expand2(egui::vec2(3.5, 0.0)),
+            Axis::Vertical => d.rect.expand2(egui::vec2(0.0, 3.5)),
+        };
+        let response = ui.interact(hit, id(&d.path), Sense::click_and_drag());
         if response.hovered() || response.dragged() {
             ctx.set_cursor_icon(match d.axis {
                 Axis::Horizontal => CursorIcon::ResizeHorizontal,
@@ -58,4 +62,30 @@ pub(crate) fn interact(app: &mut VectorcraftApp, ui: &mut egui::Ui, layout: &Lay
         }
     }
     changed
+}
+
+/// One separator per split, painted over neighboring surfaces.
+pub(crate) fn paint(ui: &egui::Ui, layout: &Layout) {
+    for d in &layout.dividers {
+        let response = ui.ctx().read_response(id(&d.path));
+        let t = crate::theme::Tokens::get(ui.ctx());
+        let stroke = egui::Stroke::new(
+            if response.as_ref().is_some_and(|r| r.hovered()) || response.as_ref().is_some_and(|r| r.dragged()) { 2.0 } else { 1.0 },
+            if response.as_ref().is_some_and(|r| r.dragged()) {
+                t.accent
+            } else if response.as_ref().is_some_and(|r| r.hovered()) {
+                t.hover
+            } else {
+                t.border
+            },
+        );
+        match d.axis {
+            Axis::Horizontal => {
+                ui.painter().vline(d.rect.center().x, d.rect.y_range(), stroke);
+            }
+            Axis::Vertical => {
+                ui.painter().hline(d.rect.x_range(), d.rect.center().y, stroke);
+            }
+        }
+    }
 }

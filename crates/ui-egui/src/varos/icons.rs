@@ -115,6 +115,10 @@ const ORIGINALS: &[(&str, &[u8])] = &[
     ("dc-transform-panel", include_bytes!("../../assets/varos/icons/legacy-scale.svg")),
     ("dc-transparency", include_bytes!("../../assets/varos/icons/legacy-opacity.svg")),
     ("dc-zoom-large", include_bytes!("../../assets/varos/icons/zoom-in.svg")),
+    ("shell-chevrons-left", include_bytes!("../../assets/varos/icons/chevrons-left.svg")),
+    ("shell-chevrons-right", include_bytes!("../../assets/varos/icons/chevrons-right.svg")),
+    ("shell-sliders-horizontal", include_bytes!("../../assets/varos/icons/sliders-horizontal.svg")),
+    ("shell-sparkles", include_bytes!("../../assets/varos/icons/sparkles.svg")),
     ("ellipsis", include_bytes!("../../assets/varos/icons/ellipsis.svg")),
     ("eraser", include_bytes!("../../assets/varos/icons/varos-path-eraser.svg")),
     ("eye", include_bytes!("../../assets/varos/icons/legacy-l-eye.svg")),
@@ -182,7 +186,7 @@ pub fn source(name: &str) -> Option<egui::ImageSource<'static>> {
 mod tests {
     #[test]
     fn every_override_rasterizes_and_missing_icons_fall_back() {
-        assert_eq!(super::ORIGINALS.len(), 153);
+        assert_eq!(super::ORIGINALS.len(), 157);
         // Optional contact sheet for visual QA, using the same rasterizer as the app.
         let preview = std::env::var_os("VECTORCRAFT_ICON_ATLAS");
         let mut atlas = preview

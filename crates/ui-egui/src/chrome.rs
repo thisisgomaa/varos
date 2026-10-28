@@ -20,6 +20,12 @@ const MARK: f32 = 18.0;
 /// Height of the workspace switcher.
 const WIDGET_H: f32 = 22.0;
 
+/// The height of the window's top bar this frame: Home's own bar and the Varos shell's bar are 40
+/// points, the editor's app bar [`APP_BAR_HEIGHT`]. The macOS window buttons centre on it.
+pub fn app_bar_height(app: &VectorcraftApp) -> f32 {
+    if crate::varos::home::is_home(app) || crate::varos::shell::enabled(app) { crate::varos::shell::tokens::APP_BAR_HEIGHT } else { APP_BAR_HEIGHT }
+}
+
 /// The application bar: brand mark, Home, menus, then search and the workspace switcher
 /// at the right. With [`VectorcraftApp::custom_titlebar`] it is also the window's title bar
 /// ([`titlebar`]): the caption buttons take the right end and the rest of the bar drags the window.
@@ -27,6 +33,10 @@ const WIDGET_H: f32 = 22.0;
 /// too ([`titlebar::drag_area`]). With the system title bar (Windows and Linux, `system_title_bar`) the OS draws its own icon and
 /// title, so the in-app bar shows Home, menus and workspace controls only: no brand mark.
 pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
+    if crate::varos::shell::enabled(app) && !crate::varos::home::is_home(app) {
+        simple_app_bar(app, ui);
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     let shell = crate::varos::shell::enabled(app);
     let custom = app.custom_titlebar;
@@ -254,7 +264,11 @@ const ARTBOARD_SNAPPING_WIDTH: f32 = 900.0;
 fn snapping_menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Varos: a link label as the bar's other menus ("Stroke:", "Opacity:"), not a framed button.
     let t = Tokens::get(ui.ctx());
-    let resp = ui.link(egui::RichText::new(tl!("Snapping")).size(12.0).color(t.text).underline());
+    let resp = if crate::varos::shell::enabled(app) {
+        ui.button(egui::RichText::new(tl!("Snapping")).size(11.0).color(t.text_dim))
+    } else {
+        ui.link(egui::RichText::new(tl!("Snapping")).size(12.0).color(t.text).underline())
+    };
     egui::Popup::menu(&resp).show(|ui| {
         for (label, cmd, on) in [
             (tl!("Smart Guides"), "view.smartGuides", app.ui.view.smart_guides),
@@ -316,147 +330,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(10, 0)).stroke(Stroke::new(1.0, t.border)))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
-                // Gripper
-                let (g, _) = ui.allocate_exact_size(vec2(6.0, 20.0), Sense::hover());
-                for i in 0..5 {
-                    ui.painter().circle_filled(g.center_top() + vec2(0.0, 2.0 + i as f32 * 4.0), 0.9, t.text_disabled);
-                }
-                if app.session.active().is_none() {
-                    ui.label(egui::RichText::new(tl!("No Document")).color(t.text_dim));
-                    return;
-                }
-                // The Artboard tool's controls fill the narrowest window, so they keep it to themselves there.
-                if app.session.tool_id() != "artboard" || ui.available_width() >= ARTBOARD_SNAPPING_WIDTH {
-                    snapping_menu(app, ui);
-                }
-                let Some(st) = app.session.active() else { return };
-                let sel = st.selection.objects.clone();
-                let units = app.session.general_unit();
-                let first = sel.first().and_then(|id| st.doc.node(*id)).cloned();
-                let anchors = anchor_controls(app);
-                let label = match &first {
-                    _ if app.session.tool_id() == "artboard" => tl!("Artboard"),
-                    Some(_) if sel.len() == 1 && anchors != AnchorControls::None => {
-                        tl!("Anchor Point")
-                    }
-                    Some(vectorcraft_doc::Node { kind: NodeKind::Image(im), .. }) if sel.len() == 1 => {
-                        if im.link.is_some() {
-                            tl!("Linked File")
-                        } else {
-                            tl!("Embedded")
-                        }
-                    }
-                    Some(n) if sel.len() == 1 && crate::panels::image_trace::is_trace(n) => {
-                        tl!("Image Tracing")
-                    }
-                    _ => tl!(crate::panels::appearance::object_label(app)),
-                };
-                ui.label(egui::RichText::new(label).font(theme::semibold(12.0)).color(t.text));
-                // With the Artboard tool in use, the bar shows the active artboard's controls in place
-                // of the object controls.
-                if crate::panels::artboards::control_bar(app, ui) {
-                    return;
-                }
-                if anchors != AnchorControls::None {
-                    anchor_buttons(app, ui, anchors);
-                }
-                isolation_button(app, ui);
-                ui.add_space(6.0);
-                // An image or an Image Trace object shows its own controls in place of Fill and Stroke.
-                let image = crate::place::control_bar_details(app, ui) || crate::panels::image_trace::control_bar(app, ui);
-                crate::toolbar::control_bar_options(app, ui);
-                crate::dialogs::envelope::control_bar(app, ui);
-                let opacity = if first.is_some() { crate::panels::current_transparency(app).map_or(1.0, |t| t.0) } else { 1.0 };
-                if !image {
-                    let shown_stroke = crate::panels::current_stroke(app);
-                    let mixed = crate::panels::stroke_mixed(app, ui.ctx());
-                    let weight = stroke_panel::shown_weight(app, shown_stroke.as_ref(), &mixed);
-                    crate::panels::paint_chip(app, ui, false, 22.0, true);
-                    crate::panels::paint_chip(app, ui, true, 22.0, true);
-                    // The link opens the Stroke panel as a popover under it; then the weight spinner
-                    // (with presets) and the width profile.
-                    stroke_panel::link(app, ui, tl!("Stroke:"));
-                    stroke_panel::weight_field(app, ui, "cb-stroke", weight, 100.0);
-                    if let Some(id) = stroke_panel::profile_dropdown(app, ui, shown_stroke.as_ref().and_then(|s| s.profile.as_ref())) {
-                        app.run("stroke.set", json!({"profile": id})).ok();
-                    }
-                    ui.add_space(4.0);
-                    ui.separator();
-                }
-                if ui.link(egui::RichText::new(tl!("Opacity:")).size(12.0).color(t.text).underline()).clicked() {
-                    app.ui.open_panel = Some("transparency".into());
-                }
-                if let Some(o) = widgets::plain_field(ui, "cb-opacity", opacity as f64 * 100.0, "%", 0, 56.0)
-                    && !sel.is_empty()
-                {
-                    app.run("transparency.set", json!({"opacity": o.clamp(0.0, 100.0)})).ok();
-                }
-                if !sel.is_empty() {
-                    // Style picker: the selection's graphic style; its menu applies another.
-                    ui.add_space(4.0);
-                    if ui.link(egui::RichText::new(tl!("Style:")).size(12.0).color(t.text).underline()).clicked() {
-                        app.ui.open_panel = Some("graphicStyles".into());
-                    }
-                    let resp = widgets::chip_button_named(ui, 22.0, true, tl!("Graphic Style"), |ui, r| {
-                        crate::panels::graphic_styles::paint_linked(app, ui, r)
-                    });
-                    egui::Popup::menu(&resp).show(|ui| crate::panels::graphic_styles::picker(app, ui));
-                    // Recolor Artwork, when the selection has colours to recolour.
-                    let colored = app.session.active().is_some_and(|st| crate::canvas::has_colors(&st.doc, &st.selection.objects));
-                    if colored && widgets::icon_button(ui, "palette", tl!("Recolor Artwork"), false, 24.0).clicked() {
-                        crate::menus::invoke(app, "ui.recolorDialog", json!({}));
-                    }
-                }
-                ui.separator();
-                crate::panels::character::control_bar(app, ui);
-                if sel.is_empty() {
-                    if widgets::flat_button(ui, tl!("Document Setup"), 112.0).clicked() {
-                        app.run("file.documentSetup", json!({})).ok();
-                    }
-                    if widgets::flat_button(ui, tl!("Preferences"), 90.0).clicked() {
-                        app.run("edit.preferences", json!({})).ok();
-                    }
-                    return;
-                }
-                crate::panels::align::align_buttons(app, ui, 24.0);
-                ui.separator();
-                // The Transform link opens the whole Transform panel (reference point, rotate,
-                // shear, options) in a popover; X/Y/W/H follow inline while the bar has room.
-                crate::panels::transform::link(app, ui);
-                // The bounding box, rotated with rotated objects: its centre and its own sides.
-                if let Some(b) = app.selection_box()
-                    && ui.available_width() >= INLINE_TRANSFORM_WIDTH
-                {
-                    let c = b.center();
-                    let origin = app.ruler_origin();
-                    let link = crate::panels::transform::proportional(app, ui);
-                    let copy = crate::panels::transform::alt_enter_copies(app, ui);
-                    for (k, lbl, v, offset) in [
-                        ("x", "X:", c.x, origin.x),
-                        ("y", "Y:", c.y, origin.y),
-                        ("width", "W:", b.rect.width(), 0.0),
-                        ("height", "H:", b.rect.height(), 0.0),
-                    ] {
-                        // The W/H link sits between W and H.
-                        if k == "height" {
-                            crate::panels::transform::constrain_link(app, ui);
-                        }
-                        widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
-                        let (id, shown) = (("cb", k), Some(v - offset));
-                        let set = if matches!(k, "width" | "height") {
-                            widgets::size_field(ui, id, shown, units, 80.0)
-                        } else {
-                            widgets::num_field(ui, id, shown, units, 80.0)
-                        };
-                        if let Some(nv) = set {
-                            app.run("object.setBounds", json!({k: nv + offset, "reference": 4, "proportional": link, "copy": copy})).ok();
-                        }
-                    }
-                }
-                // Varos: shared Make/Release; preserve upstream fields on narrow control bars.
-                if ui.available_width() >= 164.0 {
-                    crate::varos::clipping::button(app, ui);
-                }
+                control_contents(app, ui);
             });
         });
 }
@@ -496,11 +370,20 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
     /// The width of the » button.
     const MORE: f32 = 30.0;
     let t = Tokens::get(ui.ctx());
-    let (height, title_size) = if app.session.prefs.large_tabs { (44.0, 14.0) } else { (35.0, 12.5) };
+    let shell = crate::varos::shell::enabled(app);
+    let (height, title_size) = if shell {
+        (28.0, 11.0)
+    } else if app.session.prefs.large_tabs {
+        (44.0, 14.0)
+    } else {
+        (35.0, 12.5)
+    };
     let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     crate::varos::panel_stack::note_tab_strip(ui.ctx(), strip); // Varos: panel cards stay under the document tabs
-    ui.painter().rect_filled(strip, 0.0, t.tab_strip);
-    ui.painter().line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, t.border));
+    if !shell {
+        ui.painter().rect_filled(strip, 0.0, t.tab_strip);
+        ui.painter().line_segment([strip.left_bottom(), strip.right_bottom()], Stroke::new(1.0, t.border));
+    }
     // On the Home screen no tab is the current one.
     let active = app.session.active_index().filter(|_| !crate::varos::home::is_home(app)); // Varos: shared Home gate, including stale keys.
     let tabs: Vec<(String, std::sync::Arc<egui::Galley>)> = app
@@ -510,15 +393,19 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         .enumerate()
         .map(|(i, d)| {
             let zoom = app.views.get(i).map(|v| v.zoom).unwrap_or(1.0);
-            let title = tab_title(d, zoom, app.ui.view.outline, app.session.prefs.display_print_size);
+            let title = if shell {
+                format!("{}{}", d.title(), if d.is_dirty() { " •" } else { "" })
+            } else {
+                tab_title(d, zoom, app.ui.view.outline, app.session.prefs.display_print_size)
+            };
             let color = if Some(i) == active { t.text_strong } else { t.text_dim };
             (title.clone(), ui.painter().layout_no_wrap(title, theme::semibold(title_size), color))
         })
         .collect();
-    let widths: Vec<f32> = tabs.iter().map(|(_, g)| g.size().x + 50.0).collect();
-    let overflow = widths.iter().sum::<f32>() > strip.width();
+    let widths: Vec<f32> = tabs.iter().map(|(_, g)| g.size().x + if shell { 46.0 } else { 50.0 }).collect();
+    let overflow = widths.iter().sum::<f32>() > strip.width() - if shell { 28.0 } else { 0.0 };
     // Varos: explicit overflow navigation, with automatic reveal on activation/resize.
-    let room = (strip.width() - if overflow { 3.0 * MORE } else { 0.0 }).max(1.0);
+    let room = (strip.width() - if shell { 28.0 } else { 0.0 } - if overflow { 3.0 * MORE } else { 0.0 }).max(1.0);
     let mut step = 0;
     if overflow {
         for (offset, icon, delta, tip) in [(3.0, "chevron-left", -1, "Previous document tabs"), (2.0, "chevron-right", 1, "Next document tabs")] {
@@ -544,12 +431,17 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         let is_active = Some(i) == active;
         let r = egui::Rect::from_min_size(egui::pos2(x, strip.top()), vec2(w, strip.height() - 1.0));
         let resp = ui.interact(r, ui.scope_id().with(("tab", i)), Sense::click());
+        if shell {
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, is_active, galley.text()));
+        }
         if is_active {
-            ui.painter().rect_filled(r, 0.0, t.panel);
+            ui.painter().rect_filled(r, if shell { 6.0 } else { 0.0 }, if shell { t.hover } else { t.panel });
         } else if resp.hovered() {
             ui.painter().rect_filled(r, 0.0, t.hover.gamma_multiply(0.4));
         }
-        ui.painter().line_segment([r.right_top(), r.right_bottom()], Stroke::new(1.5, t.border));
+        if !shell {
+            ui.painter().line_segment([r.right_top(), r.right_bottom()], Stroke::new(1.5, t.border));
+        }
         // The × where each platform puts a tab's: before the title on macOS, after it elsewhere
         // (#673).
         let (x_center, title_left) = if CLOSE_BEFORE_TITLE { (r.left() + 16.0, r.left() + 32.0) } else { (r.right() - 16.0, r.left() + 14.0) };
@@ -565,6 +457,15 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
         x += w;
     }
+    if shell {
+        let r = egui::Rect::from_min_size(egui::pos2(x.min(strip.right() - 28.0), strip.top()), vec2(28.0, 28.0));
+        let response = ui.interact(r, ui.scope_id().with("new-document"), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("New Document")));
+        icons::paint(ui, "plus", r.shrink(6.0), t.text_dim);
+        if response.on_hover_text(tl!("New Document")).clicked() {
+            menus::invoke(app, "file.newDialog", json!({}));
+        }
+    }
     crate::document_drag::finish_tabs(ui.ctx(), hovering_art);
     // The » button: every open document, the active one checked. The list scrolls once it
     // reaches the bottom of the window, so every document of a large session stays reachable
@@ -573,7 +474,12 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         let more = egui::Rect::from_min_max(egui::pos2(strip.right() - MORE, strip.top()), egui::pos2(strip.right(), strip.bottom() - 1.0));
         let resp = ui.interact(more, ui.scope_id().with("tabs-more"), Sense::click());
         ui.painter().rect_filled(more, 0.0, if resp.hovered() { t.hover.gamma_multiply(0.4) } else { t.tab_strip });
-        icons::paint(ui, "chevrons-right", egui::Rect::from_center_size(more.center(), vec2(14.0, 14.0)), t.text);
+        icons::paint(
+            ui,
+            if shell { "shell-chevrons-right" } else { "chevrons-right" },
+            egui::Rect::from_center_size(more.center(), vec2(14.0, 14.0)),
+            t.text,
+        );
         let resp = resp.on_hover_text(tl!("Show all open documents"));
         egui::Popup::menu(&resp).show(|ui| {
             widgets::menu_scroll(ui, |ui| {
@@ -805,7 +711,11 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         go = Some(json!(to));
                     }
                 }
-                if let Some(i) = artboard_list(app, ui, cur) {
+                // Varos shell: the page and artboard readout ("Page 2 of 3 · Artboard 1 / 4") between
+                // the arrows, in place of the artboard list.
+                if let Some(text) = crate::varos::shell::enabled(app).then(|| crate::varos::pages::status(app)).flatten() {
+                    ui.label(egui::RichText::new(text).size(11.0).color(t.text_dim));
+                } else if let Some(i) = artboard_list(app, ui, cur) {
                     go = Some(json!(i));
                 }
                 for (icon, to, tip) in [("chevron-right", "next", tl!("Next Artboard")), ("chevrons-right", "last", tl!("Last Artboard"))] {
@@ -2778,5 +2688,229 @@ mod visual_regressions {
                 }
             }
         }
+    }
+}
+
+/// Shell-only top chrome; the legacy app bar remains unchanged.
+fn simple_app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let bar = egui::Panel::top("app_bar")
+        .exact_size(40.0)
+        .frame(egui::Frame::NONE.fill(t.app_bar).inner_margin(egui::Margin::symmetric(10, 0)))
+        .show(ui, |ui| {
+            if app.custom_titlebar || cfg!(target_os = "macos") {
+                titlebar::drag_area(ui, ui.max_rect());
+            }
+            ui.horizontal_centered(|ui| {
+                if app.titlebar_inset > 10.0 {
+                    ui.add_space(app.titlebar_inset - 10.0);
+                }
+                let (mark, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+                crate::brand::paint_mark(ui, mark);
+                if widgets::icon_button(ui, "house", tl!("Home"), menus::home_showing(app), 28.0).clicked() {
+                    menus::invoke(app, "app.home", json!({}));
+                }
+                // MenuBar allocates the full row; use the returned end of its titles.
+                let menus_end = if app.services.native_menu.is_some() { ui.cursor().min.x } else { menus::menu_bar(app, ui) };
+                let available = egui::Rect::from_min_max(egui::pos2(menus_end + 8.0, ui.max_rect().top()), ui.max_rect().max);
+                // The right group (presence, Share, search, the capped workspace control) is laid
+                // out first; the document tabs take what it leaves, so they never run under it.
+                let mut right = ui.new_child(egui::UiBuilder::new().max_rect(available).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                simple_app_bar_right(app, &mut right);
+                let right_left = right.min_rect().left().min(available.right());
+                let tabs = egui::Rect::from_min_max(
+                    egui::pos2(available.left(), available.center().y - 14.0),
+                    egui::pos2((right_left - 8.0).max(available.left()), available.center().y + 14.0),
+                );
+                #[cfg(test)]
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("simple-tabs-rect"), tabs));
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs).layout(egui::Layout::top_down(egui::Align::Min)));
+                child.set_clip_rect(tabs);
+                doc_tabs(app, &mut child);
+            });
+        });
+    ui.painter().hline(bar.response.rect.x_range(), bar.response.rect.bottom() - 0.5, Stroke::new(1.0, t.border));
+    if app.custom_titlebar {
+        titlebar::caption_buttons(app, ui, bar.response.rect);
+    }
+}
+
+/// The simple app bar's right group, right to left: caption-button room, workspace control,
+/// search, Share, the sharing `+`, the agent's and the user's avatars.
+fn simple_app_bar_right(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    if app.custom_titlebar {
+        ui.add_space(titlebar::WIDTH);
+    }
+    crate::varos::shell::workspace::switcher(app, ui);
+    if widgets::icon_button(ui, "search", tl!("Search commands and tools"), app.ui.palette_open, 28.0).clicked() {
+        app.ui.palette_open = !app.ui.palette_open;
+        app.ui.palette_query.clear();
+    }
+    ui.add_enabled(false, egui::Button::new(egui::RichText::new(tl!("Share")).size(11.0))).on_disabled_hover_text(tl!("Sharing comes later"));
+    widgets::icon_button(ui, "plus", tl!("Sharing comes later"), false, 22.0);
+    if !app.agents.registry.is_empty() {
+        let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+        ui.painter().circle_filled(r.center(), 11.0, crate::varos::theme::AGENT);
+        icons::paint(ui, "shell-sparkles", r.shrink(4.0), t.panel);
+    }
+    let initial = std::env::var("USER").ok().and_then(|n| n.chars().next()).unwrap_or('U').to_uppercase().to_string();
+    let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+    ui.painter().circle_filled(r.center(), 11.0, t.hover);
+    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, initial, theme::semibold(10.0), t.text);
+}
+
+pub(crate) fn control_panel(app: &mut VectorcraftApp, ui: &mut Ui) {
+    ui.horizontal_wrapped(|ui| {
+        control_contents(app, ui);
+    });
+}
+fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    // Gripper
+    if !crate::varos::shell::enabled(app) {
+        let (g, _) = ui.allocate_exact_size(vec2(6.0, 20.0), Sense::hover());
+        for i in 0..5 {
+            ui.painter().circle_filled(g.center_top() + vec2(0.0, 2.0 + i as f32 * 4.0), 0.9, t.text_disabled);
+        }
+    }
+    if app.session.active().is_none() {
+        ui.label(egui::RichText::new(tl!("No Document")).color(t.text_dim));
+        return;
+    }
+    // The Artboard tool's controls fill the narrowest window, so they keep it to themselves there.
+    if app.session.tool_id() != "artboard" || ui.available_width() >= ARTBOARD_SNAPPING_WIDTH {
+        snapping_menu(app, ui);
+    }
+    let Some(st) = app.session.active() else { return };
+    let sel = st.selection.objects.clone();
+    let units = app.session.general_unit();
+    let first = sel.first().and_then(|id| st.doc.node(*id)).cloned();
+    let anchors = anchor_controls(app);
+    let label = match &first {
+        _ if app.session.tool_id() == "artboard" => tl!("Artboard"),
+        Some(_) if sel.len() == 1 && anchors != AnchorControls::None => {
+            tl!("Anchor Point")
+        }
+        Some(vectorcraft_doc::Node { kind: NodeKind::Image(im), .. }) if sel.len() == 1 => {
+            if im.link.is_some() {
+                tl!("Linked File")
+            } else {
+                tl!("Embedded")
+            }
+        }
+        Some(n) if sel.len() == 1 && crate::panels::image_trace::is_trace(n) => {
+            tl!("Image Tracing")
+        }
+        _ => tl!(crate::panels::appearance::object_label(app)),
+    };
+    ui.label(egui::RichText::new(label).font(theme::semibold(12.0)).color(t.text));
+    // With the Artboard tool in use, the bar shows the active artboard's controls in place
+    // of the object controls.
+    if crate::panels::artboards::control_bar(app, ui) {
+        return;
+    }
+    if anchors != AnchorControls::None {
+        anchor_buttons(app, ui, anchors);
+    }
+    isolation_button(app, ui);
+    ui.add_space(6.0);
+    // An image or an Image Trace object shows its own controls in place of Fill and Stroke.
+    let image = crate::place::control_bar_details(app, ui) || crate::panels::image_trace::control_bar(app, ui);
+    crate::toolbar::control_bar_options(app, ui);
+    crate::dialogs::envelope::control_bar(app, ui);
+    let opacity = if first.is_some() { crate::panels::current_transparency(app).map_or(1.0, |t| t.0) } else { 1.0 };
+    if !image {
+        let shown_stroke = crate::panels::current_stroke(app);
+        let mixed = crate::panels::stroke_mixed(app, ui.ctx());
+        let weight = stroke_panel::shown_weight(app, shown_stroke.as_ref(), &mixed);
+        crate::panels::paint_chip(app, ui, false, 22.0, true);
+        crate::panels::paint_chip(app, ui, true, 22.0, true);
+        // The link opens the Stroke panel as a popover under it; then the weight spinner
+        // (with presets) and the width profile.
+        stroke_panel::link(app, ui, tl!("Stroke:"));
+        stroke_panel::weight_field(app, ui, "cb-stroke", weight, 100.0);
+        if let Some(id) = stroke_panel::profile_dropdown(app, ui, shown_stroke.as_ref().and_then(|s| s.profile.as_ref())) {
+            app.run("stroke.set", json!({"profile": id})).ok();
+        }
+        ui.add_space(4.0);
+        ui.separator();
+    }
+    if control_link(app, ui, tl!("Opacity:"), t.text).clicked() {
+        app.ui.open_panel = Some("transparency".into());
+    }
+    if let Some(o) = widgets::plain_field(ui, "cb-opacity", opacity as f64 * 100.0, "%", 0, 56.0)
+        && !sel.is_empty()
+    {
+        app.run("transparency.set", json!({"opacity": o.clamp(0.0, 100.0)})).ok();
+    }
+    if !sel.is_empty() {
+        // Style picker: the selection's graphic style; its menu applies another.
+        ui.add_space(4.0);
+        if control_link(app, ui, tl!("Style:"), t.text).clicked() {
+            app.ui.open_panel = Some("graphicStyles".into());
+        }
+        let resp = widgets::chip_button_named(ui, 22.0, true, tl!("Graphic Style"), |ui, r| crate::panels::graphic_styles::paint_linked(app, ui, r));
+        egui::Popup::menu(&resp).show(|ui| crate::panels::graphic_styles::picker(app, ui));
+        // Recolor Artwork, when the selection has colours to recolour.
+        let colored = app.session.active().is_some_and(|st| crate::canvas::has_colors(&st.doc, &st.selection.objects));
+        if colored && widgets::icon_button(ui, "palette", tl!("Recolor Artwork"), false, 24.0).clicked() {
+            crate::menus::invoke(app, "ui.recolorDialog", json!({}));
+        }
+    }
+    ui.separator();
+    crate::panels::character::control_bar(app, ui);
+    if sel.is_empty() {
+        if widgets::flat_button(ui, tl!("Document Setup"), 112.0).clicked() {
+            app.run("file.documentSetup", json!({})).ok();
+        }
+        if widgets::flat_button(ui, tl!("Preferences"), 90.0).clicked() {
+            app.run("edit.preferences", json!({})).ok();
+        }
+        return;
+    }
+    crate::panels::align::align_buttons(app, ui, 24.0);
+    ui.separator();
+    // The Transform link opens the whole Transform panel (reference point, rotate,
+    // shear, options) in a popover; X/Y/W/H follow inline while the bar has room.
+    crate::panels::transform::link(app, ui);
+    // The bounding box, rotated with rotated objects: its centre and its own sides.
+    if let Some(b) = app.selection_box()
+        && ui.available_width() >= INLINE_TRANSFORM_WIDTH
+    {
+        let c = b.center();
+        let origin = app.ruler_origin();
+        let link = crate::panels::transform::proportional(app, ui);
+        let copy = crate::panels::transform::alt_enter_copies(app, ui);
+        for (k, lbl, v, offset) in
+            [("x", "X:", c.x, origin.x), ("y", "Y:", c.y, origin.y), ("width", "W:", b.rect.width(), 0.0), ("height", "H:", b.rect.height(), 0.0)]
+        {
+            // The W/H link sits between W and H.
+            if k == "height" {
+                crate::panels::transform::constrain_link(app, ui);
+            }
+            widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
+            let (id, shown) = (("cb", k), Some(v - offset));
+            let set = if matches!(k, "width" | "height") {
+                widgets::size_field(ui, id, shown, units, 80.0)
+            } else {
+                widgets::num_field(ui, id, shown, units, 80.0)
+            };
+            if let Some(nv) = set {
+                app.run("object.setBounds", json!({k: nv + offset, "reference": 4, "proportional": link, "copy": copy})).ok();
+            }
+        }
+    }
+    // Varos: shared Make/Release; preserve upstream fields on narrow control bars.
+    if ui.available_width() >= 164.0 {
+        crate::varos::clipping::button(app, ui);
+    }
+}
+
+pub(crate) fn control_link(app: &VectorcraftApp, ui: &mut Ui, label: &str, color: egui::Color32) -> egui::Response {
+    if crate::varos::shell::enabled(app) {
+        ui.add(egui::Label::new(egui::RichText::new(label).size(11.0).color(color)).sense(Sense::click()))
+    } else {
+        ui.link(egui::RichText::new(label).size(12.0).color(color).underline())
     }
 }

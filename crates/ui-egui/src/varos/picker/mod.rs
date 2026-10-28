@@ -359,7 +359,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     }
     let mut y = origin.y + HEADER_H;
-    match prefs.tab {
+    let mut contents = |ui: &mut Ui| match prefs.tab {
         Tab::Wheel => {
             wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
             y += wheel::BODY_H;
@@ -377,6 +377,11 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             y += harmony::extra_height(prefs.harmony) - harmony::STRIP_H;
         }
         Tab::Gradient => {}
+    };
+    if crate::varos::shell::enabled(app) {
+        ui.scope_builder(egui::UiBuilder::new().ui_stack_info(egui::UiStackInfo::default().with_tag("simple-picker")), contents);
+    } else {
+        contents(ui);
     }
     fields::row(ui, pos2(origin.x, y), &mut st, &v, prefs.tab == Tab::Sliders, &mut acts);
     y += fields::ROW_H;
@@ -753,7 +758,19 @@ fn tallest(prefs: &Prefs) -> f32 {
 /// application dialog is open the picker stays visible but takes no input.
 pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(anchor) = app.ui.varos_picker_anchor else { return };
-    let screen = ctx.content_rect();
+    let mut screen = ctx.content_rect();
+    let shell = crate::varos::shell::enabled(app);
+    let mut exclusions = Vec::new();
+    if shell {
+        for (hit, r) in crate::varos::shell::hit_rects(ctx) {
+            match hit {
+                crate::varos::shell::Hit::Tools if app.ui.varos_shell.tools_pos.is_none() => screen.min.x = screen.left().max(r.right() + 6.0),
+                crate::varos::shell::Hit::Strip => screen.max.x = screen.right().min(r.left() - 6.0),
+                crate::varos::shell::Hit::Tools | crate::varos::shell::Hit::FloatStrip(_) => exclusions.push(r.expand(6.0)),
+                _ => {}
+            }
+        }
+    }
     let h = height(&app.ui.varos_picker).min(screen.height());
     let tall = tallest(&app.ui.varos_picker).min(screen.height());
     let frame_nr = ctx.cumulative_frame_nr();
@@ -778,9 +795,31 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     };
     let x = x.clamp(screen.left(), (screen.right() - W).max(screen.left()));
     let y = y.min(screen.bottom() - h).max(screen.top());
+    let preferred = Rect::from_min_size(pos2(x, y), egui::vec2(W + 2.0, tall + 2.0));
+    // Try each obstacle edge, including combinations, so multiple floating strips stay clear.
+    let mut xs = vec![x, screen.left(), (screen.right() - preferred.width()).max(screen.left())];
+    let mut ys = vec![y, screen.top(), (screen.bottom() - preferred.height()).max(screen.top())];
+    for r in &exclusions {
+        xs.extend([r.right(), r.left() - preferred.width()]);
+        ys.extend([r.bottom(), r.top() - preferred.height()]);
+    }
+    let position = if exclusions.is_empty() {
+        preferred.min
+    } else {
+        xs.into_iter()
+            .flat_map(|x| ys.iter().map(move |&y| pos2(x, y)))
+            .filter(|p| {
+                let r = Rect::from_min_size(*p, preferred.size());
+                screen.contains_rect(r) && exclusions.iter().all(|e| !r.intersects(*e))
+            })
+            .min_by(|a, b| a.distance_sq(preferred.min).total_cmp(&b.distance_sq(preferred.min)))
+            .unwrap_or(preferred.min)
+    };
     let id = popover_id();
-    let area = egui::Area::new(id).kind(egui::UiKind::Modal).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).movable(false).fade_in(false);
-    let frame = egui::Frame::NONE.fill(Tokens::get(ctx).panel);
+    let area = egui::Area::new(id).kind(egui::UiKind::Modal).order(egui::Order::Foreground).fixed_pos(position).movable(false).fade_in(false);
+    let t = Tokens::get(ctx);
+    let frame =
+        if shell { egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(10) } else { egui::Frame::NONE.fill(t.panel) };
     let body = |app: &mut VectorcraftApp, ui: &mut Ui| {
         ui.set_width(W);
         egui::ScrollArea::vertical().max_height(screen.height()).show(ui, |ui| show(app, ui));

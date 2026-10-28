@@ -1276,8 +1276,8 @@ fn section_list(app: &mut VectorcraftApp) -> Vec<Section> {
 }
 
 /// A section's header height, and its body's inset from the left.
-const SECTION_HEAD: f32 = 24.0;
-const SECTION_INSET: i8 = 8;
+const SECTION_HEAD: f32 = 32.0;
+const SECTION_INSET: i8 = 0;
 
 /// One section as drawn: its header, grip and whole extent (header and body).
 #[derive(Clone, Debug, PartialEq)]
@@ -1369,11 +1369,7 @@ fn section(ui: &mut Ui, instance: &str, id: SectionId, title: &str, collapsed: b
         galley,
         t.text_strong,
     );
-    for dx in [-2.0, 2.0] {
-        for dy in [-4.0, 0.0, 4.0] {
-            painter.circle_filled(grip.center() + egui::vec2(dx, dy), 0.8, t.text_dim);
-        }
-    }
+    icons::paint(ui, "ellipsis", egui::Rect::from_center_size(grip.center(), egui::vec2(16.0, 16.0)), t.text_dim);
     if grip_response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }

@@ -401,6 +401,13 @@ fn groups() -> &'static [Heading] {
     })
 }
 
+/// A shell popup can open the drawer from outside its bounds. That opening click belongs
+/// to the popup, rather than the drawer's outside-click dismissal.
+pub(crate) fn opened_from_popup(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(drawer_id().with("popup-open-frame"), frame));
+}
+
 /// The All Tools drawer beside the toolbar, its top by the ••• button (higher when that would put
 /// it past the window's bottom), while `tools_drawer` is on.
 pub(crate) fn drawer(app: &mut VectorcraftApp, ctx: &egui::Context) {
@@ -478,6 +485,15 @@ pub(crate) fn drawer(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     }
                 }
             });
+            if crate::varos::shell::enabled(app) {
+                ui.horizontal(|ui| {
+                    for (n, label) in [(1, tl!("1 column")), (2, tl!("2 columns")), (3, tl!("3 columns"))] {
+                        if ui.selectable_label(app.ui.varos_shell.tools_columns == n, label).clicked() {
+                            app.ui.varos_shell.tools_columns = n;
+                        }
+                    }
+                });
+            }
             // Show: the controls under the toolbar's tools.
             ui.add_space(4.0);
             ui.separator();
@@ -519,7 +535,12 @@ pub(crate) fn drawer(app: &mut VectorcraftApp, ctx: &egui::Context) {
     if let Some(id) = picked {
         app.select_tool(id);
         app.ui.tools_drawer = false;
-    } else if resp.response.clicked_elsewhere() && !pointer.is_some_and(|p| bar.contains(p)) && !egui::Popup::is_id_open(ctx, menu_id()) {
+    } else if resp.response.clicked_elsewhere()
+        && !pointer.is_some_and(|p| bar.contains(p))
+        && !egui::Popup::is_id_open(ctx, menu_id())
+        && !(crate::varos::shell::enabled(app)
+            && ctx.data(|d| d.get_temp::<u64>(drawer_id().with("popup-open-frame"))) == Some(ctx.cumulative_frame_nr()))
+    {
         // A click in the toolbar (picking a tool, or the ••• button that toggles the drawer) leaves
         // it open.
         app.ui.tools_drawer = false;

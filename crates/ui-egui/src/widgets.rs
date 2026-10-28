@@ -60,6 +60,11 @@ pub fn paint_icon_button(ui: &mut Ui, resp: Response, icon: &str, tip: &str, sel
     if !tip.is_empty() { resp.on_hover_text(tl!(tip)) } else { resp }
 }
 
+/// Shell panel labels use the compact scale; legacy widgets keep their exact font size.
+fn panel_label_size(ui: &Ui) -> f32 {
+    if ui.stack().iter().any(|node| node.tags().contains("shell-panel")) { 11.0 } else { 12.5 }
+}
+
 /// Small flat text button (Quick Actions style).
 pub fn flat_button(ui: &mut Ui, text: &str, width: f32) -> Response {
     let t = Tokens::get(ui.ctx());
@@ -67,7 +72,13 @@ pub fn flat_button(ui: &mut Ui, text: &str, width: f32) -> Response {
     let rect = rect.shrink2(vec2(0.0, 0.5));
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.button);
     flat_fill(ui, rect, &resp);
-    ui.painter().with_clip_rect(rect).text(rect.center(), egui::Align2::CENTER_CENTER, tl!(text), egui::FontId::proportional(12.5), t.text_strong);
+    ui.painter().with_clip_rect(rect).text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        tl!(text),
+        egui::FontId::proportional(panel_label_size(ui)),
+        t.text_strong,
+    );
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!(text)));
     resp
 }
@@ -75,13 +86,19 @@ pub fn flat_button(ui: &mut Ui, text: &str, width: f32) -> Response {
 /// A [`flat_button`] that expands to fit localized labels wider than `min_width`.
 pub fn flat_button_fit(ui: &mut Ui, text: &str, min_width: f32) -> Response {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), egui::FontId::proportional(12.5), t.text_strong);
+    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), egui::FontId::proportional(panel_label_size(ui)), t.text_strong);
     let width = (galley.size().x + 24.0).max(min_width);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
     let rect = rect.shrink2(vec2(0.0, 0.5));
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.button);
     flat_fill(ui, rect, &resp);
-    ui.painter().with_clip_rect(rect).text(rect.center(), egui::Align2::CENTER_CENTER, tl!(text), egui::FontId::proportional(12.5), t.text_strong);
+    ui.painter().with_clip_rect(rect).text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        tl!(text),
+        egui::FontId::proportional(panel_label_size(ui)),
+        t.text_strong,
+    );
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!(text)));
     resp
 }
@@ -114,7 +131,7 @@ pub fn split_button_named(ui: &mut Ui, text: &str, arrow_tip: &str, width: f32) 
         main_rect.center(),
         egui::Align2::CENTER_CENTER,
         tl!(text),
-        egui::FontId::proportional(12.5),
+        egui::FontId::proportional(panel_label_size(ui)),
         t.text_strong,
     );
     icons::paint(ui, "chevron-down", Rect::from_center_size(arrow_rect.center(), vec2(12.0, 12.0)), t.text_dim);
@@ -156,7 +173,7 @@ pub(crate) fn primary_button_width(ui: &mut Ui, text: &str, min_width: f32) -> R
 fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, min_width: f32) -> Response {
     let t = Tokens::get(ui.ctx());
     let fg = if enabled { Color32::WHITE } else { t.text_disabled };
-    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(12.5), fg);
+    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(panel_label_size(ui)), fg);
     let w = galley.size().x + 32.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(min_width), 28.0), if enabled { Sense::click() } else { Sense::hover() });
     let bg = match (enabled, resp.hovered()) {
@@ -181,7 +198,7 @@ pub fn secondary_button(ui: &mut Ui, text: &str) -> Response {
 /// Secondary dialog button with a minimum width, for aligned action columns.
 pub(crate) fn secondary_button_width(ui: &mut Ui, text: &str, min_width: f32) -> Response {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(12.5), t.text);
+    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(panel_label_size(ui)), t.text);
     let w = galley.size().x + 32.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(min_width), 28.0), Sense::click());
     ui.painter().rect_filled(rect, CornerRadius::same(6), if resp.hovered() { t.hover } else { t.button });
@@ -194,7 +211,7 @@ pub(crate) fn secondary_button_width(ui: &mut Ui, text: &str, min_width: f32) ->
 pub fn section_header(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.add_space(2.0);
-    ui.label(egui::RichText::new(tl!(text)).size(12.5).color(t.text_strong));
+    ui.label(egui::RichText::new(tl!(text)).size(panel_label_size(ui)).color(t.text_strong));
     ui.add_space(2.0);
 }
 
@@ -214,7 +231,7 @@ pub fn section_toggle_name(ui: &mut Ui, text: &str, open: bool) -> Response {
     }
     let chevron = Rect::from_center_size(pos2(rect.left() + 8.0, rect.center().y), vec2(12.0, 12.0));
     icons::paint(ui, if open { "chevron-down" } else { "chevron-right" }, chevron, if resp.hovered() { t.text_strong } else { t.icon });
-    ui.painter().text(pos2(rect.left() + 18.0, rect.center().y), egui::Align2::LEFT_CENTER, text, theme::semibold(12.5), t.text);
+    ui.painter().text(pos2(rect.left() + 18.0, rect.center().y), egui::Align2::LEFT_CENTER, text, theme::semibold(panel_label_size(ui)), t.text);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::DisclosureTriangle, true, open, text));
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -326,7 +343,7 @@ pub fn field_label(ui: &mut Ui, text: impl Into<egui::WidgetText>) -> Response {
 /// shown as it is, never translated.
 pub fn dim_name(ui: &mut Ui, text: &str) -> Response {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(text).color(t.text).size(12.5))
+    ui.label(egui::RichText::new(text).color(t.text).size(panel_label_size(ui)))
 }
 
 /// Preferences › Units › Numbers Without Units Are Points (#394; on until set): the app sets it
@@ -760,7 +777,8 @@ fn recessed_text(
     // The box is exactly as tall as the other controls of a row (26 points a line), its text
     // centred in it: a frame around the text came out a point taller and stood out next to
     // spinners and dropdowns (#900).
-    let height = 26.0 + 16.0 * (rows.max(1) - 1) as f32;
+    let simple = ui.stack().iter().any(|node| node.tags().contains("shell-panel"));
+    let height = if simple { 24.0 } else { 26.0 } + 16.0 * (rows.max(1) - 1) as f32;
     let layout = if rows > 1 { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Center) };
     let (rect, resp) = ui
         .allocate_ui_with_layout(vec2(width, height), layout, |ui| {
@@ -778,7 +796,7 @@ fn recessed_text(
                             .frame(egui::Frame::NONE)
                             .margin(egui::Margin::ZERO)
                             .desired_width(width - 14.0)
-                            .font(egui::FontId::proportional(12.5))
+                            .font(egui::FontId::proportional(if simple { 11.0 } else { 12.5 }))
                             .text_color(t.text_strong),
                     )
                 })
@@ -832,7 +850,7 @@ pub fn label_row(ui: &mut Ui, label: &str, label_width: f32, add: impl FnOnce(&m
         let (r, resp) = ui.allocate_exact_size(vec2(label_width, 24.0), Sense::hover());
         let t = Tokens::get(ui.ctx());
         let shown = tl!(label);
-        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, shown, egui::FontId::proportional(12.5), t.text);
+        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, shown, egui::FontId::proportional(panel_label_size(ui)), t.text);
         scrub::note_label(ui, r);
         // The label is painted, not a widget of its own: give it a real semantic node so the
         // input beside it can be named by `label_inputs_by` (egui 0.37's strict a11y gate).
@@ -1734,13 +1752,13 @@ pub fn slider(ui: &mut Ui, slider: egui::Slider<'_>) -> Response {
 /// Regular-weight panel sub-header ("Shape Modes:", "Align Objects:").
 pub fn subheader(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(tl!(text)).size(12.5).color(t.text));
+    ui.label(egui::RichText::new(tl!(text)).size(panel_label_size(ui)).color(t.text));
 }
 
 /// A label drawn with a dotted underline (Illustrator's link labels: "Stroke:", "Opacity:").
 pub fn link_label(ui: &mut Ui, text: &str) -> Response {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), egui::FontId::proportional(12.5), t.text_strong);
+    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), egui::FontId::proportional(panel_label_size(ui)), t.text_strong);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(0.0, 3.0), Sense::click());
     let y = rect.top() + galley.size().y + 1.0;
     ui.painter().galley(rect.min, galley, t.text_strong);
@@ -1757,7 +1775,11 @@ pub fn link_label(ui: &mut Ui, text: &str) -> Response {
 /// draws the text and returns the box, the response and the box's border colour.
 fn choice_row(ui: &mut Ui, text: &str, enabled: bool) -> (Rect, Response, Color32) {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(text.to_string(), egui::FontId::proportional(12.5), if enabled { t.text } else { t.text_disabled });
+    let galley = ui.painter().layout_no_wrap(
+        text.to_string(),
+        egui::FontId::proportional(panel_label_size(ui)),
+        if enabled { t.text } else { t.text_disabled },
+    );
     let (rect, resp) =
         ui.allocate_exact_size(vec2(18.0 + galley.size().x, 20.0f32.max(galley.size().y)), if enabled { Sense::click() } else { Sense::hover() });
     let bx = Rect::from_min_size(pos2(rect.left(), rect.center().y - 6.5), Vec2::splat(13.0));
@@ -2486,7 +2508,7 @@ pub fn hex_field_named(ui: &mut Ui, id: impl std::hash::Hash, name: Option<&str>
                     .frame(egui::Frame::NONE)
                     .desired_width(62.0)
                     .char_limit(7)
-                    .font(egui::FontId::proportional(12.5))
+                    .font(egui::FontId::proportional(panel_label_size(ui)))
                     .text_color(t.text_strong),
             )
         })
@@ -2538,7 +2560,12 @@ pub fn search_field(ui: &mut Ui, id: egui::Id, hint: &str) -> String {
 /// A bordered list box (Swatches tiles, Appearance rows, Artboards list).
 pub fn list_box<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     let t = Tokens::get(ui.ctx());
-    egui::Frame::NONE.stroke(Stroke::new(1.0, t.input_border)).inner_margin(egui::Margin::same(1)).show(ui, add).inner
+    let frameless = ui.stack().iter().any(|node| node.tags().contains("varos-frameless"));
+    egui::Frame::NONE
+        .stroke(if frameless { Stroke::NONE } else { Stroke::new(1.0, t.input_border) })
+        .inner_margin(egui::Margin::same(if frameless { 0 } else { 1 }))
+        .show(ui, add)
+        .inner
 }
 
 /// A bottom button bar separated from the content by a divider (panel footers).
@@ -2563,7 +2590,7 @@ pub fn menu_item(ui: &mut Ui, label: &str, enabled: bool, checked: bool) -> bool
 /// Like the menu bar's items, the row lights up under the pointer.
 pub fn menu_item_name(ui: &mut Ui, label: &str, enabled: bool, checked: bool) -> bool {
     let text = if checked { format!("✓ {label}") } else { format!("   {label}") };
-    ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(text).size(12.5)).frame_when_inactive(false)).clicked()
+    ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(text).size(panel_label_size(ui))).frame_when_inactive(false)).clicked()
 }
 
 /// A number field that may be empty (Stroke dash/gap): `value` (points) shows in `unit` without
@@ -2607,7 +2634,7 @@ pub fn opt_field_named(ui: &mut Ui, id: impl std::hash::Hash, name: Option<&str>
                     .id(id)
                     .frame(egui::Frame::NONE)
                     .desired_width(width - 10.0)
-                    .font(egui::FontId::proportional(12.5))
+                    .font(egui::FontId::proportional(panel_label_size(ui)))
                     .text_color(if enabled { t.text_strong } else { t.text_disabled }),
             )
         });

@@ -677,7 +677,10 @@ impl Images {
         if let Some((.., image)) = self.0.iter().find(|(k, s, _)| *k == c && *s == ppp) {
             return Some(image.clone());
         }
-        let image = rasterize(c, ppp)?;
+        let fallback = rasterize(c, ppp)?;
+        // Resolve the same default Varos asset the canvas hands to the OS. Tool-specific
+        // variants remain in the Varos cache; unsupported glyphs keep their system fallback.
+        let image = crate::varos::cursors::image(c, "", ppp).unwrap_or(fallback);
         // A few dozen glyphs at the scales of the displays the window visited.
         if self.0.len() >= 128 {
             self.0.clear();

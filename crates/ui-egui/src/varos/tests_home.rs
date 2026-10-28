@@ -23,7 +23,12 @@ pub(crate) fn assert_chrome(app: &mut VectorcraftApp, document: bool) {
     assert!(!app.ui.status.starts_with("Internal error:"), "{}", app.ui.status);
     // egui 0.37: a panel's id is its parent Ui's scope id salted with the panel's name.
     let panel = |id: &str| egui::containers::panel::PanelState::load(&ctx, root.with_salt(egui::IdSalt::new(id))).is_some();
-    assert!(panel("app_bar"), "title bar remains available");
+    // One bar: the editor's app bar with a document, Home's own 40 pt bar on Home, which then
+    // carries the title-bar duties (the window drag on macOS and with the custom title bar).
+    assert_eq!(panel("app_bar"), document, "the editor's app bar follows the Home gate");
+    if !document && (app.custom_titlebar || cfg!(target_os = "macos")) {
+        assert!(ctx.read_response(egui::Id::unique("titlebar-drag")).is_some(), "Home's bar drags the window");
+    }
     for id in ["toolbar", "control_bar", "status_bar", "hint_bar"] {
         assert_eq!(panel(id), document, "{id}: editor chrome follows the Home gate");
     }
@@ -45,6 +50,7 @@ pub(crate) fn assert_chrome(app: &mut VectorcraftApp, document: bool) {
             assert!(texts.contains(&label), "Home keeps {label}: {texts:?}");
         }
         assert!(!texts.contains(&"File"), "in-window editor menus stay hidden");
+        assert!(texts.contains(&"Varos"), "Home's own bar keeps the brand: {texts:?}");
     }
 }
 

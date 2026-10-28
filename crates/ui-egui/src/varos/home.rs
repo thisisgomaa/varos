@@ -223,11 +223,25 @@ fn identity(ctx: &egui::Context) -> (String, u32) {
 
 fn top_bar(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
     let t = Tokens::get(ui.ctx());
-    let brand = Rect::from_min_size(rect.min + vec2(10.0, 9.0), vec2(22.0, 22.0));
+    // Home's bar is the window's only bar: it drags the window (before its widgets register, so
+    // they keep their clicks), clears the macOS window buttons and holds the caption buttons.
+    if app.custom_titlebar || cfg!(target_os = "macos") {
+        crate::titlebar::drag_area(ui, rect);
+    }
+    let lead = app.titlebar_inset.max(10.0);
+    let trail = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
+    let brand = Rect::from_min_size(rect.min + vec2(lead, 9.0), vec2(22.0, 22.0));
     ui.painter().rect_filled(brand, 5.0, t.text);
     text(ui, brand, "V", theme::semibold(13.0), t.panel_darker, Align2::CENTER_CENTER);
-    text(ui, Rect::from_min_size(rect.min + vec2(40.0, 0.0), vec2(100.0, 40.0)), tl!("Varos"), theme::semibold(12.0), t.text, Align2::LEFT_CENTER);
-    let avatar = Rect::from_center_size(pos2(rect.right() - 21.0, rect.center().y), vec2(22.0, 22.0));
+    text(
+        ui,
+        Rect::from_min_size(rect.min + vec2(lead + 30.0, 0.0), vec2(100.0, 40.0)),
+        tl!("Varos"),
+        theme::semibold(12.0),
+        t.text,
+        Align2::LEFT_CENTER,
+    );
+    let avatar = Rect::from_center_size(pos2(rect.right() - trail - 21.0, rect.center().y), vec2(22.0, 22.0));
     ui.painter().circle_filled(avatar.center(), 11.0, t.button);
     let (name, _) = identity(ui.ctx());
     let initial = name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
@@ -251,6 +265,9 @@ fn top_bar(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
     }
     if app.ui.home_view.query != old {
         app.ui.home_view.selected = None;
+    }
+    if app.custom_titlebar {
+        crate::titlebar::caption_buttons(app, ui, rect);
     }
 }
 

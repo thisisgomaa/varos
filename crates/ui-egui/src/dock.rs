@@ -9,32 +9,48 @@ use crate::{VectorcraftApp, panels, widgets};
 /// Panel `id`'s contents in a popped-out or floating panel `width` wide; the tabbed group's panels
 /// fill (Layers) or scroll (Properties) `tall` points.
 pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, width: f32, tall: f32) {
+    panel_body_host(app, ui, id, width, tall, false);
+}
+
+pub(crate) fn panel_body_frameless(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, width: f32, tall: f32) {
+    panel_body_host(app, ui, id, width, tall, true);
+}
+
+fn panel_body_host(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, width: f32, tall: f32, frameless: bool) {
     let _profile = crate::varos::profile::scope(id); // Varos: per-panel frame cost
-    egui::Frame::NONE.inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-        ui.set_width(width - 20.0);
-        match DockTab::from_id(id) {
-            Some(DockTab::Properties) => {
-                // At least `tall` when the sections are taller: the flyout's area keeps the size its
-                // content needs, and egui sizes a new area at most 400 points high, so a scroll area
-                // that only took the room it was given never grew past it.
-                widgets::panel_scroll(
-                    ui,
-                    egui::ScrollArea::vertical().id_salt("props-flyout").max_height(tall).min_scrolled_height(tall).auto_shrink([false, true]),
-                    |ui| panels::properties::show(app, ui),
-                );
+    let mut contents = |ui: &mut Ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin::same(if frameless { 8 } else { 10 })).show(ui, |ui| {
+            ui.set_width((width - if frameless { 16.0 } else { 20.0 }).max(0.0));
+
+            match DockTab::from_id(id) {
+                Some(DockTab::Properties) => {
+                    // At least `tall` when the sections are taller: the flyout's area keeps the size its
+                    // content needs, and egui sizes a new area at most 400 points high, so a scroll area
+                    // that only took the room it was given never grew past it.
+                    widgets::panel_scroll(
+                        ui,
+                        egui::ScrollArea::vertical().id_salt("props-flyout").max_height(tall).min_scrolled_height(tall).auto_shrink([false, true]),
+                        |ui| panels::properties::show(app, ui),
+                    );
+                }
+                Some(DockTab::Layers) => {
+                    ui.set_max_height(tall);
+                    panels::layers::show(app, ui);
+                }
+                Some(DockTab::Libraries) => {
+                    // Its list scrolls inside `tall` (as in the dock) instead of growing the flyout.
+                    ui.set_max_height(tall);
+                    panels::libraries(app, ui);
+                }
+                None => panels::show_icon_panel(app, ui, id),
             }
-            Some(DockTab::Layers) => {
-                ui.set_max_height(tall);
-                panels::layers::show(app, ui);
-            }
-            Some(DockTab::Libraries) => {
-                // Its list scrolls inside `tall` (as in the dock) instead of growing the flyout.
-                ui.set_max_height(tall);
-                panels::libraries(app, ui);
-            }
-            None => panels::show_icon_panel(app, ui, id),
-        }
-    });
+        });
+    };
+    if frameless {
+        ui.scope_builder(egui::UiBuilder::new().ui_stack_info(egui::UiStackInfo::default().with_tag("varos-frameless")), contents);
+    } else {
+        contents(ui);
+    }
 }
 
 #[cfg(test)]
