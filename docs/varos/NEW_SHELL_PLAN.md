@@ -179,3 +179,15 @@ The tools docking target follows the window edge even with a group left of the B
 Partial validation and owner hand-test steps are recorded in
 [`lanes/shell-simple-1-report.md`](lanes/shell-simple-1-report.md). Captures and final gates remain unfinished at the owner’s request for a draft PR. Owner acceptance
 and stage 6 remain pending; this lane changes neither Home/Pages nor theme colours.
+
+## Simple look implementation record (2026-10-28/29)
+Direction: `SHELL_SIMPLE_DIRECTION.md` + mockup `mockups/shell-simple-2026-10-28.html`. Landed as #6 (lane-look):
+flat docked look (no box frames/gutters, one hairline, dividers invisible until hover), the 40 pt top bar owns
+the document tabs + presence/Share placeholders + search + workspace control (capped, ellipsized); the Workspaces
+row and the fixed Control-bar row are gone — Control is a dockable `control` panel; strips are flat 40 pt with
+one grip, 28×28 tiles and 1/2/3 tool columns per workspace (40/68/96 pt); legacy bodies are frameless inside
+boxes; tab rows 36/32 pt with overflow menus; Lucide icon textures replace text glyphs; flyouts/picker 240 pt
+never over any strip (floating ones included); VarosShell v6 (+fixture v5). Home draws its own single 40 pt bar
+(window drag + caption buttons on custom title bars). Pages (#5) sits above Layers|Artboards in the Design layout
+and the status bar reads "Page N of M · Artboard i / n" (shell ON). Captures: `mockups/shell-simple-capture.png`,
+`shell-simple-cols-capture.png`. Deferred: colour round (lane-colours), stage 6 removal after the owner's OK.
