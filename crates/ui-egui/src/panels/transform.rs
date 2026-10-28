@@ -448,7 +448,7 @@ pub(crate) fn polygon_rows(app: &mut VectorcraftApp, ui: &mut Ui, n: &Node, live
 /// popover under it, as the Stroke link does with the Stroke panel.
 pub fn link(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let resp = ui.link(egui::RichText::new(tl!("Transform")).size(12.0).color(t.text).underline()).on_hover_text(tl!("Transform options"));
+    let resp = crate::chrome::control_link(app, ui, tl!("Transform"), t.text).on_hover_text(tl!("Transform options"));
     widgets::popover(&resp, resp.clicked(), |ui| {
         ui.set_width(300.0);
         show(app, ui);

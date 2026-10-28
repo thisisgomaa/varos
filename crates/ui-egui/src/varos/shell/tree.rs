@@ -167,8 +167,7 @@ fn ratio_bounds(room: f32, a_min: f32, b_min: f32) -> (f32, f32) {
 }
 
 impl Node {
-    /// The default layout: Board (left, 72 %) | right column: Layers | Artboards over
-    /// Properties | Color | Swatches.
+    /// Design: Layers | Artboards on the left, Board in the middle, Properties on the right.
     pub fn default_layout() -> Node {
         split(
             Axis::Horizontal,
@@ -639,13 +638,35 @@ mod tests {
         ["layers", "artboards", "properties", "color", "swatches", "stroke", "gradient"].contains(&id)
     }
 
+    fn historical_layout() -> Node {
+        Node::board_and_column(&["layers", "artboards"], &["properties", "color", "swatches"])
+    }
+
     fn tabs(tree: &Node) -> Vec<Vec<&str>> {
         tree.boxes().iter().map(|b| b.tabs.iter().map(String::as_str).collect()).collect()
     }
 
     #[test]
-    fn the_default_layout_is_board_then_layers_over_properties() {
+    fn simple_default_layout_matches_the_editor_columns() {
         let tree = Node::default_layout();
+        assert_eq!(tabs(&tree), [vec!["layers", "artboards"], vec![BOARD], vec!["properties"]]);
+        let layout = tree.layout(Rect::from_min_size(egui::Pos2::ZERO, vec2(1360.0, 836.0)));
+        let left = layout.rect_of(2).unwrap();
+        let board = layout.rect_of(1).unwrap();
+        let right = layout.rect_of(3).unwrap();
+        assert!((left.width() - 232.0).abs() <= 1.0);
+        assert!((right.width() - 248.0).abs() <= 1.0);
+        assert_eq!(left.left(), 0.0);
+        assert_eq!(right.right(), 1360.0);
+        assert_eq!(board.left() - left.right(), 1.0);
+        assert_eq!(right.left() - board.right(), 1.0);
+        assert_eq!(left.height(), 836.0);
+        assert_eq!(right.height(), 836.0);
+    }
+
+    #[test]
+    fn the_historical_layout_is_board_then_layers_over_properties() {
+        let tree = historical_layout();
         assert_eq!(tabs(&tree), [vec![BOARD], vec!["layers", "artboards"], vec!["properties", "color", "swatches"]]);
         let Node::Split { axis, ratio, a, b, .. } = &tree else { panic!("a split") };
         assert_eq!((*axis, *ratio), (Axis::Horizontal, BOARD_RATIO));
@@ -663,7 +684,7 @@ mod tests {
 
     #[test]
     fn removing_the_last_tab_merges_the_box_away() {
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         assert!(tree.remove_tab("layers"));
         assert!(tree.remove_tab("artboards"));
         assert_eq!(tabs(&tree), [vec![BOARD], vec!["properties", "color", "swatches"]]);
@@ -678,7 +699,7 @@ mod tests {
 
     #[test]
     fn tabs_activate_add_and_remove_keep_the_front_tab() {
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         assert!(tree.add_tab(3, "stroke"));
         assert_eq!(tree.find_box(3).unwrap().front(), Some("stroke"));
         assert!(tree.activate("color"));
@@ -696,7 +717,7 @@ mod tests {
 
     #[test]
     fn ratios_clamp_to_the_minimum_box_sizes() {
-        let tree = Node::default_layout();
+        let tree = historical_layout();
         let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 700.0));
         // Far right: the right column keeps 190 points.
         let r = tree.ratio_for(&[], 5000.0, rect);
@@ -733,7 +754,7 @@ mod tests {
 
     #[test]
     fn reset_puts_the_default_ratio_back() {
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         tree.set_ratio(&[], 0.4);
         tree.set_ratio(&[1], 0.8);
         tree.reset_ratio(&[]);
@@ -745,7 +766,7 @@ mod tests {
 
     #[test]
     fn serde_round_trip_and_sanitizing() {
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         tree.add_tab(3, "stroke");
         tree.set_ratio(&[], 0.6);
         let json = serde_json::to_value(&tree).unwrap();
@@ -775,7 +796,7 @@ mod tests {
 
     #[test]
     fn the_minimum_size_adds_up_the_seams() {
-        let tree = Node::default_layout();
+        let tree = historical_layout();
         assert_eq!(tree.min_size(), vec2(BOARD_MIN.x + SEAM + BOX_MIN.x, (BOX_MIN.y * 2.0 + SEAM).max(BOARD_MIN.y)));
     }
 
@@ -801,7 +822,7 @@ mod tests {
 
     #[test]
     fn adding_a_tab_to_its_own_box_only_brings_it_forward() {
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         let id = tree.split_box(3, Axis::Vertical, "stroke", true, 0.4).unwrap();
         assert_eq!(tabs(&tree)[3], ["stroke"]);
         // Its only tab added to its own box: nothing lost.
@@ -821,7 +842,7 @@ mod tests {
 
     #[test]
     fn insert_tab_reorders_and_moves() {
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         assert!(tree.insert_tab(3, 0, "swatches"));
         assert_eq!(tabs(&tree)[2], ["swatches", "properties", "color"]);
         assert_eq!(tree.find_box(3).unwrap().front(), Some("swatches"));
@@ -841,7 +862,7 @@ mod tests {
     #[test]
     fn a_collapsed_box_keeps_its_row_and_its_sibling_takes_the_rest() {
         let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0));
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         assert!(tree.toggle_collapsed(2));
         let layout = tree.layout(rect);
         let (top, bottom) = (layout.rect_of(2).unwrap(), layout.rect_of(3).unwrap());
@@ -853,7 +874,7 @@ mod tests {
         assert!(back.find_box(2).unwrap().collapsed, "saved");
         assert!(!tree.toggle_collapsed(1), "the Board never collapses");
         assert!(tree.toggle_collapsed(2));
-        assert_eq!(tree.layout(rect), Node::default_layout().layout(rect), "whole again");
+        assert_eq!(tree.layout(rect), historical_layout().layout(rect), "whole again");
         // The lower box collapsed: the upper one takes the rest.
         assert!(tree.toggle_collapsed(3));
         let layout = tree.layout(rect);
@@ -867,14 +888,14 @@ mod tests {
     fn collapsing_never_leaves_a_hole_beside_or_under_a_box() {
         let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0));
         // Beside the Board alone, nothing takes the room: the box stays whole.
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         tree.remove_tab("layers");
         tree.remove_tab("artboards");
         assert!(!tree.toggle_collapsed(3), "nothing above or below it");
         assert!(!tree.find_box(3).unwrap().collapsed);
         assert_eq!(tree.layout(rect).rect_of(3).unwrap().height(), rect.height());
         // Nested stacks: two collapsed boxes under a whole one; it takes the room of both.
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         let low = tree.split_box(3, Axis::Vertical, "stroke", true, 0.5).unwrap();
         assert!(tree.toggle_collapsed(3) && tree.toggle_collapsed(low));
         let layout = tree.layout(rect);
@@ -884,7 +905,7 @@ mod tests {
         assert!((mid.top() - whole.bottom() - SEAM).abs() < 0.5 && (bottom.top() - mid.bottom() - SEAM).abs() < 0.5, "{whole:?} {mid:?} {bottom:?}");
         // Side by side over a box: one alone would leave a hole under it, so it stays whole; both
         // collapsed (a saved layout), their row is one tab row and the box below takes the rest.
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         let right = tree.split_box(2, Axis::Horizontal, "stroke", true, 0.5).unwrap();
         assert!(!tree.toggle_collapsed(2));
         for id in [2, right] {
@@ -895,7 +916,7 @@ mod tests {
         assert_eq!((a.height(), b.height()), (ROW, ROW));
         assert!((below.top() - a.bottom() - SEAM).abs() < 0.5 && below.bottom() == rect.bottom(), "{below:?}");
         // A collapsed box whose neighbour goes shows whole again.
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         assert!(tree.toggle_collapsed(2));
         for p in ["properties", "color", "swatches"] {
             tree.remove_tab(p);
@@ -912,7 +933,7 @@ mod tests {
     fn an_all_collapsed_row_beside_a_collapsed_pair_leaves_no_hole() {
         let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(1400.0, 900.0));
         // Board | (box 2 | (box 4 / box 5)) / box 3.
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         let pair = tree.split_box(2, Axis::Horizontal, "stroke", true, 0.5).unwrap();
         let low = tree.split_box(pair, Axis::Vertical, "color", true, 0.5).unwrap();
         for id in [2, pair, low] {
@@ -934,7 +955,7 @@ mod tests {
         assert!(!tree.toggle_collapsed(2), "refused, as beside the Board");
         assert!(!tree.find_box(2).unwrap().collapsed);
         // Equal heights (two single boxes) still share one row, as before.
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         let right = tree.split_box(2, Axis::Horizontal, "stroke", true, 0.5).unwrap();
         for id in [2, right] {
             tree.box_mut_rec(id).unwrap().collapsed = true;
@@ -945,7 +966,7 @@ mod tests {
 
     #[test]
     fn split_box_keeps_the_tree_sound() {
-        let mut tree = Node::default_layout();
+        let mut tree = historical_layout();
         // Properties split off its own box, to the left.
         let id = tree.split_box(3, Axis::Horizontal, "properties", false, 0.3).unwrap();
         tree.invariants().unwrap();

@@ -59,7 +59,7 @@ pub struct Group {
     pub height: f32,
 }
 fn initial_width() -> f32 {
-    260.0
+    240.0
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Strip {
@@ -74,13 +74,15 @@ impl Strip {
             .map(|g| Group {
                 temporary: false,
                 panels: g.iter().filter(|p| tree.find_tab(p).is_none()).map(|p| (*p).into()).collect(),
-                width: 260.0,
+                width: 240.0,
                 height: 360.0,
             })
             .filter(|g| !g.panels.is_empty())
             .collect();
         let mut strip = Self { groups, ..Self::default() };
-        strip.append("control");
+        if tree.find_tab("control").is_none() {
+            strip.groups.push(Group { panels: vec!["control".into()], temporary: false, width: 240.0, height: 360.0 });
+        }
         strip
     }
     pub fn group(&self, panel: &str) -> Option<usize> {
@@ -93,7 +95,7 @@ impl Strip {
         self.groups.retain(|g| !g.panels.is_empty());
     }
     pub fn is_default(panel: &str) -> bool {
-        crate::state::ICON_PANEL_GROUPS.iter().any(|g| g.contains(&panel))
+        panel == "control" || crate::state::ICON_PANEL_GROUPS.iter().any(|g| g.contains(&panel))
     }
     pub fn append(&mut self, panel: &str) {
         self.remove(panel);
@@ -101,14 +103,11 @@ impl Strip {
         let index = if temporary { self.groups.iter().position(|g| g.temporary) } else { self.groups.iter().rposition(|g| !g.temporary) };
         let index = index.unwrap_or_else(|| {
             let index = if temporary { self.groups.len() } else { self.groups.iter().position(|g| g.temporary).unwrap_or(self.groups.len()) };
-            self.groups.insert(index, Group { temporary, panels: Vec::new(), width: 260.0, height: 360.0 });
+            self.groups.insert(index, Group { temporary, panels: Vec::new(), width: 240.0, height: 360.0 });
             index
         });
         if let Some(g) = self.groups.get_mut(index) {
             g.panels.push(panel.into());
-            if matches!(panel, "properties" | "layers" | "libraries") {
-                g.width = g.width.max(300.0);
-            }
         }
     }
 
@@ -124,7 +123,7 @@ impl Strip {
         let mut seen = std::collections::HashSet::new();
         for g in &mut self.groups {
             g.panels.retain(|p| super::persist::known(p) && tree.find_tab(p).is_none() && !elsewhere(p) && seen.insert(p.clone()));
-            g.width = if g.width.is_finite() { g.width.clamp(190.0, 1200.0) } else { 260.0 };
+            g.width = if g.width.is_finite() { g.width.clamp(190.0, 1200.0) } else { 240.0 };
             g.height = if g.height.is_finite() { g.height.clamp(120.0, 1600.0) } else { 360.0 };
         }
         if !legacy {
@@ -132,7 +131,7 @@ impl Strip {
             for group in Self::default_for(tree).groups {
                 let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
                 if !panels.is_empty() {
-                    self.groups.push(Group { panels, temporary: false, width: 260.0, height: 360.0 });
+                    self.groups.push(Group { panels, temporary: false, width: 240.0, height: 360.0 });
                 }
             }
             return;
@@ -158,7 +157,7 @@ impl Strip {
         for group in Self::default_for(tree).groups {
             let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
             if !panels.is_empty() {
-                self.groups.push(Group { panels, temporary: false, width: 260.0, height: 360.0 });
+                self.groups.push(Group { panels, temporary: false, width: 240.0, height: 360.0 });
             }
         }
         self.groups.sort_by_key(|g| g.temporary);
@@ -262,7 +261,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     }
     crate::icons::paint(
         ui,
-        if app.ui.varos_shell.strip.mode == Mode::Icons { "chevrons-left" } else { "chevrons-right" },
+        if app.ui.varos_shell.strip.mode == Mode::Icons { "shell-chevrons-left" } else { "shell-chevrons-right" },
         Rect::from_center_size(toggle.center(), vec2(16.0, 16.0)),
         t.text_dim,
     );
@@ -363,7 +362,7 @@ pub(crate) fn paint_icons(
             paint_ui.painter().rect_filled(rect, 3.0, if active { t.button } else { t.hover });
         }
         let icon = crate::state::rail_panel(super::persist::instance_kind(&panel))
-            .map_or(if panel == "control" { "sliders-horizontal" } else { "panel-left" }, |p| p.2);
+            .map_or(if panel == "control" { "shell-sliders-horizontal" } else { "panel-left" }, |p| p.2);
         egui::Image::new(crate::icons::source(icon))
             .tint(if active { t.text_strong } else { t.text_dim })
             .paint_at(paint_ui, Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(16.0, 16.0)));
@@ -413,7 +412,7 @@ pub(crate) fn flyout(
     let left_room = (rail.left() - bounds.left()).max(1.0);
     let on_right = sref != StripRef::Board && (right_room >= group.width.min(bounds.width()) || right_room > left_room);
     let room = (if on_right { right_room } else { left_room } - 6.0).max(1.0);
-    let mut width = 240.0_f32.min(room);
+    let mut width = group.width.min(room);
     let height = group.height.min(bounds.height());
     let top = tops.get(index).copied().unwrap_or(bounds.top()).min(bounds.bottom() - height).max(bounds.top());
     let place = |width: f32| {
@@ -449,7 +448,7 @@ pub(crate) fn flyout(
     if r.dragged()
         && let Some(p) = r.interact_pointer_pos()
     {
-        let wanted = if on_right { p.x - rail.right() } else { rail.left() - p.x };
+        let wanted = if on_right { p.x - rail.right() - 6.0 } else { rail.left() - p.x - 6.0 };
         width = wanted.clamp(190.0_f32.min(room), room);
         rect = place(width);
         if let Some(g) = app.ui.varos_shell.strip_groups_mut(sref).and_then(|gs| gs.get_mut(index)) {
@@ -470,7 +469,7 @@ pub(crate) fn flyout(
         ui.set_min_size(rect.size());
         ui.set_clip_rect(bounds);
         let t = crate::theme::Tokens::get(&ctx);
-        let head = Rect::from_min_size(rect.min, vec2(width, 32.0));
+        let head = Rect::from_min_size(rect.min, vec2(width, boxes::FLOAT_HEADER));
         let collapse = Rect::from_min_size(pos2(head.right() - 48.0, head.top() + 4.0), vec2(22.0, 24.0));
         let collapse_response = ui.interact(collapse, area_id.with("close"), Sense::click());
         collapse_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Collapse panel"));
@@ -502,12 +501,14 @@ pub(crate) fn flyout(
             open(app, &front);
         }
         for ((p, _), r) in tabs.iter().zip(out.tabs) {
-            hits.push((Hit::FlyoutTab(p.clone()), r));
+            if r.is_positive() {
+                hits.push((Hit::FlyoutTab(p.clone()), r));
+            }
         }
         if collapse_response.hovered() {
             ui.painter().rect_filled(collapse, 3.0, t.hover);
         }
-        crate::icons::paint(ui, "chevrons-right", Rect::from_center_size(collapse.center(), vec2(16.0, 16.0)), t.text_dim);
+        crate::icons::paint(ui, "shell-chevrons-right", Rect::from_center_size(collapse.center(), vec2(16.0, 16.0)), t.text_dim);
         if boxes::menu_button(app, ui, menu, u32::MAX, &front, &t) {
             close_panel(app, &front);
             // A closing default panel keeps its body for the fade, but takes no input.
@@ -528,9 +529,15 @@ pub(crate) fn flyout(
         let mut body = ui.new_child(egui::UiBuilder::new().id_salt("shell-flyout-body").max_rect(inner));
         body.set_clip_rect(inner.intersect(bounds));
         let output = egui::ScrollArea::vertical().id_salt(("shell-flyout-scroll", sref, index)).auto_shrink([false, false]).show(&mut body, |ui| {
-            boxes::panel_body(app, ui, &front, width, (inner.height() - 20.0).max(0.0));
+            boxes::panel_body(app, ui, &front, inner.width(), (inner.height() - 20.0).max(0.0));
         });
-        let wanted = (output.content_size.y + boxes::HEADER + 1.0).clamp(120.0, 1600.0).min(bounds.height());
+        // These bodies own a scrolling viewport. Fitting that viewport back to its own
+        // contents creates a height feedback loop; retain the group's saved height.
+        let wanted = if crate::state::DockTab::from_id(&front).is_some() || super::persist::is_properties(&front) {
+            height
+        } else {
+            (output.content_size.y + boxes::FLOAT_HEADER + 1.0).clamp(120.0, 1600.0).min(bounds.height())
+        };
         let wanted_width = width;
         #[cfg(test)]
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique("shell-flyout-content"), output.content_size));

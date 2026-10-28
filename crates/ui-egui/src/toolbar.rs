@@ -159,8 +159,8 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
     let bounds = ui.max_rect();
     // The drawer opens beside it; a click in it leaves the drawer open.
     ui.data_mut(|d| d.insert_temp(crate::edit_toolbar::toolbar_id(), bounds));
-    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
     let shell = crate::varos::shell::enabled(app);
+    ui.spacing_mut().item_spacing = vec2(0.0, if shell { 2.0 } else { 0.0 });
     if !shell {
         // Title bar with » and a grip strip: a drag on either floats the panel or moves it.
         let (hdr, hresp) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::click_and_drag());
@@ -602,7 +602,8 @@ pub(crate) fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens,
             app.run("view.screenMode", json!({})).ok();
         }
         // Edit Toolbar: the All Tools drawer opens beside the toolbar, by this button.
-        let edit = widgets::icon_button(ui, "ellipsis", "Edit Toolbar", app.ui.tools_drawer, 26.0);
+        let edit =
+            widgets::icon_button(ui, "ellipsis", "Edit Toolbar", app.ui.tools_drawer, if crate::varos::shell::enabled(app) { 28.0 } else { 26.0 });
         ui.data_mut(|d| d.insert_temp(crate::edit_toolbar::button_id(), edit.rect));
         if crate::varos::shell::enabled(app) {
             egui::Popup::menu(&edit).show(|ui| {
@@ -614,6 +615,7 @@ pub(crate) fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens,
                 }
                 if ui.button(tl!("Edit Toolbar")).clicked() {
                     app.run("window.editToolbar", json!({})).ok();
+                    crate::edit_toolbar::opened_from_popup(ui.ctx());
                     ui.close();
                 }
             });
@@ -708,13 +710,7 @@ fn flyout_body(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String], floating
                 if xr.hovered() {
                     ui.painter().rect_filled(x, 3.0, t.hover);
                 }
-                ui.painter().text(
-                    x.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "×",
-                    egui::FontId::proportional(crate::varos::shell::tokens::CHROME_GLYPH),
-                    t.text,
-                );
+                icons::paint(ui, "x", egui::Rect::from_center_size(x.center(), vec2(16.0, 16.0)), t.text);
             } else {
                 icons::paint(ui, "x", x.shrink2(vec2(1.0, 3.0)), if xr.hovered() { t.text_strong } else { t.text });
             }

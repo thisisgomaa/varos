@@ -15,6 +15,7 @@ use crate::theme::Tokens;
 
 /// The tab row's height.
 pub(crate) const HEADER: f32 = super::tree::ROW;
+pub(crate) const FLOAT_HEADER: f32 = 32.0;
 /// A box's corner radius.
 pub(crate) const RADIUS: u8 = 10;
 /// A tab pill's height (a capsule: its radius is half of it).
@@ -97,20 +98,34 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
         .into_iter()
         .zip(widths)
         .zip(visible)
-        .map(|((galley, width), visible)| {
+        .zip(tabs)
+        .map(|(((mut galley, width), visible), (id, label))| {
             if !visible {
                 return (Rect::NOTHING, galley);
             }
             let pill = Rect::from_min_size(pos2(x, row.center().y - PILL_H / 2.0), vec2(width.min(room), PILL_H));
             x = pill.right() + PILL_GAP;
+            let text_room = (pill.width() - 2.0 * PILL_PAD - option_width(id)).max(0.0);
+            if galley.size().x > text_room {
+                let mut job = egui::text::LayoutJob::simple(
+                    label.clone(),
+                    galley.job.sections.first().map_or_else(|| egui::FontId::proportional(LABEL), |s| s.format.font_id.clone()),
+                    t.text,
+                    text_room,
+                );
+                job.wrap.max_rows = 1;
+                job.wrap.break_anywhere = false;
+                job.wrap.overflow_character = Some('…');
+                galley = painter.layout_job(job);
+            }
             (pill, galley)
         })
         .collect()
 }
 
 /// Draw a tab row in `row`: `tabs` (panel id, label) as capsule pills from the left, the front one
-/// lit (a brighter fill, semibold text); narrower than their labels when they don't all fit
-/// (labels are cut). A click switches at once: the clicked pill is painted in front on the very
+/// lit (a brighter fill, semibold text). Tabs that do not fit move to the overflow menu;
+/// an oversized active label is ellipsized. A click switches at once: the clicked pill is painted in front on the very
 /// frame of the click. Tabs are dragged and double-clicked by these same pills.
 pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> TabRow {
     let painter = ui.painter().clone();
@@ -135,6 +150,7 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
     if before.iter().any(|(r, _)| !r.is_positive()) {
         let more = Rect::from_center_size(pos2(row.right() - 12.0, row.center().y), vec2(24.0, 24.0));
         let response = ui.interact(more, ui.scope_id().with("tab-overflow"), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("More tabs")));
         crate::icons::paint(ui, "ellipsis", more.shrink(4.0), t.text_dim);
         let response = response.on_hover_text(tl!("More tabs"));
         egui::Popup::menu(&response).show(|ui| {
@@ -173,7 +189,7 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
             let rect = Rect::from_center_size(pos2(pill.right() - 9.0, pill.center().y), vec2(16.0, 16.0));
             let response = ui.interact(rect, tab_id(panel).with("options"), Sense::click());
             let hidden: bool = crate::panels::pstate(ui.ctx(), key);
-            crate::icons::paint(ui, "chevrons-right", rect, text);
+            crate::icons::paint(ui, "shell-chevrons-right", rect, text);
             if response.on_hover_text(if hidden { tl!("Show Options") } else { tl!("Hide Options") }).clicked() {
                 crate::panels::set_pstate(ui.ctx(), key, !hidden);
             }
@@ -252,7 +268,7 @@ pub(crate) fn show(
     if !floating {
         hits.push((Hit::Box(b.id), rect));
     }
-    let head = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + if floating { 32.0 } else { HEADER }).min(rect.bottom())));
+    let head = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + if floating { FLOAT_HEADER } else { HEADER }).min(rect.bottom())));
     let menu = Rect::from_min_size(pos2(head.right() - PAD - MENU.x, head.center().y - MENU.y / 2.0), MENU);
     let row = Rect::from_min_max(pos2(head.left() + PAD, head.top()), pos2((menu.left() - PAD).max(head.left() + PAD), head.bottom()));
     hits.push((Hit::TabRow(b.id), row));
@@ -262,7 +278,9 @@ pub(crate) fn show(
     let active = b.active.min(tabs.len().saturating_sub(1));
     let out = tab_row(ui, &tabs, active, row, &t);
     for ((panel, _), pill) in tabs.iter().zip(&out.tabs) {
-        hits.push((Hit::Tab { box_id: b.id, panel: panel.clone() }, *pill));
+        if pill.is_positive() {
+            hits.push((Hit::Tab { box_id: b.id, panel: panel.clone() }, *pill));
+        }
     }
     if let Some(i) = out.drag_started
         && let (Some((panel, _)), Some(pill)) = (tabs.get(i), out.tabs.get(i))
@@ -422,6 +440,17 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str) {
 /// editor is drawn as one: its sections (collapsed, in its order), its pin
 /// (`panels::properties::show_editor`), with its own view.
 pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: f32, tall: f32) {
+    ui.scope_builder(egui::UiBuilder::new().ui_stack_info(egui::UiStackInfo::default().with_tag("shell-panel")), |ui| {
+        panel_contents(app, ui, id, width, tall);
+    });
+}
+
+fn panel_contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: f32, tall: f32) {
+    ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_width: 4.0, floating_width: 2.0, ..egui::style::ScrollStyle::floating() };
+    let style = ui.style_mut();
+    style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
+    style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(11.0, egui::FontFamily::Name("ui-medium".into())));
+    style.text_styles.insert(egui::TextStyle::Heading, crate::theme::semibold(14.0));
     if id == "color" {
         crate::panels::show_icon_panel(app, ui, id);
         return;
@@ -435,6 +464,8 @@ pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, 
         return;
     }
     let _profile = crate::varos::profile::scope(super::persist::PROPERTIES);
+    // Hosts reserve the legacy 20-point vertical margin; this editor has 32.
+    let tall = (tall - 12.0).max(0.0);
     let stored = app.ui.varos_shell.views.get(id).cloned();
     let mut view = stored.clone().unwrap_or_default();
     egui::Frame::NONE.inner_margin(egui::Margin::same(16)).show(ui, |ui| {

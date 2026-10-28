@@ -27,7 +27,7 @@ const WIDGET_H: f32 = 22.0;
 /// too ([`titlebar::drag_area`]). With the system title bar (Windows and Linux, `system_title_bar`) the OS draws its own icon and
 /// title, so the in-app bar shows Home, menus and workspace controls only: no brand mark.
 pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
-    if crate::varos::shell::enabled(app) {
+    if crate::varos::shell::enabled(app) && !crate::varos::home::is_home(app) {
         simple_app_bar(app, ui);
         return;
     }
@@ -396,8 +396,8 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
             (title.clone(), ui.painter().layout_no_wrap(title, theme::semibold(title_size), color))
         })
         .collect();
-    let widths: Vec<f32> = tabs.iter().map(|(_, g)| g.size().x + if shell { 32.0 } else { 50.0 }).collect();
-    let overflow = widths.iter().sum::<f32>() > strip.width();
+    let widths: Vec<f32> = tabs.iter().map(|(_, g)| g.size().x + if shell { 46.0 } else { 50.0 }).collect();
+    let overflow = widths.iter().sum::<f32>() > strip.width() - if shell { 28.0 } else { 0.0 };
     // Varos: explicit overflow navigation, with automatic reveal on activation/resize.
     let room = (strip.width() - if shell { 28.0 } else { 0.0 } - if overflow { 3.0 * MORE } else { 0.0 }).max(1.0);
     let mut step = 0;
@@ -425,6 +425,9 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         let is_active = Some(i) == active;
         let r = egui::Rect::from_min_size(egui::pos2(x, strip.top()), vec2(w, strip.height() - 1.0));
         let resp = ui.interact(r, ui.scope_id().with(("tab", i)), Sense::click());
+        if shell {
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, is_active, galley.text()));
+        }
         if is_active {
             ui.painter().rect_filled(r, if shell { 6.0 } else { 0.0 }, if shell { t.hover } else { t.panel });
         } else if resp.hovered() {
@@ -451,6 +454,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
     if shell {
         let r = egui::Rect::from_min_size(egui::pos2(x.min(strip.right() - 28.0), strip.top()), vec2(28.0, 28.0));
         let response = ui.interact(r, ui.scope_id().with("new-document"), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("New Document")));
         icons::paint(ui, "plus", r.shrink(6.0), t.text_dim);
         if response.on_hover_text(tl!("New Document")).clicked() {
             menus::invoke(app, "file.newDialog", json!({}));
@@ -464,7 +468,12 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         let more = egui::Rect::from_min_max(egui::pos2(strip.right() - MORE, strip.top()), egui::pos2(strip.right(), strip.bottom() - 1.0));
         let resp = ui.interact(more, ui.scope_id().with("tabs-more"), Sense::click());
         ui.painter().rect_filled(more, 0.0, if resp.hovered() { t.hover.gamma_multiply(0.4) } else { t.tab_strip });
-        icons::paint(ui, "chevrons-right", egui::Rect::from_center_size(more.center(), vec2(14.0, 14.0)), t.text);
+        icons::paint(
+            ui,
+            if shell { "shell-chevrons-right" } else { "chevrons-right" },
+            egui::Rect::from_center_size(more.center(), vec2(14.0, 14.0)),
+            t.text,
+        );
         let resp = resp.on_hover_text(tl!("Show all open documents"));
         egui::Popup::menu(&resp).show(|ui| {
             widgets::menu_scroll(ui, |ui| {
@@ -2679,6 +2688,9 @@ fn simple_app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
         .exact_size(40.0)
         .frame(egui::Frame::NONE.fill(t.app_bar).inner_margin(egui::Margin::symmetric(10, 0)))
         .show(ui, |ui| {
+            if app.custom_titlebar || cfg!(target_os = "macos") {
+                titlebar::drag_area(ui, ui.max_rect());
+            }
             ui.horizontal_centered(|ui| {
                 if app.titlebar_inset > 10.0 {
                     ui.add_space(app.titlebar_inset - 10.0);
@@ -2688,13 +2700,14 @@ fn simple_app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 if widgets::icon_button(ui, "house", tl!("Home"), menus::home_showing(app), 28.0).clicked() {
                     menus::invoke(app, "app.home", json!({}));
                 }
-                if app.services.native_menu.is_none() {
-                    menus::menu_bar(app, ui);
-                }
-                let available = ui.available_rect_before_wrap();
+                // MenuBar allocates the full row; use the returned end of its titles.
+                let menus_end = if app.services.native_menu.is_some() { ui.cursor().min.x } else { menus::menu_bar(app, ui) };
+                let available = egui::Rect::from_min_max(egui::pos2(menus_end + 8.0, ui.max_rect().top()), ui.max_rect().max);
                 let reserve = 270.0 + if app.custom_titlebar { titlebar::WIDTH } else { 0.0 };
-                let tabs =
-                    egui::Rect::from_min_max(available.min, egui::pos2((available.right() - reserve).max(available.left()), available.bottom()));
+                let tabs = egui::Rect::from_min_max(
+                    egui::pos2(available.left(), available.center().y - 14.0),
+                    egui::pos2((available.right() - reserve).max(available.left()), available.center().y + 14.0),
+                );
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs).layout(egui::Layout::top_down(egui::Align::Min)));
                 child.set_clip_rect(tabs);
                 doc_tabs(app, &mut child);
@@ -2714,8 +2727,8 @@ fn simple_app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 widgets::icon_button(ui, "plus", tl!("Sharing comes later"), false, 22.0);
                 if !app.agents.registry.is_empty() {
                     let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 11.0, t.warning);
-                    icons::paint(ui, "sparkles", r.shrink(4.0), t.panel);
+                    ui.painter().circle_filled(r.center(), 11.0, crate::varos::theme::AGENT);
+                    icons::paint(ui, "shell-sparkles", r.shrink(4.0), t.panel);
                 }
                 let initial = std::env::var("USER").ok().and_then(|n| n.chars().next()).unwrap_or('U').to_uppercase().to_string();
                 let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
@@ -2876,7 +2889,7 @@ fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
 }
 
-fn control_link(app: &VectorcraftApp, ui: &mut Ui, label: &str, color: egui::Color32) -> egui::Response {
+pub(crate) fn control_link(app: &VectorcraftApp, ui: &mut Ui, label: &str, color: egui::Color32) -> egui::Response {
     if crate::varos::shell::enabled(app) {
         ui.add(egui::Label::new(egui::RichText::new(label).size(11.0).color(color)).sense(Sense::click()))
     } else {

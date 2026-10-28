@@ -54,7 +54,7 @@ fn contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, hits: &mut 
         drag::begin(app, ui.ctx(), drag::Item::Tools, rect);
     }
     if movable {
-        response.on_hover_cursor(egui::CursorIcon::Grab).on_hover_text(tl!("Drag tools; drop on the Board's left edge to dock"));
+        response.on_hover_cursor(egui::CursorIcon::Grab).on_hover_text(tl!("Drag tools; drop on the window's left edge to dock"));
     }
     hits.push((Hit::Tools, rect));
     hits.push((Hit::ToolsGrip, grip));
@@ -79,5 +79,16 @@ fn controls_height(app: &VectorcraftApp) -> f32 {
 
 fn content_height(app: &VectorcraftApp) -> f32 {
     let slots = crate::toolbar::slots(app);
-    18.0 + 8.0 + slots.len() as f32 * 29.0 + slots.iter().filter(|s| s.0.is_some()).count() as f32 * super::strip::GRIP + controls_height(app)
+    let columns = usize::from(app.ui.varos_shell.tools_columns.clamp(1, 3));
+    let mut rows = 0;
+    let mut in_group = 0usize;
+    for (group, _) in &slots {
+        if group.is_some() {
+            rows += in_group.div_ceil(columns);
+            in_group = 0;
+        }
+        in_group += 1;
+    }
+    rows += in_group.div_ceil(columns);
+    18.0 + 8.0 + rows as f32 * 30.0 + slots.iter().filter(|s| s.0.is_some()).count() as f32 * (super::strip::GRIP + 2.0) + controls_height(app)
 }

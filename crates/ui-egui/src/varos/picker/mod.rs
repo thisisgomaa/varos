@@ -359,32 +359,30 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     }
     let mut y = origin.y + HEADER_H;
-    ui.scope_builder(
-        egui::UiBuilder::new().ui_stack_info(if crate::varos::shell::enabled(app) {
-            egui::UiStackInfo::default().with_tag("simple-picker")
-        } else {
-            egui::UiStackInfo::default()
-        }),
-        |ui| match prefs.tab {
-            Tab::Wheel => {
-                wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
-                y += wheel::BODY_H;
-            }
-            Tab::Sliders => {
-                sliders::show(ui, pos2(origin.x, y), &mut st, &v, &mut prefs, &mut acts);
-                y += sliders::body_height(prefs.mode);
-            }
-            Tab::Harmony => {
-                harmony::strip(ui, pos2(origin.x, y), &mut prefs);
-                y += harmony::STRIP_H;
-                wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
-                y += wheel::BODY_H;
-                harmony::chips(ui, pos2(origin.x, y), &st, &prefs, &mut acts);
-                y += harmony::extra_height(prefs.harmony) - harmony::STRIP_H;
-            }
-            Tab::Gradient => {}
-        },
-    );
+    let mut contents = |ui: &mut Ui| match prefs.tab {
+        Tab::Wheel => {
+            wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
+            y += wheel::BODY_H;
+        }
+        Tab::Sliders => {
+            sliders::show(ui, pos2(origin.x, y), &mut st, &v, &mut prefs, &mut acts);
+            y += sliders::body_height(prefs.mode);
+        }
+        Tab::Harmony => {
+            harmony::strip(ui, pos2(origin.x, y), &mut prefs);
+            y += harmony::STRIP_H;
+            wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
+            y += wheel::BODY_H;
+            harmony::chips(ui, pos2(origin.x, y), &st, &prefs, &mut acts);
+            y += harmony::extra_height(prefs.harmony) - harmony::STRIP_H;
+        }
+        Tab::Gradient => {}
+    };
+    if crate::varos::shell::enabled(app) {
+        ui.scope_builder(egui::UiBuilder::new().ui_stack_info(egui::UiStackInfo::default().with_tag("simple-picker")), contents);
+    } else {
+        contents(ui);
+    }
     fields::row(ui, pos2(origin.x, y), &mut st, &v, prefs.tab == Tab::Sliders, &mut acts);
     y += fields::ROW_H;
     drawer::show(app, ui, pos2(origin.x, y), &mut prefs, &mut acts);

@@ -139,7 +139,7 @@ pub(crate) fn weight_field(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, weig
 /// "Stroke"): a click toggles the Stroke panel in a popover under it.
 pub(crate) fn link(app: &mut VectorcraftApp, ui: &mut Ui, label: &str) {
     let t = Tokens::get(ui.ctx());
-    let resp = ui.link(egui::RichText::new(label).size(12.0).color(t.text).underline()).on_hover_text(tl!("Stroke options"));
+    let resp = crate::chrome::control_link(app, ui, label, t.text).on_hover_text(tl!("Stroke options"));
     widgets::popover(&resp, resp.clicked(), |ui| {
         ui.set_width(260.0);
         show(app, ui);
@@ -153,9 +153,16 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let unit = app.session.stroke_unit();
     let weight = shown_weight(app, st.as_ref(), &mixed);
     let hidden: bool = pstate(ui.ctx(), "stroke-hide-options");
-    let label_w = 64.0;
+    let shell = ui.stack().iter().any(|s| s.tags().contains("shell-panel"));
+    if shell {
+        ui.spacing_mut().item_spacing.x = 3.0;
+    }
+    let label_w = if shell { 60.0 } else { 64.0 };
     let row_label = |ui: &mut Ui, s: &str| {
-        let l = ui.add_sized(vec2(label_w, 24.0), egui::Label::new(egui::RichText::new(s).size(12.5).color(t.text)).halign(egui::Align::RIGHT));
+        let l = ui.add_sized(
+            vec2(label_w, 24.0),
+            egui::Label::new(egui::RichText::new(s).size(if shell { 11.0 } else { 12.5 }).color(t.text)).halign(egui::Align::RIGHT),
+        );
         crate::scrub::note_label(ui, l.rect);
     };
     ui.horizontal(|ui| {
@@ -195,7 +202,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         widgets::dim_label(ui, tl!("Limit:"));
         let lim = st.as_ref().map(|s| s.miter_limit).unwrap_or(10.0);
         if !matches!(join, Some(LineJoin::Round | LineJoin::Bevel)) {
-            if let Some(v) = widgets::range_field(ui, "stroke-limit", (!mixed.miter_limit).then_some(lim), 1.0..=500.0, " x", 0, 50.0) {
+            if let Some(v) =
+                widgets::range_field(ui, "stroke-limit", (!mixed.miter_limit).then_some(lim), 1.0..=500.0, " x", 0, if shell { 34.0 } else { 50.0 })
+            {
                 set(app, json!({"miterLimit": v}));
             }
         } else {
@@ -366,7 +375,8 @@ fn paint_arrow(ui: &Ui, r: Rect, a: Option<Arrowhead>, start: bool, color: Color
 /// Dropdown whose button and items show drawn arrowhead previews. Returns Some(choice).
 fn arrow_dropdown(ui: &mut Ui, id: &str, cur: Option<Arrowhead>, start: bool) -> Option<Option<Arrowhead>> {
     let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(64.0, 24.0), Sense::click());
+    let (r, resp) =
+        ui.allocate_exact_size(vec2(if ui.stack().iter().any(|s| s.tags().contains("shell-panel")) { 56.0 } else { 64.0 }, 24.0), Sense::click());
     ui.painter().rect_filled(r, 2, t.input);
     ui.painter().rect_stroke(r, 2, Stroke::new(1.0, if resp.hovered() { t.text } else { t.input_border }), StrokeKind::Inside);
     let body = Rect::from_min_max(r.min + vec2(3.0, 0.0), pos2(r.right() - 16.0, r.bottom()));
@@ -436,7 +446,8 @@ pub fn paint_profile(ui: &Ui, r: Rect, points: Option<&[(f64, f64, f64)]>, color
 /// id or name picked.
 pub(crate) fn profile_dropdown(app: &VectorcraftApp, ui: &mut Ui, cur: Option<&WidthProfile>) -> Option<String> {
     let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(100.0, 24.0), Sense::click());
+    let (r, resp) =
+        ui.allocate_exact_size(vec2(if ui.stack().iter().any(|s| s.tags().contains("shell-panel")) { 84.0 } else { 100.0 }, 24.0), Sense::click());
     ui.painter().rect_filled(r, 2, t.input);
     ui.painter().rect_stroke(r, 2, Stroke::new(1.0, if resp.hovered() { t.text } else { t.input_border }), StrokeKind::Inside);
     let body = Rect::from_min_max(r.min + vec2(6.0, 5.0), pos2(r.right() - 20.0, r.bottom() - 5.0));

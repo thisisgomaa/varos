@@ -860,7 +860,9 @@ fn toolbar_popover_anchor_dismiss_escape_and_target_switch_in_both_shells() {
         // Under the Fill/Stroke pair when it fits, else beside it; never over the other well.
         let pair = fill.union(stroke);
         assert!(!r.intersects(pair), "{r:?} {pair:?}");
-        if (r.top() - (pair.bottom() + 4.0)).abs() < 1.0 {
+        if shell {
+            assert!(r.left() >= 40.0 + 6.0 && r.top() <= pair.top() + 1.0, "clear of the tool strip: {r:?}");
+        } else if (r.top() - (pair.bottom() + 4.0)).abs() < 1.0 {
             assert!((r.left() - pair.left()).abs() < 1.0, "below: {r:?} {pair:?}");
         } else {
             assert!((r.left() - (pair.right() + 4.0)).abs() < 1.0 && r.top() <= pair.top() + 1.0, "beside: {r:?} {pair:?}");

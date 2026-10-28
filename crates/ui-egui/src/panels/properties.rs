@@ -1277,7 +1277,7 @@ fn section_list(app: &mut VectorcraftApp) -> Vec<Section> {
 
 /// A section's header height, and its body's inset from the left.
 const SECTION_HEAD: f32 = 32.0;
-const SECTION_INSET: i8 = 8;
+const SECTION_INSET: i8 = 0;
 
 /// One section as drawn: its header, grip and whole extent (header and body).
 #[derive(Clone, Debug, PartialEq)]

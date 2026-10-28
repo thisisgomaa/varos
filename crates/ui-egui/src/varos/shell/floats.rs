@@ -15,7 +15,7 @@ use super::Hit;
 use super::boxes;
 use super::drag::{self, Item};
 use super::strip::{self, Group, Mode, StripRef};
-use super::tree::{BOX_MIN, PanelBox, ROW};
+use super::tree::{BOX_MIN, PanelBox};
 use crate::VectorcraftApp;
 use crate::theme::Tokens;
 
@@ -63,7 +63,7 @@ impl Float {
     /// The rect it shows in `region`: kept inside it, its title and tab row only while collapsed.
     pub(crate) fn shown(&self, region: Rect) -> Rect {
         let full = clamp_into(self.rect(), region);
-        if self.panels.collapsed { Rect::from_min_size(full.min, vec2(full.width(), (TITLE + ROW).min(full.height()))) } else { full }
+        if self.panels.collapsed { Rect::from_min_size(full.min, vec2(full.width(), (TITLE + boxes::FLOAT_HEADER).min(full.height()))) } else { full }
     }
 }
 
@@ -161,8 +161,8 @@ fn button(ui: &mut egui::Ui, rect: Rect, id: Id, glyph: &str, label: &str, t: &T
         ui,
         match glyph {
             "×" => "x",
-            "<<" => "chevrons-left",
-            ">>" => "chevrons-right",
+            "<<" => "shell-chevrons-left",
+            ">>" => "shell-chevrons-right",
             _ => "ellipsis",
         },
         Rect::from_center_size(rect.center(), vec2(16.0, 16.0)),
@@ -184,7 +184,7 @@ fn float(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, f: &Float, h
     let close = Rect::from_min_size(title.min + vec2(3.0, 1.0), BUTTON);
     let to_icon = Rect::from_min_size(pos2(title.right() - 3.0 - BUTTON.x, title.top() + 1.0), BUTTON);
     let corner = Rect::from_min_max(rect.max - vec2(CORNER, CORNER), rect.max);
-    let edge = Rect::from_min_max(pos2(rect.right() - EDGE, title.bottom() + ROW), pos2(rect.right(), rect.bottom() - CORNER));
+    let edge = Rect::from_min_max(pos2(rect.right() - EDGE, title.bottom() + boxes::FLOAT_HEADER), pos2(rect.right(), rect.bottom() - CORNER));
     let mut ask = None;
     egui::Area::new(area).order(Order::Middle).fixed_pos(rect.min).constrain(false).fade_in(false).movable(false).show(&ctx, |ui| {
         ui.set_min_size(rect.size());
@@ -286,9 +286,7 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
         painter.rect_filled(rect, CornerRadius::same(boxes::RADIUS), t.panel);
         // The title strip drags the whole strip (to the Board's edge, or elsewhere).
         let grab = ui.interact(grip, area.with("title"), Sense::drag());
-        for x in [-4.0, 0.0, 4.0] {
-            painter.circle_filled(grip.center() + vec2(x, 0.0), 0.8, t.text_dim);
-        }
+        // The title remains draggable; the column below owns the only visible grip.
         if grab.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -316,7 +314,15 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
     hits.push((Hit::FloatStripTitle(id), grip));
     hits.push((Hit::FloatStripClose(id), close));
     hits.push((Hit::FloatStripExpand(id), expand));
-    strip::flyout(app, ui, region, rect, &tops, sref, hits);
+    let mut bounds = region;
+    for (hit, rail) in hits.iter() {
+        match hit {
+            Hit::Tools if app.ui.varos_shell.tools_pos.is_none() => bounds.min.x = bounds.left().max(rail.right()),
+            Hit::Strip => bounds.max.x = bounds.right().min(rail.left()),
+            _ => {}
+        }
+    }
+    strip::flyout(app, ui, bounds, rect, &tops, sref, hits);
     // Painted after its flyout's input: the open panel's icon is lit on the click frame.
     let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
     paint_ui.set_clip_rect(rect.intersect(region));

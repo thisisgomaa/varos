@@ -213,7 +213,7 @@ pub(crate) fn layout_rev(shell: &VarosShell, region: Rect) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     format!("{region:?}{:?}{:?}{:?}{:?}{:?}", shell.tree, shell.strip, shell.floats, shell.float_strips, shell.maximized_box()).hash(&mut h);
-    format!("{:?}", shell.tools_pos).hash(&mut h);
+    format!("{:?}:{}", shell.tools_pos, shell.tools_columns).hash(&mut h);
     h.finish()
 }
 
@@ -423,9 +423,9 @@ pub(crate) fn target_at(shell: &VarosShell, ctx: &egui::Context, region: Rect, h
         return None;
     }
     if d.item == Item::Tools {
-        let board = hits.iter().find(|(h, _)| *h == Hit::Board).map(|(_, r)| *r)?;
-        if (p.x - board.left()).abs() <= 20.0 && p.y >= board.top() && p.y <= board.bottom() {
-            return Some((Target::Dock, Some((vline(board.left(), board.top(), board.bottom()), true))));
+        // Tools border the entire docked layout, including groups left of the Board.
+        if (p.x - region.left()).abs() <= 20.0 {
+            return Some((Target::Dock, Some((vline(region.left(), region.top(), region.bottom()), true))));
         }
         return Some((Target::Move, None));
     }
