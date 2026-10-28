@@ -3204,3 +3204,37 @@ fn simple_review_picker_avoids_floating_tools_and_panel_strip() {
         assert!(!picker.intersects(strip), "{picker:?} overlaps {strip:?}");
     }
 }
+
+#[test]
+fn simple_status_bar_shows_the_page_readout_only_with_the_shell() {
+    let texts = |out: &egui::FullOutput| -> Vec<String> {
+        out.shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut h = Harness::new();
+    let readout = crate::varos::pages::status(&h.app).expect("a document has a page readout");
+    assert!(readout.starts_with("Page 1 of 1 · Artboard "), "{readout}");
+    let off = h.frame_full(vec![]);
+    assert!(!texts(&off).contains(&readout), "OFF keeps the artboard list");
+    h.shell(true);
+    let on = h.frame_full(vec![]);
+    assert!(texts(&on).contains(&readout), "{:?}", texts(&on));
+}
+
+#[test]
+fn simple_pages_tab_is_not_repeated_as_a_header() {
+    let count =
+        |out: &egui::FullOutput| out.shapes.iter().filter(|s| matches!(&s.shape, egui::Shape::Text(text) if text.galley.text() == "Pages")).count();
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.varos_shell.tree = tree::Node::default_layout();
+    h.app.ui.varos_shell.strip = shell::strip::Strip::default_for(&h.app.ui.varos_shell.tree);
+    h.settle();
+    h.rect(&Hit::Tab { box_id: 4, panel: "pages".into() });
+    assert_eq!(count(&h.frame_full(vec![])), 1, "the tab names the Pages panel once");
+}
