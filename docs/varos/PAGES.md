@@ -139,4 +139,58 @@ The failures were `varos::home::tests::save_and_open_write_real_png_thumbnails_a
 and `varos::home::tests::thumbnail_rereads_a_file_replaced_between_document_load_and_cache_hook`:
 both expected thumbnail files under the non-writable real Home cache.
 
+Engine attempt after the Codex fix round (moderator run), 2 failures:
+`tests_placed_document::the_preview_is_saved_so_the_document_shows_it_without_its_file` and
+`tests_save::older_native_files_open_converted_and_save_under_a_new_name`.
+
+- Root cause of the first: every native save/serialize/export now goes through the project encoder,
+  which passed versions 1–4 straight to the format writer and skipped the single-document
+  encoder's preparation (placed documents resolved to the art they show, previews where their
+  files are gone). A version 2 save of a placed document whose file was removed therefore wrote the
+  stale vectors of the removed file instead of its saved preview. Fix: the project encoder hands a
+  one-page project saved as version 1–4 to the single-document encoder unchanged, and refuses
+  several pages with a message naming version 5 (`crates/engine/src/cmd/fileio/native.rs`,
+  `encode_project_to`). New regression test
+  `tests_pages::pages_older_versions_save_one_page_as_its_document_and_refuse_several`.
+- Root cause of the second: the test made a "version 1 file" by relabelling the current file's
+  version number; since v5 the current file is a pages envelope, so the relabelled file was an
+  invalid v1 envelope (`not a Varos file: invalid project envelope`). The fixture now writes a real
+  version 1 file with the format's own version 1 writer (`crates/engine/src/tests_save.rs`,
+  `old_file`); the test's assertions are unchanged.
+
+Gates after the fix (2026-10-29):
+```text
+cargo test -p vectorcraft-engine --lib --release --offline -j 2 -- --test-threads=2 the_preview_is_saved older_native_files
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3226 filtered out; finished in 0.04s
+
+cargo test -p vectorcraft-engine -p vectorcraft-mcp -p vectorcraft-cli --release --offline -j 2 -- --test-threads=2   (exit 0)
+vectorcraft_cli unittests:      test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+vectorcraft_cli tests/it:       test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+vectorcraft_engine lib:         test result: ok. 3227 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 14.61s
+engine affinity_artboards:      test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+engine affinity_corpus:         test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+engine affinity_text:           test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+engine color_settings:          test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+engine command_sweep:           test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.04s
+engine font_folder:             test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+engine import_fuzz:             test result: ok. 143 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.59s
+engine tests/it:                test result: ok. 155 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 69.48s
+engine open_relative_path:      test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+engine plugin_export:           test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+engine plugin_fuzz:             test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+engine removed_font:            test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+engine text_import_fuzz:        test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+vectorcraft_mcp lib:            test result: ok. 158 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.92s
+mcp automation_roots:           test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+mcp protocol_props:             test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.09s
+doc-tests engine / mcp:         test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+cargo clippy -p vectorcraft-engine -p vectorcraft-mcp -p vectorcraft-cli --all-targets --offline -j 2 -- -D warnings
+    Finished `dev` profile [optimized + debuginfo] target(s) in 40.16s   (exit 0, no warnings)
+
+cargo fmt --check -p vectorcraft-engine   (exit 0)
+git diff --check                          (exit 0)
+```
+
 Revision history: 2026-10-28 — PR #5 recovery generation and project-history fixes; frozen default MCP contract.
+2026-10-29 — legacy-version saves of a project go through the single-document encoder; v1 test fixture written by the v1 writer.
