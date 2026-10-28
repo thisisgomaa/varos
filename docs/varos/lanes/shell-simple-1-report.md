@@ -27,16 +27,22 @@ OFF isolation: legacy panel and picker bodies execute directly, without an added
 - Picker placement excludes floating Tools and floating panel strips, trying nearby obstacle edges while retaining the original placement when no floating strips are present (`varos/picker/mod.rs`).
 - Four `simple_review_*` frame regressions cover these findings, including a 60-character name and both kinds of floating strip (`varos/tests_shell.rs`).
 
+### Verification round (Opus, 2026-10-29)
+
+- P1 follow-up: with the app bar gone on Home, Home's own 40-point bar takes the title-bar duties the app bar had: window drag on empty bar space (macOS and custom title bar), the brand clears the macOS window buttons (`titlebar_inset`), and the custom caption buttons sit at its right end (`varos/home.rs` `top_bar`). `chrome::app_bar_height` gives the macOS window buttons the bar they centre on (40 on Home and with the shell on, 32 for the OFF editor, unchanged) (`chrome.rs`, `apps/vectorcraft/src/main.rs`). Note: Home is shared by OFF and ON, so OFF Home also loses the old second bar (the brief's P1 rule is unconditional); the OFF editor is unchanged.
+- P3 follow-up: the app bar's right group (presence, Share, search, capped workspace control) is laid out first and the document tabs take exactly the room it leaves (8-point gap), replacing the fixed 340-point reserve, so a connected agent avatar can no longer push the group over the tabs (`chrome.rs` `simple_app_bar` / `simple_app_bar_right`).
+- Tests: `simple_review_home_bar_is_the_window_title_bar` (caption Close in the corner, brand past the inset, empty-bar drag sends `StartDrag`); the tool-flyout regression now checks 2 and 3 columns (`simple_review_multi_column_tool_flyout_clears_strip`).
+
 ## Gates
 
-Current validation: macOS lane-look, shared target directory `~/Documents/AI workspace/lanes/_target-shared`, one Cargo command at a time, `--offline -j 2`, test execution with `--test-threads=2`. Implementation and regression tests were written before Cargo. The requested handoff marker is awaited before the first Cargo command. The earlier Linux partial run is superseded by the results below; its ten failures are no longer an accepted baseline.
+Current validation: macOS lane-look, shared target directory `~/Documents/AI workspace/lanes/_target-shared`, one Cargo command at a time, `--offline -j 2`, test execution with `--test-threads=2`. Implementation and regression tests were written before Cargo. The Cargo handoff marker (`go-look-cargo`) did not appear within the allowed 120 one-minute waits (2026-10-28 22:19 → 2026-10-29 00:18), so no Cargo command has run on this round yet; every Cargo row below is still pending and nothing in this round is compiled or test-proven.
 
 | Gate | Exact result / status |
 |---|---|
-| UI release library tests | Pending handoff marker. |
+| UI release library tests | Pending: Cargo marker never appeared (not run). |
 | Two ignored 1440×900 captures | Pending. |
 | Clippy, workspace/all targets, warnings denied | Pending. |
-| rustfmt check, touched Rust files | Exit 0, no output (pre-Cargo static check). |
+| rustfmt check, touched Rust files | `rustfmt --edition 2024 --check` on chrome.rs, varos/home.rs, varos/tests_shell.rs, apps/vectorcraft/src/main.rs: exit 0, no output (standalone rustfmt, not `cargo fmt`). |
 | `git diff --check` | Exit 0, no output (pre-Cargo static check). |
 | Native release build | Pending. |
 
