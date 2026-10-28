@@ -220,7 +220,9 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
                 .groups
                 .iter()
                 .flat_map(|g| &g.panels)
-                .map(|p| ui.painter().layout_no_wrap(boxes::label(app, p), egui::FontId::proportional(11.0), t.text).size().x + 42.0)
+                .map(|p| {
+                    ui.painter().layout_no_wrap(boxes::label(app, p), egui::FontId::proportional(super::tokens::CHROME_GLYPH), t.text).size().x + 42.0
+                })
                 .fold(70.0, f32::max)
                 .min(180.0)
         }
@@ -260,7 +262,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
         toggle.center(),
         egui::Align2::CENTER_CENTER,
         if app.ui.varos_shell.strip.mode == Mode::Icons { "<<" } else { ">>" },
-        egui::FontId::proportional(11.0),
+        egui::FontId::proportional(super::tokens::CHROME_GLYPH),
         t.text,
     );
     let groups = app.ui.varos_shell.strip.groups.clone();
@@ -363,7 +365,7 @@ pub(crate) fn paint_icons(
                 rect.min + vec2(29.0, 13.0),
                 egui::Align2::LEFT_CENTER,
                 boxes::label(app, &panel),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(super::tokens::CHROME_GLYPH),
                 t.text,
             );
         } else {
@@ -387,7 +389,15 @@ pub(crate) fn flyout(
     sref: StripRef,
     hits: &mut Vec<(Hit, Rect)>,
 ) {
-    let Some(panel) = app.ui.varos_shell.open.clone() else { return };
+    let motion_id = egui::Id::unique("shell-flyout-motion").with(sref);
+    let requested = app
+        .ui
+        .varos_shell
+        .open
+        .as_deref()
+        .filter(|p| app.ui.varos_shell.strip_groups(sref).is_some_and(|gs| gs.iter().any(|g| g.panels.iter().any(|q| q == p))));
+    let Some((panel, alpha, slide)) = super::motion::flyout(ui.ctx(), motion_id, requested) else { return };
+    let mut closing = requested.is_none();
     let Some(index) = app.ui.varos_shell.strip_groups(sref).and_then(|gs| gs.iter().position(|g| g.panels.contains(&panel))) else {
         return;
     };
@@ -410,7 +420,12 @@ pub(crate) fn flyout(
         && ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !rect.contains(p) && !rail.contains(p)))
     {
         close(app);
-        return;
+        closing = true;
+        // Start the fade on the event frame; this pass still paints its visible body.
+        let _ = super::motion::flyout(ui.ctx(), motion_id, None);
+        if ui.ctx().global_style().animation_time == 0.0 {
+            return;
+        }
     }
     let area_id = egui::Id::unique("shell-flyout");
     let layer = egui::LayerId::new(egui::Order::Middle, area_id);
@@ -434,11 +449,16 @@ pub(crate) fn flyout(
             g.width = width;
         }
     }
+    rect = rect.translate(vec2(if on_right { -slide } else { slide }, 0.0));
     // Over the boxes and floating panels.
     ctx.move_to_top(layer);
     // Known geometry avoids egui's invisible first sizing pass and blocks the canvas immediately.
     ctx.memory_mut(|m| m.areas_mut().set_state(layer, egui::AreaState { pivot_pos: Some(rect.min), size: Some(rect.size()), ..Default::default() }));
     egui::Area::new(area_id).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).fade_in(false).movable(false).show(&ctx, |ui| {
+        if closing {
+            ui.disable();
+        }
+        ui.set_opacity(alpha);
         ui.set_min_size(rect.size());
         ui.set_clip_rect(bounds);
         let t = crate::theme::Tokens::get(&ctx);
@@ -448,7 +468,13 @@ pub(crate) fn flyout(
         collapse_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Collapse panel"));
         if collapse_response.clicked() {
             close(app);
-            return;
+            // Keep painting on the close frame, instead of a blank frame before the fade.
+            let _ = super::motion::flyout(&ctx, motion_id, None);
+            if ctx.global_style().animation_time == 0.0 {
+                return;
+            }
+            ui.disable();
+            ui.set_opacity(alpha);
         }
         ui.painter().rect_filled(rect, boxes::RADIUS, t.panel);
         let menu = collapse.translate(vec2(23.0, 0.0));
@@ -473,11 +499,19 @@ pub(crate) fn flyout(
         if collapse_response.hovered() {
             ui.painter().rect_filled(collapse, 3.0, t.hover);
         }
-        ui.painter().text(collapse.center(), egui::Align2::CENTER_CENTER, ">>", egui::FontId::proportional(11.0), t.text);
+        ui.painter().text(collapse.center(), egui::Align2::CENTER_CENTER, ">>", egui::FontId::proportional(super::tokens::CHROME_GLYPH), t.text);
         if boxes::menu_button(app, ui, menu, u32::MAX, &front, &t) {
             close_panel(app, &front);
-            return;
+            // A closing default panel keeps its body for the fade, but takes no input.
+            let _ = super::motion::flyout(&ctx, motion_id, None);
+            if ctx.global_style().animation_time == 0.0 {
+                return;
+            }
+            ui.disable();
+            ui.set_opacity(alpha);
         }
+        #[cfg(test)]
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("review-strip-opacity"), ui.opacity()));
         hits.push((Hit::FlyoutClose, collapse));
         hits.push((Hit::FlyoutResize, edge_of(rect)));
         hits.push((Hit::Flyout, rect));

@@ -16,6 +16,7 @@ struct Harness {
     app: VectorcraftApp,
     ctx: egui::Context,
     time: f64,
+    root: egui::Id,
     screen: egui::Vec2,
     /// The modifier keys held (sent as `ModifiersChanged` when they change).
     modifiers: egui::Modifiers,
@@ -47,7 +48,16 @@ impl Harness {
         let app = VectorcraftApp::new(Session::new(), Default::default());
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let mut h = Self { app, ctx, time: 0.0, screen, modifiers: egui::Modifiers::NONE, sent_modifiers: egui::Modifiers::NONE, focused: true };
+        let mut h = Self {
+            app,
+            ctx,
+            root: egui::Id::NULL,
+            time: 0.0,
+            screen,
+            modifiers: egui::Modifiers::NONE,
+            sent_modifiers: egui::Modifiers::NONE,
+            focused: true,
+        };
         h.settle();
         h
     }
@@ -66,8 +76,10 @@ impl Harness {
         let screen = Rect::from_min_size(Pos2::ZERO, self.screen);
         let input = egui::RawInput { time: Some(self.time), events, screen_rect: Some(screen), focused: self.focused, ..Default::default() };
         let app = &mut self.app;
+        let root = &mut self.root;
         app.begin_host_iteration();
         let mut out = self.ctx.run_ui(input, |ui| {
+            *root = ui.scope_id();
             app.tick(ui.ctx());
             app.ui(ui);
         });
@@ -250,7 +262,7 @@ fn the_board_holds_the_canvas_beside_the_two_default_boxes() {
     assert!(board.contains_rect(canvas), "the canvas lies in the Board: {canvas:?} in {board:?}");
     // The Board body reserves the full strip and its seam, plus document tabs, rulers and scroll bars.
     assert!(board.right() - canvas.right() <= 54.0 + tree::SEAM && board.bottom() - canvas.bottom() <= 20.0, "{canvas:?} in {board:?}");
-    assert!(canvas.top() - board.top() <= 80.0 && canvas.left() - board.left() <= 30.0, "{canvas:?} in {board:?}");
+    assert!(canvas.top() - board.top() <= 80.0 && canvas.left() - board.left() <= shell::tools::WIDTH + 30.0, "{canvas:?} in {board:?}");
     assert_eq!(h.rect(&Hit::Strip).width(), 34.0);
     assert!(h.rect(&Hit::Strip).left() - canvas.right() >= tree::SEAM);
     assert_eq!(h.rect(&Hit::BoardBody), canvas, "the canvas body is published apart from the Board");
@@ -413,7 +425,11 @@ fn home_and_the_full_screen_modes_show_the_board_alone() {
         h.app.ui.screen_mode = mode;
         h.settle();
         let hits = h.hits();
-        assert!(hits.iter().all(|(hit, _)| matches!(hit, Hit::Board | Hit::BoardBody)), "mode {mode}: {hits:?}");
+        assert!(
+            hits.iter().all(|(hit, _)| matches!(hit, Hit::Board | Hit::BoardBody) || (mode < 3 && matches!(hit, Hit::Tools | Hit::ToolsGrip))),
+            "mode {mode}: {hits:?}"
+        );
+        assert_eq!(hits.iter().any(|(hit, _)| *hit == Hit::Tools), mode < 3, "tools remain available until presentation mode");
         assert!(h.board().contains_rect(h.rect(&Hit::BoardBody)), "mode {mode}");
         if mode == 1 {
             assert_eq!(h.board(), area, "Full Screen Mode with Menu Bar: the Board fills the central region");
@@ -841,7 +857,12 @@ fn flyout_first_open_fits_stroke_and_area_matches_visible_bounds() {
     let index = h.app.ui.varos_shell.strip.group("stroke").unwrap();
     assert_eq!(h.app.ui.varos_shell.strip.groups[index].width, rect.width());
     h.frame(vec![]);
-    assert_eq!(h.rect(&Hit::Flyout), rect, "no visible sizing motion");
+    assert!((h.rect(&Hit::Flyout).size() - rect.size()).length() < 0.01, "opening slides but never changes size");
+    h.time += 0.10;
+    h.frame(vec![]);
+    let settled = h.rect(&Hit::Flyout);
+    h.frame(vec![]);
+    assert_eq!(h.rect(&Hit::Flyout), settled);
 }
 
 #[test]
@@ -940,7 +961,7 @@ fn flyout_near_bottom_moves_up_without_shrinking() {
     assert!((first.bottom() - h.board().bottom()).abs() < 1.0);
     assert!(first.top() < top);
     h.frame(vec![]);
-    assert_eq!(h.rect(&Hit::Flyout), first);
+    assert_eq!(h.rect(&Hit::Flyout).y_range(), first.y_range(), "opening slides horizontally, never shrinks or moves vertically");
 }
 
 #[test]
@@ -1017,7 +1038,7 @@ fn flyouts_keep_their_first_presented_height_on_open_and_switch() {
         let first = h.rect(&Hit::Flyout);
         for _ in 0..4 {
             h.frame(vec![]);
-            assert_eq!(h.rect(&Hit::Flyout), first, "{panel} must not grow each frame");
+            assert!((h.rect(&Hit::Flyout).size() - first.size()).length() < 0.01, "{panel} must not grow each frame");
         }
     }
 }
@@ -2367,4 +2388,474 @@ fn two_editors_section_views_survive_a_workspace_switch() {
     // And through ui.json.
     let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
     assert_eq!(back.varos_shell.views, views);
+}
+
+#[test]
+fn shell5_tools_belong_to_board_float_and_dock_without_changing_legacy_preferences() {
+    let mut h = Harness::new();
+    h.app.ui.toolbar_pos = Some([70.0, 160.0]);
+    h.app.ui.toolbar_double = true;
+    h.shell(true);
+    let tools = h.rect(&Hit::Tools);
+    assert_eq!(tools.width(), 34.0);
+    assert_eq!(tools.left(), h.board().left());
+    assert!(h.board().contains_rect(tools));
+    let to = h.board().center();
+    h.drag(h.rect(&Hit::ToolsGrip).center(), to);
+    assert!(h.state().tools_pos.is_some());
+    assert_eq!(h.app.ui.toolbar_pos, Some([70.0, 160.0]));
+    assert!(h.app.ui.toolbar_double);
+    let back = h.board().left_center() + vec2(4.0, 0.0);
+    h.hold_drag(h.rect(&Hit::ToolsGrip).center(), back);
+    let (hit, line) = h.drop_line();
+    assert!(matches!(hit, Hit::DropLine { vertical: true, target: Target::Dock }));
+    assert_eq!(line.height(), h.board().height());
+    h.release(back);
+    assert_eq!(h.state().tools_pos, None);
+    h.shell(false);
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::Tools));
+    assert_eq!(h.app.ui.toolbar_pos, Some([70.0, 160.0]));
+}
+
+#[test]
+fn shell5_v4_migrates_and_v5_tools_roundtrip() {
+    let s = shell::persist::VarosShell { tools_pos: Some([120.0, 190.0]), ..Default::default() };
+    let v = serde_json::to_value(&s).unwrap();
+    assert_eq!(v["version"], 5);
+    assert_eq!(shell::persist::from_value(&v).tools_pos, s.tools_pos);
+    let old: serde_json::Value = serde_json::from_str(include_str!("shell/fixtures/v4.json")).unwrap();
+    assert!(old["varos_shell"].get("tools_pos").is_none());
+    let back: crate::state::UiState = serde_json::from_value(old).unwrap();
+    assert_eq!(back.varos_shell.version, 5);
+    assert_eq!(back.varos_shell.tools_pos, None);
+    assert_eq!(back.varos_shell.workspace, "Review v4");
+    assert_eq!(back.varos_shell.workspaces[0].name, "Review v4");
+    assert_eq!(back.varos_shell.workspaces[0].tools_pos, None);
+    assert_eq!(back.varos_shell.tree.boxes()[0].id, 41);
+}
+
+#[test]
+fn shell5_status_never_intersects_boxes_or_floats_even_after_resize() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.varos_shell.tools_pos = Some([9999.0, 9999.0]);
+    h.app.ui.varos_shell.floats.push(floats::Float {
+        panels: tree::PanelBox { id: 999, tabs: vec!["stroke".into()], active: 0, collapsed: false },
+        rect: [9999.0, 9999.0, 260.0, 360.0],
+        owner_area: 1,
+    });
+    h.app.ui.varos_shell.strip.remove("stroke");
+    for size in [SCREEN, vec2(900.0, 600.0)] {
+        h.screen = size;
+        h.settle();
+        let status = egui::containers::panel::PanelState::load(&h.ctx, h.root.with_salt(egui::IdSalt::new("status_bar"))).unwrap().outer_rect;
+        assert_eq!(status.height(), 24.0);
+        for (hit, rect) in h.hits() {
+            if matches!(hit, Hit::Board | Hit::Box(_) | Hit::Float(_) | Hit::FloatStrip(_) | Hit::Tools) {
+                assert!(!rect.intersects(status), "{hit:?}: {rect:?} intersects {status:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn shell5_motion_visible_immediately_final_on_time_and_reduced_motion_instant() {
+    let ctx = egui::Context::default();
+    let id = egui::Id::unique("test-shell5-motion");
+    let sample = |time, requested: Option<&str>, instant| {
+        let mut result = None;
+        let _ = ctx.run_ui(egui::RawInput { time: Some(time), ..Default::default() }, |ui| {
+            ui.ctx().global_style_mut(|s| s.animation_time = if instant { 0.0 } else { 0.2 });
+            result = shell::motion::flyout(ui.ctx(), id, requested);
+        });
+        result
+    };
+    assert!(sample(0.0, Some("stroke"), false).unwrap().1 > 0.0);
+    assert_eq!(sample(0.091, Some("stroke"), false).unwrap().1, 1.0);
+    assert!(sample(0.10, None, false).is_some());
+    assert!(sample(0.161, None, false).is_none());
+    assert_eq!(sample(0.2, Some("stroke"), true).unwrap().1, 1.0);
+    assert!(sample(0.21, None, true).is_none());
+    let opening = sample(0.3, Some("stroke"), false).unwrap();
+    let closing = sample(0.32, None, false).unwrap();
+    assert!(closing.1 <= opening.1, "interrupting an opening never flashes opaque");
+    assert_eq!(closing.2, opening.2, "closing only fades; it does not slide");
+    assert!(sample(0.4, None, false).is_none());
+    let target = Rect::from_min_size(pos2(100.0, 100.0), vec2(300.0, 300.0));
+    let region = Rect::from_min_size(Pos2::ZERO, SCREEN);
+    let _ = ctx.run_ui(egui::RawInput { time: Some(1.0), ..Default::default() }, |ui| {
+        ui.ctx().global_style_mut(|s| s.animation_time = 0.2);
+        shell::motion::dropped(ui.ctx(), "stroke", pos2(300.0, 200.0));
+        assert_ne!(shell::motion::settle(ui.ctx(), "stroke", target, region), target);
+    });
+    let _ = ctx.run_ui(egui::RawInput { time: Some(1.081), ..Default::default() }, |ui| {
+        assert_eq!(shell::motion::settle(ui.ctx(), "stroke", target, region), target);
+    });
+}
+
+#[test]
+#[ignore = "optional final capture; set VAROS_SHELL_CAPTURE_FINAL"]
+fn capture_shell5_final() {
+    let Some(file) = std::env::var_os("VAROS_SHELL_CAPTURE_FINAL").map(std::path::PathBuf::from) else { return };
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.run("window.panel", json!({"panel":"stroke"})).unwrap();
+    let pixels = capture(&mut h.app, 1440, 1000);
+    image::save_buffer(file, &pixels, 1440, 1000, image::ColorType::Rgba8).unwrap();
+}
+
+#[test]
+fn shell5_tool_selection_flyout_and_picker_use_existing_behaviour() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let mut buttons = crate::toolbar::tests::widget_rects(&h.ctx, vec2(34.0, 29.0));
+    buttons.dedup();
+    assert!(buttons.len() > 4);
+    h.click(buttons[3].center());
+    assert_eq!(h.app.session.tool_id(), "rectangle");
+    let triangle = buttons[3].right_bottom() - vec2(2.0, 2.0);
+    let output = h.frame_full(vec![egui::Event::PointerMoved(triangle), button(triangle, true)]);
+    assert!(h.app.ui.flyout.is_some());
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("tool-flyout"));
+    assert!(egui::AreaState::load(&h.ctx, layer.id).is_some(), "flyout has an area on the press frame");
+    assert!(
+        output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text().contains("Rounded Rectangle"))),
+        "flyout body paints on press frame"
+    );
+    h.frame(vec![button(triangle, false)]);
+    h.app.ui.flyout = None;
+    h.settle();
+    // The front well is in the bottom proxy's top-left square.
+    let tools = h.rect(&Hit::Tools);
+    h.click(pos2(tools.left() + 8.0, tools.bottom() - 120.0));
+    assert!(h.app.ui.varos_picker_anchor.is_some());
+}
+
+#[test]
+fn shell5_app_bar_accessible_home_search_and_undo_without_workspace_switcher() {
+    use egui_kittest::kittest::Queryable;
+    let mut app = VectorcraftApp::new(Session::new(), Default::default());
+    app.run("file.new", json!({})).unwrap();
+    app.ui.varos_shell.enabled = true;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(vec2(1600.0, 100.0))
+        .build_ui_state(|ui, app: &mut VectorcraftApp| crate::chrome::app_bar(app, ui), app);
+    h.run_steps(3);
+    assert!(h.query_by_label("Switch workspace").is_none());
+    for (label, command) in [("Undo", "edit.undo"), ("Redo", "edit.redo")] {
+        let tip = format!("{}  ({})", label, crate::menus::pretty_shortcut(crate::menus::shortcut_of(command).unwrap()));
+        h.get_by_label(&tip);
+    }
+    h.get_by_label("Home").click();
+    h.run_steps(2);
+    assert!(crate::varos::home::is_home(h.state()));
+}
+
+#[test]
+fn shell5_app_bar_document_title_dirty_dot_and_geometry() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let title = h.app.session.active().unwrap().title();
+    assert!(h.texts().iter().any(|s| s == &title));
+    h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap();
+    assert!(h.texts().iter().any(|s| s == &format!("• {title}")));
+    let bar = egui::containers::panel::PanelState::load(&h.ctx, h.root.with_salt(egui::IdSalt::new("app_bar"))).unwrap().outer_rect;
+    assert_eq!(bar.height(), 40.0);
+    assert_eq!(h.rect(&Hit::Workspaces).height(), 28.0);
+    assert!(h.rect(&Hit::Workspaces).top() >= bar.bottom());
+}
+
+#[test]
+fn shell5_hidden_host_does_not_resurrect_a_closing_flyout() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.run("window.panel", json!({"panel":"stroke"})).unwrap();
+    h.settle();
+    h.shell(false);
+    shell::set_enabled(&mut h.app, true);
+    h.frame(vec![]);
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::Flyout));
+}
+
+#[test]
+fn shell5_collapse_paints_the_flyout_through_the_close_event_then_fades_out() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.run("window.panel", json!({"panel":"stroke"})).unwrap();
+    h.settle();
+    let at = h.rect(&Hit::FlyoutClose).center();
+    h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+    h.frame(vec![button(at, false)]);
+    assert!(h.state().open.is_none());
+    h.rect(&Hit::Flyout);
+    h.time += 0.011;
+    h.frame(vec![]);
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::Flyout));
+}
+
+#[test]
+fn shell5_review_tools_escape_workspace_and_screen_modes() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let to = h.board().center();
+    h.hold_drag(h.rect(&Hit::ToolsGrip).center(), to);
+    assert!(h.state().drag.is_some());
+    h.frame(vec![escape_key()]);
+    h.release(to);
+    assert_eq!(h.state().tools_pos, None);
+    h.app.ui.varos_shell.tools_pos = Some([220.0, 180.0]);
+    h.app.run("window.workspace", json!({"name":"Typography"})).unwrap();
+    assert_eq!(h.state().tools_pos, None);
+    h.app.ui.varos_shell.tools_pos = Some([330.0, 210.0]);
+    h.app.run("window.workspace", json!({"name":"Design"})).unwrap();
+    assert_eq!(h.state().tools_pos, Some([220.0, 180.0]));
+    h.app.run("window.workspace", json!({"name":"Typography"})).unwrap();
+    assert_eq!(h.state().tools_pos, Some([330.0, 210.0]));
+    for mode in [1, 2] {
+        h.app.ui.screen_mode = mode;
+        h.settle();
+        let before = h.state().tools_pos;
+        h.hold_drag(h.rect(&Hit::ToolsGrip).center(), to);
+        assert!(h.state().drag.is_none());
+        h.release(to);
+        assert_eq!(h.state().tools_pos, before);
+    }
+}
+
+#[test]
+fn shell5_review_real_drop_never_moves_an_existing_box() {
+    for instant in [false, true] {
+        let mut h = Harness::new();
+        h.shell(true);
+        h.ctx.global_style_mut(|s| s.animation_time = if instant { 0.0 } else { 0.2 });
+        let rect = h.rect(&Hit::Box(3));
+        let to = h.tab("properties").center();
+        h.hold_drag(h.tab("artboards").center(), to);
+        h.frame(vec![button(to, false)]);
+        for _ in 0..12 {
+            assert_eq!(h.rect(&Hit::Box(3)), rect);
+            h.time -= 0.04;
+            h.frame(vec![]);
+        }
+        assert_eq!(h.front(3), Some("artboards"));
+    }
+}
+
+#[test]
+fn shell5_review_character_paragraph_options_in_all_hosts() {
+    for (panel, key) in [("character", "ch-hide-options"), ("paragraph", "pa-hide-options")] {
+        for host in 0..3 {
+            let mut h = Harness::new();
+            h.shell(true);
+            if host == 0 {
+                h.app.ui.varos_shell.add_tab(3, panel);
+                h.app.ui.varos_shell.set_active(3, 3);
+            } else if host == 1 {
+                h.app.ui.varos_shell.take(panel);
+                h.app.ui.varos_shell.floats.push(floats::Float {
+                    panels: tree::PanelBox { id: 999, tabs: vec![panel.into()], active: 0, collapsed: false },
+                    rect: [250.0, 200.0, 300.0, 400.0],
+                    owner_area: 1,
+                });
+            } else {
+                h.app.run("window.panel", json!({"panel":panel})).unwrap();
+            }
+            h.settle();
+            let pill = if host == 2 { h.rect(&Hit::FlyoutTab(panel.into())) } else { h.tab(panel) };
+            let at = pos2(pill.right() - 9.0, pill.center().y);
+            h.click(at);
+            assert!(crate::panels::pstate::<bool>(&h.ctx, key), "{panel} host {host}");
+            h.click(at);
+            assert!(!crate::panels::pstate::<bool>(&h.ctx, key));
+        }
+    }
+}
+
+#[test]
+fn shell5_review_native_menu_and_chrome_hit_areas() {
+    struct Native;
+    impl crate::native_menu::Backend for Native {
+        fn sync(&mut self, _: &crate::native_menu::MenuBar) {}
+        fn drain(&mut self) -> Vec<crate::native_menu::Event> {
+            Vec::new()
+        }
+    }
+    for native in [false, true] {
+        let mut h = Harness::new();
+        h.shell(true);
+        if native {
+            h.app.services.native_menu = Some(crate::native_menu::NativeMenu::new(Box::new(Native)));
+        }
+        h.settle();
+        assert_eq!(h.texts().iter().any(|t| t == "File"), !native);
+        h.app.run("window.panel", json!({"panel":"stroke"})).unwrap();
+        h.app.ui.varos_shell.take("gradient");
+        h.app.ui.varos_shell.floats.push(floats::Float {
+            panels: tree::PanelBox { id: 999, tabs: vec!["gradient".into()], active: 0, collapsed: false },
+            rect: [250.0, 200.0, 300.0, 400.0],
+            owner_area: 1,
+        });
+        h.app.ui.varos_shell.take("transform");
+        h.app.ui.varos_shell.float_strips.push(floats::FloatStrip {
+            id: 998,
+            pos: [650.0, 200.0],
+            groups: vec![shell::strip::Group { panels: vec!["transform".into()], temporary: false, width: 260.0, height: 360.0 }],
+        });
+        h.settle();
+        for (hit, rect) in h.hits() {
+            if matches!(
+                hit,
+                Hit::FlyoutClose
+                    | Hit::Menu(_)
+                    | Hit::BoardMenu
+                    | Hit::ToolsGrip
+                    | Hit::FloatClose(_)
+                    | Hit::FloatToIcon(_)
+                    | Hit::FloatStripClose(_)
+                    | Hit::FloatStripExpand(_)
+            ) {
+                assert!(rect.width() >= 16.0 && rect.height() >= 16.0, "{hit:?}: {rect:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn shell5_review_reduced_motion_settle_is_exact() {
+    let ctx = egui::Context::default();
+    let _ = ctx.run_ui(Default::default(), |ui| {
+        ctx.global_style_mut(|s| s.animation_time = 0.0);
+        let target = Rect::from_min_size(pos2(100.0, 100.0), vec2(100.0, 100.0));
+        shell::motion::dropped(&ctx, "new-box", pos2(300.0, 300.0));
+        assert_eq!(shell::motion::settle(&ctx, "new-box", target, ui.max_rect()), target);
+    });
+}
+
+fn review_open_tool_flyout(h: &mut Harness) {
+    let mut buttons = crate::toolbar::tests::widget_rects(&h.ctx, vec2(34.0, 29.0));
+    buttons.dedup();
+    let at = buttons[3].right_bottom() - vec2(2.0, 2.0);
+    h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+    h.frame(vec![button(at, false)]);
+    h.settle();
+    assert!(h.app.ui.flyout.is_some());
+}
+
+#[test]
+fn shell5_review_real_close_opacity_and_tear_off() {
+    let mut h = Harness::new();
+    h.shell(true);
+    review_open_tool_flyout(&mut h);
+    let opacity = |h: &Harness, key| h.ctx.data(|d| d.get_temp::<f32>(egui::Id::unique(key))).unwrap();
+    let open = opacity(&h, "review-tool-opacity");
+    h.app.ui.flyout = None;
+    h.time -= 0.04;
+    h.frame(vec![]);
+    assert!(opacity(&h, "review-tool-opacity") >= open - 0.01 / 0.06 - 0.01);
+    h.settle();
+    review_open_tool_flyout(&mut h);
+    let area = egui::AreaState::load(&h.ctx, egui::Id::unique("tool-flyout")).unwrap().rect();
+    let at = pos2(area.right() - 8.0, area.center().y);
+    h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+    h.time -= 0.04;
+    h.frame(vec![button(at, false)]);
+    assert_eq!(h.app.ui.floating_flyouts.len(), 1);
+    assert!(h.app.ui.flyout.is_none());
+    assert!(shell::motion::flyout(&h.ctx, egui::Id::unique("shell-tool-flyout-motion"), None).is_none());
+    h.time -= 0.04;
+    let output = h.frame_full(vec![]);
+    assert!(
+        !output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text().contains("Rounded Rectangle"))),
+        "no docked copy during the old fade interval"
+    );
+    h.app.run("window.panel", json!({"panel":"stroke"})).unwrap();
+    h.settle();
+    let open = opacity(&h, "review-strip-opacity");
+    let at = h.rect(&Hit::FlyoutClose).center();
+    h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+    h.time -= 0.04;
+    h.frame(vec![button(at, false)]);
+    assert!(opacity(&h, "review-strip-opacity") >= open - 0.01 / 0.06 - 0.01);
+}
+
+#[test]
+fn shell5_review_strip_slide_toward_its_rail_and_exact_final_rect() {
+    for floating in [true, false] {
+        let mut h = Harness::new();
+        h.shell(true);
+        if floating {
+            h.app.ui.varos_shell.strip.remove("stroke");
+            h.app.ui.varos_shell.float_strips.push(floats::FloatStrip {
+                id: 999,
+                pos: [250.0, 200.0],
+                groups: vec![shell::strip::Group { panels: vec!["stroke".into()], temporary: false, width: 260.0, height: 360.0 }],
+            });
+        }
+        h.app.run("window.panel", json!({"panel":"stroke"})).unwrap();
+        h.frame(vec![]);
+        let first = h.rect(&Hit::Flyout);
+        h.time += 0.10;
+        h.frame(vec![]);
+        let end = h.rect(&Hit::Flyout);
+        if floating {
+            assert!(first.left() < end.left());
+        } else {
+            assert!(first.left() > end.left());
+        }
+        h.frame(vec![]);
+        assert_eq!(h.rect(&Hit::Flyout), end);
+    }
+}
+
+#[test]
+fn shell5_review_bottom_controls_and_fill_stroke_visibility() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let edit: Rect = h.ctx.data(|d| d.get_temp(crate::edit_toolbar::button_id())).unwrap();
+    assert!(h.rect(&Hit::Tools).contains_rect(edit), "tools {:?}, edit {edit:?}", h.rect(&Hit::Tools));
+    h.click(edit.center());
+    assert!(h.app.ui.tools_drawer);
+    h.app.ui.tools_drawer = false;
+    // Leave room for the full content, so this checks visibility rather than viewport clamping.
+    h.screen = vec2(SCREEN.x, 1400.0);
+    h.app.ui.varos_shell.tools_pos = Some([250.0, 180.0]);
+    h.settle();
+    let with = h.rect(&Hit::Tools).height();
+    h.app.ui.toolbar_show.fill_stroke = false;
+    h.settle();
+    assert_eq!(h.rect(&Hit::Tools).height(), with - 48.0);
+    h.ctx.enable_accesskit();
+    let out = h.frame_full(vec![]);
+    let nodes = out.platform_output.accesskit_update.unwrap().nodes;
+    for label in ["Color (,)", "Gradient (.)", "None (/)", "Draw Normal (Shift+D)"] {
+        assert!(nodes.iter().any(|(_, n)| n.label() == Some(label)), "{label}");
+    }
+}
+
+#[test]
+fn shell5_review_real_drop_new_box_settles_and_reduced_motion_snaps() {
+    for instant in [false, true] {
+        let mut h = Harness::new();
+        h.shell(true);
+        h.ctx.global_style_mut(|s| s.animation_time = if instant { 0.0 } else { 0.2 });
+        let to = h.rect(&Hit::Box(3)).left_center() + vec2(3.0, 0.0);
+        let before: Vec<_> = h.tree().boxes().iter().map(|b| b.id).collect();
+        h.hold_drag(h.tab("artboards").center(), to);
+        assert!(matches!(h.drop_line().0, Hit::DropLine { target: Target::Edge { .. }, .. }));
+        h.frame(vec![button(to, false)]);
+        let id = h.tree().boxes().iter().find(|b| !before.contains(&b.id)).unwrap().id;
+        h.time -= 0.04;
+        h.frame(vec![]);
+        let early = h.rect(&Hit::Box(id));
+        h.time += 0.1;
+        h.frame(vec![]);
+        let end = h.rect(&Hit::Box(id));
+        if instant {
+            assert_eq!(early, end);
+        } else {
+            assert_ne!(early, end);
+        }
+        h.frame(vec![]);
+        assert_eq!(h.rect(&Hit::Box(id)), end);
+    }
 }

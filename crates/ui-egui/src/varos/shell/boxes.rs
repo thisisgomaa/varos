@@ -49,6 +49,18 @@ pub(crate) fn tab_id(panel: &str) -> egui::Id {
     egui::Id::unique("varos-shell-tab").with(panel)
 }
 
+fn options_key(panel: &str) -> Option<&'static str> {
+    match panel {
+        "character" => Some("ch-hide-options"),
+        "paragraph" => Some("pa-hide-options"),
+        _ => None,
+    }
+}
+
+fn option_width(panel: &str) -> f32 {
+    if options_key(panel).is_some() { 18.0 } else { 0.0 }
+}
+
 /// The pills of `tabs` (labels) in `row` with tab `active` in front (semibold, so wider), and
 /// each label's galley; narrower than their labels when they don't all fit.
 fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> Vec<(Rect, std::sync::Arc<egui::Galley>)> {
@@ -60,13 +72,14 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
             painter.layout_no_wrap(label.clone(), font, t.text)
         })
         .collect();
-    let wanted: f32 = galleys.iter().map(|g| g.size().x + 2.0 * PILL_PAD + PILL_GAP).sum();
+    let wanted: f32 = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + PILL_GAP + option_width(id)).sum();
     let scale = if wanted > row.width() && wanted > 0.0 { row.width() / wanted } else { 1.0 };
     let mut x = row.left();
     galleys
         .into_iter()
-        .map(|galley| {
-            let w = ((galley.size().x + 2.0 * PILL_PAD) * scale).floor().max(1.0);
+        .zip(tabs)
+        .map(|(galley, (id, _))| {
+            let w = ((galley.size().x + 2.0 * PILL_PAD + option_width(id)) * scale).floor().max(1.0);
             let pill = Rect::from_min_size(pos2(x, row.center().y - PILL_H / 2.0), vec2(w, PILL_H));
             x = pill.right() + PILL_GAP * scale;
             (pill, galley)
@@ -82,8 +95,13 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
     let painter = ui.painter().clone();
     // The pills where they were drawn (with the old front tab) take the input…
     let before = pills(&painter, tabs, active, row, t);
-    let responses: Vec<egui::Response> =
-        tabs.iter().zip(&before).map(|((panel, _), (pill, _))| ui.interact(*pill, tab_id(panel), Sense::click_and_drag())).collect();
+    let responses: Vec<egui::Response> = tabs
+        .iter()
+        .zip(&before)
+        .map(|((panel, _), (pill, _))| {
+            ui.interact(Rect::from_min_max(pill.min, pill.max - vec2(option_width(panel), 0.0)), tab_id(panel), Sense::click_and_drag())
+        })
+        .collect();
     let clicked = responses.iter().position(|r| r.clicked()).filter(|i| *i != active);
     let double_clicked = responses.iter().position(egui::Response::double_clicked);
     let drag_started = responses.iter().position(egui::Response::drag_started);
@@ -103,7 +121,17 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
             t.text_dim
         };
         let at = pos2(pill.left() + PILL_PAD.min(pill.width() / 2.0), pill.center().y - galley.size().y / 2.0);
-        let clip = pill.shrink2(vec2(4.0, 0.0)).intersect(painter.clip_rect());
+        let panel = &tabs[i].0;
+        let clip = Rect::from_min_max(pill.min, pill.max - vec2(option_width(panel), 0.0)).shrink2(vec2(4.0, 0.0)).intersect(painter.clip_rect());
+        if let Some(key) = options_key(panel) {
+            let rect = Rect::from_center_size(pos2(pill.right() - 9.0, pill.center().y), vec2(16.0, 16.0));
+            let response = ui.interact(rect, tab_id(panel).with("options"), Sense::click());
+            let hidden: bool = crate::panels::pstate(ui.ctx(), key);
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "◇", egui::FontId::proportional(super::tokens::CHROME_GLYPH), text);
+            if response.on_hover_text(if hidden { tl!("Show Options") } else { tl!("Hide Options") }).clicked() {
+                crate::panels::set_pstate(ui.ctx(), key, !hidden);
+            }
+        }
         painter.with_clip_rect(clip).galley(at, galley.clone(), text);
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, galley.text()));
     }

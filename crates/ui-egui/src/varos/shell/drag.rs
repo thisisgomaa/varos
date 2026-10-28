@@ -45,6 +45,8 @@ pub enum DragMode {
 /// What is being dragged.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
+    /// The Board tools strip, using the same ghost, preview and transactional drop.
+    Tools,
     /// A panel's tab (in a box, a floating panel or a flyout).
     Tab(String),
     /// A panel's icon in a strip.
@@ -211,6 +213,7 @@ pub(crate) fn layout_rev(shell: &VarosShell, region: Rect) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     format!("{region:?}{:?}{:?}{:?}{:?}{:?}", shell.tree, shell.strip, shell.floats, shell.float_strips, shell.maximized_box()).hash(&mut h);
+    format!("{:?}", shell.tools_pos).hash(&mut h);
     h.finish()
 }
 
@@ -267,7 +270,7 @@ pub(crate) fn before(app: &mut VectorcraftApp, ctx: &egui::Context, region: Rect
 /// changes but the flyout the drag closed opens again.
 fn land(app: &mut VectorcraftApp, ctx: &egui::Context, region: Rect, hits: &[(Hit, Rect)], d: &Drag, p: Pos2) {
     let landed = match target_at(&app.ui.varos_shell, ctx, region, hits, d, p) {
-        Some((target, _)) => apply_drop(app, d, &target, p, hits),
+        Some((target, _)) => apply_drop(app, ctx, d, &target, p, hits),
         None => false,
     };
     if !landed {
@@ -365,6 +368,7 @@ fn source_rect(shell: &VarosShell, item: &Item, hits: &[(Hit, Rect)]) -> Option<
             let index = shell.strip_groups(*strip)?.iter().position(|g| g.panels == group.panels)?;
             group_of(*strip, index)
         }
+        Item::Tools => find(&|h| *h == Hit::Tools),
         Item::Strip(id) => find(&|h| *h == Hit::FloatStrip(*id)),
         Item::Float { .. } | Item::Resize { .. } => None,
     }
@@ -378,7 +382,7 @@ pub(crate) fn item_panels(shell: &VarosShell, item: &Item) -> Vec<String> {
         Item::Strip(id) => {
             shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.groups.iter().flat_map(|g| g.panels.clone()).collect()).unwrap_or_default()
         }
-        Item::Float { .. } | Item::Resize { .. } => Vec::new(),
+        Item::Tools | Item::Float { .. } | Item::Resize { .. } => Vec::new(),
     }
 }
 
@@ -397,7 +401,7 @@ fn item_groups(shell: &VarosShell, item: &Item) -> Vec<Group> {
         }
         Item::Group { group, .. } => vec![group.clone()],
         Item::Strip(id) => shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.groups.clone()).unwrap_or_default(),
-        Item::Float { .. } | Item::Resize { .. } => Vec::new(),
+        Item::Tools | Item::Float { .. } | Item::Resize { .. } => Vec::new(),
     }
 }
 
@@ -417,6 +421,13 @@ type Found = Option<(Target, Option<(Rect, bool)>)>;
 pub(crate) fn target_at(shell: &VarosShell, ctx: &egui::Context, region: Rect, hits: &[(Hit, Rect)], d: &Drag, p: Pos2) -> Found {
     if !region.contains(p) || d.item.in_place() {
         return None;
+    }
+    if d.item == Item::Tools {
+        let board = hits.iter().find(|(h, _)| *h == Hit::Board).map(|(_, r)| *r)?;
+        if (p.x - board.left()).abs() <= 20.0 && p.y >= board.top() && p.y <= board.bottom() {
+            return Some((Target::Dock, Some((vline(board.left(), board.top(), board.bottom()), true))));
+        }
+        return Some((Target::Move, None));
     }
     let moving_strip = match d.item {
         Item::Strip(id) => Some(id),
@@ -588,7 +599,7 @@ fn strip_target(shell: &VarosShell, hits: &[(Hit, Rect)], sref: StripRef, rail: 
 }
 
 /// Make drop `t` of drag `d` (pointer at `p`) on a copy of the shell; keep it only when it worked.
-fn apply_drop(app: &mut VectorcraftApp, d: &Drag, t: &Target, p: Pos2, hits: &[(Hit, Rect)]) -> bool {
+fn apply_drop(app: &mut VectorcraftApp, ctx: &egui::Context, d: &Drag, t: &Target, p: Pos2, hits: &[(Hit, Rect)]) -> bool {
     let mut shell = app.ui.varos_shell.clone();
     let mut item = d.item.clone();
     if d.mode == DragMode::Duplicate {
@@ -625,6 +636,21 @@ fn apply_drop(app: &mut VectorcraftApp, d: &Drag, t: &Target, p: Pos2, hits: &[(
     }
     shell.settle();
     debug_assert!(shell.invariants().is_ok(), "after a drop: {:?}", shell.invariants());
+    if item == Item::Tools {
+        super::motion::dropped(ctx, "__tools", p - d.grab);
+    }
+    let before = &app.ui.varos_shell;
+    let existing: Vec<_> = before.tree.boxes().iter().map(|b| b.id).chain(before.floats.iter().map(|f| f.panels.id)).collect();
+    for id in shell.tree.boxes().iter().map(|b| b.id).chain(shell.floats.iter().map(|f| f.panels.id)) {
+        if !existing.contains(&id) {
+            super::motion::dropped(ctx, &format!("box-{id}"), p - d.grab);
+        }
+    }
+    for strip in &shell.float_strips {
+        if !before.float_strips.iter().any(|s| s.id == strip.id) {
+            super::motion::dropped(ctx, &format!("strip-{}", strip.id), p - d.grab);
+        }
+    }
     app.ui.varos_shell = shell;
     app.ui.open_panel = app.ui.varos_shell.open.clone();
     true
@@ -633,6 +659,14 @@ fn apply_drop(app: &mut VectorcraftApp, d: &Drag, t: &Target, p: Pos2, hits: &[(
 /// Drop `item` on `t` in `shell`: true when it fully worked (else `shell` is garbage). `at`: the
 /// ghost's top-left; `p`: the pointer; `owner`: the box under the pointer.
 pub(crate) fn apply(shell: &mut VarosShell, item: &Item, t: &Target, at: Pos2, p: Pos2, owner: u32) -> bool {
+    if *item == Item::Tools {
+        shell.tools_pos = match t {
+            Target::Dock => None,
+            Target::Move => Some([at.x, at.y]),
+            _ => return false,
+        };
+        return true;
+    }
     if *t == Target::Move {
         let Item::Strip(id) = item else { return false };
         let Some(s) = shell.float_strips.iter_mut().find(|s| s.id == *id) else { return false };
@@ -670,7 +704,7 @@ pub(crate) fn apply(shell: &mut VarosShell, item: &Item, t: &Target, at: Pos2, p
         }
         Target::LoneIcon => {
             let id = shell.fresh_strip_id();
-            let pos = p - vec2(floats::STRIP_W / 2.0, floats::TITLE + strip::GRIP + strip::ICON_ROW / 2.0);
+            let pos = p - vec2(floats::STRIP_W / 2.0, floats::STRIP_TITLE + strip::GRIP + strip::ICON_ROW / 2.0);
             shell.float_strips.push(FloatStrip { id, pos: [pos.x, pos.y], groups });
             true
         }
