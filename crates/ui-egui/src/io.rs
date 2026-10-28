@@ -137,6 +137,11 @@ pub(crate) fn opened(app: &mut VectorcraftApp, r: &Value) {
         app.status(format!("Opened with {} note(s): {}", w.len(), w[0].as_str().unwrap_or_default()));
     }
     crate::dialogs::missing_links::after_open(app, r);
+    if let Some(st) = app.session.active()
+        && let Some(path) = &st.path
+    {
+        crate::varos::home::cache_document(path, &st.doc);
+    }
 }
 
 /// A path from the open dialog, or "cancelled".
@@ -735,6 +740,8 @@ fn write_plan(app: &mut VectorcraftApp, plan: SavePlan) -> Result<Value, String>
     // Varos: a Save its location refuses (a read-only volume) goes on as Save As.
     let retry = crate::varos::read_only_save::Retry::of(app, &plan);
     let watch = retry.watch();
+    // Home previews use the snapshot being saved, even if the tab changes while saving.
+    let home_snapshot = app.session.active().map(|st| st.doc.clone());
     let job = fileio::save_job(&mut app.session, plan).map_err(|e| e.to_string())?;
     let (retargets, target) = (job.plan().retargets(), job.plan().path.clone());
     let (format, warnings) = (job.plan().format.id, job.known_warnings());
@@ -773,6 +780,11 @@ fn write_plan(app: &mut VectorcraftApp, plan: SavePlan) -> Result<Value, String>
         let path = r["path"].as_str().unwrap_or_default().to_string();
         if retargets {
             note_recent(app, &path);
+        }
+        if let Some(doc) = &home_snapshot
+            && !path.is_empty()
+        {
+            crate::varos::home::cache_document(&path, doc);
         }
         report_saved(app, &path, &r);
         Ok(r)

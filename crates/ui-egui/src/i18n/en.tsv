@@ -3,3 +3,62 @@
 	About Varos	About Varos
 	Quit Varos	Quit Varos
 	“{name}” is on a read-only location: choose where to save it	“{name}” is on a read-only location: choose where to save it
+
+# Home simple shell
+	Recents	Recents
+	Projects	Projects
+	Shared with me	Shared with me
+	Templates	Templates
+	Getting started	Getting started
+	Preferences	Preferences
+	New board	New board
+	Open…	Open…
+	Open	Open
+	Join with a code	Join with a code
+	later	later
+	Sharing comes later	Sharing comes later
+	Search files and templates	Search files and templates
+	Good morning, {name}	Good morning, {name}
+	Good afternoon, {name}	Good afternoon, {name}
+	Good evening, {name}	Good evening, {name}
+	friend	friend
+	Pick up where you left off, or start something new.	Pick up where you left off, or start something new.
+	Recent	Recent
+	Last modified	Last modified
+	Name	Name
+	Date created	Date created
+	Show in Finder	Show in Finder
+	Remove from Recents	Remove from Recents
+	Add project…	Add project…
+	Not found	Not found
+	{n} files · {path}	{n} files · {path}
+	Add a folder to keep its boards together.	Add a folder to keep its boards together.
+	No files to show.	No files to show.
+	Project folder not found	Project folder not found
+	Modification date unavailable	Modification date unavailable
+	Edited just now	Edited just now
+	Edited {n} minute ago	Edited {n} minute ago
+	Edited {n} minutes ago	Edited {n} minutes ago
+	Edited {n} hour ago	Edited {n} hour ago
+	Edited {n} hours ago	Edited {n} hours ago
+	Edited {n} day ago	Edited {n} day ago
+	Edited {n} days ago	Edited {n} days ago
+	{edited} · {n} artboards	{edited} · {n} artboards
+	A4 poster	A4 poster
+	Square post	Square post
+	Business card	Business card
+	210 × 297 mm	210 × 297 mm
+	1080 × 1080 px	1080 × 1080 px
+	85 × 55 mm	85 × 55 mm
+	Hide	Hide
+	Draw your first artboard	Draw your first artboard
+	Pick the Artboard tool, drag on the canvas or choose a preset size.	Pick the Artboard tool, drag on the canvas or choose a preset size.
+	Write in Arabic	Write in Arabic
+	The Type tool shapes Arabic natively; Kashida lives in the Character panel.	The Type tool shapes Arabic natively; Kashida lives in the Character panel.
+	Let an agent help	Let an agent help
+	Connect Claude or Codex through Bridge; their work shows in orange on the canvas.	Connect Claude or Codex through Bridge; their work shows in orange on the canvas.
+	Home action needs a path	Home action needs a path
+	File manager unavailable	File manager unavailable
+	Unknown Home sort order	Unknown Home sort order
+	Unknown Home section	Unknown Home section
+	Unknown Home action	Unknown Home action

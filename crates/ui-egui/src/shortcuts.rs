@@ -573,6 +573,18 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         crate::varos::shell::strip::escape(app, ctx);
     }
 
+    // Home owns navigation/search even while an editor document is open behind it.
+    if crate::varos::home::is_home(app) {
+        // Preserve text queued at the editor's handoff and retire its IME fence once.
+        // Subsequent Home input never reaches the hidden text editor.
+        if std::mem::take(&mut app.ui.home_view.finish_editor_text) && !ctx.egui_wants_keyboard_input() {
+            crate::ime::suspend_if_route_lost(app, ctx);
+            type_text(app, ctx);
+        }
+        crate::varos::home::handle_shortcuts(app, ctx);
+        crate::ime::controls_without_editor(app, ctx);
+        return;
+    }
     if app.ui.screen_mode == 3 {
         crate::ime::controls_without_editor(app, ctx);
         presentation_keys(app, ctx, escape_pair);
