@@ -573,6 +573,12 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         crate::varos::shell::strip::escape(app, ctx);
     }
 
+    // Home owns navigation/search even while an editor document is open behind it.
+    if crate::varos::home::is_home(app) {
+        crate::varos::home::handle_shortcuts(app, ctx);
+        crate::ime::controls_without_editor(app, ctx);
+        return;
+    }
     if app.ui.screen_mode == 3 {
         crate::ime::controls_without_editor(app, ctx);
         presentation_keys(app, ctx, escape_pair);

@@ -167,7 +167,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "Cmd+Alt+N",
         "{} makes a document with the settings the New Document dialog opens on (the first Recent entry, else the Print category's Letter), named after the next untitled document, without opening the dialog → {index, previewMode}",
     ),
-    ("app.home", "Home", "", "{} shows the Home screen (new file presets, Open) over the open documents; choosing a document tab returns to it"),
+    (
+        "app.home",
+        "Home",
+        "",
+        "{section?: recents|projects|templates|gettingStarted, action?: show|open|reveal|removeRecent|addProject|project|hideTips|showTips|sort, path?, sort?: modified|name|created} Home screen and local file actions",
+    ),
     ("edit.preferences", "Preferences…", "Cmd+K", "{category?} open Preferences (engine: prefs.get / prefs.set / prefs.list)"),
     ("edit.keyboardShortcuts", "Keyboard Shortcuts…", "Cmd+Alt+Shift+K", "{}"),
     ("shortcuts.set", "Set Keyboard Shortcut", "", "{id: command id or tool:<id>, shortcut: \"Cmd+Shift+K\" | \"\" (none) | null (default), force?}"),
@@ -549,6 +554,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "",
         "{} opens the Save PDF dialog; with params = document.exportPdf options written to path (asked when missing; viewAfterSaving opens the file) → {path, bytes, warnings}",
     ),
+    ("help.gettingStarted", "Getting started", "", "{} show Home onboarding tips again"),
     ("help.about", "About Varos", "", "{}"),
     ("help.checkForUpdates", "Check for Updates…", "", "{}"),
     ("help.commandPalette", "Search Commands…", "Cmd+Shift+/", "{}"),
@@ -1335,10 +1341,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             Ok(Value::Null)
         }
         "file.newWithoutDialog" => crate::dialogs::new_document_without_dialog(app),
-        "app.home" => {
-            app.ui.home = Some(home_key(app));
-            Ok(Value::Null)
-        }
+        "app.home" => crate::varos::home::command(app, p),
         "file.open" => match s("path") {
             Some(path) => io::open_path(app, &path),
             None => io::open_dialog(app).map(|_| Value::Null),
@@ -1713,6 +1716,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         },
         "file.export.pdf" if p.as_object().is_none_or(|o| o.is_empty()) => crate::dialogs::open_save_pdf(app, &json!({})),
         "file.export.pdf" => io::export_pdf(app, p.clone()),
+        "help.gettingStarted" => crate::varos::home::command(app, &json!({"action":"showTips"})),
         "help.about" => {
             app.ui.about = true;
             Ok(Value::Null)
@@ -3307,7 +3311,16 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                 sub("Symbol Libraries", crate::panels::symbols::window_menu()),
             ],
         ),
-        ("Help", vec![c("Search Commands…", "help.commandPalette"), todos("Varos Help…", "F1"), Sep, c("About Varos", "help.about")]),
+        (
+            "Help",
+            vec![
+                c("Getting started", "help.gettingStarted"),
+                c("Search Commands…", "help.commandPalette"),
+                todos("Varos Help…", "F1"),
+                Sep,
+                c("About Varos", "help.about"),
+            ],
+        ),
     ]
 }
 

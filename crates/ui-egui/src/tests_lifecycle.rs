@@ -588,10 +588,9 @@ fn home_with_an_interrupted_commit_allocates_no_reset_and_leaves_no_stock_token(
     ime_frame(&mut app, &ctx, vec![preedit("é", 1)], |_| {});
     let first = pointer_reset(&mut app, &ctx, point);
     // R1 is live and the incoming latch is Stale. A fresh preedit/commit here is not reachable:
-    // `shortcuts.rs` drops IME mutations while Stale. Application text still is: `Text` changes
-    // the committed stamp and caret without being an IME mutation. Home is already known at
-    // pass entry, so route suspension retires R1 before text/ArrowRight handling. No new reset
-    // may be allocated for this pass's non-custom route.
+    // `shortcuts.rs` drops IME mutations while Stale. Home is already known at pass entry,
+    // so its guard must also reject application Text/ArrowRight, including the first frame.
+    // Route suspension retires R1 without allocating a new reset for this non-custom route.
     let _ = crate::ime::take_request_count(&ctx);
     let output = ime_frame(&mut app, &ctx, vec![Event::Text("x".into()), pressed(egui::Key::ArrowRight, egui::Modifiers::NONE)], |app| {
         // Chosen after `tick`, before this pass's UI/input handling: the same route ordering
@@ -602,7 +601,7 @@ fn home_with_an_interrupted_commit_allocates_no_reset_and_leaves_no_stock_token(
     assert!(output.is_none(), "Home publishes no custom descriptor");
     assert_eq!(crate::ime::take_request_count(&ctx), 0, "Home suspends the old fence before input; no new reset is allocated");
     assert!(crate::ime::pending_request(&app, &ctx).is_none(), "the old fence is retired, not rearmed");
-    assert_eq!(plain(&app, id), "axbcdé", "the application text lands at the fenced caret; Home changes no text");
+    assert_eq!(plain(&app, id), "abcdé", "Home rejects application text from its first input frame");
     app.ui.palette_open = true;
     // A newly shown TextEdit requests focus after it has already sampled
     // `owns_ime_events`; its stock descriptor is published on the next pass.

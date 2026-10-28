@@ -1113,7 +1113,7 @@ mod tests {
         let out = frame(&mut app, &ctx, vec![egui::Event::PointerMoved(over)]);
         if OS_CURSORS {
             let img = out.platform_output.cursor_image.as_ref().expect("the Selection tool's arrow as an OS cursor");
-            assert_eq!(img, &app.canvas.cursors.get(Cursor::Arrow, 1.0).unwrap());
+            assert_eq!(img, &crate::varos::cursors::image(Cursor::Arrow, "selection", 1.0).unwrap());
             // Where the OS can't show the bitmap, its system cursor.
             assert_eq!(out.platform_output.cursor_icon, egui::CursorIcon::Default);
         } else if crate::varos::cursors::SYSTEM_FALLBACK {
@@ -1243,9 +1243,9 @@ mod tests {
         let shown =
             |app: &mut VectorcraftApp, d: f32| frame(app, &ctx, vec![egui::Event::PointerMoved(over + vec2(d, 0.0))]).platform_output.cursor_image;
         if OS_CURSORS {
-            assert_eq!(shown(&mut app, 0.0).unwrap(), app.canvas.cursors.get(Cursor::Arrow, 1.0).unwrap(), "off: its own size");
+            assert_eq!(shown(&mut app, 0.0).unwrap(), crate::varos::cursors::image(Cursor::Arrow, "selection", 1.0).unwrap(), "off: its own size");
             app.run("prefs.set", json!({"key": "scaleCursorWithUi", "value": true})).unwrap();
-            assert_eq!(shown(&mut app, 4.0).unwrap(), app.canvas.cursors.get(Cursor::Arrow, 2.0).unwrap(), "on: twice as big");
+            assert_eq!(shown(&mut app, 4.0).unwrap(), crate::varos::cursors::image(Cursor::Arrow, "selection", 2.0).unwrap(), "on: twice as big");
         }
         // Painted into the window (macOS, the web), the glyph is drawn at the scale asked for, its
         // hotspot where the pointer is.
