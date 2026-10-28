@@ -5,11 +5,13 @@ Owner words: «مش عاوز أبقى زيهم بس عاوز البساطة في
 storytold/figcraft 90054a8 (MIT OR Apache-2.0, egui 0.37 fork, eframe, craft-ui — same stack as ours).
 
 ## Decisions
-1. **The box system disappears from the look, not from the code (yet).** Default layout = fixed
-   columns like a modern editor: tools strip (left edge) · left column (Pages + Layers) · canvas ·
-   right column (Properties sections, tabs) · panel-icon strip (right edge). Columns resize by their
-   hairline; nothing is a "card"; no rounded frames, no 12 pt seams, no grips. Split/swap/maximize
-   stay reachable (Window menu) but are not advertised; stage 6 decides whether the tree is deleted.
+1. **Owner amendment (2026-10-28, after the mockup): the panels are NOT fixed columns.** «مش عاوز
+   القوائم ثابتة، عاوز القوائم بالنظام بتاعنا العايم». Every panel group in the mockup (Pages+Layers on
+   the left, Properties on the right) is a docked group of OUR shell: drag its tab out → floating card,
+   drag back to an edge → azure line → docked again; groups = tabs; strips + flyouts as stages 2–5.
+   What changes is only the LOOK of docked groups: flat, no rounded frames, no 12 pt seams, no grips,
+   one hairline between neighbours, dividers invisible until hover. The mockup's columns are the
+   default Design workspace, not a fixed layout. Split/swap/maximize stay as they are.
 2. **Floating panels stay** (Illustrator): strip icon → flyout; tear-off → floating card (1 px line,
    radius 10, no shadow); groups = tabs; the azure line is the only drop preview; light motion as S5.
 3. **Simplicity rules (from FigCraft, not its look):** one 40 pt top bar only (brand/Home, document
