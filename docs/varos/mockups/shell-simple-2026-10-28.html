@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varos — simple shell</title>
+<style>
+:root{
+  --base:#141313; --panel:#1b1a1a; --raised:#222120; --field:#262524; --line:#2c2b2a; --line2:#383634;
+  --text:#e9e6e2; --muted:#9d9995; --quiet:#6e6a66; --azure:#0c8ce9; --azure-dim:#0c8ce933; --orange:#f29a3e;
+  --r:6px; --rc:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--base);color:var(--text);font:12px/1.4 Inter,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.view{position:absolute;inset:0;display:none}
+.view.on{display:flex;flex-direction:column}
+.tile{width:28px;height:28px;border-radius:var(--r);display:flex;align-items:center;justify-content:center;color:var(--muted);position:relative}
+.tile:hover{background:var(--raised);color:var(--text)}
+.tile.on{background:var(--raised);color:var(--text)}
+.tile.sel{background:var(--azure-dim);color:#8ec8f7}
+.tile.fly:after{content:"";position:absolute;right:3px;bottom:3px;border:3px solid transparent;border-right-color:var(--quiet);border-bottom-color:var(--quiet)}
+.lbl{font-size:11px;color:var(--muted)}
+.sec{font-size:11px;font-weight:600;color:var(--text)}
+.hair{background:var(--line);flex:none}
+.pill{height:24px;padding:0 10px;border-radius:var(--r);display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.pill.on{background:var(--raised);color:var(--text)}
+.btn{height:24px;padding:0 10px;border-radius:var(--r);display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--text);background:var(--raised)}
+.btn.primary{background:var(--text);color:#141313;font-weight:600}
+.field{height:24px;background:var(--field);border-radius:5px;display:flex;align-items:center;padding:0 8px;gap:6px;font-size:11px}
+.field .k{color:var(--quiet);width:12px}
+/* top bar */
+.top{height:40px;display:flex;align-items:center;padding:0 10px;gap:6px;flex:none}
+.brand{width:22px;height:22px;border-radius:5px;background:var(--text);color:#141313;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;margin-right:2px}
+.doctab{height:28px;padding:0 10px 0 12px;border-radius:var(--r);display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted)}
+.doctab.on{background:var(--raised);color:var(--text)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.ava{width:22px;height:22px;border-radius:50%;border:2px solid var(--base);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;margin-left:-6px}
+/* editor body */
+.body{flex:1;display:flex;min-height:0}
+.strip{width:40px;display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:2px;flex:none}
+.strip .grp{height:1px;width:20px;background:var(--line);margin:4px 0}
+.col{display:flex;flex-direction:column;background:var(--panel);min-height:0}
+.col.left{width:232px}.col.right{width:248px}
+.colhead{height:36px;display:flex;align-items:center;padding:0 12px 0 16px;gap:8px;flex:none}
+.colhead .sec{flex:1}
+.row{height:28px;display:flex;align-items:center;padding:0 16px;gap:8px;font-size:11px;color:var(--text)}
+.row .ic{color:var(--muted)}
+.row.sel{background:var(--azure-dim)}
+.row.sel .ic{color:#8ec8f7}
+.row .end{margin-left:auto;color:var(--quiet);display:flex;gap:6px}
+.canvas{flex:1;position:relative;background:var(--base);min-width:0}
+.ruler{position:absolute;background:var(--panel);color:var(--quiet);font-size:9px}
+.ruler.h{left:0;right:0;top:0;height:16px;border-bottom:1px solid var(--line)}
+.ruler.v{left:0;top:16px;bottom:0;width:16px;border-right:1px solid var(--line)}
+.art{position:absolute;left:120px;top:80px;width:520px;height:640px;background:#fff}
+.artname{position:absolute;left:120px;top:60px;font-size:10px;color:var(--muted)}
+.hint{position:absolute;left:28px;bottom:10px;font-size:11px;color:var(--quiet)}
+.status{height:24px;display:flex;align-items:center;gap:16px;padding:0 12px;font-size:11px;color:var(--quiet);flex:none}
+.tabs{height:36px;display:flex;align-items:center;padding:0 10px;gap:2px;flex:none}
+.tabs .end{margin-left:auto}
+.section{padding:6px 0 10px}
+.sechead{height:32px;display:flex;align-items:center;padding:0 12px 0 16px;gap:8px}
+.sechead .sec{flex:1}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:0 16px}
+.align{display:flex;gap:2px;padding:0 12px}
+.align .tile{width:24px;height:24px}
+.sw{width:14px;height:14px;border-radius:3px;border:1px solid var(--line2)}
+/* floating card */
+.card{position:absolute;background:var(--panel);border:1px solid var(--line2);border-radius:var(--rc);width:240px}
+.card .tabs{height:32px}
+.wheel{margin:4px auto;width:180px;height:180px;border-radius:50%;background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red);position:relative}
+.wheel:after{content:"";position:absolute;inset:20px;border-radius:50%;background:var(--panel)}
+.tri{position:absolute;left:36px;top:40px;width:108px;height:100px;z-index:1;background:linear-gradient(to right,#fff 0%,#d65042 100%);clip-path:polygon(0 0,100% 50%,0 100%);opacity:.95}
+.tri:after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,transparent 0%,#141313 100%);clip-path:polygon(0 0,100% 50%,0 100%);opacity:.9}
+.sws{display:flex;gap:6px;padding:6px 12px 12px;flex-wrap:wrap}
+.sws i{width:16px;height:16px;border-radius:3px;display:block}
+/* home */
+.home{flex:1;display:flex;min-height:0}
+.side{width:220px;background:var(--panel);display:flex;flex-direction:column;padding:12px 8px;gap:2px}
+.side .row{border-radius:var(--r);height:30px}
+.side .row.on{background:var(--raised)}
+.main{flex:1;padding:36px 48px;overflow:auto}
+h1{font-size:20px;font-weight:600;letter-spacing:-.2px;margin-bottom:6px}
+.sub{color:var(--muted);margin-bottom:22px}
+.actions{display:flex;gap:8px;margin-bottom:34px}
+.actions .btn{height:32px;padding:0 14px;font-size:12px}
+h2{font-size:12px;font-weight:600;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+h2 .more{margin-left:auto;font-weight:400;color:var(--muted)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:34px}
+.fcard .thumb{aspect-ratio:4/3;border-radius:var(--rc);background:var(--raised);border:1px solid var(--line);position:relative;overflow:hidden}
+.fcard .thumb:before{content:"";position:absolute;left:14%;top:12%;width:46%;height:70%;background:#efece7}
+.fcard .thumb:after{content:"";position:absolute;left:64%;top:30%;width:22%;height:22%;border-radius:50%;background:var(--orange)}
+.fcard .n{margin-top:8px;font-size:12px}
+.fcard .d{font-size:11px;color:var(--quiet)}
+.proj{display:flex;flex-direction:column;margin-bottom:34px}
+.proj .row{height:36px;border-radius:var(--r);padding:0 10px}
+.proj .row:hover{background:var(--raised)}
+.tips{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tip{background:var(--panel);border:1px solid var(--line);border-radius:var(--rc);padding:14px}
+.tip b{display:block;font-size:12px;margin-bottom:4px}
+.tip span{color:var(--muted);font-size:11px}
+.soon{font-size:9px;color:var(--quiet);border:1px solid var(--line2);border-radius:4px;padding:1px 4px;margin-left:auto}
+/* mock switch */
+.switch{position:fixed;right:14px;bottom:36px;display:flex;gap:2px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;padding:3px;z-index:9}
+.switch button{border:0;background:none;color:var(--muted);font:600 11px Inter,sans-serif;padding:5px 10px;border-radius:5px;cursor:pointer}
+.switch button.on{background:var(--raised);color:var(--text)}
+</style>
+</head>
+<body>
+
+<!-- ===================== EDITOR ===================== -->
+<div class="view on" id="editor">
+  <div class="top">
+    <div class="brand">V</div>
+    <div class="tile" title="Home"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></div>
+    <div class="hair" style="width:1px;height:18px;margin:0 4px"></div>
+    <div class="doctab on"><span>Poster-A.varos</span><span class="dot"></span></div>
+    <div class="doctab"><span>Logo.varos</span></div>
+    <div class="tile"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;margin-right:8px">
+      <div class="ava" style="background:#5b8def;color:#fff">A</div>
+      <div class="ava" style="background:var(--orange);color:#141313" title="Agent (orange)">◆</div>
+      <div class="ava" style="background:var(--raised);color:var(--muted)">+</div>
+    </div>
+    <div class="btn">Share</div>
+    <div class="tile"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div>
+    <div class="pill"><span>Design</span><svg viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M6 9l6 6 6-6"/></svg></div>
+  </div>
+  <div class="hair" style="height:1px"></div>
+
+  <div class="body">
+    <!-- tools strip -->
+    <div class="strip" style="background:var(--panel)">
+      <div class="tile sel"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-7 1-4 6z"/></svg></div>
+      <div class="tile fly"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-7 1-4 6z" stroke-dasharray="2 2"/></svg></div>
+      <div class="grp"></div>
+      <div class="tile fly"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg></div>
+      <div class="tile fly"><svg viewBox="0 0 24 24"><path d="M12 3l9 7-3.5 11h-11L3 10z"/></svg></div>
+      <div class="grp"></div>
+      <div class="tile fly"><svg viewBox="0 0 24 24"><path d="M12 19l7-7-3-3-7 7-4 1zM13 9l3 3"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 20c4-9 8-13 16-16"/></svg></div>
+      <div class="tile fly"><svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14"/></svg></div>
+      <div class="grp"></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M9 11l3-7 3 7M7 21h10M12 4v17"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M8 13V6a2 2 0 1 1 4 0v6l5 1v4a4 4 0 0 1-4 4h-2a4 4 0 0 1-3-1.5L5 15a1.5 1.5 0 0 1 2-2z"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M21 21l-5-5M9 11h4M11 9v4"/></svg></div>
+      <div class="grp"></div>
+      <div class="tile" title="Comments (later)"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg></div>
+      <div style="flex:1"></div>
+      <div style="position:relative;width:28px;height:28px;margin-bottom:6px"><i class="sw" style="position:absolute;left:0;top:0;width:18px;height:18px;background:#fff"></i><i class="sw" style="position:absolute;left:9px;top:9px;width:18px;height:18px;background:#141313;border-color:var(--text)"></i></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="18" cy="12" r="1.2" fill="currentColor"/></svg></div>
+    </div>
+    <div class="hair" style="width:1px"></div>
+
+    <!-- left column: pages + layers -->
+    <div class="col left">
+      <div class="colhead"><span class="sec">Pages</span><div class="tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div></div>
+      <div class="row sel"><span class="ic"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/></svg></span>Cover<span class="end">3</span></div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/></svg></span>Inside<span class="end">6</span></div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/></svg></span>Back<span class="end">1</span></div>
+      <div class="hair" style="height:1px;margin:8px 0"></div>
+      <div class="colhead"><span class="sec">Layers</span><div class="tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div></div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>Artboard 1<span class="end">◎ ○</span></div>
+      <div class="row" style="padding-left:32px"><span class="ic"><svg viewBox="0 0 24 24"><path d="M9 11l3-7 3 7M7 21h10M12 4v17"/></svg></span>عنوان الملصق<span class="end">◎</span></div>
+      <div class="row sel" style="padding-left:32px"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg></span>Orbit<span class="end">◎</span></div>
+      <div class="row" style="padding-left:32px"><span class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1"/></svg></span>Background<span class="end">◎ ○</span></div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>Artboard 2<span class="end">◎</span></div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>Artboard 3<span class="end">◎</span></div>
+    </div>
+    <div class="hair" style="width:1px"></div>
+
+    <!-- canvas -->
+    <div class="canvas">
+      <div class="ruler h"></div><div class="ruler v"></div>
+      <div class="artname">Artboard 1 · 600 × 760</div>
+      <div class="art">
+        <div style="position:absolute;left:40px;top:40px;font:700 44px Inter,sans-serif;color:#2a3a33;line-height:1">Form,<br>in motion.</div>
+        <div style="position:absolute;right:40px;top:60px;font:600 22px Inter,sans-serif;color:#2a3a33;direction:rtl">عنوان الملصق</div>
+        <div style="position:absolute;left:52px;top:250px;width:420px;height:230px;background:#d65042;outline:1px solid var(--azure);outline-offset:0"></div>
+        <div style="position:absolute;left:48px;top:246px;width:7px;height:7px;background:#fff;border:1px solid var(--azure)"></div>
+        <div style="position:absolute;left:468px;top:246px;width:7px;height:7px;background:#fff;border:1px solid var(--azure)"></div>
+        <div style="position:absolute;left:48px;top:476px;width:7px;height:7px;background:#fff;border:1px solid var(--azure)"></div>
+        <div style="position:absolute;left:468px;top:476px;width:7px;height:7px;background:#fff;border:1px solid var(--azure)"></div>
+      </div>
+      <div class="hint">Click the object to select · ⇧Click adds · ⌥Drag duplicates</div>
+
+      <!-- floating panel (torn off from the right strip) -->
+      <div class="card" style="right:36px;top:300px">
+        <div class="tabs"><span class="pill on">Color</span><span class="pill">Swatches</span><span class="end tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="18" cy="12" r="1.2" fill="currentColor"/></svg></span></div>
+        <div class="hair" style="height:1px"></div>
+        <div class="tabs" style="height:34px;gap:4px"><span class="tile on" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></span><span class="tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2" fill="var(--panel)"/><circle cx="15" cy="16" r="2" fill="var(--panel)"/></svg></span><span class="tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><path d="M4 12h16"/><circle cx="7" cy="12" r="2" fill="var(--panel)"/><circle cx="17" cy="12" r="2" fill="var(--panel)"/></svg></span><span class="end tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><path d="M3 21l7-7M14 4l6 6-8 8H6v-6z"/></svg></span></div>
+        <div class="wheel"><div class="tri"></div></div>
+        <div style="display:flex;gap:6px;padding:4px 12px"><div class="field" style="flex:1"><span class="k">#</span>D65042</div><div class="field" style="width:64px">100%</div></div>
+        <div class="sws"><i style="background:#fff"></i><i style="background:#141313;border:1px solid var(--line2)"></i><i style="background:#d65042"></i><i style="background:#f29a3e"></i><i style="background:#2a3a33"></i><i style="background:#efece7"></i><i style="background:#0c8ce9"></i><i style="background:#8e8e8e"></i></div>
+      </div>
+    </div>
+    <div class="hair" style="width:1px"></div>
+
+    <!-- right column: properties -->
+    <div class="col right">
+      <div class="tabs"><span class="pill on">Design</span><span class="pill">Type</span><span class="pill">Export</span><span class="end tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="18" cy="12" r="1.2" fill="currentColor"/></svg></span></div>
+      <div class="hair" style="height:1px"></div>
+      <div class="sechead" style="height:40px"><span class="sec" style="font-size:12px">Orbit</span><span class="lbl">Following selection</span></div>
+      <div class="hair" style="height:1px"></div>
+      <div class="section">
+        <div class="sechead"><span class="sec">Transform</span></div>
+        <div class="grid2"><div class="field"><span class="k">X</span>52</div><div class="field"><span class="k">Y</span>250</div><div class="field"><span class="k">W</span>420</div><div class="field"><span class="k">H</span>230</div><div class="field"><span class="k">∠</span>0°</div><div class="field"><span class="k">◜</span>0</div></div>
+      </div>
+      <div class="hair" style="height:1px"></div>
+      <div class="section">
+        <div class="sechead"><span class="sec">Align</span></div>
+        <div class="align"><span class="tile"><svg viewBox="0 0 24 24"><path d="M4 4v16M8 8h10v3H8M8 13h6v3H8"/></svg></span><span class="tile"><svg viewBox="0 0 24 24"><path d="M12 4v16M6 8h12v3H6M8 13h8v3H8"/></svg></span><span class="tile"><svg viewBox="0 0 24 24"><path d="M20 4v16M6 8h10v3H6M10 13h6v3h-6"/></svg></span><span class="tile"><svg viewBox="0 0 24 24"><path d="M4 4h16M8 8v10h3V8M13 8v6h3V8"/></svg></span><span class="tile"><svg viewBox="0 0 24 24"><path d="M4 12h16M8 6v12h3V6M13 8v8h3V8"/></svg></span><span class="tile"><svg viewBox="0 0 24 24"><path d="M4 20h16M8 6v10h3V6M13 10v6h3v-6"/></svg></span></div>
+      </div>
+      <div class="hair" style="height:1px"></div>
+      <div class="section">
+        <div class="sechead"><span class="sec">Appearance</span><div class="tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div></div>
+        <div class="row"><i class="sw" style="background:#d65042"></i><span>Fill</span><span style="color:var(--muted)">D65042</span><span class="end">100% ◎</span></div>
+        <div class="row"><i class="sw" style="background:#141313"></i><span>Stroke</span><span style="color:var(--muted)">1 pt · Inside</span><span class="end">◎</span></div>
+        <div class="row"><span class="lbl">Opacity</span><div class="field" style="width:64px;margin-left:auto">100%</div></div>
+      </div>
+      <div class="hair" style="height:1px"></div>
+      <div class="section"><div class="sechead"><span class="sec">Effects</span><div class="tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div></div></div>
+      <div class="hair" style="height:1px"></div>
+      <div class="section"><div class="sechead"><span class="sec">Export</span><div class="tile" style="width:24px;height:24px"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div></div></div>
+    </div>
+    <div class="hair" style="width:1px"></div>
+
+    <!-- panel icon strip -->
+    <div class="strip" style="background:var(--panel)">
+      <div class="tile on"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2" fill="var(--panel)"/><circle cx="15" cy="16" r="2" fill="var(--panel)"/></svg></div>
+      <div class="grp"></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M9 11l3-7 3 7M7 21h10M12 4v17"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M10 4h8M13 4v16M9 4a4 4 0 0 0 0 8h4"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h16"/></svg></div>
+      <div class="grp"></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18"/><path d="M8 3v18M3 8h18"/></svg></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg></div>
+      <div class="grp"></div>
+      <div class="tile"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="8"/></svg></div>
+      <div class="tile" title="AI (later)"><svg viewBox="0 0 24 24"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg></div>
+    </div>
+  </div>
+
+  <div class="hair" style="height:1px"></div>
+  <div class="status"><span>91.2%</span><span>0°</span><span>Artboard 1 / 3</span><span>Selection</span><span style="margin-left:auto">X 2.34 mm · Y 45.96 mm</span><span>render 0.3 ms</span></div>
+</div>
+
+<!-- ===================== HOME ===================== -->
+<div class="view" id="home">
+  <div class="top">
+    <div class="brand">V</div><span style="font-weight:600;margin-right:6px">Varos</span>
+    <div style="flex:1"></div>
+    <div class="field" style="width:260px"><svg viewBox="0 0 24 24" style="width:13px;height:13px;color:var(--quiet)"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span style="color:var(--quiet)">Search files and templates</span></div>
+    <div class="ava" style="background:#5b8def;color:#fff;margin-left:10px">A</div>
+  </div>
+  <div class="hair" style="height:1px"></div>
+  <div class="home">
+    <div class="side">
+      <div class="row on"><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="8"/></svg></span>Recents</div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg></span>Projects</div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20a6 6 0 0 1 12 0M15 20a5 5 0 0 1 6-4"/></svg></span>Shared with me<span class="soon">later</span></div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/></svg></span>Templates</div>
+      <div class="hair" style="height:1px;margin:8px 4px"></div>
+      <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 16v-1M12 8a2 2 0 0 1 1 3.7c-.7.4-1 .8-1 1.3"/></svg></span>Getting started</div>
+      <div style="flex:1"></div>
+      <div class="row" style="color:var(--muted)"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3.9a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 2.4a7 7 0 0 0-1.7 1L5.1 5.5l-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 1.7 1l.4 2.4h5l.4-2.4a7 7 0 0 0 1.7-1l2.3.9 2-3.4-2-1.5c.1-.3.1-.7.1-1z"/></svg></span>Preferences</div>
+    </div>
+    <div class="hair" style="width:1px"></div>
+    <div class="main">
+      <h1>Good evening, Ahmed</h1>
+      <div class="sub">Pick up where you left off, or start something new.</div>
+      <div class="actions"><div class="btn primary">+ New board</div><div class="btn">Open…</div><div class="btn" style="color:var(--muted)">Join with a code <span class="soon" style="margin-left:4px">later</span></div></div>
+
+      <h2>Recent <span class="more">Last modified ▾</span></h2>
+      <div class="cards">
+        <div class="fcard"><div class="thumb"></div><div class="n">Poster-A.varos</div><div class="d">Edited 2 minutes ago · 3 pages</div></div>
+        <div class="fcard"><div class="thumb" style="background:#1f1e1d"></div><div class="n">Logo.varos</div><div class="d">Yesterday · 1 page</div></div>
+        <div class="fcard"><div class="thumb"></div><div class="n">غلاف الكتاب.varos</div><div class="d">Oct 24 · 2 pages</div></div>
+        <div class="fcard"><div class="thumb" style="background:#1f1e1d"></div><div class="n">Brand-sheet.varos</div><div class="d">Oct 21 · 5 pages</div></div>
+      </div>
+
+      <h2>Projects <span class="more">A project is one .varos file; its pages are inside</span></h2>
+      <div class="proj">
+        <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg></span>Ramadan campaign<span class="end">4 files · ~/Documents/Varos</span></div>
+        <div class="row"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg></span>Client — Nile Studio<span class="end">2 files · iCloud Drive</span></div>
+      </div>
+
+      <h2>Getting started <span class="more">Hide</span></h2>
+      <div class="tips">
+        <div class="tip"><b>Draw your first artboard</b><span>Pick the Artboard tool, drag on the canvas or choose a preset size.</span></div>
+        <div class="tip"><b>Write in Arabic</b><span>The Type tool shapes Arabic natively; Kashida lives in the Character panel.</span></div>
+        <div class="tip"><b>Let an agent help</b><span>Connect Claude or Codex to this file; their work shows in orange on the canvas.</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="switch"><button class="on" onclick="go('editor',this)">Editor</button><button onclick="go('home',this)">Home</button></div>
+<script>
+function go(id,b){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===id));document.querySelectorAll('.switch button').forEach(x=>x.classList.toggle('on',x===b));}
+</script>
+</body>
+</html>
