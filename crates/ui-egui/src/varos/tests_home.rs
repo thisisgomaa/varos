@@ -358,12 +358,29 @@ fn drop_anywhere_on_home_opens_and_invalid_files_report_an_error() {
         a.open_dropped_files(vec![Arc::new(DropFile(path.clone()))], Some(at), false);
         assert_eq!(a.session.active().unwrap().path.as_deref(), path.to_str());
     }
-    let bad = dir.0.join("Bad.varos");
-    std::fs::write(&bad, b"not a document").unwrap();
-    let mut a = app();
-    a.open_dropped_files(vec![Arc::new(DropFile(bad))], None, false);
-    assert!(is_home(&a));
-    assert!(!a.ui.status.is_empty());
+    for name in ["Bad.varos", "Unsupported.xyz"] {
+        let bad = dir.0.join(name);
+        std::fs::write(&bad, b"not a document").unwrap();
+        for with_document in [false, true] {
+            let mut a = app();
+            if with_document {
+                a.run("file.new", json!({})).unwrap();
+                a.run("app.home", json!({})).unwrap();
+            }
+            a.open_dropped_files(vec![Arc::new(DropFile(bad.clone()))], None, false);
+            assert!(is_home(&a));
+            assert!(a.ui.dialog.is_none(), "Home drop errors must be toast only: {name}");
+            let message = a.ui.status.clone();
+            assert!(message.contains(name));
+            let mut h = harness(a);
+            h.run_steps(2);
+            assert!(texts(&h).iter().any(|s| s == &message), "the error toast is visible");
+        }
+        let mut editor = app();
+        editor.run("file.new", json!({})).unwrap();
+        editor.open_dropped_files(vec![Arc::new(DropFile(bad))], None, false);
+        assert!(editor.ui.dialog.is_some(), "editor open failures keep their existing modal");
+    }
 }
 
 #[test]
@@ -440,29 +457,25 @@ fn home_shortcuts_do_not_nudge_or_open_tool_dialogs_behind_home() {
 }
 
 #[test]
-fn home_input_leaves_a_hidden_text_edit_unchanged_after_handoff() {
-    let mut a = app();
-    a.run("file.new", json!({})).unwrap();
-    a.run("text.create", json!({"x":20,"y":40,"text":"Hello"})).unwrap();
-    a.select_tool("type");
-    a.session.apply_actions(vec![vectorcraft_tools::Action::Notify("text.editNew".into())]).unwrap();
-    assert!(a.session.tool_wants_text());
-    a.run("app.home", json!({})).unwrap();
-    let ctx = egui::Context::default();
-    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| crate::shortcuts::handle(&mut a, ui.ctx()));
-    out.textures_delta.clear();
-    let before = vectorcraft_format::save(&a.session.active().unwrap().doc, false);
-    for key in [egui::Key::ArrowRight, egui::Key::Enter, egui::Key::Backspace, egui::Key::Delete] {
-        let raw = egui::RawInput {
-            events: vec![
-                egui::Event::Text("x".into()),
-                egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
-            ],
-            ..Default::default()
-        };
+fn home_input_leaves_a_hidden_text_edit_unchanged_from_the_first_frame() {
+    let press = |key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+    for event in
+        [egui::Event::Text("x".into()), press(egui::Key::Backspace), press(egui::Key::Delete), press(egui::Key::Enter), press(egui::Key::ArrowRight)]
+    {
+        let mut a = app();
+        a.run("file.new", json!({})).unwrap();
+        a.run("text.create", json!({"x":20,"y":40,"text":"Hello"})).unwrap();
+        a.select_tool("type");
+        a.session.apply_actions(vec![vectorcraft_tools::Action::Notify("text.editNew".into())]).unwrap();
+        assert!(a.session.tool_wants_text());
+        let before = vectorcraft_format::save(&a.session.active().unwrap().doc, false);
+        a.run("app.home", json!({})).unwrap();
+        let ctx = egui::Context::default();
+        // No empty warm-up frame: the very first Home frame carries the real event.
+        let raw = egui::RawInput { events: vec![event.clone()], ..Default::default() };
         let mut out = ctx.run_ui(raw, |ui| crate::shortcuts::handle(&mut a, ui.ctx()));
         out.textures_delta.clear();
-        assert_eq!(vectorcraft_format::save(&a.session.active().unwrap().doc, false), before);
+        assert_eq!(vectorcraft_format::save(&a.session.active().unwrap().doc, false), before, "{event:?}");
     }
 }
 
@@ -516,4 +529,60 @@ fn home_scrolls_in_a_short_window_and_scrolled_cards_still_open() {
     frame(&mut a, 3.0, vec![egui::Event::PointerMoved(target), button(true)]);
     frame(&mut a, 3.1, vec![button(false)]);
     assert!(a.session.active().is_some());
+}
+
+#[test]
+fn thumbnail_reloads_and_rerenders_if_the_source_changes_during_rendering() {
+    thumbnail_source_change(true);
+}
+
+#[test]
+fn thumbnail_reloads_if_the_queued_stamp_is_already_stale() {
+    thumbnail_source_change(false);
+}
+
+fn thumbnail_source_change(during_render: bool) {
+    let dir = Folder::new();
+    let root = dir.0.join("thumbs");
+    let path = dir.0.join("Racing.varos");
+    let old = vectorcraft_doc::Document::new(120.0, 80.0);
+    let mut new = vectorcraft_doc::Document::new(60.0, 160.0);
+    let mut second = new.artboards[0].clone();
+    second.id += 1;
+    new.artboards.push(second);
+    let save = |doc: &vectorcraft_doc::Document, seconds| {
+        std::fs::write(&path, vectorcraft_format::save(doc, false)).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)))
+            .unwrap();
+    };
+    save(&old, 100);
+    let queued = data::stamp(&path).unwrap();
+    if !during_render {
+        save(&new, 200);
+    }
+    let mut renders = Vec::new();
+    let png = data::write_thumbnail_with(&root, &path, &old, queued, |doc| {
+        let pixels = data::render_thumbnail(doc)?;
+        renders.push(doc.artboards[0].rect);
+        if during_render && renders.len() == 1 {
+            // The old pixels exist, but publication must detect this intervening save.
+            save(&new, 200);
+        }
+        Ok(pixels)
+    })
+    .unwrap();
+    if during_render {
+        assert_eq!(renders, [old.artboards[0].rect, new.artboards[0].rect]);
+    } else {
+        assert_eq!(renders, [new.artboards[0].rect], "a stale queued snapshot is never rendered as current");
+    }
+    let image = image::open(&png).unwrap();
+    assert_eq!((image.width(), image.height()), (135, 360), "only the freshly rendered first artboard is published");
+    let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(png.with_extension("json")).unwrap()).unwrap();
+    assert_eq!(manifest["stamp"], json!(data::stamp(&path).unwrap()));
+    assert_eq!(manifest["artboards"], 2);
 }

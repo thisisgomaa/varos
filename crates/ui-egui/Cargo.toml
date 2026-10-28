@@ -53,6 +53,7 @@ image = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+chrono = { workspace = true, features = ["clock", "wasmbind"] }
 # Varos cursor SVGs; the existing offline rasterizer, without fonts or image decoders.
 resvg = { version = "0.45", default-features = false }
 

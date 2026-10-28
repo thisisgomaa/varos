@@ -28,8 +28,6 @@ pub struct View {
     pub project: Option<PathBuf>,
     pub selected: Option<String>,
     pub generation: u64,
-    /// Settle application text already queued when the editor hands input to Home.
-    pub finish_editor_text: bool,
 }
 
 /// Home yields as soon as New/Open/Close changes the document identity or count.
@@ -101,9 +99,6 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
     }
     app.ui.home_view.selected = None;
     app.ui.home_view.generation = app.ui.home_view.generation.wrapping_add(1);
-    if !is_home(app) {
-        app.ui.home_view.finish_editor_text = app.session.tool_wants_text();
-    }
     app.canvas_rect = None;
     app.ui.home = Some(crate::menus::home_key(app));
     Ok(Value::Null)

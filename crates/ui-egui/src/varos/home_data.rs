@@ -106,15 +106,8 @@ pub(super) fn user_name() -> String {
 }
 
 pub(super) fn local_hour() -> u32 {
-    // Ask the platform for its local clock; no hand-written timezone/calendar conversion.
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Ok(out) = std::process::Command::new("date").arg("+%H").output()
-        && out.status.success()
-        && let Ok(hour) = String::from_utf8_lossy(&out.stdout).trim().parse::<u32>()
-    {
-        return hour;
-    }
-    vectorcraft_doc::metadata::now_unix().map_or(12, |t| ((t.rem_euclid(86400)) / 3600) as u32)
+    use chrono::Timelike;
+    chrono::Local::now().hour()
 }
 
 pub(super) fn edited(modified: Option<SystemTime>, now: SystemTime) -> String {
@@ -143,7 +136,9 @@ pub(super) fn cache_root() -> Option<PathBuf> {
     }
 }
 
-fn stamp(path: &Path) -> Option<(u128, u64)> {
+pub(super) type Stamp = (u128, u64);
+
+pub(super) fn stamp(path: &Path) -> Option<Stamp> {
     let m = std::fs::metadata(path).ok()?;
     Some((m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos(), m.len()))
 }
@@ -165,50 +160,88 @@ struct Manifest {
 fn cached_in(root: &Path, source: &Path) -> Option<(PathBuf, usize)> {
     let png = cache_path(root, source);
     let m: Manifest = serde_json::from_slice(&std::fs::read(png.with_extension("json")).ok()?).ok()?;
-    (m.version == 1 && m.source == source && m.stamp.is_some() && m.stamp == stamp(source) && png.is_file()).then_some((png, m.artboards))
+    (m.version == 2 && m.source == source && m.stamp.is_some() && m.stamp == stamp(source) && png.is_file()).then_some((png, m.artboards))
 }
 
-pub(super) fn write_thumbnail(root: &Path, path: &Path, doc: &vectorcraft_doc::Document) -> Result<PathBuf, String> {
-    vectorcraft_engine::file_access::check_write(&root.to_string_lossy())?;
-    let original_stamp = stamp(path);
+pub(super) fn render_thumbnail(doc: &vectorcraft_doc::Document) -> Result<vectorcraft_render::Rendered, String> {
     let region = doc.artboards.first().map(|a| a.rect).or_else(|| super::board_bounds(doc)).ok_or("No artboard to preview")?;
     if !region.width().is_finite() || !region.height().is_finite() || region.width() <= 0.0 || region.height() <= 0.0 {
         return Err("Invalid thumbnail bounds".into());
     }
     let scale = (480.0 / region.width()).min(360.0 / region.height());
-    let mut renderer = vectorcraft_render::Renderer::new();
-    let rendered = renderer.render_region(doc, region, scale, true);
-    if stamp(path) != original_stamp {
-        return Err("File changed during thumbnail rendering".into());
+    if !scale.is_finite() {
+        return Err("Invalid thumbnail scale".into());
     }
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    Ok(vectorcraft_render::Renderer::new().render_region(doc, region, scale, true))
+}
+
+/// Keep the queued snapshot's stamp through rendering and publication. Never resample a
+/// newer stamp and attach it to old pixels. A changed source is reloaded and rendered again.
+pub(super) fn write_thumbnail_with(
+    root: &Path,
+    path: &Path,
+    doc: &vectorcraft_doc::Document,
+    mut expected: Stamp,
+    mut render: impl FnMut(&vectorcraft_doc::Document) -> Result<vectorcraft_render::Rendered, String>,
+) -> Result<PathBuf, String> {
+    vectorcraft_engine::file_access::check_write(&root.to_string_lossy())?;
+    let mut doc = std::borrow::Cow::Borrowed(doc);
     let png = cache_path(root, path);
-    let temp = png.with_extension("png.tmp");
-    image::save_buffer_with_format(&temp, &rendered.to_straight(), rendered.width, rendered.height, image::ColorType::Rgba8, image::ImageFormat::Png)
-        .map_err(|e| e.to_string())?;
-    std::fs::rename(temp, &png).map_err(|e| e.to_string())?;
-    let manifest = Manifest { version: 1, source: path.to_owned(), stamp: original_stamp, artboards: doc.artboards.len() };
-    let bytes = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
-    std::fs::write(png.with_extension("json.tmp"), bytes).map_err(|e| e.to_string())?;
-    std::fs::rename(png.with_extension("json.tmp"), png.with_extension("json")).map_err(|e| e.to_string())?;
-    Ok(png)
+    for _ in 0..3 {
+        if stamp(path) != Some(expected) {
+            vectorcraft_engine::file_access::check_read(&path.to_string_lossy())?;
+            let before_read = stamp(path).ok_or("Thumbnail source unavailable")?;
+            let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+            let loaded = vectorcraft_engine::cmd::fileio::load(&path.to_string_lossy(), &bytes).map_err(|e| e.to_string())?;
+            if stamp(path) != Some(before_read) {
+                continue;
+            }
+            doc = std::borrow::Cow::Owned(loaded.doc);
+            expected = before_read;
+        }
+        let rendered = render(&doc)?;
+        let bytes = rendered.to_png().map_err(|e| e.to_string())?;
+        let manifest = Manifest { version: 2, source: path.to_owned(), stamp: Some(expected), artboards: doc.artboards.len() };
+        let metadata = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+        let temp = png.with_extension("png.tmp");
+        let temp_metadata = png.with_extension("json.tmp");
+        std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+        std::fs::write(&temp_metadata, metadata).map_err(|e| e.to_string())?;
+        // Compare immediately before publishing, after both rendering and PNG encoding.
+        if stamp(path) != Some(expected) {
+            // Unpublished cache files are disposable; cleanup failure cannot validate them.
+            let _ = std::fs::remove_file(temp);
+            let _ = std::fs::remove_file(temp_metadata);
+            continue;
+        }
+        std::fs::rename(temp, &png).map_err(|e| e.to_string())?;
+        std::fs::rename(temp_metadata, png.with_extension("json")).map_err(|e| e.to_string())?;
+        if stamp(path) == Some(expected) {
+            return Ok(png);
+        }
+        // A write during publication also requires a fresh render. Even if it changes
+        // just after this check, cached_in rejects the manifest's immutable old stamp.
+    }
+    Err("File kept changing during thumbnail rendering".into())
 }
 
 /// Open/save callers pass the saved snapshot, never a subsequently edited active tab.
 /// Cache errors are non-fatal and leave a placeholder; document I/O has already succeeded.
 pub(crate) fn cache_document(path: &str, doc: &vectorcraft_doc::Document) {
     let Some(root) = cache_root() else { return };
+    let Some(expected) = stamp(Path::new(path)) else { return };
     if !Path::new(path).is_file() || vectorcraft_engine::file_access::check_write(&root.to_string_lossy()).is_err() {
         return;
     }
     #[cfg(test)]
-    if let Err(e) = write_thumbnail(&root, Path::new(path), doc) {
+    if let Err(e) = write_thumbnail_with(&root, Path::new(path), doc, expected, render_thumbnail) {
         log::warn!("Home thumbnail: {e}");
     }
     #[cfg(not(test))]
     {
         use std::sync::{Mutex, OnceLock, mpsc};
-        type Job = (PathBuf, PathBuf, vectorcraft_doc::Document, Option<(u128, u64)>, vectorcraft_engine::file_access::ScopeHandle);
+        type Job = (PathBuf, PathBuf, vectorcraft_doc::Document, Stamp, vectorcraft_engine::file_access::ScopeHandle);
         static WORKER: OnceLock<Option<Mutex<mpsc::SyncSender<Job>>>> = OnceLock::new();
         let worker = WORKER.get_or_init(|| {
             let (tx, rx) = mpsc::sync_channel::<Job>(16);
@@ -216,10 +249,8 @@ pub(crate) fn cache_document(path: &str, doc: &vectorcraft_doc::Document) {
                 .name("varos-home-thumbnails".into())
                 .spawn(move || {
                     while let Ok((root, path, doc, expected, scope)) = rx.recv() {
-                        if stamp(&path) != expected {
-                            continue;
-                        } // A newer save superseded this job.
-                        let result = scope.run(|| vectorcraft_engine::guard::catch_panic(|| write_thumbnail(&root, &path, &doc)));
+                        let result = scope
+                            .run(|| vectorcraft_engine::guard::catch_panic(|| write_thumbnail_with(&root, &path, &doc, expected, render_thumbnail)));
                         if let Err(e) = result.and_then(|r| r) {
                             log::warn!("Home thumbnail: {e}");
                         }
@@ -230,8 +261,7 @@ pub(crate) fn cache_document(path: &str, doc: &vectorcraft_doc::Document) {
         });
         if let Some(worker) = worker
             && let Ok(tx) = worker.lock()
-            && let Err(e) =
-                tx.try_send((root, PathBuf::from(path), doc.clone(), stamp(Path::new(path)), vectorcraft_engine::file_access::ScopeHandle::capture()))
+            && let Err(e) = tx.try_send((root, PathBuf::from(path), doc.clone(), expected, vectorcraft_engine::file_access::ScopeHandle::capture()))
         {
             log::warn!("Home thumbnail queue: {e}");
         }
