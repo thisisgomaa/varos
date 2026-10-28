@@ -129,7 +129,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
         {
-            let bar = vectorcraft_ui_egui::chrome::APP_BAR_HEIGHT;
+            let bar = vectorcraft_ui_egui::chrome::app_bar_height(&self.app);
             let inset = mac_window::center_buttons(frame, ui.ctx().zoom_factor(), bar);
             self.app.titlebar_inset = inset.unwrap_or(mac_window::DEFAULT_INSET);
         }

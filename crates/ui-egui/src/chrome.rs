@@ -20,6 +20,12 @@ const MARK: f32 = 18.0;
 /// Height of the workspace switcher.
 const WIDGET_H: f32 = 22.0;
 
+/// The height of the window's top bar this frame: Home's own bar and the Varos shell's bar are 40
+/// points, the editor's app bar [`APP_BAR_HEIGHT`]. The macOS window buttons centre on it.
+pub fn app_bar_height(app: &VectorcraftApp) -> f32 {
+    if crate::varos::home::is_home(app) || crate::varos::shell::enabled(app) { crate::varos::shell::tokens::APP_BAR_HEIGHT } else { APP_BAR_HEIGHT }
+}
+
 /// The application bar: brand mark, Home, menus, then search and the workspace switcher
 /// at the right. With [`VectorcraftApp::custom_titlebar`] it is also the window's title bar
 /// ([`titlebar`]): the caption buttons take the right end and the rest of the bar drags the window.
@@ -2703,45 +2709,51 @@ fn simple_app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 // MenuBar allocates the full row; use the returned end of its titles.
                 let menus_end = if app.services.native_menu.is_some() { ui.cursor().min.x } else { menus::menu_bar(app, ui) };
                 let available = egui::Rect::from_min_max(egui::pos2(menus_end + 8.0, ui.max_rect().top()), ui.max_rect().max);
-                let reserve = 340.0 + if app.custom_titlebar { titlebar::WIDTH } else { 0.0 };
+                // The right group (presence, Share, search, the capped workspace control) is laid
+                // out first; the document tabs take what it leaves, so they never run under it.
+                let mut right = ui.new_child(egui::UiBuilder::new().max_rect(available).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                simple_app_bar_right(app, &mut right);
+                let right_left = right.min_rect().left().min(available.right());
                 let tabs = egui::Rect::from_min_max(
                     egui::pos2(available.left(), available.center().y - 14.0),
-                    egui::pos2((available.right() - reserve).max(available.left()), available.center().y + 14.0),
+                    egui::pos2((right_left - 8.0).max(available.left()), available.center().y + 14.0),
                 );
                 #[cfg(test)]
                 ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("simple-tabs-rect"), tabs));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(tabs).layout(egui::Layout::top_down(egui::Align::Min)));
                 child.set_clip_rect(tabs);
                 doc_tabs(app, &mut child);
-                let right = egui::Rect::from_min_max(egui::pos2(tabs.right(), available.top()), available.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
-                let ui = &mut child;
-                if app.custom_titlebar {
-                    ui.add_space(titlebar::WIDTH);
-                }
-                crate::varos::shell::workspace::switcher(app, ui);
-                if widgets::icon_button(ui, "search", tl!("Search commands and tools"), app.ui.palette_open, 28.0).clicked() {
-                    app.ui.palette_open = !app.ui.palette_open;
-                    app.ui.palette_query.clear();
-                }
-                ui.add_enabled(false, egui::Button::new(egui::RichText::new(tl!("Share")).size(11.0)))
-                    .on_disabled_hover_text(tl!("Sharing comes later"));
-                widgets::icon_button(ui, "plus", tl!("Sharing comes later"), false, 22.0);
-                if !app.agents.registry.is_empty() {
-                    let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-                    ui.painter().circle_filled(r.center(), 11.0, crate::varos::theme::AGENT);
-                    icons::paint(ui, "shell-sparkles", r.shrink(4.0), t.panel);
-                }
-                let initial = std::env::var("USER").ok().and_then(|n| n.chars().next()).unwrap_or('U').to_uppercase().to_string();
-                let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-                ui.painter().circle_filled(r.center(), 11.0, t.hover);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, initial, theme::semibold(10.0), t.text);
             });
         });
     ui.painter().hline(bar.response.rect.x_range(), bar.response.rect.bottom() - 0.5, Stroke::new(1.0, t.border));
     if app.custom_titlebar {
         titlebar::caption_buttons(app, ui, bar.response.rect);
     }
+}
+
+/// The simple app bar's right group, right to left: caption-button room, workspace control,
+/// search, Share, the sharing `+`, the agent's and the user's avatars.
+fn simple_app_bar_right(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    if app.custom_titlebar {
+        ui.add_space(titlebar::WIDTH);
+    }
+    crate::varos::shell::workspace::switcher(app, ui);
+    if widgets::icon_button(ui, "search", tl!("Search commands and tools"), app.ui.palette_open, 28.0).clicked() {
+        app.ui.palette_open = !app.ui.palette_open;
+        app.ui.palette_query.clear();
+    }
+    ui.add_enabled(false, egui::Button::new(egui::RichText::new(tl!("Share")).size(11.0))).on_disabled_hover_text(tl!("Sharing comes later"));
+    widgets::icon_button(ui, "plus", tl!("Sharing comes later"), false, 22.0);
+    if !app.agents.registry.is_empty() {
+        let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+        ui.painter().circle_filled(r.center(), 11.0, crate::varos::theme::AGENT);
+        icons::paint(ui, "shell-sparkles", r.shrink(4.0), t.panel);
+    }
+    let initial = std::env::var("USER").ok().and_then(|n| n.chars().next()).unwrap_or('U').to_uppercase().to_string();
+    let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+    ui.painter().circle_filled(r.center(), 11.0, t.hover);
+    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, initial, theme::semibold(10.0), t.text);
 }
 
 pub(crate) fn control_panel(app: &mut VectorcraftApp, ui: &mut Ui) {
