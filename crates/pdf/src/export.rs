@@ -1806,8 +1806,24 @@ impl Exporter<'_> {
         let mut line: Option<GlyphLine> = None;
         // The characters the glyphs stand for: the plain text, then, when the run has glyphs that
         // stand for no character of it, the characters a line-break hyphen can stand for.
-        let written: Cow<str> =
+        let mut written: Cow<str> =
             if layout.glyphs.iter().any(|g| g.run == run && g.len == 0) { Cow::Owned(format!("{text}{BREAK_HYPHENS}")) } else { Cow::Borrowed(text) };
+        // PDF glyphs are emitted in visual order. Keep the codepoints *inside* an RTL
+        // cluster in that same order, too: readers apply bidi to the whole extracted line.
+        // A logical multi-letter ligature in an otherwise visual line would reverse twice.
+        let mut mapped = std::collections::HashSet::new();
+        for g in layout.glyphs.iter().filter(|g| g.run == run && g.rtl && g.len > 0) {
+            let range = g.byte..g.byte.saturating_add(g.len);
+            if mapped.insert(range.clone())
+                && let Some(cluster) = written.get(range.clone())
+                && cluster.chars().count() > 1
+                && let Some((order, _)) = vectorcraft_text::logical_order(cluster)
+            {
+                let chars: Vec<_> = cluster.chars().collect();
+                let visual: String = order.iter().filter_map(|&i| chars.get(i)).collect();
+                written.to_mut().replace_range(range, &visual);
+            }
+        }
         for (gi, g) in layout.glyphs.iter().enumerate().filter(|(_, g)| g.run == run) {
             let coloured = g.image.is_some() || g.colour.is_some();
             if coloured && !images {
@@ -1834,10 +1850,11 @@ impl Exporter<'_> {
             }
             // The glyph at the font size of its vertical scale: `frame` maps that size's glyph
             // space (y down, krilla's) to text space.
-            let [a, b, c, d, ..] = g.xf.as_coeffs();
+            let (glyph_xf, glyph_advance) = if images { (g.xf, g.advance) } else { searchable_transform(layout, gi) };
+            let [a, b, c, d, ..] = glyph_xf.as_coeffs();
             let (sx, sy) = (a.hypot(b), c.hypot(d));
             let font = if g.gid != 0 && ch.is_some() { self.font(g.font_id) } else { None };
-            let det = g.xf.determinant();
+            let det = glyph_xf.determinant();
             let Some((font, upem)) = font.filter(|(_, upem)| det.is_finite() && det.abs() > 1e-9 && (1e-3..=1e5).contains(&(upem * sy))) else {
                 rest.extend(g.outline.iter());
                 if coloured {
@@ -1855,7 +1872,7 @@ impl Exporter<'_> {
                 }
             }
             let size = upem * sy;
-            let frame = g.xf * Affine::scale(1.0 / sy);
+            let frame = glyph_xf * Affine::scale(1.0 / sy);
             // Its pen position along the frame's baseline, when it continues the line (a
             // line-break hyphen never does).
             let x = line.as_ref().filter(|l| hyphen.is_none() && l.face == g.font_id && (l.size - size).abs() < 1e-6).and_then(|l| {
@@ -1874,7 +1891,7 @@ impl Exporter<'_> {
                 }
             };
             // The glyph's advance in frame units (the last one's ends the line).
-            let advance = g.advance * sy / sx;
+            let advance = glyph_advance * sy / sx;
             if let Some(l) = line.as_mut() {
                 l.glyphs.push((g.gid, x, advance, range));
             }
@@ -2059,6 +2076,41 @@ impl Exporter<'_> {
         s.draw_image(img, size);
         s.pop();
     }
+}
+
+/// Invisible text has no tatweel characters. Let the preceding authored glyph's
+/// selection box cover the virtual elongation, otherwise PDF readers interpret the
+/// jump to the next glyph as a word space. Only the hidden text matrix changes;
+/// the unioned fill/stroke outlines and the layout's positions remain untouched.
+fn searchable_transform(layout: &TextLayout, index: usize) -> (Affine, f64) {
+    let Some(g) = layout.glyphs.get(index) else { return (Affine::IDENTITY, 0.0) };
+    let original = (g.xf, g.advance);
+    if g.len == 0 || g.advance <= 0.0 {
+        return original;
+    }
+    let db = vectorcraft_text::FontDb::global();
+    let mut extra = 0.0;
+    for (i, next) in layout.glyphs.iter().enumerate().skip(index + 1) {
+        if next.line != g.line || next.len > 0 && next.advance > 0.0 {
+            break;
+        }
+        if next.len == 0 && layout.marker_of(i).is_none() && db.face_by_id(next.font_id).is_some_and(|f| f.glyph_for('\u{0640}') == next.gid) {
+            extra += next.advance;
+        }
+    }
+    if extra <= 0.0 {
+        return original;
+    }
+    let [a, b, ..] = g.xf.as_coeffs();
+    let width = db.face_by_id(g.font_id).map_or(0.0, |f| f.advance(g.gid)) * a.hypot(b);
+    if width <= 0.0 {
+        return original;
+    }
+    let scale = (width + extra) / width;
+    if !scale.is_finite() {
+        return original;
+    }
+    (g.xf * Affine::scale_non_uniform(scale, 1.0), g.advance + extra)
 }
 
 /// The size image `im` is placed at: its pixel grid's sides through its transform.

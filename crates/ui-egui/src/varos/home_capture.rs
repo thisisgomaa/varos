@@ -1,64 +1,84 @@
-//! Test-only software capture of egui's real tessellated output when WindowServer is unavailable.
-//! Not native window acceptance; the optional PNGs are inspection evidence only.
+//! Deterministic software capture of the real Home surface (no native window required).
 use super::*;
 use std::collections::HashMap;
 
 #[test]
-#[ignore = "optional software visual capture; set VAROS_HOME_CAPTURE_DIR"]
-fn home_capture_at_desktop_and_compact_widths() {
-    let Some(root) = std::env::var_os("VAROS_HOME_CAPTURE_DIR").map(std::path::PathBuf::from) else { return };
-    std::fs::create_dir_all(&root).unwrap();
-    for (width, height) in [(1280, 800), (800, 800)] {
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        crate::theme::apply(&ctx, crate::theme::Brightness::Dark);
-        egui_extras::install_image_loaders(&ctx);
-        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
-        app.fonts_ready = true;
-        app.canvas.worker_started = true;
-        app.custom_titlebar = true;
-        let clients = root.join("Documents").join("Clients");
-        std::fs::create_dir_all(&clients).unwrap();
-        let recent = clients.join("Ramadan poster.vectorcraft");
-        std::fs::write(&recent, vectorcraft_format::save(&vectorcraft_doc::Document::new(100.0, 100.0), false)).unwrap();
-        app.ui.recent_files = vec![recent.to_string_lossy().into_owned(), "/private/tmp/Exploration/Icon set v3.svg".into()];
-        let mut textures = HashMap::<egui::TextureId, egui::ColorImage>::new();
-        let mut hover = None;
-        for frame in 0..3 {
-            let raw = egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width as f32, height as f32))),
-                max_texture_side: Some(8192),
-                events: hover.map(|p| vec![egui::Event::PointerMoved(p)]).unwrap_or_default(),
-                ..Default::default()
-            };
-            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
-            for (id, deltas) in &out.textures_delta.set {
-                for delta in deltas {
-                    let egui::ImageData::Color(image) = &delta.image;
-                    if let Some([x, y]) = delta.pos {
-                        let target = textures.get_mut(id).unwrap();
-                        for row in 0..image.size[1] {
-                            for col in 0..image.size[0] {
-                                target.pixels[(y + row) * target.size[0] + x + col] = image.pixels[row * image.size[0] + col];
-                            }
+#[ignore = "visual evidence; set VAROS_HOME_CAPTURE_SIMPLE to the output PNG"]
+fn home_capture_simple() {
+    let Some(output) = std::env::var_os("VAROS_HOME_CAPTURE_SIMPLE").map(std::path::PathBuf::from) else { return };
+    let root = std::env::temp_dir().join(format!("varos-home-capture-{}", std::process::id()));
+    let projects = [root.join("Ramadan campaign"), root.join("Client — Nile Studio")];
+    for path in &projects {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    crate::theme::apply(&ctx, crate::theme::Brightness::Dark);
+    egui_extras::install_image_loaders(&ctx);
+    let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+    app.ui.home_preferences.projects = projects.to_vec();
+    let tokens = Tokens::get(&ctx);
+    let color = |c: Color32| format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b());
+    for (i, name) in ["Poster-A.varos", "Logo.varos", "غلاف الكتاب.varos", "Brand-sheet.varos"].iter().enumerate() {
+        app.run("file.new", json!({"width":600,"height":450})).unwrap();
+        app.run("shape.rectangle", json!({"x":40,"y":40,"width":250,"height":330})).unwrap();
+        app.run("paint.setFill", json!({"color":color(tokens.button)})).unwrap();
+        app.run("stroke.set", json!({"weight":0})).unwrap();
+        app.run("shape.ellipse", json!({"x":340,"y":130,"width":120,"height":120})).unwrap();
+        app.run("paint.setFill", json!({"color":color(tokens.accent)})).unwrap();
+        app.run("stroke.set", json!({"weight":0})).unwrap();
+        let path = projects[i % 2].join(name);
+        let doc = &app.session.active().unwrap().doc;
+        std::fs::write(&path, vectorcraft_format::save(doc, false)).unwrap();
+        let age = [120, 86400, 4 * 86400, 7 * 86400][i];
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age)))
+            .unwrap();
+        cache_document(path.to_str().unwrap());
+        app.ui.recent_files.push(path.to_string_lossy().into_owned());
+    }
+    app.run("app.home", json!({})).unwrap();
+    app.ui.status.clear();
+    let minute = vectorcraft_doc::metadata::now_unix().unwrap() / 60;
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("home-identity"), (minute, "Ahmed".to_string(), 19_u32)));
+    let mut textures = HashMap::<egui::TextureId, egui::ColorImage>::new();
+    for frame in 0..4 {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 900.0))),
+            max_texture_side: Some(8192),
+            time: Some(frame as f64 / 60.0),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| show(&mut app, ui, Rect::from_min_size(egui::Pos2::ZERO, vec2(1440.0, 900.0))));
+        for (id, deltas) in &out.textures_delta.set {
+            for delta in deltas {
+                let egui::ImageData::Color(image) = &delta.image;
+                if let Some([x, y]) = delta.pos {
+                    let target = textures.get_mut(id).unwrap();
+                    for row in 0..image.size[1] {
+                        for col in 0..image.size[0] {
+                            target.pixels[(y + row) * target.size[0] + x + col] = image.pixels[row * image.size[0] + col];
                         }
-                    } else {
-                        textures.insert(*id, (**image).clone());
                     }
+                } else {
+                    textures.insert(*id, (**image).clone());
                 }
             }
-            out.textures_delta.clear(); // Texture updates above are applied to the software atlas.
-            hover = out.shapes.iter().find_map(|s| match &s.shape {
-                egui::Shape::Text(t) if t.galley.text() == "Post" => Some(t.visual_bounding_rect().center() - vec2(0.0, 45.0)),
-                _ => None,
-            });
-            if frame == 2 {
-                let meshes = ctx.tessellate(out.shapes, out.pixels_per_point);
-                let pixels = raster(&meshes, &textures, width, height);
-                image::save_buffer(root.join(format!("home-{width}.png")), &pixels, width, height, image::ColorType::Rgba8).unwrap();
+        }
+        out.textures_delta.clear();
+        if frame == 3 {
+            let meshes = ctx.tessellate(out.shapes, out.pixels_per_point);
+            let pixels = raster(&meshes, &textures, 1440, 900);
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent).unwrap();
             }
+            image::save_buffer(&output, &pixels, 1440, 900, image::ColorType::Rgba8).unwrap();
         }
     }
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 pub(crate) fn raster(meshes: &[egui::ClippedPrimitive], textures: &HashMap<egui::TextureId, egui::ColorImage>, w: u32, h: u32) -> Vec<u8> {
