@@ -20,6 +20,11 @@
 //! show is saved as its low-resolution preview (`"proxy": true`), unless saved with Include Linked
 //! Files; the engine reads the linked file again when the document opens.
 //!
+//! v5 saves a project as `pages: [{id, name, doc, images}]` and `active_page` (a zero-based
+//! index). Every page keeps its independent resources; large entries share the v4 blob tail.
+//! The pure `migrate_v4_to_v5_pages` migration wraps a legacy document in "Page 1".
+//! Older readers refuse v5; exporting v1–v4 is supported only for single-page projects.
+//!
 //! Versions: v1 wrote anchors as `{p: {x, y}, in: {x, y}, out: {x, y}, kind}`; v2 as
 //! `{p: [x, y], in?, out?, kind?}` with default-valued fields left out; v3 keeps the assigned colour
 //! profiles in `document.color_profiles` (before: `document.unknown.colorProfiles`) and may be
@@ -34,6 +39,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod atomic;
 mod legacy;
+mod project;
+pub use project::{Page, Project, migrate_v4_to_v5_pages, save_project, save_project_to};
 mod stream;
 mod unpack;
 // Varos: why the last file write failed, by kind (a Save to a read-only location goes on as Save As).
@@ -55,8 +62,8 @@ pub use atomic::{sync_file, write_atomic, write_atomic_with, write_new_with};
 use stream::{Gz, Indent, KeyScan, Out};
 pub use write_failure::{refuses_writes, take_write_failure}; // Varos
 
-/// v4: large data after the JSON (v1 to v3 files still load).
-pub const VERSION: u32 = 4;
+/// v5: projects containing pages; v1–v4 migrate to a single page.
+pub const VERSION: u32 = 5;
 /// Data this large or larger goes after the JSON (v4), not into it as base64.
 pub const INLINE_MAX: usize = 8 << 10;
 /// What separates the JSON from the data after it (v4).
@@ -213,7 +220,12 @@ fn split_tail(text: &[u8]) -> (&[u8], &[u8]) {
 struct File {
     format: String,
     version: u32,
-    document: Document,
+    #[serde(default)]
+    document: Option<Document>,
+    #[serde(default)]
+    pages: Option<Vec<project::FilePage>>,
+    #[serde(default)]
+    active_page: usize,
     #[serde(default)]
     images: BTreeMap<String, Image>,
     #[serde(default)]
@@ -313,7 +325,7 @@ fn body(doc: &Document, o: &SaveOptions) -> Result<Body, FormatError> {
     let mut d = doc.without_edit_modes().into_owned();
     // Older apps don't know placed documents: they get the art the objects show, with its
     // resources. Otherwise resources only exporting adds are never saved.
-    if version < VERSION && d.has_placed() {
+    if version < 4 && d.has_placed() {
         d = d.with_placed_art().into_owned();
         d.placed_as_groups();
     } else {
@@ -371,6 +383,9 @@ const JSON_CHUNK: usize = 64 << 10;
 /// is never held in memory as a whole. Give it a buffered writer. On an error `w` has part of a
 /// file: write to a temporary file ([`write_atomic_with`]).
 pub fn save_to(doc: &Document, o: &SaveOptions, w: impl Write) -> Result<(), FormatError> {
+    if o.version >= 5 {
+        return save_project_to(&migrate_v4_to_v5_pages(doc.clone()), o, w);
+    }
     o.check()?;
     let pretty = o.pretty && !o.compress;
     let Body { d, v1, blobs, linked } = body(doc, o)?;
@@ -526,6 +541,7 @@ pub fn load(bytes: &[u8]) -> Result<Document, FormatError> {
 /// A native file read: its document, what it says about itself and the colour profiles it carries.
 #[derive(Debug)]
 pub struct NativeFile {
+    pub project: Project,
     pub doc: Document,
     /// What was done to bring the document within the nesting caps
     /// ([`Document::limit_depth_noting`]: a file saved before them, or a damaged one).
@@ -573,7 +589,18 @@ pub fn load_file(bytes: &[u8]) -> Result<NativeFile, FormatError> {
         return Err(FormatError::TooNew(f.version));
     }
     // The bytes after the JSON, read in one pass: the images' first, then the profiles'.
-    let entries: Vec<[u64; 2]> = f.images.values().chain(f.profiles.values()).filter_map(|i| i.blob).collect();
+    let mut pages = match f.pages {
+        Some(pages) if f.version >= 5 && f.document.is_none() && f.images.is_empty() => pages,
+        None if f.version < 5 => {
+            let doc = f.document.ok_or_else(|| FormatError::NotVectorcraft("missing document".into()))?;
+            let mut migrated = migrate_v4_to_v5_pages(doc).pages.into_iter();
+            let page = migrated.next().ok_or_else(|| FormatError::NotVectorcraft("missing migrated page".into()))?;
+            vec![project::FilePage { id: page.id, name: page.name, doc: page.doc, images: f.images }]
+        }
+        _ => return Err(FormatError::NotVectorcraft("invalid project envelope".into())),
+    };
+    project::validate_pages(pages.iter().map(|p| (p.id.as_str(), p.name.as_str())), f.active_page)?;
+    let entries: Vec<[u64; 2]> = pages.iter().flat_map(|p| p.images.values()).chain(f.profiles.values()).filter_map(|i| i.blob).collect();
     let tail = file.entries(&entries)?;
     // Entries naming the same bytes share them; a profile's own copy of shared bytes counts
     // against the data's size, so copies never add up to more than the file has (#3574).
@@ -584,42 +611,45 @@ pub fn load_file(bytes: &[u8]) -> Result<NativeFile, FormatError> {
         Some(_) => tail.next().flatten(),
         None => img.inline().map(Arc::new),
     };
-    let mut doc = f.document;
-    for (k, img) in f.images {
-        let bytes = bytes_of(&img).ok_or_else(|| FormatError::BadImage(k.clone()))?;
-        let mut blob = ImageBlob { mime: img.mime, bytes, proxy: None };
-        // Until the linked file is read, the preview stands in for it.
-        if img.proxy {
-            blob.proxy = Some(blob.bytes.clone());
+    for page in &mut pages {
+        for (k, img) in std::mem::take(&mut page.images) {
+            let bytes = bytes_of(&img).ok_or_else(|| FormatError::BadImage(k.clone()))?;
+            let mut blob = ImageBlob { mime: img.mime, bytes, proxy: None };
+            if img.proxy {
+                blob.proxy = Some(blob.bytes.clone());
+            }
+            page.doc.images.insert(k, blob);
         }
-        doc.images.insert(k, blob);
     }
-    // Saved mid-edit by an older version: drop the opacity-mask editing layer.
-    doc.drop_edit_modes();
-    // Saved before per-fill/stroke overprint: the Overprint Black list becomes overprint flags.
-    doc.migrate_overprint_black();
-    // Saved before v3: the assigned profiles move out of `unknown`.
-    doc.migrate_color_profiles();
-    doc.fix_next_id();
-    // Untrusted: the bleed and type proportions, within the ranges Document Setup takes.
-    doc.setup.keep_in_range();
-    // Untrusted: capped, named and pointing at objects the file has.
-    doc.tidy_saved_selections();
-    doc.tidy_graph_designs();
-    doc.raster_effects.add_around = doc.raster_effects.add_around.clamp(0.0, vectorcraft_doc::rastersettings::MAX_ADD_AROUND);
     let mut depth_notes = vec![];
-    doc.limit_depth_noting(&mut depth_notes);
-    // Untrusted: the type's sizes, leading, baseline shifts and scales, its indents and paragraph
-    // spacing, and its tab stops, each within its range (after the depth limit: the walk recurses).
-    doc.keep_type_values_in_range();
-    // Untrusted: ruby ranges over the type's text, clamped to it (after the depth limit too).
-    doc.fix_ruby();
-    // Untrusted: the raster effects resolution, within 1 to 2400 ppi (72 when it isn't finite).
-    doc.raster_effects_ppi = Some(doc.raster_effects_ppi).filter(|v| v.is_finite()).unwrap_or(72.0).clamp(1.0, 2400.0);
-    // Untrusted: the superscript, subscript and small caps proportions of the type, the graph
-    // labels and the character styles, within the ranges `document.setup` takes (after the depth
-    // limit: the walk recurses).
-    doc.keep_scripts_in_range();
+    for page in &mut pages {
+        let doc = &mut page.doc;
+        // Saved mid-edit by an older version: drop the opacity-mask editing layer.
+        doc.drop_edit_modes();
+        // Saved before per-fill/stroke overprint: the Overprint Black list becomes overprint flags.
+        doc.migrate_overprint_black();
+        // Saved before v3: the assigned profiles move out of `unknown`.
+        doc.migrate_color_profiles();
+        doc.fix_next_id();
+        // Untrusted: the bleed and type proportions, within the ranges Document Setup takes.
+        doc.setup.keep_in_range();
+        // Untrusted: capped, named and pointing at objects the file has.
+        doc.tidy_saved_selections();
+        doc.tidy_graph_designs();
+        doc.raster_effects.add_around = doc.raster_effects.add_around.clamp(0.0, vectorcraft_doc::rastersettings::MAX_ADD_AROUND);
+        doc.limit_depth_noting(&mut depth_notes);
+        // Untrusted: the type's sizes, leading, baseline shifts and scales, its indents and paragraph
+        // spacing, and its tab stops, each within its range (after the depth limit: the walk recurses).
+        doc.keep_type_values_in_range();
+        // Untrusted: ruby ranges over the type's text, clamped to it (after the depth limit too).
+        doc.fix_ruby();
+        // Untrusted: the raster effects resolution, within 1 to 2400 ppi (72 when it isn't finite).
+        doc.raster_effects_ppi = Some(doc.raster_effects_ppi).filter(|v| v.is_finite()).unwrap_or(72.0).clamp(1.0, 2400.0);
+        // Untrusted: the superscript, subscript and small caps proportions of the type, the graph
+        // labels and the character styles, within the ranges `document.setup` takes (after the depth
+        // limit: the walk recurses).
+        doc.keep_scripts_in_range();
+    }
     let profiles = f
         .profiles
         .into_iter()
@@ -632,7 +662,9 @@ pub fn load_file(bytes: &[u8]) -> Result<NativeFile, FormatError> {
             }
         })
         .collect::<Result<_, FormatError>>()?;
-    Ok(NativeFile { doc, depth_notes, info: FileInfo { version: f.version, legacy: f.format == LEGACY_EXTENSION }, profiles })
+    let project = Project { pages: pages.into_iter().map(|p| Page { id: p.id, name: p.name, doc: p.doc }).collect(), active: f.active_page };
+    let doc = project.pages.get(project.active).ok_or_else(|| FormatError::NotVectorcraft("missing active page".into()))?.doc.clone();
+    Ok(NativeFile { project, doc, depth_notes, info: FileInfo { version: f.version, legacy: f.format == LEGACY_EXTENSION }, profiles })
 }
 
 /// The members of a native file besides its document (which is skipped, not decoded).
@@ -754,7 +786,8 @@ mod tests {
         let text = String::from_utf8(current).unwrap();
         let legacy = text.replacen("\"format\":\"vectorcraft\"", "\"format\":\"drawcraft\"", 1);
         assert!(load_info(legacy.as_bytes()).unwrap().1.is_old());
-        let v1 = text.replacen(&format!("\"version\":{VERSION}"), "\"version\":1", 1);
+        let v1 =
+            String::from_utf8(save_with(&d, &SaveOptions { version: 1, ..Default::default() }).unwrap()).unwrap().replace("drawcraft", "vectorcraft");
         assert_eq!(load_info(v1.as_bytes()).unwrap().1, FileInfo { version: 1, legacy: false });
         assert!(load_info(v1.as_bytes()).unwrap().1.is_old());
     }

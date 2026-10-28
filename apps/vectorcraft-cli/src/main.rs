@@ -94,6 +94,7 @@ USAGE:
   vectorcraft-cli commands
       Print the command catalogue as JSON.
 
+  vectorcraft-cli pages FILE
   vectorcraft-cli convert IN OUT [--scale N] [--artboard I | --range R] [--outline-text] [--decimals N] [--replace-lossy] [--editing-data] [--preserve-editing] [--ai-version 7|pdf] [--hidden-objects layer|omit|visible] [--transparent-images flatten|omit]
       Open IN (any readable format) and export OUT in the format its extension picks (see Writable
       formats). --scale sizes a raster OUT (pixels per point, default 1); other formats leave it
@@ -201,6 +202,7 @@ fn main() -> ExitCode {
         Some("bench") => bench(&args[1..]),
         Some("perf") => perf::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => help(),
+        Some("pages") => pages(&args[1..]),
         Some("-V" | "--version") => {
             outln!("vectorcraft-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -647,5 +649,20 @@ fn bench(args: &[String]) -> Result<(), String> {
             r.stats.culled
         );
     }
+    Ok(())
+}
+
+fn pages(args: &[String]) -> Result<(), String> {
+    let [path] = args else { return Err("usage: vectorcraft-cli pages FILE".into()) };
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let file = vectorcraft_format::load_file(&bytes).map_err(|e| e.to_string())?;
+    let rows: Vec<_> = file
+        .project
+        .pages
+        .iter()
+        .enumerate()
+        .map(|(i, p)| json!({"page_id":p.id,"page_name":p.name,"active":i == file.project.active,"artboards":p.doc.artboards.len()}))
+        .collect();
+    outln!("{}", serde_json::to_string_pretty(&rows).map_err(|e| e.to_string())?);
     Ok(())
 }

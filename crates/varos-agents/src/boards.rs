@@ -225,9 +225,12 @@ fn walk_refs(v: &mut Value, named: &mut Option<String>, given: bool) -> Result<(
 /// Board revisions that move only with content: a board's number goes up when its document value
 /// is not the one last seen (an edit, an undo to another state). Selecting, scrolling or saving
 /// leave it. Unchanged documents are one pointer comparison. Starts at 1.
+type PageContent = Vec<(String, String, Arc<Document>)>;
+
 #[derive(Default)]
 pub struct Revisions {
     seen: HashMap<u64, (u64, Arc<Document>)>,
+    projects: HashMap<u64, (u64, PageContent)>,
 }
 
 impl Revisions {
@@ -241,8 +244,18 @@ impl Revisions {
         entry.0
     }
 
+    /// Project revision excludes active page and selection/view state.
+    pub fn of_pages(&mut self, uid: u64, pages: PageContent) -> u64 {
+        let entry = self.projects.entry(uid).or_insert_with(|| (1, pages.clone()));
+        if entry.1.len() != pages.len() || !entry.1.iter().zip(&pages).all(|(a, b)| a.0 == b.0 && a.1 == b.1 && Arc::ptr_eq(&a.2, &b.2)) {
+            entry.0 += 1;
+            entry.1 = pages;
+        }
+        entry.0
+    }
     /// Forget the boards that closed.
     pub fn retain(&mut self, open: impl Fn(u64) -> bool) {
         self.seen.retain(|uid, _| open(*uid));
+        self.projects.retain(|uid, _| open(*uid));
     }
 }

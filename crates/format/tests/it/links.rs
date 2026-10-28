@@ -39,9 +39,9 @@ fn link_details_round_trip_and_linked_only_images_save_their_preview() {
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     let saved = |k: &str| {
         (
-            v["images"][k]["mime"].as_str().unwrap().to_string(),
-            base64_decode(v["images"][k]["data"].as_str().unwrap()).unwrap(),
-            v["images"][k]["proxy"].clone(),
+            v["pages"][0]["images"][k]["mime"].as_str().unwrap().to_string(),
+            base64_decode(v["pages"][0]["images"][k]["data"].as_str().unwrap()).unwrap(),
+            v["pages"][0]["images"][k]["proxy"].clone(),
         )
     };
     assert_eq!(saved("linked"), ("image/png".into(), vec![9, 9], Value::Bool(true)), "only linked images show it: the preview");
@@ -57,5 +57,5 @@ fn link_details_round_trip_and_linked_only_images_save_their_preview() {
     assert!(links.contains(&Some(link)), "{links:?}");
     // Saved again unread, the preview stays the preview.
     let again: Value = serde_json::from_slice(&save(&back, false)).unwrap();
-    assert_eq!(again["images"]["linked"], v["images"]["linked"]);
+    assert_eq!(again["pages"][0]["images"]["linked"], v["pages"][0]["images"]["linked"]);
 }

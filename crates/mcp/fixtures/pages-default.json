@@ -1,0 +1,20 @@
+{
+  "capabilities": {
+    "content": [
+      {
+        "text": "{\n  \"api\": \"varos-boards/1\",\n  \"boardFree\": [\n    \"list_boards\",\n    \"capabilities\",\n    \"command_list\",\n    \"list_commands\",\n    \"ui_inspect\",\n    \"inspect_ui\",\n    \"open_file\"\n  ],\n  \"boardIds\": \"\\\"<launch>-<n>\\\": stable while Varos runs, whatever happens to other tabs; an id from before a restart is refused as session_reset\",\n  \"boardScoped\": true,\n  \"errors\": {\n    \"board_not_found\": \"that board is not open any more; call list_boards. Nothing was run.\",\n    \"board_required\": \"name the board (list_boards); save, save_as and exports also need its current revision. Nothing was run.\",\n    \"needs_dialog\": \"the command opens a dialog; pass every option in the call (command_list shows them). Nothing was run.\",\n    \"person_busy\": \"the person is dragging or typing; retry in a moment. Nothing was run.\",\n    \"person_state\": \"the verb would change the person's tool, view, window, panels, dialogs or input (or close their boards); agents work through document verbs on explicit ids. Nothing was run.\",\n    \"read_only_location\": \"the file's folder or volume can't be written (a read-only disk, no permission); save_as to a folder that can be written. Nothing was written.\",\n    \"session_reset\": \"Varos restarted since the board id was read; call list_boards again. Nothing was run.\",\n    \"stale_revision\": \"the board changed since the revision you gave; read it again (doc_inspect / list_boards) and retry. Nothing was run.\",\n    \"target_changed\": \"the verb needs its board in front of the person and another board is in front now (the person switched tabs), or the request would have left its board. Nothing was run or kept; read the board again and retry.\",\n    \"write_in_batch\": \"a batch may not save or export: run the batch, then save or export in a call of its own with the revision the batch answered. Nothing was run.\",\n    \"wrong_board\": \"an object reference (\\\"<board>:<id>\\\") belongs to another board than the one named. Nothing was run.\"\n  },\n  \"frontOnly\": [\n    \"ui_screenshot\"\n  ],\n  \"objectRefs\": \"\\\"<board>:<id>\\\": object ids carry their board; one of another board is refused as wrong_board\",\n  \"personsOnly\": [\n    \"pointer_gesture\",\n    \"press_key\",\n    \"type_text\",\n    \"select_tool\",\n    \"open_panel\"\n  ],\n  \"resources\": \"vectorcraft://board/<board>/document, vectorcraft://board/<board>/document/json, vectorcraft://board/<board>/object/<id or <board>:<id>>, vectorcraft://board/<board>/swatch/<name>, vectorcraft://board/<board>/effect/<id>; vectorcraft://commands and vectorcraft://command/<id> need no board\",\n  \"revision\": \"the board's content revision: it moves when the art changes (anyone's edit, undo), not when the person selects or scrolls\",\n  \"rule\": \"All verbs are board-scoped: pass `board` (a stable id from list_boards) with every call that reads or changes a document, and `revision` too when saving or exporting (save_file, export, command_run file.save / file.saveAs / document.export*, screenshot or render to a path). Varos never falls back to the tab in front. Object ids come back as \\\"<board>:<id>\\\" references; pass them as they are. Every reply carries `varos: {board, revision, front, opened}`: use that revision next. The person's tab, tool, selection, view and dialogs are never touched: each agent has its own selection per board, so act on explicit ids. Batches stay on their board and never save or export; save or export in a call of its own. Resources of a board are read as vectorcraft://board/<board>/document, .../object/<id>, .../swatch/<name>.\"\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false
+  },
+  "list_boards": {
+    "content": [
+      {
+        "text": "{\n  \"boards\": [\n    {\n      \"board\": \"fixture-1\",\n      \"front\": true\n    },\n    {\n      \"board\": \"fixture-2\",\n      \"front\": false\n    }\n  ]\n}",
+        "type": "text"
+      }
+    ],
+    "isError": false
+  }
+}

@@ -454,6 +454,12 @@ pub(crate) fn settle_interaction(s: &mut Session) -> Result<()> {
 
 fn undo(s: &mut Session, _: &Value) -> Result<Value> {
     settle_interaction(s)?;
+    if s.project()?.page_history_label(false).is_some() {
+        s.reset_tool_for_doc_switch();
+        if let Some(label) = s.project_mut()?.turn_page_history(false) {
+            return Ok(json!({"undone": label}));
+        }
+    }
     let menu = s.menu.clone();
     let st = s.doc_mut()?;
     let e = st.history.undo.pop().ok_or_else(|| EngineError::Other("nothing to undo".into()))?;
@@ -481,6 +487,12 @@ fn undo(s: &mut Session, _: &Value) -> Result<Value> {
 
 fn redo(s: &mut Session, _: &Value) -> Result<Value> {
     settle_interaction(s)?;
+    if s.project()?.page_history_label(true).is_some() {
+        s.reset_tool_for_doc_switch();
+        if let Some(label) = s.project_mut()?.turn_page_history(true) {
+            return Ok(json!({"redone": label}));
+        }
+    }
     let menu = s.menu.clone();
     let st = s.doc_mut()?;
     let e = st.history.redo.pop().ok_or_else(|| EngineError::Other("nothing to redo".into()))?;

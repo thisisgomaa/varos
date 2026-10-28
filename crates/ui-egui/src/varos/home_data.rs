@@ -130,7 +130,12 @@ pub(super) fn cache_root() -> Option<PathBuf> {
     {
         None
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), test))]
+    {
+        // Tests must neither depend on nor populate the person's application cache.
+        Some(std::env::temp_dir().join(format!("varos-home-test-thumbs-{}-{:?}", std::process::id(), std::thread::current().id())))
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(test)))]
     {
         std::env::var_os("HOME").filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join("Library/Application Support/Varos/thumbs"))
     }

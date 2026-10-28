@@ -2166,8 +2166,22 @@ pub fn dynamic_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
         "select.globalEdit" => {
             if app.session.active().is_some_and(|d| d.global_edit.is_some()) { "Stop Global Edit" } else { "Start Global Edit" }.into()
         }
-        "edit.undo" => app.session.active().and_then(|d| d.history.undo.last()).map(|h| format!("Undo {}", h.label)).unwrap_or_else(|| "Undo".into()),
-        "edit.redo" => app.session.active().and_then(|d| d.history.redo.last()).map(|h| format!("Redo {}", h.label)).unwrap_or_else(|| "Redo".into()),
+        "edit.undo" => app
+            .session
+            .project()
+            .ok()
+            .and_then(|p| p.page_history_label(false))
+            .map(|label| format!("Undo {label}"))
+            .or_else(|| app.session.active().and_then(|d| d.history.undo.last()).map(|h| format!("Undo {}", h.label)))
+            .unwrap_or_else(|| "Undo".into()),
+        "edit.redo" => app
+            .session
+            .project()
+            .ok()
+            .and_then(|p| p.page_history_label(true))
+            .map(|label| format!("Redo {label}"))
+            .or_else(|| app.session.active().and_then(|d| d.history.redo.last()).map(|h| format!("Redo {}", h.label)))
+            .unwrap_or_else(|| "Redo".into()),
         id if id.starts_with(crate::panels::swatches::USER_SLOT) => {
             crate::panels::swatches::user_library(app, id).map_or_else(|| "—".into(), |l| l.name)
         }
@@ -2228,6 +2242,9 @@ pub fn display_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
     let fmt = crate::i18n::fmt;
     match id {
         "edit.undo" | "edit.redo" => {
+            if let Some(label) = app.session.project().ok().and_then(|p| p.page_history_label(id == "edit.redo")) {
+                return fmt(tl!(if id == "edit.undo" { "Undo {name}" } else { "Redo {name}" }), &[("name", tl!(label))]);
+            }
             let last = app.session.active().and_then(|d| if id == "edit.undo" { d.history.undo.last() } else { d.history.redo.last() });
             // The step's name as the History panel lists it.
             let name = crate::panels::history::shown;
@@ -4630,6 +4647,19 @@ mod tests {
     /// Edit › Undo and Edit › Redo name the step in the UI language as the History panel lists it
     /// (`panels::history::step_name`), including a step named after an effect whose catalog holds
     /// only the effect's menu row with an ellipsis, as Japanese does for Feather.
+    #[test]
+    fn undo_and_redo_name_page_operations() {
+        crate::i18n::set_current(crate::i18n::Lang::from_code("en").unwrap());
+        let mut app = app_with_a_rectangle();
+        app.run("page.add", json!({})).unwrap();
+        app.run("page.delete", json!({"page":0})).unwrap();
+        assert_eq!(dynamic_label(&app, "edit.undo", ""), "Undo Delete Page");
+        assert_eq!(display_label(&app, "edit.undo", ""), "Undo Delete Page");
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(dynamic_label(&app, "edit.redo", ""), "Redo Delete Page");
+        assert_eq!(display_label(&app, "edit.redo", ""), "Redo Delete Page");
+    }
+
     #[test]
     fn undo_and_redo_name_the_step_as_the_history_panel_does() {
         let ja = crate::i18n::Lang::from_code("ja").expect("ja registered");

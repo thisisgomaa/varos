@@ -530,3 +530,25 @@ fn a_batch_that_writes_a_file_is_refused() {
     assert!(Arc::ptr_eq(&doc(&app, a), &before), "nothing ran");
     assert!(!out.exists());
 }
+
+#[test]
+fn pages_target_edits_another_canvas_and_restores_the_persons_page() {
+    let (mut app, tx) = app();
+    app.run("file.new", json!({"width":200,"height":200})).unwrap();
+    app.run("page.add", json!({"name":"Second"})).unwrap();
+    let uid = app.session.active().unwrap().uid;
+    let page = app.session.project().unwrap().pages()[1].id.clone();
+    let before = app.session.doc().unwrap().doc.node_count();
+    let result = request(&mut app, &tx, agent(Some(json!({"board":board_id(uid),"page":page}))), "engine.execute", rect(20));
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(app.session.project().unwrap().active_page(), 0);
+    assert_eq!(app.session.doc().unwrap().doc.node_count(), before);
+    assert!(app.session.project().unwrap().pages()[1].doc.doc.node_count() > before);
+    let old = request(&mut app, &tx, agent(None), varos_agents::boards::LIST, json!({}));
+    assert!(old["result"]["boards"][0].get("pages").is_none());
+    let new = request(&mut app, &tx, agent(None), varos_agents::boards::LIST, json!({"pages":true}));
+    assert_eq!(new["result"]["boards"][0]["pages"][1]["page_name"], "Second");
+    let missing = request(&mut app, &tx, agent(Some(json!({"board":board_id(uid),"page":"missing"}))), "engine.execute", rect(20));
+    assert_eq!(missing["ok"], false);
+    assert_eq!(app.session.project().unwrap().active_page(), 0);
+}

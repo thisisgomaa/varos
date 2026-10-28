@@ -615,6 +615,7 @@ fn lock(s: &mut Session, p: &Value) -> Result<Value> {
 /// Locked or hidden slices can't stay selected, in any open document ([`crate::deselect_hidden`]).
 fn deselect_in_every_document(s: &mut Session) {
     for st in &mut s.docs {
+        let st: &mut crate::DocState = st;
         if crate::deselect_hidden(&s.menu, &st.doc, &mut st.selection) {
             st.revision += 1;
         }

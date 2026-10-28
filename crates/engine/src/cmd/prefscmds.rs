@@ -585,7 +585,7 @@ impl Session {
             vectorcraft_text::set_hyphenation_exceptions(&self.prefs.hyphenation_exceptions);
         }
         vectorcraft_render::set_default_threads(u16::try_from(self.prefs.render_threads).ok());
-        for st in &mut self.docs {
+        for st in self.docs.iter_mut().flat_map(crate::Project::page_states_mut) {
             if history_changed {
                 st.history.limit = self.prefs.history_states as usize;
                 st.history.trim();

@@ -617,6 +617,7 @@ fn lock_guides(s: &mut Session, p: &Value) -> Result<Value> {
     if v {
         let active = s.active;
         for (i, st) in s.docs.iter_mut().enumerate() {
+            let st: &mut crate::DocState = st;
             if Some(i) != active && crate::deselect_hidden(&s.menu, &st.doc, &mut st.selection) {
                 st.revision += 1;
             }

@@ -53,6 +53,7 @@ pub(crate) mod objects_on_path;
 mod opacitymask;
 mod overprint;
 pub mod package;
+mod pages;
 mod paint;
 mod panelcmds;
 pub mod params;
@@ -183,9 +184,15 @@ pub fn has_multi(s: &Session) -> std::result::Result<(), String> {
     if st.selection.len() < 2 { Err("select at least two objects".into()) } else { Ok(()) }
 }
 pub fn can_undo(s: &Session) -> std::result::Result<(), String> {
+    if s.project().ok().and_then(|p| p.page_history_label(false)).is_some() {
+        return Ok(());
+    }
     s.active().filter(|d| !d.history.undo.is_empty()).map(|_| ()).ok_or_else(|| "nothing to undo".into())
 }
 pub fn can_redo(s: &Session) -> std::result::Result<(), String> {
+    if s.project().ok().and_then(|p| p.page_history_label(true)).is_some() {
+        return Ok(());
+    }
     s.active().filter(|d| !d.history.redo.is_empty()).map(|_| ()).ok_or_else(|| "nothing to redo".into())
 }
 /// The active document has a step to undo or to redo (Clear History).
@@ -309,6 +316,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(perspgrid::specs());
         v.extend(shortcutset::specs());
         v.extend(importmatches::specs());
+        v.extend(pages::specs());
         v.extend(varos_arabic::specs()); // Varos
         v
     })
