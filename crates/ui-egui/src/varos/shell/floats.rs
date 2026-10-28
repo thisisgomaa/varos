@@ -157,7 +157,17 @@ fn button(ui: &mut egui::Ui, rect: Rect, id: Id, glyph: &str, label: &str, t: &T
         ui.painter().rect_filled(rect, CornerRadius::same(3), t.hover);
     }
     let color = if response.hovered() { t.text_strong } else { t.text_dim };
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(super::tokens::CHROME_GLYPH), color);
+    crate::icons::paint(
+        ui,
+        match glyph {
+            "×" => "x",
+            "<<" => "chevrons-left",
+            ">>" => "chevrons-right",
+            _ => "ellipsis",
+        },
+        Rect::from_center_size(rect.center(), vec2(16.0, 16.0)),
+        color,
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     response.on_hover_text(label).clicked()
 }

@@ -141,7 +141,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
 
 /// Stage 5 host: the existing tools and popovers, inside the Board's strip.
 pub(crate) fn shell_body(app: &mut VectorcraftApp, ui: &mut Ui) {
-    body(app, ui, 1, None);
+    body(app, ui, usize::from(app.ui.varos_shell.tools_columns.clamp(1, 3)), None);
 }
 
 pub(crate) fn shell_popovers(app: &mut VectorcraftApp, ctx: &egui::Context, region: egui::Rect) {
@@ -211,12 +211,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
         while i < all.len() {
             if shell && all[i].0.is_some() {
                 let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), crate::varos::shell::strip::GRIP), Sense::hover());
-                ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, t.border));
-                for y in [4.0, 8.0] {
-                    for x in [-4.0, 0.0, 4.0] {
-                        ui.painter().circle_filled(pos2(r.center().x + x, r.top() + y), 0.7, t.text_dim);
-                    }
-                }
+                ui.painter().hline((r.center().x - 10.0)..=(r.center().x + 10.0), r.center().y, Stroke::new(1.0, t.border));
             } else if all[i].0.is_some() && !labels {
                 // User Interface › Show Tool Group Labels off: the tools run on from group to group,
                 // in one column or two (as the reference's Basic toolbar in two), with nothing
@@ -232,7 +227,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
             // One row = `cols` slots (a category label always starts a new row; without labels,
             // nothing does).
             let mut row = vec![i];
-            while row.len() < cols && i + row.len() < all.len() && (all[i + row.len()].0.is_none() || !labels) {
+            while row.len() < cols && i + row.len() < all.len() && (all[i + row.len()].0.is_none() || (!labels && !shell)) {
                 row.push(i + row.len());
             }
             ui.horizontal(|ui| {
@@ -240,7 +235,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
                 // Centred on the panel's inside (`bounds`: within its border and, docked, the
                 // separator line egui reserves on its right), not on `WIDTH`, which sat them 2½ pt
                 // right of centre docked; nor on this row, which the scroll area starts ½ pt in.
-                ui.add_space((bounds.center().x - cols as f32 * if shell { 17.0 } else { 18.0 } - ui.cursor().min.x).max(0.0));
+                ui.add_space((bounds.center().x - cols as f32 * if shell { 14.0 } else { 18.0 } - ui.cursor().min.x).max(0.0));
                 for &k in &row {
                     let slot = &all[k].1;
                     let shown_id = if slot.contains(&active) {
@@ -250,14 +245,15 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
                     };
                     let Some(shown) = tool_info(&shown_id).or_else(|| tool_info(slot[0])) else { continue };
                     let is_active = slot.contains(&active);
-                    let (rect, resp) = ui.allocate_exact_size(vec2(if shell { 34.0 } else { 36.0 }, PITCH - 1.0), Sense::click_and_drag());
-                    let well = egui::Rect::from_center_size(rect.center(), vec2(30.0, 27.5));
+                    let (rect, resp) = ui
+                        .allocate_exact_size(vec2(if shell { 28.0 } else { 36.0 }, if shell { 28.0 } else { PITCH - 1.0 }), Sense::click_and_drag());
+                    let well = egui::Rect::from_center_size(rect.center(), if shell { vec2(28.0, 28.0) } else { vec2(30.0, 27.5) });
                     if is_active {
                         ui.painter().rect_filled(well, CornerRadius::same(6), t.tool_active);
                     } else if resp.hovered() {
                         ui.painter().rect_filled(well, CornerRadius::same(6), t.hover);
                     }
-                    let ir = egui::Rect::from_center_size(rect.center(), vec2(18.0, 18.0));
+                    let ir = egui::Rect::from_center_size(rect.center(), if shell { vec2(16.0, 16.0) } else { vec2(18.0, 18.0) });
                     icons::paint(
                         ui,
                         // Varos: distinct tool variants.
@@ -266,8 +262,12 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
                         if is_active { t.text_strong } else { t.icon },
                     );
                     if slot.len() > 1 {
-                        let c = rect.center() + vec2(12.5, 10.0);
-                        ui.painter().add(egui::Shape::convex_polygon(vec![c, c + vec2(-3.5, 0.0), c + vec2(0.0, -3.5)], t.icon, Stroke::NONE));
+                        let c = if shell { rect.right_bottom() - vec2(3.0, 3.0) } else { rect.center() + vec2(12.5, 10.0) };
+                        ui.painter().add(egui::Shape::convex_polygon(
+                            vec![c, c + vec2(if shell { -3.0 } else { -3.5 }, 0.0), c + vec2(0.0, if shell { -3.0 } else { -3.5 })],
+                            t.icon,
+                            Stroke::NONE,
+                        ));
                     }
                     if editing {
                         buttons.push((k, rect));
@@ -604,7 +604,20 @@ pub(crate) fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens,
         // Edit Toolbar: the All Tools drawer opens beside the toolbar, by this button.
         let edit = widgets::icon_button(ui, "ellipsis", "Edit Toolbar", app.ui.tools_drawer, 26.0);
         ui.data_mut(|d| d.insert_temp(crate::edit_toolbar::button_id(), edit.rect));
-        if edit.clicked() {
+        if crate::varos::shell::enabled(app) {
+            egui::Popup::menu(&edit).show(|ui| {
+                for (n, label) in [(1, tl!("1 column")), (2, tl!("2 columns")), (3, tl!("3 columns"))] {
+                    if ui.selectable_label(app.ui.varos_shell.tools_columns == n, label).clicked() {
+                        app.ui.varos_shell.tools_columns = n;
+                        ui.close();
+                    }
+                }
+                if ui.button(tl!("Edit Toolbar")).clicked() {
+                    app.run("window.editToolbar", json!({})).ok();
+                    ui.close();
+                }
+            });
+        } else if edit.clicked() {
             app.run("window.editToolbar", json!({})).ok();
         }
     });

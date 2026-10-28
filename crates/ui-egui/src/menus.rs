@@ -2034,7 +2034,13 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         // A View › Rotate View item is checked when the active view is turned to its angle; without
         // a document no item is checked.
         "view.rotate" => app.view().zip(p.get("angle").and_then(Value::as_f64)).is_some_and(|(view, a)| (view.rotation - a).abs() < 1e-9),
-        "window.control" => app.ui.control_bar,
+        "window.control" => {
+            if crate::varos::shell::enabled(app) {
+                crate::varos::shell::showing(app, "control")
+            } else {
+                app.ui.control_bar
+            }
+        }
         "window.toolbar" => app.ui.toolbar,
         "window.toolbarAdvanced" => app.ui.toolbar_advanced,
         "window.toolbarColumns" => app.ui.toolbar_double,

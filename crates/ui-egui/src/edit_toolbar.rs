@@ -478,6 +478,15 @@ pub(crate) fn drawer(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     }
                 }
             });
+            if crate::varos::shell::enabled(app) {
+                ui.horizontal(|ui| {
+                    for (n, label) in [(1, tl!("1 column")), (2, tl!("2 columns")), (3, tl!("3 columns"))] {
+                        if ui.selectable_label(app.ui.varos_shell.tools_columns == n, label).clicked() {
+                            app.ui.varos_shell.tools_columns = n;
+                        }
+                    }
+                });
+            }
             // Show: the controls under the toolbar's tools.
             ui.add_space(4.0);
             ui.separator();

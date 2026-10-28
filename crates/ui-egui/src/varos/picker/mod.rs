@@ -359,25 +359,32 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     }
     let mut y = origin.y + HEADER_H;
-    match prefs.tab {
-        Tab::Wheel => {
-            wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
-            y += wheel::BODY_H;
-        }
-        Tab::Sliders => {
-            sliders::show(ui, pos2(origin.x, y), &mut st, &v, &mut prefs, &mut acts);
-            y += sliders::body_height(prefs.mode);
-        }
-        Tab::Harmony => {
-            harmony::strip(ui, pos2(origin.x, y), &mut prefs);
-            y += harmony::STRIP_H;
-            wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
-            y += wheel::BODY_H;
-            harmony::chips(ui, pos2(origin.x, y), &st, &prefs, &mut acts);
-            y += harmony::extra_height(prefs.harmony) - harmony::STRIP_H;
-        }
-        Tab::Gradient => {}
-    }
+    ui.scope_builder(
+        egui::UiBuilder::new().ui_stack_info(if crate::varos::shell::enabled(app) {
+            egui::UiStackInfo::default().with_tag("simple-picker")
+        } else {
+            egui::UiStackInfo::default()
+        }),
+        |ui| match prefs.tab {
+            Tab::Wheel => {
+                wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
+                y += wheel::BODY_H;
+            }
+            Tab::Sliders => {
+                sliders::show(ui, pos2(origin.x, y), &mut st, &v, &mut prefs, &mut acts);
+                y += sliders::body_height(prefs.mode);
+            }
+            Tab::Harmony => {
+                harmony::strip(ui, pos2(origin.x, y), &mut prefs);
+                y += harmony::STRIP_H;
+                wheel::show(ui, pos2(origin.x, y), &mut st, &v, &prefs, &mut acts);
+                y += wheel::BODY_H;
+                harmony::chips(ui, pos2(origin.x, y), &st, &prefs, &mut acts);
+                y += harmony::extra_height(prefs.harmony) - harmony::STRIP_H;
+            }
+            Tab::Gradient => {}
+        },
+    );
     fields::row(ui, pos2(origin.x, y), &mut st, &v, prefs.tab == Tab::Sliders, &mut acts);
     y += fields::ROW_H;
     drawer::show(app, ui, pos2(origin.x, y), &mut prefs, &mut acts);
@@ -754,7 +761,17 @@ fn tallest(prefs: &Prefs) -> f32 {
 /// application dialog is open the picker stays visible but takes no input.
 pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(anchor) = app.ui.varos_picker_anchor else { return };
-    let screen = ctx.content_rect();
+    let mut screen = ctx.content_rect();
+    let shell = crate::varos::shell::enabled(app);
+    if shell {
+        for (hit, r) in crate::varos::shell::hit_rects(ctx) {
+            match hit {
+                crate::varos::shell::Hit::Tools if app.ui.varos_shell.tools_pos.is_none() => screen.min.x = screen.left().max(r.right() + 6.0),
+                crate::varos::shell::Hit::Strip => screen.max.x = screen.right().min(r.left() - 6.0),
+                _ => {}
+            }
+        }
+    }
     let h = height(&app.ui.varos_picker).min(screen.height());
     let tall = tallest(&app.ui.varos_picker).min(screen.height());
     let frame_nr = ctx.cumulative_frame_nr();
@@ -781,7 +798,9 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let y = y.min(screen.bottom() - h).max(screen.top());
     let id = popover_id();
     let area = egui::Area::new(id).kind(egui::UiKind::Modal).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).movable(false).fade_in(false);
-    let frame = egui::Frame::NONE.fill(Tokens::get(ctx).panel);
+    let t = Tokens::get(ctx);
+    let frame =
+        if shell { egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(10) } else { egui::Frame::NONE.fill(t.panel) };
     let body = |app: &mut VectorcraftApp, ui: &mut Ui| {
         ui.set_width(W);
         egui::ScrollArea::vertical().max_height(screen.height()).show(ui, |ui| show(app, ui));

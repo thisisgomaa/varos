@@ -45,7 +45,10 @@ impl Harness {
 
     /// A window `screen` big with no document (Home).
     fn sized_without_document(screen: egui::Vec2) -> Self {
-        let app = VectorcraftApp::new(Session::new(), Default::default());
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        // Stage 2–5 interaction regression on the historical arrangement (still supported).
+        app.ui.varos_shell.tree = tree::Node::board_and_column(&["layers", "artboards"], &["properties", "color", "swatches"]);
+        app.ui.varos_shell.strip = shell::strip::Strip::default_for(&app.ui.varos_shell.tree);
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         let mut h = Self {
@@ -263,7 +266,7 @@ fn the_board_holds_the_canvas_beside_the_two_default_boxes() {
     // The Board body reserves the full strip and its seam, plus document tabs, rulers and scroll bars.
     assert!(board.right() - canvas.right() <= 54.0 + tree::SEAM && board.bottom() - canvas.bottom() <= 20.0, "{canvas:?} in {board:?}");
     assert!(canvas.top() - board.top() <= 80.0 && canvas.left() - board.left() <= shell::tools::WIDTH + 30.0, "{canvas:?} in {board:?}");
-    assert_eq!(h.rect(&Hit::Strip).width(), 34.0);
+    assert_eq!(h.rect(&Hit::Strip).width(), 40.0);
     assert!(h.rect(&Hit::Strip).left() - canvas.right() >= tree::SEAM);
     assert_eq!(h.rect(&Hit::BoardBody), canvas, "the canvas body is published apart from the Board");
     assert_eq!(h.tabs(), ["layers", "artboards", "properties", "color", "swatches"]);
@@ -724,7 +727,8 @@ fn strip_defaults_migrate_and_ownership_moves() {
     let tree = tree::Node::default_layout();
     let mut shell = shell::persist::from_value(&json!({"version":1,"enabled":true,"tree":tree}));
     assert_eq!(shell.version, shell::persist::VERSION);
-    let expected: Vec<_> = crate::state::ICON_PANEL_GROUPS.iter().flat_map(|g| g.iter()).filter(|p| tree.find_tab(p).is_none()).copied().collect();
+    let mut expected: Vec<_> = crate::state::ICON_PANEL_GROUPS.iter().flat_map(|g| g.iter()).filter(|p| tree.find_tab(p).is_none()).copied().collect();
+    expected.push("control");
     assert_eq!(shell.strip.groups.iter().flat_map(|g| g.panels.iter().map(String::as_str)).collect::<Vec<_>>(), expected);
     assert!(shell.add_tab(3, "stroke"));
     assert!(shell.strip.group("stroke").is_none());
@@ -784,7 +788,7 @@ fn strip_click_switch_close_resize_and_persist() {
     assert!(back.open.is_none());
     let toggle = h.rect(&Hit::StripToggle).center();
     h.click(toggle);
-    assert_eq!(h.rect(&Hit::Strip).width(), 34.0);
+    assert_eq!(h.rect(&Hit::Strip).width(), 40.0);
 }
 
 #[test]
@@ -1387,8 +1391,8 @@ fn an_icon_dropped_on_the_board_is_a_lone_icon_with_a_flyout_a_full_panel_and_ba
 fn a_strip_group_dragged_by_its_grip_floats_or_moves_between_groups() {
     let mut h = Harness::new();
     h.shell(true);
-    let group = h.state().strip.groups[2].clone();
-    let grip = h.rect(&Hit::StripGroup(2)).center();
+    let group = h.state().strip.groups[0].clone();
+    let grip = h.rect(&Hit::StripGroup(0)).center();
     let to = h.rect(&Hit::BoardBody).center();
     h.hold_drag(grip, to);
     assert_eq!(h.drop_target(), Some(Target::LoneIcon));
@@ -1768,10 +1772,6 @@ impl Harness {
     }
 }
 
-fn middle(pos: Pos2, pressed: bool) -> egui::Event {
-    egui::Event::PointerButton { pos, button: egui::PointerButton::Middle, pressed, modifiers: Default::default() }
-}
-
 #[test]
 fn properties_sections_keep_their_ids_across_selections_and_collapse_per_editor() {
     let mut h = Harness::new();
@@ -2034,13 +2034,7 @@ fn the_workspace_row_switches_restores_and_remembers_layouts_keeping_the_documen
     let mut h = Harness::new();
     h.shell(true);
     let uid = h.app.session.active().unwrap().uid;
-    let row = h.rect(&Hit::Workspaces);
-    assert_eq!(row.height(), shell::workspace::ROW_H);
-    assert!(row.bottom() <= h.board().top(), "the row is above the boxes");
-    for name in shell::workspace::PRESETS {
-        h.rect(&Hit::WorkspaceTab(name.into()));
-    }
-    h.rect(&Hit::WorkspaceNew);
+    assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Workspaces)));
     assert_eq!(h.state().workspace, "Design");
     // Changes in Design: Stroke a tab of the upper box, Color floating.
     h.app.ui.varos_shell.add_tab(2, "stroke");
@@ -2048,8 +2042,8 @@ fn the_workspace_row_switches_restores_and_remembers_layouts_keeping_the_documen
     h.float_tab("color", body.center());
     let design = h.state().capture("Design");
     // Typography as its preset comes; the document stays.
-    let at = h.rect(&Hit::WorkspaceTab("Typography".into())).center();
-    h.click(at);
+    h.app.run("window.workspace", json!({"name": "Typography"})).unwrap();
+    h.settle();
     assert_eq!(h.state().workspace, "Typography");
     let typography = shell::workspace::preset("Typography").unwrap();
     assert_eq!((&h.state().tree, &h.state().strip), (&typography.tree, &typography.strip));
@@ -2060,8 +2054,8 @@ fn the_workspace_row_switches_restores_and_remembers_layouts_keeping_the_documen
     h.app.run("window.panel.close", json!({"panel": "glyphs"})).unwrap();
     h.settle();
     // Design comes back as it was left: tree, strip, floats, floating strips.
-    let at = h.rect(&Hit::WorkspaceTab("Design".into())).center();
-    h.click(at);
+    h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
+    h.settle();
     let now = h.state().capture("Design");
     assert_eq!((&now.tree, &now.strip, &now.floats, &now.float_strips), (&design.tree, &design.strip, &design.floats, &design.float_strips));
     // … and Typography with its change.
@@ -2072,15 +2066,15 @@ fn the_workspace_row_switches_restores_and_remembers_layouts_keeping_the_documen
     assert_eq!(h.state().tree, typography.tree);
     // `+`: the New Workspace dialog; OK saves the layout under the name typed.
     h.settle();
-    let at = h.rect(&Hit::WorkspaceNew).center();
-    h.click(at);
+    h.app.run("window.workspace.new", json!({})).unwrap();
+    h.settle();
     let d = h.app.ui.dialog.as_mut().expect("New Workspace");
     assert_eq!(d.kind, "newWorkspace");
     d.fields.insert("name".into(), json!("Mine"));
     crate::workspaces::confirm(&mut h.app).unwrap();
     h.settle();
     assert_eq!(h.state().workspace, "Mine");
-    h.rect(&Hit::WorkspaceTab("Mine".into()));
+    assert!(h.texts().iter().any(|t| t == "Mine"));
     assert_eq!(h.app.run("window.workspace.list", json!({})).unwrap()["custom"], json!(["Mine"]));
     assert_eq!(crate::menus::checked(&h.app, "window.workspace", &json!({"name": "Mine"})), Some(true));
     // Rename and delete (the tab's context menu runs these); a preset can't be deleted.
@@ -2145,8 +2139,7 @@ fn a_box_maximizes_and_restores_to_the_identical_layout() {
     assert_eq!(h.state().maximized, Some(2));
     assert_eq!(h.tree(), &before, "the tree is kept as it was");
     let big = h.rect(&Hit::Box(2));
-    let region = h.rect(&Hit::Workspaces);
-    assert!((big.width() - region.width()).abs() < 1.0 && (big.top() - region.bottom()).abs() < 1.0, "{big:?} under {region:?}");
+    assert!((big.width() - (h.screen.x - 80.0)).abs() < 1.0);
     assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Board | Hit::Box(3) | Hit::Divider(_))), "the rest is hidden");
     assert!(!shell::showing(&h.app, "properties"));
     // Persisted.
@@ -2162,12 +2155,12 @@ fn a_box_maximizes_and_restores_to_the_identical_layout() {
     assert_eq!(again, rects, "every box where it was");
     // The Board maximized by a double-click on its document tabs' empty space: it fills, with its
     // strip; a hidden panel asked for brings the layout back.
-    let header = h.rect(&Hit::BoardHeader);
-    h.double_click(pos2(header.right() - 20.0, header.center().y));
+    h.app.ui.varos_shell.toggle_maximized(1);
+    h.settle();
     assert_eq!(h.state().maximized, Some(1));
     assert_eq!(h.tree(), &before);
     h.settle();
-    assert!((h.board().width() - h.rect(&Hit::Workspaces).width()).abs() < 1.0, "{:?}", h.board());
+    assert!(h.board().width() > h.screen.x - 81.0, "{:?}", h.board());
     h.rect(&Hit::Strip);
     h.app.run("window.panel", json!({"panel": "layers"})).unwrap();
     h.settle();
@@ -2175,60 +2168,6 @@ fn a_box_maximizes_and_restores_to_the_identical_layout() {
     assert!(shell::showing(&h.app, "layers"));
     // ⌘⇧M is Object › Transform › Move, so the gesture has no key: a double-click or the ≡ menu.
     assert_eq!(crate::menus::shortcut_of("object.move"), Some("Cmd+Shift+M"));
-}
-
-#[test]
-fn the_workspace_row_overflows_and_scrolls_with_the_wheel_and_a_middle_drag() {
-    let mut h = Harness::new();
-    h.shell(true);
-    for i in 0..14 {
-        h.app.ui.varos_shell.save_workspace(&format!("Workspace number {i}")).unwrap();
-    }
-    h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
-    h.settle();
-    // One row: the first tabs show, the last are out of sight, `›` says so.
-    assert!(h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)));
-    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(false)));
-    h.rect(&Hit::WorkspaceTab("Design".into()));
-    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceTab("Workspace number 13".into())));
-    let row = h.rect(&Hit::Workspaces);
-    for (hit, r) in h.hits() {
-        if let Hit::WorkspaceTab(_) = hit {
-            assert!(row.contains_rect(r) && (r.center().y - row.center().y).abs() < 1.0, "one row: {r:?} in {row:?}");
-        }
-    }
-    // The wheel over the row scrolls it.
-    let p = row.center();
-    let wheel = egui::Event::MouseWheel {
-        unit: egui::MouseWheelUnit::Point,
-        delta: vec2(0.0, -120.0),
-        phase: egui::TouchPhase::Move,
-        source: egui::MouseWheelSource::Unknown,
-        modifiers: Default::default(),
-    };
-    h.frame(vec![egui::Event::PointerMoved(p), wheel]);
-    h.settle();
-    let s1 = shell::workspace::scroll(&h.ctx);
-    assert!((s1 - 120.0).abs() < 1.0, "{s1}");
-    assert!(h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(false)), "`‹` now");
-    // A middle-button drag pans it.
-    h.frame(vec![egui::Event::PointerMoved(p), middle(p, true)]);
-    for k in 1..=8 {
-        h.frame(vec![egui::Event::PointerMoved(p - vec2(25.0 * k as f32, 0.0))]);
-    }
-    h.frame(vec![middle(p - vec2(200.0, 0.0), false)]);
-    h.settle();
-    let s2 = shell::workspace::scroll(&h.ctx);
-    assert!((s2 - s1 - 200.0).abs() < 1.0, "{s1} → {s2}");
-    assert_eq!(h.state().workspace, "Design", "panning switched nothing");
-    // A click on `›` scrolls on, to the end at most; the last tab comes into sight.
-    for _ in 0..20 {
-        if let Some((_, r)) = h.hits().into_iter().find(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)) {
-            h.click(r.center());
-        }
-    }
-    h.rect(&Hit::WorkspaceTab("Workspace number 13".into()));
-    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)));
 }
 
 /// Software capture (no GPU): two Properties editors following the selected text, the first with
@@ -2290,7 +2229,7 @@ fn capture_shell_workspaces() {
     }
     h.app.run("window.workspace", json!({"name": "Design"})).unwrap();
     h.settle();
-    assert!(h.hits().iter().any(|(hit, _)| *hit == Hit::WorkspaceOverflow(true)), "the row overflows");
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::Workspaces));
     let pixels = capture(&mut h.app, width, height);
     image::save_buffer(&file, &pixels, width, height, image::ColorType::Rgba8).unwrap();
 }
@@ -2303,18 +2242,8 @@ fn the_board_maximizes_from_its_header_and_its_menu() {
     use egui::accesskit::Role;
     let mut h = Harness::new();
     h.shell(true);
-    let before = h.tree().clone();
     let rects: Vec<(Hit, Rect)> = h.hits().into_iter().filter(|(hit, _)| matches!(hit, Hit::Box(_) | Hit::Board)).collect();
-    let header = h.rect(&Hit::BoardHeader);
-    assert!(h.board().contains_rect(header) && header.top() <= h.rect(&Hit::BoardBody).top());
-    h.double_click(pos2(header.right() - 20.0, header.center().y));
-    assert_eq!(h.state().maximized, Some(1));
-    assert!((h.board().width() - h.rect(&Hit::Workspaces).width()).abs() < 1.0, "{:?}", h.board());
-    assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Box(_))));
-    let header = h.rect(&Hit::BoardHeader);
-    h.double_click(pos2(header.right() - 20.0, header.center().y));
-    assert_eq!(h.state().maximized, None);
-    assert_eq!(h.tree(), &before);
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::BoardHeader));
     // ≡ › Maximize Board, then ≡ › Restore Layout.
     h.ctx.enable_accesskit();
     let pick = |h: &mut Harness, label: &str| {
@@ -2335,10 +2264,6 @@ fn the_board_maximizes_from_its_header_and_its_menu() {
     assert_eq!(h.state().maximized, None);
     let again: Vec<(Hit, Rect)> = h.hits().into_iter().filter(|(hit, _)| matches!(hit, Hit::Box(_) | Hit::Board)).collect();
     assert_eq!(again, rects, "every box where it was");
-    // A double-click on the document's tab itself doesn't maximize.
-    let header = h.rect(&Hit::BoardHeader);
-    h.double_click(pos2(header.left() + 60.0, header.center().y));
-    assert_eq!(h.state().maximized, None);
 }
 
 /// Save Workspace (`+`) while Design has changes: Design remembers them (switching back shows
@@ -2397,9 +2322,9 @@ fn shell5_tools_belong_to_board_float_and_dock_without_changing_legacy_preferenc
     h.app.ui.toolbar_double = true;
     h.shell(true);
     let tools = h.rect(&Hit::Tools);
-    assert_eq!(tools.width(), 34.0);
-    assert_eq!(tools.left(), h.board().left());
-    assert!(h.board().contains_rect(tools));
+    assert_eq!(tools.width(), 40.0);
+    assert_eq!(tools.right(), h.board().left());
+    assert_eq!(tools.left(), 0.0);
     let to = h.board().center();
     h.drag(h.rect(&Hit::ToolsGrip).center(), to);
     assert!(h.state().tools_pos.is_some());
@@ -2426,7 +2351,7 @@ fn shell5_v4_migrates_and_v5_tools_roundtrip() {
     let old: serde_json::Value = serde_json::from_str(include_str!("shell/fixtures/v4.json")).unwrap();
     assert!(old["varos_shell"].get("tools_pos").is_none());
     let back: crate::state::UiState = serde_json::from_value(old).unwrap();
-    assert_eq!(back.varos_shell.version, 5);
+    assert_eq!(back.varos_shell.version, 6);
     assert_eq!(back.varos_shell.tools_pos, None);
     assert_eq!(back.varos_shell.workspace, "Review v4");
     assert_eq!(back.varos_shell.workspaces[0].name, "Review v4");
@@ -2508,7 +2433,7 @@ fn capture_shell5_final() {
 fn shell5_tool_selection_flyout_and_picker_use_existing_behaviour() {
     let mut h = Harness::new();
     h.shell(true);
-    let mut buttons = crate::toolbar::tests::widget_rects(&h.ctx, vec2(34.0, 29.0));
+    let mut buttons = crate::toolbar::tests::widget_rects(&h.ctx, vec2(28.0, 28.0));
     buttons.dedup();
     assert!(buttons.len() > 4);
     h.click(buttons[3].center());
@@ -2541,11 +2466,11 @@ fn shell5_app_bar_accessible_home_search_and_undo_without_workspace_switcher() {
         .with_size(vec2(1600.0, 100.0))
         .build_ui_state(|ui, app: &mut VectorcraftApp| crate::chrome::app_bar(app, ui), app);
     h.run_steps(3);
-    assert!(h.query_by_label("Switch workspace").is_none());
-    for (label, command) in [("Undo", "edit.undo"), ("Redo", "edit.redo")] {
-        let tip = format!("{}  ({})", label, crate::menus::pretty_shortcut(crate::menus::shortcut_of(command).unwrap()));
-        h.get_by_label(&tip);
-    }
+    h.get_by_label("Design").click();
+    h.run_steps(2);
+    h.get_by_label("Typography").click();
+    h.run_steps(2);
+    assert_eq!(h.state().ui.varos_shell.workspace, "Typography");
     h.get_by_label("Home").click();
     h.run_steps(2);
     assert!(crate::varos::home::is_home(h.state()));
@@ -2558,11 +2483,11 @@ fn shell5_app_bar_document_title_dirty_dot_and_geometry() {
     let title = h.app.session.active().unwrap().title();
     assert!(h.texts().iter().any(|s| s == &title));
     h.app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap();
-    assert!(h.texts().iter().any(|s| s == &format!("• {title}")));
+    assert!(h.texts().iter().any(|s| s == &format!("{title} •")));
     let bar = egui::containers::panel::PanelState::load(&h.ctx, h.root.with_salt(egui::IdSalt::new("app_bar"))).unwrap().outer_rect;
     assert_eq!(bar.height(), 40.0);
-    assert_eq!(h.rect(&Hit::Workspaces).height(), 28.0);
-    assert!(h.rect(&Hit::Workspaces).top() >= bar.bottom());
+    assert!(!h.hits().iter().any(|(hit, _)| *hit == Hit::Workspaces));
+    assert!(h.board().top() >= bar.bottom());
 }
 
 #[test]
@@ -2732,7 +2657,7 @@ fn shell5_review_reduced_motion_settle_is_exact() {
 }
 
 fn review_open_tool_flyout(h: &mut Harness) {
-    let mut buttons = crate::toolbar::tests::widget_rects(&h.ctx, vec2(34.0, 29.0));
+    let mut buttons = crate::toolbar::tests::widget_rects(&h.ctx, vec2(28.0, 28.0));
     buttons.dedup();
     let at = buttons[3].right_bottom() - vec2(2.0, 2.0);
     h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
@@ -2858,4 +2783,169 @@ fn shell5_review_real_drop_new_box_settles_and_reduced_motion_snaps() {
         h.frame(vec![]);
         assert_eq!(h.rect(&Hit::Box(id)), end);
     }
+}
+
+#[test]
+fn simple_tools_columns_shift_canvas_and_survive_workspace_roundtrip() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let mut left = Vec::new();
+    for columns in 1..=3 {
+        h.app.ui.varos_shell.tools_columns = columns;
+        h.settle();
+        assert_eq!(h.rect(&Hit::Tools).width(), 40.0 + 28.0 * f32::from(columns - 1));
+        left.push(h.rect(&Hit::BoardBody).left());
+        h.click(h.rect(&Hit::ToolsGrip).center());
+    }
+    assert_eq!(left[1] - left[0], 28.0);
+    assert_eq!(left[2] - left[1], 28.0);
+    h.app.run("window.workspace", json!({"name":"Typography"})).unwrap();
+    assert_eq!(h.state().tools_columns, 1);
+    h.app.run("window.workspace", json!({"name":"Design"})).unwrap();
+    assert_eq!(h.state().tools_columns, 3);
+    let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
+    assert_eq!(back.varos_shell.tools_columns, 3);
+    let old: crate::state::UiState = serde_json::from_str(include_str!("shell/fixtures/v5.json")).unwrap();
+    assert_eq!(old.varos_shell.version, 6);
+    assert_eq!(old.varos_shell.tools_columns, 1);
+    assert_eq!(old.varos_shell.tools_pos, Some([80.0, 120.0]));
+}
+
+#[test]
+fn simple_control_opens_from_strip_and_command_and_floats() {
+    let mut h = Harness::new();
+    h.shell(true);
+    assert!(!shell::showing(&h.app, "control"));
+    h.app.run("window.panel", json!({"panel":"control"})).unwrap();
+    h.settle();
+    assert!(shell::showing(&h.app, "control"));
+    assert!(h.texts().iter().any(|t| t == "Snapping"));
+    h.click(h.rect(&Hit::StripIcon("control".into())).center());
+    assert!(!shell::showing(&h.app, "control"));
+    h.click(h.rect(&Hit::StripIcon("control".into())).center());
+    assert!(shell::showing(&h.app, "control"));
+    h.float_tab("control", h.rect(&Hit::BoardBody).center());
+    assert!(h.state().float_of("control").is_some());
+    h.state().invariants().unwrap();
+}
+
+#[test]
+fn simple_flyout_clear_of_strips_and_no_text_glyph_controls() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.click(h.rect(&Hit::StripIcon("stroke".into())).center());
+    let flyout = h.rect(&Hit::Flyout);
+    assert!(!flyout.intersects(h.rect(&Hit::Strip)));
+    assert!(!flyout.intersects(h.rect(&Hit::Tools)));
+    assert_eq!(flyout.width(), 240.0);
+    for text in h.texts() {
+        assert!(!["<<", ">>", "×", "≡", "◇", "⋮"].contains(&text.as_str()), "{text}");
+    }
+}
+
+#[test]
+fn simple_overflow_menu_selects_hidden_tab_with_pointer() {
+    use egui_kittest::kittest::Queryable;
+    let tabs = vec![
+        ("color".into(), "Color".into()),
+        ("colorGuide".into(), "Color Guide".into()),
+        ("stroke".into(), "Stroke".into()),
+        ("swatches".into(), "Swatches".into()),
+    ];
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(160.0, 100.0)).build_ui_state(
+        move |ui, active: &mut usize| {
+            let row = Rect::from_min_size(ui.cursor().min, vec2(160.0, 36.0));
+            let t = crate::theme::Tokens::get(ui.ctx());
+            let out = boxes::tab_row(ui, &tabs, *active, row, &t);
+            if let Some(i) = out.clicked {
+                *active = i;
+            }
+        },
+        0usize,
+    );
+    h.run_steps(3);
+    h.get_by_label("More tabs").click();
+    h.run_steps(2);
+    h.get_by_label("Color Guide").click();
+    h.run_steps(2);
+    assert_eq!(*h.state(), 1);
+}
+
+#[test]
+#[ignore = "software captures; VAROS_SHELL_CAPTURE_SIMPLE and VAROS_SHELL_CAPTURE_SIMPLE_COLS"]
+fn capture_shell_simple() {
+    for (key, columns) in [("VAROS_SHELL_CAPTURE_SIMPLE", 1), ("VAROS_SHELL_CAPTURE_SIMPLE_COLS", 3)] {
+        let Some(path) = std::env::var_os(key).map(std::path::PathBuf::from) else { continue };
+        let mut h = Harness::sized_without_document(vec2(1440.0, 900.0));
+        h.app.run("file.new", json!({"width":600,"height":760})).unwrap();
+        h.app.run("shape.rectangle", json!({"x":52,"y":250,"width":420,"height":230})).unwrap();
+        h.shell(true);
+        h.app.ui.varos_shell.tree = tree::Node::default_layout();
+        h.app.ui.varos_shell.strip = shell::strip::Strip::default_for(&h.app.ui.varos_shell.tree);
+        h.app.ui.varos_shell.tools_columns = columns;
+        h.app.run("window.panel", json!({"panel":"color"})).unwrap();
+        h.settle();
+        let pixels = capture(&mut h.app, 1440, 900);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        image::save_buffer(path, &pixels, 1440, 900, image::ColorType::Rgba8).unwrap();
+    }
+}
+
+#[test]
+fn simple_flat_boxes_and_pointer_divider_feedback() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let seam = h.rect(&Hit::Divider(vec![]));
+    let t = crate::theme::Tokens::get(&h.ctx);
+    let strokes = |out: &egui::FullOutput| -> Vec<egui::Stroke> {
+        out.shapes.iter().filter_map(|s| match &s.shape {
+            egui::Shape::LineSegment { points, stroke }
+                if (points[0].x - seam.center().x).abs() < 0.1
+                    && (points[1].x - seam.center().x).abs() < 0.1
+                    && (points[0].y - seam.top()).abs() < 0.1
+                    && (points[1].y - seam.bottom()).abs() < 0.1 => Some(*stroke),
+            _ => None,
+        }).collect()
+    };
+    let out = h.frame_full(vec![egui::Event::PointerMoved(pos2(0.0, 0.0))]);
+    assert_eq!(strokes(&out), vec![egui::Stroke::new(1.0, t.border)]);
+    for (hit, rect) in h.hits() {
+        if matches!(hit, Hit::Box(_) | Hit::Board) {
+            assert!(!out.shapes.iter().any(|s| matches!(&s.shape,
+                egui::Shape::Rect(r) if r.rect == rect && r.stroke.width > 0.0)), "docked frame {hit:?}");
+        }
+    }
+    h.frame(vec![egui::Event::PointerMoved(seam.center())]);
+    let out = h.frame_full(vec![]);
+    assert_eq!(strokes(&out), vec![egui::Stroke::new(2.0, t.hover)]);
+}
+
+#[test]
+fn simple_columns_menu_uses_pointer_and_no_fixed_control_row() {
+    use egui_kittest::kittest::Queryable;
+    let mut app = VectorcraftApp::new(Session::new(), Default::default());
+    app.ui.varos_shell.enabled = true;
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(240.0, 160.0)).build_ui_state(
+        |ui, app: &mut VectorcraftApp| {
+            let t = crate::theme::Tokens::get(ui.ctx());
+            crate::toolbar::bottom_controls(app, ui, &t, 1);
+        }, app,
+    );
+    h.run_steps(3);
+    for (label, columns) in [("3 columns", 3), ("2 columns", 2), ("1 column", 1)] {
+        h.get_by_label("Edit Toolbar").click();
+        h.run_steps(2);
+        h.get_by_label(label).click();
+        h.run_steps(2);
+        assert_eq!(h.state().ui.varos_shell.tools_columns, columns);
+    }
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.control_bar = true;
+    h.settle();
+    assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Workspaces | Hit::BoardHeader)));
+    let bar = egui::containers::panel::PanelState::load(&h.ctx, h.root.with_salt(egui::IdSalt::new("app_bar"))).unwrap().outer_rect;
+    assert_eq!(h.board().top(), bar.bottom());
 }

@@ -20,7 +20,7 @@ use super::workspace::Arrangement;
 use crate::panels::properties::PropertiesView;
 
 /// The saved layout's version.
-pub(crate) const VERSION: u32 = 5;
+pub(crate) const VERSION: u32 = 6;
 /// Floating panels' box ids start here (the tree's start at 1), so the two never meet.
 const FLOAT_IDS: u32 = 1 << 20;
 /// The Properties panel: the one editor that has more than one instance.
@@ -38,6 +38,8 @@ pub struct VarosShell {
     /// Board tools: None docks; a position floats. Independent of the legacy toolbar.
     #[serde(default)]
     pub tools_pos: Option<[f32; 2]>,
+    #[serde(default = "default_columns")]
+    pub tools_columns: u8,
     /// The sole Board owns this strip; it is independent of ordinary panel boxes.
     pub strip: super::strip::Strip,
     /// Floating panels, bottom to top as first drawn.
@@ -70,6 +72,10 @@ pub struct VarosShell {
     pub drag: Option<super::drag::Drag>,
 }
 
+pub(crate) fn default_columns() -> u8 {
+    1
+}
+
 fn default_workspace() -> String {
     super::workspace::DESIGN.to_string()
 }
@@ -82,6 +88,7 @@ impl Default for VarosShell {
             strip: super::strip::Strip::default_for(&Node::default_layout()),
             tree: Node::default_layout(),
             tools_pos: None,
+            tools_columns: 1,
             floats: Vec::new(),
             float_strips: Vec::new(),
             views: BTreeMap::new(),
@@ -97,12 +104,13 @@ impl Default for VarosShell {
 
 /// The panel kind of panel id `id`: `properties` for `properties@2`, else the id itself.
 pub(crate) fn instance_kind(id: &str) -> &str {
-    if is_extra_instance(id) { PROPERTIES } else { id }
+    if is_extra_instance(id) { id.split_once('@').map_or(id, |(kind, _)| kind) } else { id }
 }
 
 /// Is `id` a second (third, …) Properties editor, `properties@<n>` with `n` ≥ 2.
 pub(crate) fn is_extra_instance(id: &str) -> bool {
-    id.split_once('@').is_some_and(|(kind, n)| kind == PROPERTIES && n.parse::<u32>().is_ok_and(|n| n >= 2) && !n.starts_with('0'))
+    id.split_once('@')
+        .is_some_and(|(kind, n)| matches!(kind, PROPERTIES | "control") && n.parse::<u32>().is_ok_and(|n| n >= 2) && !n.starts_with('0'))
 }
 
 /// Is `id` a Properties editor (the panel or another instance of it).
@@ -113,7 +121,7 @@ pub(crate) fn is_properties(id: &str) -> bool {
 /// A panel id the app knows (an icon panel, a dock tab or a library panel), or another Properties
 /// editor.
 pub(crate) fn known(id: &str) -> bool {
-    crate::menus::normalize_panel(id) == Some(id) || is_extra_instance(id)
+    id == "control" || crate::menus::normalize_panel(id) == Some(id) || is_extra_instance(id)
 }
 
 /// Version 1 (stage 1: the boxes only) → 2: the Board's strip holds the panels no box has.
@@ -162,6 +170,24 @@ pub(crate) fn migrate_4_to_5(mut v: Value) -> Value {
     v
 }
 
+/// Version 5 → 6 preserves every owner and adds the per-workspace tools grid.
+pub(crate) fn migrate_5_to_6(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("version".into(), json!(6));
+        o.entry("tools_columns").or_insert(json!(1));
+        for key in ["workspaces", "workspace_changes"] {
+            if let Some(items) = o.get_mut(key).and_then(Value::as_array_mut) {
+                for item in items {
+                    if let Some(a) = item.as_object_mut() {
+                        a.entry("tools_columns").or_insert(json!(1));
+                    }
+                }
+            }
+        }
+    }
+    v
+}
+
 /// `varos_shell` read from what `ui.json` holds: the switch kept whatever the layout; an older
 /// version migrated step by step; a layout of an unknown version, or one that doesn't read, is the
 /// default; unknown panel ids are dropped; a tree with no Board is the default layout.
@@ -181,7 +207,10 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
     if matches!(version, Some(1..=4)) {
         v = migrate_4_to_5(v);
     }
-    let readable = matches!(version, Some(1..=5));
+    if matches!(version, Some(1..=5)) {
+        v = migrate_5_to_6(v);
+    }
+    let readable = matches!(version, Some(1..=6));
     let tree =
         readable.then(|| v.get("tree").and_then(|t| Node::deserialize(t).ok())).flatten().map_or_else(Node::default_layout, |t| t.sanitized(&known));
     let strip = v.get("strip").and_then(|s| super::strip::Strip::deserialize(s).ok()).unwrap_or_else(|| super::strip::Strip::default_for(&tree));
@@ -205,6 +234,7 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
         enabled,
         version: VERSION,
         tree,
+        tools_columns: v.get("tools_columns").and_then(Value::as_u64).unwrap_or(1).clamp(1, 3) as u8,
         tools_pos: v
             .get("tools_pos")
             .filter(|_| readable)
@@ -271,6 +301,13 @@ impl VarosShell {
     }
 
     /// The box that fills the central region, while it exists.
+    pub(crate) fn fresh_instance_id(&self, kind: &str) -> String {
+        if kind == PROPERTIES {
+            return self.fresh_properties_id();
+        }
+        (2..=u32::MAX).map(|n| format!("{kind}@{n}")).find(|id| !self.owns(id)).unwrap_or_else(|| format!("{kind}@{}", u32::MAX))
+    }
+
     pub(crate) fn maximized_box(&self) -> Option<u32> {
         self.maximized.filter(|id| self.tree.find_box(*id).is_some())
     }

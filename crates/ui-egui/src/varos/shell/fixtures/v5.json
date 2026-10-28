@@ -1,0 +1,164 @@
+{
+  "toolbar_pos": [
+    70,
+    160
+  ],
+  "toolbar_double": true,
+  "varos_shell": {
+    "enabled": true,
+    "version": 5,
+    "tree": {
+      "split": {
+        "axis": "horizontal",
+        "ratio": 0.7,
+        "reset": 0.7,
+        "a": {
+          "leaf": {
+            "id": 41,
+            "tabs": [
+              "board"
+            ],
+            "active": 0,
+            "collapsed": false
+          }
+        },
+        "b": {
+          "leaf": {
+            "id": 42,
+            "tabs": [
+              "properties",
+              "layers"
+            ],
+            "active": 0,
+            "collapsed": false
+          }
+        }
+      }
+    },
+    "strip": {
+      "edge": "Right",
+      "mode": "Icons",
+      "groups": [
+        {
+          "panels": [
+            "stroke"
+          ],
+          "temporary": false,
+          "width": 260.0,
+          "height": 360.0
+        }
+      ]
+    },
+    "floats": [],
+    "float_strips": [],
+    "views": {},
+    "maximized": null,
+    "workspace": "Review v4",
+    "workspaces": [
+      {
+        "name": "Review v4",
+        "tree": {
+          "split": {
+            "axis": "horizontal",
+            "ratio": 0.7,
+            "reset": 0.7,
+            "a": {
+              "leaf": {
+                "id": 41,
+                "tabs": [
+                  "board"
+                ],
+                "active": 0,
+                "collapsed": false
+              }
+            },
+            "b": {
+              "leaf": {
+                "id": 42,
+                "tabs": [
+                  "properties",
+                  "layers"
+                ],
+                "active": 0,
+                "collapsed": false
+              }
+            }
+          }
+        },
+        "strip": {
+          "edge": "Right",
+          "mode": "Icons",
+          "groups": [
+            {
+              "panels": [
+                "stroke"
+              ],
+              "temporary": false,
+              "width": 260.0,
+              "height": 360.0
+            }
+          ]
+        },
+        "floats": [],
+        "float_strips": [],
+        "views": {},
+        "maximized": null
+      }
+    ],
+    "workspace_changes": [
+      {
+        "name": "Review v4",
+        "tree": {
+          "split": {
+            "axis": "horizontal",
+            "ratio": 0.7,
+            "reset": 0.7,
+            "a": {
+              "leaf": {
+                "id": 41,
+                "tabs": [
+                  "board"
+                ],
+                "active": 0,
+                "collapsed": false
+              }
+            },
+            "b": {
+              "leaf": {
+                "id": 42,
+                "tabs": [
+                  "properties",
+                  "layers"
+                ],
+                "active": 0,
+                "collapsed": false
+              }
+            }
+          }
+        },
+        "strip": {
+          "edge": "Right",
+          "mode": "Icons",
+          "groups": [
+            {
+              "panels": [
+                "stroke"
+              ],
+              "temporary": false,
+              "width": 260.0,
+              "height": 360.0
+            }
+          ]
+        },
+        "floats": [],
+        "float_strips": [],
+        "views": {},
+        "maximized": null
+      }
+    ],
+    "tools_pos": [
+      80,
+      120
+    ]
+  }
+}

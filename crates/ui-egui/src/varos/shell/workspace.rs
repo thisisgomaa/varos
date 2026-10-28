@@ -10,36 +10,20 @@
 
 use std::collections::BTreeMap;
 
-use egui::{CornerRadius, Id, Rect, Sense, pos2, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::Hit;
 use super::floats::{Float, FloatStrip};
 use super::persist::VarosShell;
 use super::strip::Strip;
 use super::tree::Node;
 use crate::VectorcraftApp;
 use crate::panels::properties::PropertiesView;
-use crate::theme::Tokens;
 
 /// The default workspace (the default layout).
 pub(crate) const DESIGN: &str = "Design";
 /// The presets, in the row's order.
 pub(crate) const PRESETS: [&str; 3] = [DESIGN, "Typography", "Print"];
-/// The row's height.
-pub(crate) const ROW_H: f32 = 28.0;
-/// A tab pill's height.
-const PILL_H: f32 = 22.0;
-/// Room left and right of a tab's label inside its pill, and between two pills.
-const PILL_PAD: f32 = 12.0;
-const PILL_GAP: f32 = 2.0;
-/// The `+` button, and the `‹` / `›` overflow marks.
-const ADD_W: f32 = 24.0;
-const MORE_W: f32 = 16.0;
-/// How far a click on `‹` / `›` scrolls, and a wheel line.
-const PAGE: f32 = 160.0;
-const LINE: f32 = 40.0;
 /// No more remembered layouts than this (the oldest go).
 const CHANGES_CAP: usize = 64;
 
@@ -50,6 +34,8 @@ pub struct Arrangement {
     pub tree: Node,
     #[serde(default)]
     pub tools_pos: Option<[f32; 2]>,
+    #[serde(default = "super::persist::default_columns")]
+    pub tools_columns: u8,
     pub strip: Strip,
     #[serde(default)]
     pub floats: Vec<Float>,
@@ -67,6 +53,7 @@ impl Arrangement {
     pub(crate) fn sanitized(self) -> Arrangement {
         let mut shell = VarosShell {
             tree: self.tree.sanitized(&super::persist::known),
+            tools_columns: self.tools_columns.clamp(1, 3),
             tools_pos: self.tools_pos.filter(|p| p.iter().all(|v| v.is_finite())),
             strip: self.strip,
             floats: self.floats,
@@ -107,6 +94,7 @@ fn preset_named(name: &str) -> Arrangement {
         name: name.to_string(),
         tree,
         tools_pos: None,
+        tools_columns: 1,
         strip,
         floats: Vec::new(),
         float_strips: Vec::new(),
@@ -126,6 +114,7 @@ impl VarosShell {
             name: name.to_string(),
             tree: self.tree.clone(),
             tools_pos: self.tools_pos,
+            tools_columns: self.tools_columns,
             strip: self.strip.clone(),
             floats: self.floats.clone(),
             float_strips: self.float_strips.clone(),
@@ -138,6 +127,7 @@ impl VarosShell {
     pub(crate) fn apply(&mut self, a: &Arrangement) {
         self.tree = a.tree.clone();
         self.tools_pos = a.tools_pos;
+        self.tools_columns = a.tools_columns;
         self.strip = a.strip.clone();
         self.floats = a.floats.clone();
         self.float_strips = a.float_strips.clone();
@@ -336,209 +326,47 @@ fn leave(app: &mut VectorcraftApp) {
     app.ui.varos_shell.drag = None;
 }
 
-fn scroll_id() -> Id {
-    Id::unique("varos-shell-workspace-scroll")
-}
-
-/// The row's scroll offset (how far its tabs are moved left).
-pub(crate) fn scroll(ctx: &egui::Context) -> f32 {
-    ctx.data(|d| d.get_temp::<f32>(scroll_id())).unwrap_or(0.0)
-}
-
-/// The scroll a frame's wheel and trackpad events over the row ask for (content moving right, as
-/// egui reports it, scrolls back), in points.
-fn wheel(ctx: &egui::Context, width: f32) -> f32 {
-    ctx.input(|i| {
-        i.events
-            .iter()
-            .filter_map(|e| match e {
-                egui::Event::MouseWheel { unit, delta, .. } => Some(match unit {
-                    egui::MouseWheelUnit::Point => *delta,
-                    egui::MouseWheelUnit::Line => *delta * LINE,
-                    egui::MouseWheelUnit::Page => *delta * width,
-                }),
-                _ => None,
-            })
-            .map(|d| -(d.x + d.y))
-            .sum()
-    })
-}
-
-/// What a click in the row asks for, done once the row is drawn.
-enum Ask {
-    Switch(String),
-    New,
-    Reset(String),
-    Rename(String),
-    Delete(String),
-    Scroll(f32),
-}
-
-/// Draw the workspace row in `row`: the tabs (the front one lit), `‹` / `›` when some are out of
-/// sight, and `+`. Its controls go to `hits`.
-pub(crate) fn row(app: &mut VectorcraftApp, ui: &mut egui::Ui, row: Rect, hits: &mut Vec<(Hit, Rect)>) {
-    let ctx = ui.ctx().clone();
-    let t = Tokens::get(&ctx);
-    let painter = ui.painter().clone();
-    hits.push((Hit::Workspaces, row));
-    let names = app.ui.varos_shell.workspace_names();
+/// Compact top-bar switcher; all changes use the existing workspace commands/dialogs.
+pub(crate) fn switcher(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let current = app.ui.varos_shell.workspace.clone();
-    let add = Rect::from_min_size(pos2(row.right() - ADD_W, row.center().y - PILL_H / 2.0), vec2(ADD_W, PILL_H));
-    let lane = Rect::from_min_max(row.min, pos2(add.left() - 4.0, row.bottom()));
-    let galleys: Vec<_> = names
-        .iter()
-        .map(|n| {
-            let font = if *n == current { crate::theme::semibold(12.0) } else { egui::FontId::proportional(12.0) };
-            painter.layout_no_wrap(label(n), font, t.text)
-        })
-        .collect();
-    let widths: Vec<f32> = galleys.iter().map(|g| (g.size().x + 2.0 * PILL_PAD).ceil()).collect();
-    let content = widths.iter().map(|w| w + PILL_GAP).sum::<f32>();
-    let max_scroll = (content - lane.width()).max(0.0);
-    // The wheel or trackpad over the row, and a middle-button drag begun on it, scroll it.
-    let pointer = ctx.input(|i| i.pointer.hover_pos());
-    let mut offset = scroll(&ctx);
-    if pointer.is_some_and(|p| row.contains(p)) {
-        offset += wheel(&ctx, lane.width());
-    }
-    let middle = scroll_id().with("middle");
-    let (pressed, down, delta, origin) = ctx.input(|i| {
-        (
-            i.pointer.button_pressed(egui::PointerButton::Middle),
-            i.pointer.button_down(egui::PointerButton::Middle),
-            i.pointer.delta(),
-            i.pointer.press_origin(),
-        )
-    });
-    if pressed && origin.or(pointer).is_some_and(|p| row.contains(p)) {
-        ctx.data_mut(|d| d.insert_temp(middle, true));
-    }
-    let panning = down && ctx.data(|d| d.get_temp::<bool>(middle)).unwrap_or(false);
-    if panning {
-        offset -= delta.x;
-        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-    } else {
-        ctx.data_mut(|d| d.remove_temp::<bool>(middle));
-    }
-    // The front workspace just switched to comes into sight.
-    let shown = scroll_id().with("front");
-    if ctx.data(|d| d.get_temp::<String>(shown)).as_deref() != Some(current.as_str()) {
-        if let Some(k) = names.iter().position(|n| *n == current) {
-            let left: f32 = widths[..k].iter().map(|w| w + PILL_GAP).sum();
-            let right = left + widths[k];
-            if left < offset {
-                offset = left;
-            } else if right > offset + lane.width() {
-                offset = right - lane.width();
-            }
-        }
-        ctx.data_mut(|d| d.insert_temp(shown, current.clone()));
-    }
-    offset = offset.clamp(0.0, max_scroll);
-    let mut ask = None;
-    let clip = lane.intersect(painter.clip_rect());
-    let mut x = lane.left() - offset;
-    for ((name, galley), w) in names.iter().zip(galleys).zip(&widths) {
-        let pill = Rect::from_min_size(pos2(x, row.center().y - PILL_H / 2.0), vec2(*w, PILL_H));
-        x = pill.right() + PILL_GAP;
-        let seen = pill.intersect(lane);
-        if !seen.is_positive() {
-            continue;
-        }
-        let response = ui.interact(seen, Id::unique("varos-shell-workspace").with(name), Sense::click());
-        let front = *name == current;
-        let text = if front {
-            painter.with_clip_rect(clip).rect_filled(pill, CornerRadius::same((PILL_H / 2.0) as u8), t.button);
-            t.text_strong
-        } else if response.hovered() {
-            painter.with_clip_rect(clip).rect_filled(pill, CornerRadius::same((PILL_H / 2.0) as u8), t.hover);
-            t.text
-        } else {
-            t.text_dim
-        };
-        painter.with_clip_rect(clip).galley(pos2(pill.left() + PILL_PAD, pill.center().y - galley.size().y / 2.0), galley.clone(), text);
-        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, front, galley.text()));
-        if response.clicked() && !front {
-            ask = Some(Ask::Switch(name.clone()));
-        }
-        let preset = is_preset(name);
-        response.context_menu(|ui| {
-            ui.set_min_width(170.0);
-            if crate::widgets::menu_item(ui, "Reset", true, false) {
-                ask = Some(Ask::Reset(name.clone()));
-            }
-            if crate::widgets::menu_item(ui, "Rename…", !preset, false) {
-                ask = Some(Ask::Rename(name.clone()));
-            }
-            if crate::widgets::menu_item(ui, "Delete", !preset, false) {
-                ask = Some(Ask::Delete(name.clone()));
-            }
-        });
-        hits.push((Hit::WorkspaceTab(name.clone()), seen));
-    }
-    // The ends that hide tabs show it: `‹` at the left, `›` at the right (a click scrolls).
-    for (right, hidden) in [(false, offset > 0.5), (true, offset < max_scroll - 0.5)] {
-        if !hidden {
-            continue;
-        }
-        let mark = if right {
-            Rect::from_min_max(pos2(lane.right() - MORE_W, row.top()), pos2(lane.right(), row.bottom()))
-        } else {
-            Rect::from_min_max(row.min, pos2(lane.left() + MORE_W, row.bottom()))
-        };
-        painter.rect_filled(mark, CornerRadius::ZERO, t.divider);
-        let response = ui.interact(mark, scroll_id().with(("more", right)), Sense::click());
-        let icon = if right { "chevron-right" } else { "chevron-left" };
-        crate::icons::paint(
-            ui,
-            icon,
-            Rect::from_center_size(mark.center(), vec2(12.0, 12.0)),
-            if response.hovered() { t.text_strong } else { t.text_dim },
-        );
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, if right { "More workspaces" } else { "Earlier workspaces" }));
-        if response.clicked() {
-            ask = Some(Ask::Scroll(if right { PAGE } else { -PAGE }));
-        }
-        hits.push((Hit::WorkspaceOverflow(right), mark));
-    }
-    let response = ui.interact(add, scroll_id().with("new"), Sense::click());
+    let t = crate::theme::Tokens::get(ui.ctx());
+    let galley = ui.painter().layout_no_wrap(label(&current), egui::FontId::proportional(11.0), t.text);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(galley.size().x + 32.0, 24.0), egui::Sense::click());
     if response.hovered() {
-        painter.rect_filled(add, CornerRadius::same(3), t.hover);
+        ui.painter().rect_filled(rect, 6.0, t.hover);
     }
+    ui.painter().galley(rect.left_center() + egui::vec2(8.0, -galley.size().y / 2.0), galley, t.text);
     crate::icons::paint(
         ui,
-        "plus",
-        Rect::from_center_size(add.center(), vec2(14.0, 14.0)),
-        if response.hovered() { t.text_strong } else { t.text_dim },
+        "chevron-down",
+        egui::Rect::from_center_size(rect.right_center() - egui::vec2(10.0, 0.0), egui::vec2(12.0, 12.0)),
+        t.text_dim,
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("New Workspace…")));
-    if response.on_hover_text(tl!("Save this layout as a new workspace")).clicked() {
-        ask = Some(Ask::New);
-    }
-    hits.push((Hit::WorkspaceNew, add));
-    if let Some(Ask::Scroll(by)) = ask {
-        offset = (offset + by).clamp(0.0, max_scroll);
-    }
-    ctx.data_mut(|d| d.insert_temp(scroll_id(), offset));
-    if ask.is_some() {
-        ctx.request_repaint();
-    }
-    let run = |app: &mut VectorcraftApp, id: &str, p: Value| {
-        if let Err(e) = app.run(id, p) {
-            app.status(e);
-        }
-    };
-    match ask {
-        Some(Ask::Switch(name)) => run(app, "window.workspace", json!({"name": name})),
-        Some(Ask::New) => run(app, "window.workspace.new", json!({})),
-        Some(Ask::Reset(name)) => {
-            if name != current {
-                run(app, "window.workspace", json!({"name": name}));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label(&current)));
+
+    egui::Popup::menu(&response).show(|ui| {
+        for name in app.ui.varos_shell.workspace_names() {
+            if ui.selectable_label(name == current, label(&name)).clicked() {
+                if let Err(e) = app.run("window.workspace", json!({"name": name})) {
+                    app.status(e);
+                }
+                ui.close();
             }
-            run(app, "window.workspace.reset", json!({}));
         }
-        Some(Ask::Rename(name)) => run(app, "window.workspace.manage", json!({"name": name})),
-        Some(Ask::Delete(name)) => run(app, "window.workspace.delete", json!({"name": name})),
-        Some(Ask::Scroll(_)) | None => {}
-    }
+        ui.separator();
+        for (label, command) in [
+            (tl!("New…"), "window.workspace.new"),
+            (tl!("Rename…"), "window.workspace.manage"),
+            (tl!("Delete"), "window.workspace.delete"),
+            (tl!("Reset"), "window.workspace.reset"),
+        ] {
+            let enabled = !matches!(command, "window.workspace.manage" | "window.workspace.delete") || !is_preset(&current);
+            if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                if let Err(e) = app.run(command, json!({"name": current})) {
+                    app.status(e);
+                }
+                ui.close();
+            }
+        }
+    });
 }

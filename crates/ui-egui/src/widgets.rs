@@ -2538,7 +2538,12 @@ pub fn search_field(ui: &mut Ui, id: egui::Id, hint: &str) -> String {
 /// A bordered list box (Swatches tiles, Appearance rows, Artboards list).
 pub fn list_box<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     let t = Tokens::get(ui.ctx());
-    egui::Frame::NONE.stroke(Stroke::new(1.0, t.input_border)).inner_margin(egui::Margin::same(1)).show(ui, add).inner
+    let frameless = ui.stack().iter().any(|node| node.tags().contains("varos-frameless"));
+    egui::Frame::NONE
+        .stroke(if frameless { Stroke::NONE } else { Stroke::new(1.0, t.input_border) })
+        .inner_margin(egui::Margin::same(if frameless { 0 } else { 1 }))
+        .show(ui, add)
+        .inner
 }
 
 /// A bottom button bar separated from the content by a divider (panel footers).

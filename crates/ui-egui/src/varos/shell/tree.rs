@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// The Board's tab id: the box that holds the canvas. Not a panel id (`window.panel` never names it).
 pub(crate) const BOARD: &str = "board";
 /// The void between two boxes (and around them): the old shell's `SEAM_GAP`.
-pub(crate) const SEAM: f32 = 12.0;
+pub(crate) const SEAM: f32 = 1.0;
 /// The smallest an ordinary box may be made by a divider.
 pub(crate) const BOX_MIN: Vec2 = vec2(190.0, 120.0);
 /// The smallest the Board may be made by a divider.
@@ -19,7 +19,7 @@ pub(crate) const BOARD_MIN: Vec2 = vec2(240.0, 180.0);
 /// The Board's share of the window's width in the default layout.
 pub(crate) const BOARD_RATIO: f32 = 0.72;
 /// A box collapsed to its tab row ([`PanelBox::collapsed`]) is this tall: the tab row's height.
-pub(crate) const ROW: f32 = 32.0;
+pub(crate) const ROW: f32 = 36.0;
 /// No ratio is stored outside this range (a hand-edited file, a NaN).
 const RATIO_RANGE: std::ops::RangeInclusive<f32> = 0.02..=0.98;
 
@@ -170,7 +170,12 @@ impl Node {
     /// The default layout: Board (left, 72 %) | right column: Layers | Artboards over
     /// Properties | Color | Swatches.
     pub fn default_layout() -> Node {
-        Node::board_and_column(&["layers", "artboards"], &["properties", "color", "swatches"])
+        split(
+            Axis::Horizontal,
+            232.0 / 1360.0,
+            leaf(2, &["layers", "artboards"]),
+            split(Axis::Horizontal, 880.0 / 1128.0, leaf(1, &[BOARD]), leaf(3, &["properties"])),
+        )
     }
 
     /// The Board (left, 72 %) beside a column of two boxes: `top`'s tabs over `bottom`'s (the

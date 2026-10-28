@@ -170,7 +170,7 @@ pub(crate) fn begin(app: &mut VectorcraftApp, ctx: &egui::Context, item: Item, s
 
 /// Does a duplicate drag of `item` make a copy: a Properties editor's tab.
 fn duplicates(item: &Item) -> bool {
-    matches!(item, Item::Tab(p) if super::persist::is_properties(p))
+    matches!(item, Item::Tab(p) if super::persist::is_properties(p) || super::persist::instance_kind(p) == "control")
 }
 
 /// Escape cancels a drag before anything else sees it (called first by `shortcuts::handle`): a
@@ -606,7 +606,7 @@ fn apply_drop(app: &mut VectorcraftApp, ctx: &egui::Context, d: &Drag, t: &Targe
         match &d.item {
             // Another Properties editor, with the same section view (not the pin), lands.
             Item::Tab(panel) if duplicates(&d.item) => {
-                let id = shell.fresh_properties_id();
+                let id = shell.fresh_instance_id(super::persist::instance_kind(panel));
                 let mut view = shell.views.get(panel).cloned().unwrap_or_default();
                 view.pinned = None;
                 shell.views.insert(id.clone(), view);

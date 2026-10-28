@@ -9,12 +9,13 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, reg
     if !app.ui.toolbar || app.ui.screen_mode >= 3 || !board.is_positive() {
         return board;
     }
+    let width = WIDTH + 28.0 * f32::from(app.ui.varos_shell.tools_columns.clamp(1, 3) - 1);
     let docked = app.ui.varos_shell.tools_pos.is_none();
     let rect = match app.ui.varos_shell.tools_pos {
-        None => Rect::from_min_size(board.min, vec2(WIDTH.min(board.width()), board.height())),
-        Some([x, y]) => floats::clamp_into(Rect::from_min_size(pos2(x, y), vec2(WIDTH, content_height(app).min(region.height()))), region),
+        None => Rect::from_min_size(board.min, vec2(width.min(board.width()), board.height())),
+        Some([x, y]) => floats::clamp_into(Rect::from_min_size(pos2(x, y), vec2(width, content_height(app).min(region.height()))), region),
     };
-    let canvas_left = (rect.right() + super::tree::SEAM).min(board.right());
+    let canvas_left = (rect.right()).min(board.right());
     let rect = super::motion::settle(ui.ctx(), "__tools", rect, region);
     if docked {
         contents(app, ui, rect, hits);
@@ -43,13 +44,11 @@ fn contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, hits: &mut 
     let movable = app.ui.screen_mode == 0;
     let grip = Rect::from_min_size(rect.min, vec2(rect.width(), 18.0_f32.min(rect.height())));
     let response = ui.interact(grip, egui::Id::unique("shell-tools-grip"), if movable { Sense::drag() } else { Sense::hover() });
-    if response.hovered() {
-        ui.painter().rect_filled(grip, 3.0, t.hover);
+    if ui.input(|i| i.pointer.hover_pos().is_some_and(|p| grip.expand(15.0).contains(p))) {
+        ui.painter().rect_filled(Rect::from_center_size(grip.center(), vec2(30.0, 3.0)), 1.5, t.text_dim);
     }
-    for x in [-4.0, 0.0, 4.0] {
-        for y in [-2.0, 2.0] {
-            ui.painter().circle_filled(grip.center() + vec2(x, y), 0.8, t.text_dim);
-        }
+    if !floating {
+        ui.painter().vline(rect.right() - 0.5, rect.y_range(), egui::Stroke::new(1.0, t.border));
     }
     if movable && response.drag_started() {
         drag::begin(app, ui.ctx(), drag::Item::Tools, rect);

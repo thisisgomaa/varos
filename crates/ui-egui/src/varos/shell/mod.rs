@@ -39,7 +39,7 @@ pub(crate) const PREF_KEY: &str = "__varosShell";
 pub(crate) const PREF_LABEL: &str = "Varos shell (new)";
 
 /// The void around the boxes, inside the central region.
-pub(crate) const OUTER: f32 = tree::SEAM;
+pub(crate) const OUTER: f32 = 0.0;
 
 /// Is the window's central region the Varos shell.
 pub(crate) fn enabled(app: &VectorcraftApp) -> bool {
@@ -166,10 +166,11 @@ struct Hits {
 /// full screen modes.
 pub(crate) fn frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get(ui.ctx());
-    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.divider)).show(ui, |ui| crate::varos::profile::measure("shell", || draw(app, ui)));
+    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.panel)).show(ui, |ui| crate::varos::profile::measure("shell", || draw(app, ui)));
 }
 
 fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
+    ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_width: 4.0, floating_width: 2.0, ..egui::style::ScrollStyle::floating() };
     let frame = ui.ctx().cumulative_frame_nr();
     let follow = ui.ctx().data_mut(|d| {
         let id = egui::Id::unique("shell-follow-frame");
@@ -197,9 +198,10 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         board(app, ui, canvas, false, &mut hits);
     } else {
         // The workspace row on top; the boxes, floats and drags below it.
-        let row = Rect::from_min_max(area.min + egui::vec2(OUTER, 0.0), egui::pos2(area.right() - OUTER, region.top()));
-        workspace::row(app, ui, row, &mut hits);
+
         let inner = Rect::from_min_max(egui::pos2(region.left() + OUTER, region.top()), region.max - egui::vec2(OUTER, OUTER));
+        let inner = strip::show(app, ui, inner, &mut hits);
+        let inner = tools::show(app, ui, inner, region, &mut hits);
         let lay_out = |shell: &persist::VarosShell| match shell.maximized_box() {
             Some(id) => tree::Layout { boxes: vec![(id, inner)], dividers: Vec::new() },
             None => shell.tree.layout(inner),
@@ -215,29 +217,12 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             let Some(b) = app.ui.varos_shell.tree.find_box(*id).cloned() else { continue };
             if b.is_board() {
                 hits.push((Hit::Board, *rect));
-                let canvas = strip::show(app, ui, *rect, &mut hits);
-                let canvas = tools::show(app, ui, canvas, region, &mut hits);
-                // The document tabs' row: its empty space (under the tabs, which take their own
-                // input) maximizes the Board or restores the layout on a double-click.
-                let header = (app.session.active().is_some() && !crate::varos::home::is_home(app)).then(|| {
-                    let h = if app.session.prefs.large_tabs { 44.0 } else { 35.0 };
-                    Rect::from_min_size(canvas.min, egui::vec2(canvas.width(), h))
-                });
-                let header_response = header.map(|r| (r, ui.interact(r, egui::Id::unique("varos-shell-board-header"), egui::Sense::click())));
-                board(app, ui, canvas, false, &mut hits);
-                boxes::frame(ui.painter(), *rect, &crate::theme::Tokens::get(ui.ctx()));
-                if let Some((r, response)) = header_response {
-                    hits.push((Hit::BoardHeader, r));
-                    if response.double_clicked() {
-                        strip::close(app);
-                        app.ui.varos_shell.toggle_maximized(b.id);
-                        ui.ctx().request_repaint();
-                    }
-                }
+                board(app, ui, *rect, false, &mut hits);
             } else if let Some(ask) = boxes::show(app, ui, &b, motion::settle(ui.ctx(), &format!("box-{}", b.id), *rect, region), false, &mut hits) {
                 asks.push(ask);
             }
         }
+        divider::paint(ui, &layout);
         for ask in asks {
             match ask {
                 boxes::Ask::Close(panel) => {
@@ -282,7 +267,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
 
 /// Where boxes, floats and drags live in the central region `area`: below the workspace row.
 pub(crate) fn drag_region(area: Rect) -> Rect {
-    Rect::from_min_max(egui::pos2(area.left(), area.top() + workspace::ROW_H), area.max)
+    area
 }
 
 /// Properties editor `panel`'s ≡ › Duplicate: another Properties editor (`properties@<n>`) with the
@@ -290,10 +275,10 @@ pub(crate) fn drag_region(area: Rect) -> Rect {
 /// the same document.
 pub(crate) fn duplicate_properties(app: &mut VectorcraftApp, panel: &str) -> Option<String> {
     let shell = &mut app.ui.varos_shell;
-    if !persist::is_properties(panel) {
+    if !persist::is_properties(panel) && persist::instance_kind(panel) != "control" {
         return None;
     }
-    let id = shell.fresh_properties_id();
+    let id = shell.fresh_instance_id(persist::instance_kind(panel));
     let mut view = shell.views.get(panel).cloned().unwrap_or_default();
     view.pinned = None;
     let placed = if let Some(b) = shell.tree.find_tab(panel) {
@@ -360,6 +345,7 @@ pub(crate) fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Opt
     let raw = params.get("panel").and_then(Value::as_str).unwrap_or_default();
     let panel = || resolve_panel(app, raw).ok_or_else(|| format!("unknown panel `{raw}`"));
     match id {
+        "window.control" => Some(Ok(show_panel(app, "control", true))),
         "window.panel" | "window.panel.activate" => Some(panel().map(|panel| {
             let toggle = id == "window.panel" && params.get("toggle").and_then(Value::as_bool) == Some(true);
             show_panel(app, &panel, toggle)
@@ -382,6 +368,9 @@ pub(crate) fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Opt
 /// has (`properties@2`), else a panel the app knows (by id or label, whatever the case).
 pub(crate) fn resolve_panel(app: &VectorcraftApp, raw: &str) -> Option<String> {
     let raw = raw.trim();
+    if raw.eq_ignore_ascii_case("control") {
+        return Some("control".into());
+    }
     if persist::is_extra_instance(raw) {
         return app.ui.varos_shell.owns(raw).then(|| raw.to_string());
     }

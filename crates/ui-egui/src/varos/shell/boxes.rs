@@ -4,7 +4,7 @@
 //! from ([`super::drag`]) and double-clicked to collapse its box to its tab row; a double-click on
 //! the tab row's empty space maximizes the box (and restores the layout).
 
-use egui::{Align, CornerRadius, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
+use egui::{Align, CornerRadius, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use super::Hit;
 use super::drag::{self, Item};
@@ -16,9 +16,9 @@ use crate::theme::Tokens;
 /// The tab row's height.
 pub(crate) const HEADER: f32 = super::tree::ROW;
 /// A box's corner radius.
-pub(crate) const RADIUS: u8 = 8;
+pub(crate) const RADIUS: u8 = 10;
 /// A tab pill's height (a capsule: its radius is half of it).
-pub(crate) const PILL_H: f32 = 22.0;
+pub(crate) const PILL_H: f32 = 24.0;
 /// Room left and right of a tab's label inside its pill.
 const PILL_PAD: f32 = 10.0;
 /// Between two pills.
@@ -26,7 +26,7 @@ const PILL_GAP: f32 = 2.0;
 /// Between the tab row's ends and the box's edges.
 const PAD: f32 = 6.0;
 /// Tab labels' size.
-const LABEL: f32 = 12.0;
+const LABEL: f32 = 11.0;
 /// The ≡ button.
 const MENU: Vec2 = vec2(20.0, 24.0);
 /// Controls' corner radius (the ≡ button's hover well).
@@ -72,16 +72,37 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
             painter.layout_no_wrap(label.clone(), font, t.text)
         })
         .collect();
-    let wanted: f32 = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + PILL_GAP + option_width(id)).sum();
-    let scale = if wanted > row.width() && wanted > 0.0 { row.width() / wanted } else { 1.0 };
+    let widths: Vec<f32> = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + option_width(id)).collect();
+    let overflow = widths.iter().sum::<f32>() + PILL_GAP * widths.len().saturating_sub(1) as f32 > row.width();
+    let room = (row.width() - if overflow { 24.0 } else { 0.0 }).max(0.0);
+    let active_width = widths.get(active).copied().unwrap_or(0.0);
+    let mut remaining = (room - active_width).max(0.0);
+    let visible: Vec<bool> = widths
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            if i == active {
+                return true;
+            }
+            if *w + PILL_GAP <= remaining {
+                remaining -= *w + PILL_GAP;
+                true
+            } else {
+                false
+            }
+        })
+        .collect();
     let mut x = row.left();
     galleys
         .into_iter()
-        .zip(tabs)
-        .map(|(galley, (id, _))| {
-            let w = ((galley.size().x + 2.0 * PILL_PAD + option_width(id)) * scale).floor().max(1.0);
-            let pill = Rect::from_min_size(pos2(x, row.center().y - PILL_H / 2.0), vec2(w, PILL_H));
-            x = pill.right() + PILL_GAP * scale;
+        .zip(widths)
+        .zip(visible)
+        .map(|((galley, width), visible)| {
+            if !visible {
+                return (Rect::NOTHING, galley);
+            }
+            let pill = Rect::from_min_size(pos2(x, row.center().y - PILL_H / 2.0), vec2(width.min(room), PILL_H));
+            x = pill.right() + PILL_GAP;
             (pill, galley)
         })
         .collect()
@@ -99,17 +120,42 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
         .iter()
         .zip(&before)
         .map(|((panel, _), (pill, _))| {
-            ui.interact(Rect::from_min_max(pill.min, pill.max - vec2(option_width(panel), 0.0)), tab_id(panel), Sense::click_and_drag())
+            ui.interact(
+                if pill.is_positive() {
+                    Rect::from_min_max(pill.min, pill.max - vec2(option_width(panel), 0.0))
+                } else {
+                    Rect::from_min_size(row.min, Vec2::ZERO)
+                },
+                tab_id(panel),
+                Sense::click_and_drag(),
+            )
         })
         .collect();
-    let clicked = responses.iter().position(|r| r.clicked()).filter(|i| *i != active);
+    let mut clicked = responses.iter().position(|r| r.clicked()).filter(|i| *i != active);
+    if before.iter().any(|(r, _)| !r.is_positive()) {
+        let more = Rect::from_center_size(pos2(row.right() - 12.0, row.center().y), vec2(24.0, 24.0));
+        let response = ui.interact(more, ui.scope_id().with("tab-overflow"), Sense::click());
+        crate::icons::paint(ui, "ellipsis", more.shrink(4.0), t.text_dim);
+        let response = response.on_hover_text(tl!("More tabs"));
+        egui::Popup::menu(&response).show(|ui| {
+            for (i, (_, label)) in tabs.iter().enumerate() {
+                if ui.selectable_label(i == active, label).clicked() {
+                    clicked = Some(i);
+                    ui.close();
+                }
+            }
+        });
+    }
     let double_clicked = responses.iter().position(egui::Response::double_clicked);
     let drag_started = responses.iter().position(egui::Response::drag_started);
     // … and the row is painted with the front tab that input leaves.
     let front_tab = clicked.unwrap_or(active);
     let after = if clicked.is_some() { pills(&painter, tabs, front_tab, row, t) } else { before };
-    let capsule = CornerRadius::same((PILL_H / 2.0) as u8);
+    let capsule = CornerRadius::same(6);
     for (i, ((pill, galley), response)) in after.iter().zip(&responses).enumerate() {
+        if !pill.is_positive() {
+            continue;
+        }
         let front = i == front_tab;
         let text = if front {
             painter.rect_filled(*pill, capsule, t.button);
@@ -127,7 +173,7 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
             let rect = Rect::from_center_size(pos2(pill.right() - 9.0, pill.center().y), vec2(16.0, 16.0));
             let response = ui.interact(rect, tab_id(panel).with("options"), Sense::click());
             let hidden: bool = crate::panels::pstate(ui.ctx(), key);
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "◇", egui::FontId::proportional(super::tokens::CHROME_GLYPH), text);
+            crate::icons::paint(ui, "chevrons-right", rect, text);
             if response.on_hover_text(if hidden { tl!("Show Options") } else { tl!("Hide Options") }).clicked() {
                 crate::panels::set_pstate(ui.ctx(), key, !hidden);
             }
@@ -141,9 +187,12 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
 /// Panel `id`'s tab label: its library's name, or its translated name; another Properties editor
 /// is numbered ("Properties 2").
 pub(crate) fn label(app: &VectorcraftApp, id: &str) -> String {
+    if id == "control" {
+        return tl!("Control").to_string();
+    }
     if super::persist::is_extra_instance(id) {
         let n = id.split_once('@').map_or("", |(_, n)| n);
-        return format!("{} {n}", label(app, super::persist::PROPERTIES));
+        return format!("{} {n}", label(app, super::persist::instance_kind(id)));
     }
     crate::panels::library_panel::tab_label(app, id)
         .or_else(|| crate::state::all_panels().find(|p| p.0 == id).map(|p| tl!(p.1).to_string()))
@@ -152,13 +201,7 @@ pub(crate) fn label(app: &VectorcraftApp, id: &str) -> String {
 
 /// Paint over the parts of `rect` outside its rounded corners in the seam's colour, then its
 /// hairline: content drawn edge to edge (the canvas, a scroll bar) gets the box's rounded corners.
-pub(crate) fn frame(painter: &egui::Painter, rect: Rect, t: &Tokens) {
-    // A stroke whose inner edge is the rounded box covers the corners' outside (6 points reach
-    // past the corner of an 8-point radius) and stays inside the 12-point seam.
-    const COVER: f32 = 6.0;
-    let r = f32::from(RADIUS);
-    painter.rect_stroke(rect.expand(COVER / 2.0), CornerRadius::same((r + COVER / 2.0) as u8), Stroke::new(COVER, t.divider), StrokeKind::Middle);
-    painter.rect_stroke(rect, CornerRadius::same(RADIUS), Stroke::new(1.0, t.border), StrokeKind::Inside);
+pub(crate) fn frame(_painter: &egui::Painter, _rect: Rect, _t: &Tokens) { /* docked surfaces are flat */
 }
 
 /// Draw the Board in `rect`: the document tabs, the canvas and the isolation bar (Home instead,
@@ -205,11 +248,11 @@ pub(crate) fn show(
     }
     let t = Tokens::get(ui.ctx());
     let painter = ui.painter().clone();
-    painter.rect_filled(rect, CornerRadius::same(RADIUS), t.panel);
+    painter.rect_filled(rect, if floating { CornerRadius::same(RADIUS) } else { CornerRadius::ZERO }, t.panel);
     if !floating {
         hits.push((Hit::Box(b.id), rect));
     }
-    let head = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + HEADER).min(rect.bottom())));
+    let head = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + if floating { 32.0 } else { HEADER }).min(rect.bottom())));
     let menu = Rect::from_min_size(pos2(head.right() - PAD - MENU.x, head.center().y - MENU.y / 2.0), MENU);
     let row = Rect::from_min_max(pos2(head.left() + PAD, head.top()), pos2((menu.left() - PAD).max(head.left() + PAD), head.bottom()));
     hits.push((Hit::TabRow(b.id), row));
@@ -288,7 +331,7 @@ pub(crate) fn board_menu(ui: &mut egui::Ui, rect: Rect, maximized: bool, t: &Tok
     }
     crate::icons::paint(
         ui,
-        "menu",
+        "ellipsis",
         Rect::from_center_size(rect.center(), vec2(14.0, 14.0)),
         if response.hovered() { t.text_strong } else { t.text_dim },
     );
@@ -328,7 +371,7 @@ fn panel_menu(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, box_id: u
     }
     crate::icons::paint(
         ui,
-        "menu",
+        "ellipsis",
         Rect::from_center_size(rect.center(), vec2(16.0, 16.0)),
         if response.hovered() { t.text_strong } else { t.text_dim },
     );
@@ -341,7 +384,10 @@ fn panel_menu(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, box_id: u
             if crate::panels::panel_menu_items(app, ui, super::persist::instance_kind(panel)) {
                 ui.separator();
             }
-            if extras.duplicate && super::persist::is_properties(panel) && crate::widgets::menu_item(ui, "Duplicate Panel", true, false) {
+            if extras.duplicate
+                && (super::persist::is_properties(panel) || super::persist::instance_kind(panel) == "control")
+                && crate::widgets::menu_item(ui, "Duplicate Panel", true, false)
+            {
                 pick = Some(MenuPick::Duplicate);
             }
             if let Some(max) = extras.maximized
@@ -376,15 +422,23 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str) {
 /// editor is drawn as one: its sections (collapsed, in its order), its pin
 /// (`panels::properties::show_editor`), with its own view.
 pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: f32, tall: f32) {
+    if id == "color" {
+        crate::panels::show_icon_panel(app, ui, id);
+        return;
+    }
+    if super::persist::instance_kind(id) == "control" {
+        crate::chrome::control_panel(app, ui);
+        return;
+    }
     if !super::persist::is_properties(id) {
-        crate::dock::panel_body(app, ui, id, width, tall);
+        crate::dock::panel_body_frameless(app, ui, id, width, tall);
         return;
     }
     let _profile = crate::varos::profile::scope(super::persist::PROPERTIES);
     let stored = app.ui.varos_shell.views.get(id).cloned();
     let mut view = stored.clone().unwrap_or_default();
-    egui::Frame::NONE.inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-        ui.set_width(width - 20.0);
+    egui::Frame::NONE.inner_margin(egui::Margin::same(16)).show(ui, |ui| {
+        ui.set_width((width - 32.0).max(0.0));
         // As the Properties panel in the dock: at least `tall` when the sections are taller.
         crate::widgets::panel_scroll(
             ui,
