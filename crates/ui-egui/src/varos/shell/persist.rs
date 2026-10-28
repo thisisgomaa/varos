@@ -1,4 +1,4 @@
-//! The shell's saved state: `varos_shell` in `ui.json` (version 4: the boxes, the Board's strip,
+//! The shell's saved state: `varos_shell` in `ui.json` (version 5: the boxes, the Board's strip,
 //! floating panels and floating strips, the Properties editors' section views, the maximized box
 //! and the workspaces), apart from craft-ui's `docking` layout, which it never touches. Versions
 //! 1, 2 and 3 load through the migrations [`migrate_1_to_2`], [`migrate_2_to_3`] and
@@ -20,7 +20,7 @@ use super::workspace::Arrangement;
 use crate::panels::properties::PropertiesView;
 
 /// The saved layout's version.
-pub(crate) const VERSION: u32 = 4;
+pub(crate) const VERSION: u32 = 5;
 /// Floating panels' box ids start here (the tree's start at 1), so the two never meet.
 const FLOAT_IDS: u32 = 1 << 20;
 /// The Properties panel: the one editor that has more than one instance.
@@ -35,6 +35,9 @@ pub struct VarosShell {
     pub version: u32,
     /// The boxes.
     pub tree: Node,
+    /// Board tools: None docks; a position floats. Independent of the legacy toolbar.
+    #[serde(default)]
+    pub tools_pos: Option<[f32; 2]>,
     /// The sole Board owns this strip; it is independent of ordinary panel boxes.
     pub strip: super::strip::Strip,
     /// Floating panels, bottom to top as first drawn.
@@ -78,6 +81,7 @@ impl Default for VarosShell {
             version: VERSION,
             strip: super::strip::Strip::default_for(&Node::default_layout()),
             tree: Node::default_layout(),
+            tools_pos: None,
             floats: Vec::new(),
             float_strips: Vec::new(),
             views: BTreeMap::new(),
@@ -149,6 +153,15 @@ pub(crate) fn migrate_3_to_4(mut v: Value) -> Value {
     v
 }
 
+/// Version 4 → 5: tools begin docked on the Board, never at the legacy toolbar position.
+pub(crate) fn migrate_4_to_5(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        o.insert("version".into(), json!(5));
+        o.insert("tools_pos".into(), Value::Null);
+    }
+    v
+}
+
 /// `varos_shell` read from what `ui.json` holds: the switch kept whatever the layout; an older
 /// version migrated step by step; a layout of an unknown version, or one that doesn't read, is the
 /// default; unknown panel ids are dropped; a tree with no Board is the default layout.
@@ -165,7 +178,10 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
     if matches!(version, Some(1..=3)) {
         v = migrate_3_to_4(v);
     }
-    let readable = matches!(version, Some(1..=4));
+    if matches!(version, Some(1..=4)) {
+        v = migrate_4_to_5(v);
+    }
+    let readable = matches!(version, Some(1..=5));
     let tree =
         readable.then(|| v.get("tree").and_then(|t| Node::deserialize(t).ok())).flatten().map_or_else(Node::default_layout, |t| t.sanitized(&known));
     let strip = v.get("strip").and_then(|s| super::strip::Strip::deserialize(s).ok()).unwrap_or_else(|| super::strip::Strip::default_for(&tree));
@@ -189,6 +205,11 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
         enabled,
         version: VERSION,
         tree,
+        tools_pos: v
+            .get("tools_pos")
+            .filter(|_| readable)
+            .and_then(|p| serde_json::from_value::<[f32; 2]>(p.clone()).ok())
+            .filter(|p| p.iter().all(|v| v.is_finite())),
         strip,
         floats,
         float_strips,

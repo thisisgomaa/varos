@@ -48,6 +48,8 @@ const CHANGES_CAP: usize = 64;
 pub struct Arrangement {
     pub name: String,
     pub tree: Node,
+    #[serde(default)]
+    pub tools_pos: Option<[f32; 2]>,
     pub strip: Strip,
     #[serde(default)]
     pub floats: Vec<Float>,
@@ -65,6 +67,7 @@ impl Arrangement {
     pub(crate) fn sanitized(self) -> Arrangement {
         let mut shell = VarosShell {
             tree: self.tree.sanitized(&super::persist::known),
+            tools_pos: self.tools_pos.filter(|p| p.iter().all(|v| v.is_finite())),
             strip: self.strip,
             floats: self.floats,
             float_strips: self.float_strips,
@@ -100,7 +103,16 @@ fn preset_named(name: &str) -> Arrangement {
         _ => Node::default_layout(),
     };
     let strip = Strip::default_for(&tree);
-    Arrangement { name: name.to_string(), tree, strip, floats: Vec::new(), float_strips: Vec::new(), views: BTreeMap::new(), maximized: None }
+    Arrangement {
+        name: name.to_string(),
+        tree,
+        tools_pos: None,
+        strip,
+        floats: Vec::new(),
+        float_strips: Vec::new(),
+        views: BTreeMap::new(),
+        maximized: None,
+    }
 }
 
 impl VarosShell {
@@ -113,6 +125,7 @@ impl VarosShell {
         Arrangement {
             name: name.to_string(),
             tree: self.tree.clone(),
+            tools_pos: self.tools_pos,
             strip: self.strip.clone(),
             floats: self.floats.clone(),
             float_strips: self.float_strips.clone(),
@@ -124,6 +137,7 @@ impl VarosShell {
     /// Show arrangement `a` as workspace `a.name` (the flyout closes, a drag ends).
     pub(crate) fn apply(&mut self, a: &Arrangement) {
         self.tree = a.tree.clone();
+        self.tools_pos = a.tools_pos;
         self.strip = a.strip.clone();
         self.floats = a.floats.clone();
         self.float_strips = a.float_strips.clone();

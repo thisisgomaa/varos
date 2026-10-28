@@ -125,3 +125,25 @@ Transform › Move (Illustrator), so maximize has no key. `VarosShell` version 4
 pure functions with stage 1–3 fixtures (`shell/fixtures/`). Stage-3 P2 fixed: a side-by-side all-collapsed
 pair of unequal heights shows its shorter side whole (no hole). Captures: `VAROS_SHELL_CAPTURE_SECTIONS`,
 `VAROS_SHELL_CAPTURE_WORKSPACES`. Owner acceptance pending.
+
+## Stage 5 implementation record (2026-10-28)
+Codex Astra implemented, Opus 5.5 reviewed read-only (11 findings → fix round → MERGE). Tools live on
+the Board's left edge (`shell/tools.rs`): a 34 pt strip inside the Board's rounded frame with the
+groups of the old rail, the same flyouts (long-press / triangle), the fill/stroke wells and, below them,
+Edit Toolbar · Color/Gradient/None · Draw mode (visibility flags honoured; Screen mode stays in View);
+the strip floats by its grip (rounded fill + hairline, content-derived height) and docks back to the
+Board's left edge with the full-height azure line; its position is part of each workspace; the grip is
+inert in screen modes 1–2. `VarosShell` version 5 (`tools_pos`), migration 4→5 pure, fixture
+`shell/fixtures/v4.json`. App bar (`chrome.rs`, 40 pt): brand + Home, the 9 menus only when no native
+menu backend exists (macOS keeps them in the menu bar), document name + dirty dot, undo/redo with
+`tl!` tooltips and shortcuts, search; the workspace switcher left the app bar (stage-4 row has it).
+Status bar never intersects a box or float (test). Motion (`shell/motion.rs`, the only motion in the
+shell): flyout open = 6 pt slide from its rail + fade 90 ms, close = fade 60 ms (input disabled before
+the opacity is restored, no 48 % jump); a dropped tab/float settles 80 ms ease-out only when it created
+a new container (existing boxes never move); tear-off cancels the docked flyout motion at once;
+`animation_time == 0` → instant. Tab pills get the `◇` fewer/more-options toggle for Character and
+Paragraph (`ch-hide-options` / `pa-hide-options`; glyph present in Inter); `<<` `>>` `×` hit areas
+≥ 16×16. Shared constants in `shell/tokens.rs` (strip width, app-bar padding, chrome glyph size).
+Deferred: a docked tools settle can be obscured by the canvas (P3); the docked tools scrollbar is
+always hidden (wheel/trackpad reach the overflow). Capture: `mockups/shell5-capture.png`
+(`VAROS_SHELL_CAPTURE_FINAL`). 99 shell tests. Owner acceptance pending; stage 6 waits for it.

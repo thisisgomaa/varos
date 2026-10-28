@@ -28,87 +28,114 @@ const WIDGET_H: f32 = 22.0;
 /// title, so the in-app bar shows Home, menus and workspace controls only: no brand mark.
 pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
+    let shell = crate::varos::shell::enabled(app);
     let custom = app.custom_titlebar;
     let system = system_title_bar(app);
     let left = app.titlebar_inset.clamp(8.0, f32::from(i8::MAX)) as i8;
-    let frame = egui::Frame::NONE.fill(t.app_bar).inner_margin(egui::Margin { left, right: if custom { 0 } else { 14 }, top: 0, bottom: 0 });
-    let bar = egui::Panel::top("app_bar").exact_size(APP_BAR_HEIGHT).frame(frame.stroke(Stroke::new(1.0, t.border))).show(ui, |ui| {
-        // macOS draws the bar under its transparent title bar, so the bar gets the title bar's
-        // clicks: without this a double-click there zooms nothing (#1932).
-        if custom || cfg!(target_os = "macos") {
-            titlebar::drag_area(ui, ui.max_rect());
-        }
-        ui.horizontal_centered(|ui| {
-            // With the system title bar the OS draws its own icon: no in-app brand mark.
-            if !system {
-                let (r, _) = ui.allocate_exact_size(vec2(MARK, MARK), Sense::hover());
-                crate::brand::paint_mark(ui, r);
-                ui.add_space(6.0);
-            }
-            // Home keeps the brand and window controls, without editor menus or workspace popup.
-            if !menus::document_menus_showing(app) {
-                return;
-            }
-            let on_home = menus::home_showing(app);
-            if widgets::icon_button(ui, "house", tl!("Home"), on_home, 20.0).clicked() {
-                app.run("app.home", json!({})).ok();
-            }
-            ui.add_space(2.0);
-            // With the macOS menu bar the menus are at the top of the screen instead.
-            let menus_end = if app.services.native_menu.is_some() { ui.cursor().min.x } else { menus::menu_bar(app, ui) };
-            // The right-side group fills the space after the menus from the right; when it runs
-            // short, the search icon goes first (the palette
-            // stays under its shortcut), then the workspace switcher narrows.
-            let full = ui.max_rect();
-            let right_edge = if custom { full.right() - titlebar::WIDTH - 10.0 } else { full.right() };
-            let right = egui::Rect::from_min_max(egui::pos2(menus_end + 8.0, full.top()), egui::pos2(right_edge, full.bottom()));
-            let room = right.width();
-            // Built-in workspace names translate; the user's own stay as typed.
-            let ws_name =
-                if crate::workspaces::is_builtin(&app.ui.workspace) { tl!(&app.ui.workspace).to_string() } else { app.ui.workspace.clone() };
-            let ws = ui.painter().layout_no_wrap(ws_name, egui::FontId::proportional(12.0), t.text);
-            let ws_w = (ws.size().x + 36.0).clamp(112.0, 190.0);
-            let gap = ui.spacing().item_spacing.x;
-            // The search icon, as in PhotoCraft: shown while a minimal switcher fits beside it.
-            let icon = 28.0;
-            let search = room >= 64.0 + 8.0 + gap + icon;
-            let ws_w = ws_w.min(room - 8.0 - gap - if search { icon } else { 0.0 }).max(64.0);
-            let mut rui = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
-            let ui = &mut rui;
-            // Workspace switcher: shows the current workspace, opens Window → Workspace. Varos: with
-            // the Varos shell on, its own row of workspace tabs takes its place.
-            if !crate::varos::shell::enabled(app) {
-                let (wr, wresp) = ui.allocate_exact_size(vec2(ws_w, WIDGET_H), Sense::click());
-                ui.painter().rect_filled(wr, CornerRadius::same(4), if wresp.hovered() { t.hover } else { t.panel });
-                ui.painter().with_clip_rect(wr.shrink2(vec2(4.0, 0.0))).galley(wr.left_center() + vec2(10.0, -ws.size().y / 2.0), ws, t.text);
-                icons::paint(ui, "chevron-down", egui::Rect::from_center_size(wr.right_center() - vec2(12.0, 0.0), vec2(12.0, 12.0)), t.text_dim);
-                let wresp = wresp.on_hover_text(tl!("Switch workspace"));
-                egui::Popup::menu(&wresp).show(|ui| crate::workspaces::popup(app, ui));
-                ui.add_space(8.0);
-            }
-            // Search → command palette (its shortcut opens it too).
-            if search {
-                let tip = match menus::shortcut_of("help.commandPalette") {
-                    Some(sc) => format!("{}  ({})", tl!("Search commands and tools"), menus::pretty_shortcut(sc)),
-                    None => tl!("Search commands and tools").to_string(),
-                };
-                if widgets::icon_button(ui, "search", &tip, app.ui.palette_open, icon).clicked() {
-                    app.ui.palette_open = !app.ui.palette_open;
-                    app.ui.palette_query.clear();
-                }
-            }
-            if app.services.native_menu.is_some() {
-                let title = ui.painter().layout_no_wrap(crate::brand::APP_NAME.into(), egui::FontId::proportional(13.5), t.text);
-                let title_rect = egui::Rect::from_center_size(full.center(), title.size());
-                // Keep the title centered only while the interactive groups leave room for it.
-                if title_rect.left() >= menus_end + 8.0 && title_rect.right() <= ui.min_rect().left() - 8.0 {
-                    ui.painter().galley(title_rect.min, title, t.text);
-                    ui.interact(title_rect, ui.scope_id().with("varos-build-identity"), Sense::hover())
-                        .on_hover_text(vectorcraft_format::VAROS_IDENTITY); // Varos
-                }
-            }
-        });
+    let frame = egui::Frame::NONE.fill(t.app_bar).inner_margin(egui::Margin {
+        left,
+        right: if custom { 0 } else { crate::varos::shell::tokens::APP_BAR_PAD },
+        top: 0,
+        bottom: 0,
     });
+    let bar = egui::Panel::top("app_bar")
+        .exact_size(if shell { crate::varos::shell::tokens::APP_BAR_HEIGHT } else { APP_BAR_HEIGHT })
+        .frame(frame.stroke(Stroke::new(1.0, t.border)))
+        .show(ui, |ui| {
+            // macOS draws the bar under its transparent title bar, so the bar gets the title bar's
+            // clicks: without this a double-click there zooms nothing (#1932).
+            if custom || cfg!(target_os = "macos") {
+                titlebar::drag_area(ui, ui.max_rect());
+            }
+            ui.horizontal_centered(|ui| {
+                // With the system title bar the OS draws its own icon: no in-app brand mark.
+                if shell || !system {
+                    let (r, _) = ui.allocate_exact_size(vec2(MARK, MARK), Sense::hover());
+                    crate::brand::paint_mark(ui, r);
+                    ui.add_space(6.0);
+                }
+                // Home keeps the brand and window controls, without editor menus or workspace popup.
+                if !menus::document_menus_showing(app) {
+                    return;
+                }
+                let on_home = menus::home_showing(app);
+                if widgets::icon_button(ui, "house", tl!("Home"), on_home, 20.0).clicked() {
+                    app.run("app.home", json!({})).ok();
+                }
+                ui.add_space(2.0);
+                // With the macOS menu bar the menus are at the top of the screen instead.
+                let menus_end = if app.services.native_menu.is_some() { ui.cursor().min.x } else { menus::menu_bar(app, ui) };
+                // The right-side group fills the space after the menus from the right; when it runs
+                // short, the search icon goes first (the palette
+                // stays under its shortcut), then the workspace switcher narrows.
+                let full = ui.max_rect();
+                let right_edge = if custom { full.right() - titlebar::WIDTH - 10.0 } else { full.right() };
+                let right = egui::Rect::from_min_max(egui::pos2(menus_end + 8.0, full.top()), egui::pos2(right_edge, full.bottom()));
+                let room = right.width();
+                // Built-in workspace names translate; the user's own stay as typed.
+                let ws_name =
+                    if crate::workspaces::is_builtin(&app.ui.workspace) { tl!(&app.ui.workspace).to_string() } else { app.ui.workspace.clone() };
+                let ws = ui.painter().layout_no_wrap(ws_name, egui::FontId::proportional(12.0), t.text);
+                let ws_w = (ws.size().x + 36.0).clamp(112.0, 190.0);
+                let gap = ui.spacing().item_spacing.x;
+                // The search icon, as in PhotoCraft: shown while a minimal switcher fits beside it.
+                let icon = 28.0;
+                let search = room >= 64.0 + 8.0 + gap + icon;
+                let ws_w = ws_w.min(room - 8.0 - gap - if search { icon } else { 0.0 }).max(64.0);
+                let mut rui = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                let ui = &mut rui;
+                // Workspace switcher: shows the current workspace, opens Window → Workspace. Varos: with
+                // the Varos shell on, its own row of workspace tabs takes its place.
+                if !crate::varos::shell::enabled(app) {
+                    let (wr, wresp) = ui.allocate_exact_size(vec2(ws_w, WIDGET_H), Sense::click());
+                    ui.painter().rect_filled(wr, CornerRadius::same(4), if wresp.hovered() { t.hover } else { t.panel });
+                    ui.painter().with_clip_rect(wr.shrink2(vec2(4.0, 0.0))).galley(wr.left_center() + vec2(10.0, -ws.size().y / 2.0), ws, t.text);
+                    icons::paint(ui, "chevron-down", egui::Rect::from_center_size(wr.right_center() - vec2(12.0, 0.0), vec2(12.0, 12.0)), t.text_dim);
+                    let wresp = wresp.on_hover_text(tl!("Switch workspace"));
+                    egui::Popup::menu(&wresp).show(|ui| crate::workspaces::popup(app, ui));
+                    ui.add_space(8.0);
+                }
+                // Search → command palette (its shortcut opens it too).
+                if search {
+                    let tip = match menus::shortcut_of("help.commandPalette") {
+                        Some(sc) => format!("{}  ({})", tl!("Search commands and tools"), menus::pretty_shortcut(sc)),
+                        None => tl!("Search commands and tools").to_string(),
+                    };
+                    if widgets::icon_button(ui, "search", &tip, app.ui.palette_open, icon).clicked() {
+                        app.ui.palette_open = !app.ui.palette_open;
+                        app.ui.palette_query.clear();
+                    }
+                }
+                if shell {
+                    for (icon, label, command) in [("redo-2", "Redo", "edit.redo"), ("undo-2", "Undo", "edit.undo")] {
+                        let tip = menus::shortcut_of(command)
+                            .map_or_else(|| tl!(label).to_string(), |sc| format!("{}  ({})", tl!(label), menus::pretty_shortcut(sc)));
+                        let enabled = menus::enabled(app, command);
+                        if ui.add_enabled_ui(enabled, |ui| widgets::icon_button(ui, icon, &tip, false, 28.0)).inner.clicked() {
+                            menus::invoke(app, command, json!({}));
+                        }
+                    }
+                    let name = app.session.active().map(|d| format!("{}{}", if d.is_dirty() { "• " } else { "" }, d.title())).unwrap_or_default();
+                    let title = ui.painter().layout_no_wrap(name, egui::FontId::proportional(12.0), t.text);
+                    let title_rect = egui::Rect::from_center_size(full.center(), title.size());
+                    if title_rect.left() >= menus_end + 8.0 && title_rect.right() <= ui.min_rect().left() - 8.0 {
+                        ui.painter().galley(title_rect.min, title, t.text);
+                        ui.interact(title_rect, ui.scope_id().with("varos-build-identity"), Sense::hover())
+                            .on_hover_text(vectorcraft_format::VAROS_IDENTITY);
+                    }
+                }
+                if !shell && app.services.native_menu.is_some() {
+                    let title = ui.painter().layout_no_wrap(crate::brand::APP_NAME.into(), egui::FontId::proportional(13.5), t.text);
+                    let title_rect = egui::Rect::from_center_size(full.center(), title.size());
+                    // Keep the title centered only while the interactive groups leave room for it.
+                    if title_rect.left() >= menus_end + 8.0 && title_rect.right() <= ui.min_rect().left() - 8.0 {
+                        ui.painter().galley(title_rect.min, title, t.text);
+                        ui.interact(title_rect, ui.scope_id().with("varos-build-identity"), Sense::hover())
+                            .on_hover_text(vectorcraft_format::VAROS_IDENTITY); // Varos
+                    }
+                }
+            });
+        });
     if custom {
         titlebar::caption_buttons(app, ui, bar.response.rect);
     }

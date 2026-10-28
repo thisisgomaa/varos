@@ -20,13 +20,15 @@ use crate::VectorcraftApp;
 use crate::theme::Tokens;
 
 /// The title strip's height (floating panels and floating strips).
-pub(crate) const TITLE: f32 = 16.0;
+pub(crate) const TITLE: f32 = 18.0;
+/// Narrow strips put the grip below the two 16-point buttons.
+pub(crate) const STRIP_TITLE: f32 = 32.0;
 /// A floating panel's size when nothing remembers one.
 pub(crate) const DEFAULT_SIZE: Vec2 = vec2(260.0, 360.0);
 /// A floating strip's width (an Icons-mode strip's).
-pub(crate) const STRIP_W: f32 = 34.0;
+pub(crate) const STRIP_W: f32 = super::tokens::TOOL_STRIP_WIDTH;
 /// The title strip's `×`, `<<` and `>>`.
-const BUTTON: Vec2 = vec2(12.0, 14.0);
+const BUTTON: Vec2 = vec2(16.0, 16.0);
 /// The lower-right resize corner and the right resize edge.
 const CORNER: f32 = 12.0;
 const EDGE: f32 = 5.0;
@@ -78,7 +80,7 @@ pub struct FloatStrip {
 impl FloatStrip {
     pub(crate) fn size(&self) -> Vec2 {
         let icons: usize = self.groups.iter().map(|g| g.panels.len()).sum();
-        vec2(STRIP_W, TITLE + strip::GRIP * self.groups.len() as f32 + strip::ICON_ROW * icons as f32 + STRIP_FOOT)
+        vec2(STRIP_W, STRIP_TITLE + strip::GRIP * self.groups.len() as f32 + strip::ICON_ROW * icons as f32 + STRIP_FOOT)
     }
 
     pub(crate) fn rect(&self, region: Rect) -> Rect {
@@ -155,7 +157,7 @@ fn button(ui: &mut egui::Ui, rect: Rect, id: Id, glyph: &str, label: &str, t: &T
         ui.painter().rect_filled(rect, CornerRadius::same(3), t.hover);
     }
     let color = if response.hovered() { t.text_strong } else { t.text_dim };
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(10.0), color);
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(super::tokens::CHROME_GLYPH), color);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     response.on_hover_text(label).clicked()
 }
@@ -166,7 +168,7 @@ fn float(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, f: &Float, h
     let id = f.panels.id;
     let area = float_area(id);
     let layer = float_layer(id);
-    let rect = f.shown(region);
+    let rect = super::motion::settle(&ctx, &format!("box-{}", f.panels.id), f.shown(region), region);
     ctx.memory_mut(|m| m.areas_mut().set_state(layer, egui::AreaState { pivot_pos: Some(rect.min), size: Some(rect.size()), ..Default::default() }));
     let title = Rect::from_min_size(rect.min, vec2(rect.width(), TITLE));
     let close = Rect::from_min_size(title.min + vec2(3.0, 1.0), BUTTON);
@@ -257,11 +259,13 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
     let sref = StripRef::Float(id);
     let area = strip_area(id);
     let layer = strip_layer(id);
-    let rect = s.rect(region);
+    let key = format!("strip-{}", s.id);
+    let rect = super::motion::settle(&ctx, &key, s.rect(region), region);
     ctx.memory_mut(|m| m.areas_mut().set_state(layer, egui::AreaState { pivot_pos: Some(rect.min), size: Some(rect.size()), ..Default::default() }));
-    let title = Rect::from_min_size(rect.min, vec2(rect.width(), TITLE));
-    let close = Rect::from_min_size(title.min + vec2(3.0, 1.0), BUTTON);
-    let expand = Rect::from_min_size(pos2(title.right() - 3.0 - BUTTON.x, title.top() + 1.0), BUTTON);
+    let title = Rect::from_min_size(rect.min, vec2(rect.width(), STRIP_TITLE));
+    let close = Rect::from_min_size(title.min + vec2(1.0, 1.0), BUTTON);
+    let expand = Rect::from_min_size(pos2(title.right() - 1.0 - BUTTON.x, title.top() + 1.0), BUTTON);
+    let grip = Rect::from_min_max(pos2(title.left(), title.top() + 18.0), title.max);
     let mut ask = None;
     let mut tops = Vec::new();
     let mut icons = Vec::new();
@@ -271,7 +275,10 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
         let painter = ui.painter().clone();
         painter.rect_filled(rect, CornerRadius::same(boxes::RADIUS), t.panel);
         // The title strip drags the whole strip (to the Board's edge, or elsewhere).
-        let grab = ui.interact(title, area.with("title"), Sense::drag());
+        let grab = ui.interact(grip, area.with("title"), Sense::drag());
+        for x in [-4.0, 0.0, 4.0] {
+            painter.circle_filled(grip.center() + vec2(x, 0.0), 0.8, t.text_dim);
+        }
         if grab.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::Grab);
         }
@@ -296,7 +303,7 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
         painter.rect_stroke(rect, CornerRadius::same(boxes::RADIUS), Stroke::new(1.0, t.border), StrokeKind::Inside);
     });
     hits.push((Hit::FloatStrip(id), rect));
-    hits.push((Hit::FloatStripTitle(id), title));
+    hits.push((Hit::FloatStripTitle(id), grip));
     hits.push((Hit::FloatStripClose(id), close));
     hits.push((Hit::FloatStripExpand(id), expand));
     strip::flyout(app, ui, region, rect, &tops, sref, hits);

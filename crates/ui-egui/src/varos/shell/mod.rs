@@ -20,8 +20,11 @@ pub(crate) mod boxes;
 pub(crate) mod divider;
 pub(crate) mod drag;
 pub(crate) mod floats;
+pub(crate) mod motion;
 pub(crate) mod persist;
 pub(crate) mod strip;
+pub(crate) mod tokens;
+pub(crate) mod tools;
 pub(crate) mod tree;
 pub(crate) mod workspace;
 
@@ -58,6 +61,8 @@ pub(crate) fn set_enabled(app: &mut VectorcraftApp, on: bool) {
 pub(crate) enum Hit {
     /// The Board (the canvas region, its document tabs included).
     Board,
+    Tools,
+    ToolsGrip,
     Strip,
     StripToggle,
     StripIcon(String),
@@ -188,7 +193,8 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     if alone {
         strip::close(app);
         hits.push((Hit::Board, area));
-        board(app, ui, area, false, &mut hits);
+        let canvas = if crate::varos::home::is_home(app) { area } else { tools::show(app, ui, area, region, &mut hits) };
+        board(app, ui, canvas, false, &mut hits);
     } else {
         // The workspace row on top; the boxes, floats and drags below it.
         let row = Rect::from_min_max(area.min + egui::vec2(OUTER, 0.0), egui::pos2(area.right() - OUTER, region.top()));
@@ -210,6 +216,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             if b.is_board() {
                 hits.push((Hit::Board, *rect));
                 let canvas = strip::show(app, ui, *rect, &mut hits);
+                let canvas = tools::show(app, ui, canvas, region, &mut hits);
                 // The document tabs' row: its empty space (under the tabs, which take their own
                 // input) maximizes the Board or restores the layout on a double-click.
                 let header = (app.session.active().is_some() && !crate::varos::home::is_home(app)).then(|| {
@@ -217,7 +224,8 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                     Rect::from_min_size(canvas.min, egui::vec2(canvas.width(), h))
                 });
                 let header_response = header.map(|r| (r, ui.interact(r, egui::Id::unique("varos-shell-board-header"), egui::Sense::click())));
-                board(app, ui, canvas, true, &mut hits);
+                board(app, ui, canvas, false, &mut hits);
+                boxes::frame(ui.painter(), *rect, &crate::theme::Tokens::get(ui.ctx()));
                 if let Some((r, response)) = header_response {
                     hits.push((Hit::BoardHeader, r));
                     if response.double_clicked() {
@@ -226,7 +234,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                         ui.ctx().request_repaint();
                     }
                 }
-            } else if let Some(ask) = boxes::show(app, ui, &b, *rect, false, &mut hits) {
+            } else if let Some(ask) = boxes::show(app, ui, &b, motion::settle(ui.ctx(), &format!("box-{}", b.id), *rect, region), false, &mut hits) {
                 asks.push(ask);
             }
         }
@@ -258,6 +266,9 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             strip::close(app);
         }
         drag::after(app, ui, region, &mut hits);
+    }
+    if !crate::varos::home::is_home(app) && app.ui.toolbar && app.ui.screen_mode < 3 {
+        crate::toolbar::shell_popovers(app, ui.ctx(), region);
     }
     let pass = ui.ctx().cumulative_pass_nr();
     // Only a drag needs to know the layout its targets were found in (worth a hash per frame).
