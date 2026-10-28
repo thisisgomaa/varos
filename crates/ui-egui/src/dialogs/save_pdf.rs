@@ -83,6 +83,7 @@ pub fn open(app: &mut VectorcraftApp, params: &Value) -> Result<Value, String> {
     fields.insert("preset".into(), json!(s("preset").unwrap_or(pdf::DEFAULT_PRESET)));
     fields.insert("__presets".into(), json!(pdf::presets(&app.session)));
     fields.insert("__section".into(), json!(SECTIONS[0]));
+    fields.insert("allPages".into(), json!(params.get("allPages").and_then(Value::as_bool).unwrap_or(false)));
     fields.insert("__allArtboards".into(), json!(s("range").is_none()));
     fields.insert("range".into(), json!(s("range").unwrap_or("")));
     if let Some(path) = s("path") {
@@ -485,6 +486,7 @@ fn general(ui: &mut egui::Ui, d: &mut Dialog, editor: bool) {
         }
         return;
     }
+    flag(ui, d, "allPages", "All pages", true);
     heading(ui, tl!("Artboards"));
     let mut all = d.bool("__allArtboards");
     ui.horizontal(|ui| {

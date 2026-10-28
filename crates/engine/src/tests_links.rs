@@ -86,7 +86,7 @@ pub(crate) fn near(a: [u8; 3], b: [u8; 3]) -> bool {
 
 /// The first image object's JSON in a saved document.
 fn saved_image(v: &mut Value) -> &mut Value {
-    &mut v["document"]["layers"][0]["kind"]["children"][0]["kind"]
+    &mut v["pages"][0]["doc"]["layers"][0]["kind"]["children"][0]["kind"]
 }
 
 pub(crate) fn save(s: &mut Session, path: &str) {
@@ -115,7 +115,7 @@ fn a_placed_link_records_the_file_and_the_document_saves_only_a_preview() {
     let doc_path = dir.file("poster.vectorcraft");
     save(&mut s, &doc_path);
     let mut saved: Value = serde_json::from_slice(&std::fs::read(&doc_path).unwrap()).unwrap();
-    let entry = &saved["images"][&im.key];
+    let entry = &saved["pages"][0]["images"][&im.key];
     assert_eq!(entry["proxy"], true);
     assert!(entry["data"].as_str().unwrap().len() * 3 / 4 < bytes.len(), "the preview is smaller than the file");
     let saved_link = saved_image(&mut saved)["link"].clone();
@@ -124,7 +124,7 @@ fn a_placed_link_records_the_file_and_the_document_saves_only_a_preview() {
     s.execute("file.place", &json!({"path": pic, "link": false})).unwrap();
     save(&mut s, &doc_path);
     let saved: Value = serde_json::from_slice(&std::fs::read(&doc_path).unwrap()).unwrap();
-    assert_eq!(saved["images"][&im.key]["proxy"], Value::Null, "an embedded image shows it too");
+    assert_eq!(saved["pages"][0]["images"][&im.key]["proxy"], Value::Null, "an embedded image shows it too");
 }
 
 /// A flat `w`×`h` Photoshop document of one colour (raw RGB, no layers).

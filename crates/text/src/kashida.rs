@@ -657,7 +657,7 @@ pub(crate) fn continuous_outlines(layout: &mut crate::TextLayout, text: &str, db
     use linesweeper::topology::Topology;
     let mut groups: std::collections::BTreeSet<(usize, usize, usize, usize)> = Default::default();
     for (index, g) in layout.glyphs.iter().enumerate() {
-        if layout.marker_of(index).is_some() || g.len != 0 || !db.face_by_id(g.font_id).is_some_and(|f| f.glyph_for(arabic::TATWEEL) == g.gid) {
+        if layout.marker_of(index).is_some() || g.len != 0 || db.face_by_id(g.font_id).is_none_or(|f| f.glyph_for(arabic::TATWEEL) != g.gid) {
             continue;
         }
         let Some(before) = text.get(..g.byte) else { continue };

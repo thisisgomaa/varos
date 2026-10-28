@@ -51,6 +51,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         widgets::dim_label(ui, tl!("No document"));
         return;
     };
+    if let Some(pages) = i["pages"].as_array() {
+        for page in pages {
+            row(ui, page["page_name"].as_str().unwrap_or("Page"), format!("{} artboards · {} objects", page["artboards"], page["objects"]));
+        }
+    }
     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
         let sections = i["sections"].as_array().map_or(&[][..], Vec::as_slice);
         let shown = sections.iter().filter(|s| category.is_empty() || s["id"] == category.as_str());

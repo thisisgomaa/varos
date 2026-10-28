@@ -68,7 +68,7 @@ pub(crate) struct Agents {
     /// ([`super::boards`]).
     pub revisions: varos_agents::boards::Revisions,
     /// Each agent's own selection and current layer, by session and board ([`super::boards`]).
-    pub(crate) private: HashMap<(String, u64), super::boards::Private>,
+    pub(crate) private: HashMap<(String, u64, String), super::boards::Private>,
     /// The synthetic input queued, in runs, with the board each run is for
     /// ([`super::boards::screen_synthetic`]).
     pub(crate) synthetic: std::collections::VecDeque<(Option<u64>, usize)>,

@@ -469,14 +469,14 @@ fn the_variables_lock_is_an_undo_step_and_is_saved() {
     let saved = vectorcraft_format::save(&s.doc().unwrap().doc, false);
     assert!(vectorcraft_format::load(&saved).unwrap().variables.locked, "a document saved locked opens locked");
     let mut v: Value = serde_json::from_slice(&saved).unwrap();
-    assert_eq!(v["document"]["variables"]["locked"], true);
-    v["document"]["variables"].as_object_mut().unwrap().remove("locked");
+    assert_eq!(v["pages"][0]["doc"]["variables"]["locked"], true);
+    v["pages"][0]["doc"]["variables"].as_object_mut().unwrap().remove("locked");
     assert!(!vectorcraft_format::load(&serde_json::to_vec(&v).unwrap()).unwrap().variables.locked, "a file without the key opens unlocked");
 
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(!s.doc().unwrap().doc.variables.locked, "undo unlocks");
     let v: Value = serde_json::from_slice(&vectorcraft_format::save(&s.doc().unwrap().doc, false)).unwrap();
-    assert!(v["document"].get("variables").is_none_or(|v| v.get("locked").is_none()), "unlocked variables write no key: {v}");
+    assert!(v["pages"][0]["doc"].get("variables").is_none_or(|v| v.get("locked").is_none()), "unlocked variables write no key: {v}");
     s.execute("edit.redo", &json!({})).unwrap();
     assert!(s.doc().unwrap().doc.variables.locked, "redo locks again");
 }

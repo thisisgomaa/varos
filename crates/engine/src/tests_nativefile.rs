@@ -157,10 +157,10 @@ fn unused_images_are_left_out_of_saves() {
     image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
     let r = s.execute("file.place", &json!({"name": "a.png", "dataBase64": vectorcraft_format::base64_encode(&png)})).unwrap();
     let id = r["ids"][0].as_u64().unwrap();
-    assert_eq!(json_of(&saved(&mut s, json!({})))["images"].as_object().unwrap().len(), 1);
+    assert_eq!(json_of(&saved(&mut s, json!({})))["pages"][0]["images"].as_object().unwrap().len(), 1);
     s.execute("edit.clear", &json!({"ids": [id]})).unwrap();
     assert_eq!(s.doc().unwrap().doc.images.len(), 1, "kept in memory (undo can bring the image back)");
-    assert!(json_of(&saved(&mut s, json!({})))["images"].as_object().unwrap().is_empty());
+    assert!(json_of(&saved(&mut s, json!({})))["pages"][0]["images"].as_object().unwrap().is_empty());
     s.execute("edit.undo", &json!({})).unwrap();
     let bytes = saved(&mut s, json!({}));
     open(&mut s, "back.vectorcraft", &bytes);
@@ -179,8 +179,8 @@ fn newer_keys_and_legacy_profiles_survive_open_and_save() {
     assert!(d.unknown.is_empty());
     assert_eq!(cmd::colormgmt::doc_profiles(d).0.as_deref(), Some("sRGB IEC61966-2.1"));
     let again = json_of(&saved(&mut s, json!({})));
-    assert_eq!(again["document"]["fromTheFuture"], json!({"x": 1}));
-    assert_eq!(again["document"]["color_profiles"]["rgb"], "sRGB IEC61966-2.1");
+    assert_eq!(again["pages"][0]["doc"]["fromTheFuture"], json!({"x": 1}));
+    assert_eq!(again["pages"][0]["doc"]["color_profiles"]["rgb"], "sRGB IEC61966-2.1");
     // Saved for v2 again: back where v2 apps read them.
     let v2 = json_of(&saved(&mut s, json!({"version": 2})));
     assert_eq!(v2["document"]["unknown"]["colorProfiles"]["rgb"], "sRGB IEC61966-2.1");

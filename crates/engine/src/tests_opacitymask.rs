@@ -319,8 +319,8 @@ fn saving_while_editing_writes_no_editing_layer() {
     // A file saved mid-edit by an older version (editing record and layer written) opens clean.
     let mut v: Value = serde_json::from_slice(&vectorcraft_format::save(doc(&s), false)).unwrap();
     let full = serde_json::to_value(doc(&s)).unwrap();
-    v["document"]["layers"] = full["layers"].clone();
-    v["document"]["mask_edit"] = json!({"object": obj.0, "layer": doc(&s).mask_edit.unwrap().layer.0});
+    v["pages"][0]["doc"]["layers"] = full["layers"].clone();
+    v["pages"][0]["doc"]["mask_edit"] = json!({"object": obj.0, "layer": doc(&s).mask_edit.unwrap().layer.0});
     let old = vectorcraft_format::load(&serde_json::to_vec(&v).unwrap()).unwrap();
     assert!(old.mask_edit.is_none() && !has_edit_layer(&old) && old.layers.len() == 1);
 }

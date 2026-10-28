@@ -53,6 +53,7 @@ pub(crate) fn extend(defs: &mut Vec<Value>) {
         if let Some(props) = t.get_mut("inputSchema").and_then(|s| s.get_mut("properties")).and_then(Value::as_object_mut) {
             props.insert("board".into(), board_prop(&name));
             props.insert("revision".into(), revision_prop(&name));
+            props.insert("page".into(), json!({"type":"string", "description":"Optional stable page_id within board; select/edit/inspect that canvas. Omitted: its active page."}));
         }
         if WRITERS.contains(&name.as_str())
             && let Some(Value::String(d)) = t.get_mut("description")
@@ -70,7 +71,7 @@ pub(crate) fn extend(defs: &mut Vec<Value>) {
             d.push_str(" Not for agents in Varos: it drives the person's own window, tool or input (person_state).");
         }
     }
-    let empty = json!({"type": "object", "properties": {}, "additionalProperties": false});
+    let empty = json!({"type": "object", "properties": {"pages":{"type":"boolean","description":"Opt in to project/page discovery; default responses remain unchanged."}}, "additionalProperties": false});
     defs.push(json!({
         "name": CAPABILITIES,
         "title": "Varos capabilities",
@@ -127,7 +128,11 @@ pub(crate) fn capabilities(scoped: bool) -> Value {
 /// every line it makes; references in, references out ([`boards::qualify`]).
 pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
     if name == CAPABILITIES {
-        return ToolResult::json(&capabilities(b.board_scoped()));
+        let mut value = capabilities(b.board_scoped());
+        if args.get("pages").and_then(Value::as_bool) == Some(true) {
+            value["pages"] = json!({"list":"list_boards {pages:true} adds pages: [{page_id,page_name,active,index,artboards}] per board", "target":"optional page: stable page_id on select/edit/inspect tools; omitted means active page", "commands":["page.list","page.add","page.rename","page.duplicate","page.delete","page.move","page.switch"], "isolation":"selection and history belong to the page; agent calls restore the person's page and view"});
+        }
+        return ToolResult::json(&value);
     }
     let (args, board, revision) = match split(args) {
         Ok(parts) => parts,
@@ -141,7 +146,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         if let Err(e) = b.set_target(Some(Value::Null)) {
             return ToolResult::error(format!("{name}: {e}"));
         }
-        let r = b.call(boards::LIST, json!({}));
+        let r = b.call(boards::LIST, Value::Object(args));
         let _ = b.set_target(None);
         return match r {
             Ok(v) => ToolResult::json(&v),
@@ -149,6 +154,13 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         };
     }
     let mut args = Value::Object(args);
+    let page = args.as_object_mut().and_then(|a| a.remove("page"));
+    if page.as_ref().is_some_and(|p| p.as_str().is_none()) {
+        return ToolResult::error("page must be a stable page_id");
+    }
+    if page.is_some() && !b.board_scoped() {
+        return ToolResult::error("page targets require a board-scoped Varos connection; use page.switch in headless sessions");
+    }
     let board = match boards::unqualify(&mut args, board.as_deref()) {
         Ok(board) => board,
         Err(e) => return ToolResult::error(format!("{name}: {e}")),
@@ -159,6 +171,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
     let target = match &board {
         Some(board) => {
             let mut t = json!({ "board": board });
+            if let Some(page) = &page {
+                t["page"] = page.clone();
+            }
             if let Some(r) = revision {
                 t["revision"] = json!(r);
             }
@@ -369,6 +384,19 @@ mod tests {
             assert_eq!(target, &Some(json!({"board": a, "revision": 7})));
             assert!(!params.to_string().contains(&a), "references are plain ids on the way in: {params}");
         }
+    }
+
+    #[test]
+    fn pages_are_opt_in_and_targets_travel_with_each_control_line() {
+        let mut b = fake();
+        let baseline = capabilities(true);
+        assert_eq!(json_of(&call_tool(&mut b, CAPABILITIES, &json!({}))), baseline);
+        let extended = json_of(&call_tool(&mut b, CAPABILITIES, &json!({"pages":true})));
+        assert!(extended["pages"]["target"].is_string());
+        let board = boards::board_id(1);
+        let r = call_tool(&mut b, "set_paint", &json!({"board":board,"page":"page-2","fill":"#ff0000","ids":[4]}));
+        assert!(!r.is_error, "{r:?}");
+        assert!(b.seen.iter().all(|(_, params, t)| t == &Some(json!({"board":board,"page":"page-2"})) && params.get("page").is_none()));
     }
 
     #[test]

@@ -484,6 +484,8 @@ fn fidelity_warning(f: &Format) -> Option<String> {
 /// [`SaveJob::finish`]. Cheap to clone (the documents are shared).
 #[derive(Clone)]
 pub struct SaveJob {
+    project: vectorcraft_format::Project,
+    project_source: crate::Project,
     plan: SavePlan,
     /// The document as written (with the view to reopen at, links relative to the file).
     doc: Arc<Document>,
@@ -697,10 +699,28 @@ fn job_for_stamped(s: &Session, st: &DocState, plan: SavePlan, stamped: Option<i
             o.insert("range".into(), json!("all"));
         }
     }
-    Ok(SaveJob { plan, doc, params, snapshot, source: st.doc.clone(), stamped, boards })
+    let project_source = s.documents().iter().find(|p| p.uid == st.uid).cloned().unwrap_or_else(|| st.clone().into());
+    if project_source.pages().len() > 1 && plan.retargets() && !matches!(plan.format.id, "vectorcraft" | "template") {
+        return Err(bad(cmd, "save a multipage project as .varos; use Export or Save a Copy for other formats"));
+    }
+    let mut project = project_source.snapshot();
+    for page in &mut project.pages {
+        if let Some(path) = plan.path.as_deref()
+            && let Some(d) = crate::cmd::links::with_relative_paths(&page.doc, path)
+        {
+            page.doc = d;
+        }
+    }
+    if let Some(page) = project.pages.get_mut(project.active) {
+        page.doc = (*doc).clone();
+    }
+    Ok(SaveJob { project, project_source, plan, doc, params, snapshot, source: st.doc.clone(), stamped, boards })
 }
 
 impl SaveJob {
+    pub(crate) fn project_source(&self) -> &crate::Project {
+        &self.project_source
+    }
     pub fn plan(&self) -> &SavePlan {
         &self.plan
     }
@@ -717,6 +737,13 @@ impl SaveJob {
 
     /// Encode `doc` (the job's document, changed) as the job encodes its own: one file.
     pub(crate) fn encode_doc(&self, doc: &Document) -> Result<Encoded> {
+        if matches!(self.plan.format.id, "vectorcraft" | "template") {
+            let mut project = self.project.clone();
+            if let Some(page) = project.pages.get_mut(project.active) {
+                page.doc = doc.clone();
+            }
+            return Ok(Encoded::one(super::native::encode_project(self.plan.mode.command(), self.plan.format, &project, &self.params)?));
+        }
         self.encode_one(doc)
     }
 
@@ -724,7 +751,14 @@ impl SaveJob {
     /// the warnings (what the format loses first, then the encoder's own notes: PDF options not
     /// applied yet…, then the plan's notes on its params).
     pub fn encode(&self) -> Result<Encoded> {
-        let mut enc = self.encode_one(&self.doc)?;
+        let mut enc = if matches!(self.plan.format.id, "vectorcraft" | "template") {
+            Encoded::one(super::native::encode_project(self.plan.mode.command(), self.plan.format, &self.project, &self.params)?)
+        } else if self.plan.format.id == "pdf" && bool_or(&self.params, "allPages", false) {
+            let (bytes, warnings) = super::pdf::encode_project(self.plan.mode.command(), &self.project, &self.params)?;
+            Encoded { warnings, ..Encoded::one(bytes) }
+        } else {
+            self.encode_one(&self.doc)?
+        };
         for &b in &self.boards {
             let one = self.encode_one(&artboard_doc(&self.doc, b))?;
             enc.files.extend(one.files.into_iter().map(|(_, bytes)| (Some(b), bytes)));
@@ -827,7 +861,11 @@ impl SaveJob {
         let mut written = 0u64;
         let mut fill = |w: &mut dyn std::io::Write| {
             let mut out = Counted { inner: std::io::BufWriter::with_capacity(STREAM_BUFFER, w), n: 0 };
-            let r = super::native::encode_to(cmd, f, &doc, &self.params, &mut out);
+            let mut project = self.project.clone();
+            if let Some(page) = project.pages.get_mut(project.active) {
+                page.doc = (*doc).clone();
+            }
+            let r = super::native::encode_project_to(cmd, f, &project, &self.params, &mut out);
             written = out.n;
             match r {
                 Ok(()) => out.inner.flush(),
@@ -882,8 +920,24 @@ impl SaveJob {
         let saved = self.plan.retargets() && self.plan.path.is_some();
         // The other open documents that place this one show the new version.
         let written = self.plan.path.clone().filter(|_| matches!(self.plan.format.id, "vectorcraft" | "template"));
-        if let Some(st) = s.document_mut(uid) {
-            self.finish(st);
+        if let Some(project) = s.document_mut(uid) {
+            let page_id = self.project_source.page_id().to_owned();
+            let path = self.plan.path.clone();
+            let format = self.plan.format.id;
+            let options = self.plan.options.clone();
+            if saved {
+                project.saved_snapshot(&self.project_source);
+            }
+            if let Some(st) = project.page_state_mut(&page_id) {
+                self.finish(st);
+            }
+            if saved {
+                project.path = path;
+                project.format = format;
+                project.save_options = options;
+                project.converted = false;
+                project.recovered = false;
+            }
         }
         if saved {
             crate::cmd::recovery::forget(s, uid);
@@ -928,12 +982,15 @@ fn can_revert(s: &Session) -> std::result::Result<(), String> {
 fn revert(s: &mut Session, _: &Value) -> Result<Value> {
     let index = s.active_index().ok_or(crate::EngineError::NoDocument)?;
     let path = s.doc()?.path.clone().ok_or_else(|| bad("file.revert", "the document has never been saved"))?;
-    let Loaded { mut doc, .. } = load(&path, &read_file(&path)?)?.with_grid_prefs(&s.prefs);
+    let Loaded { mut doc, project, .. } = load(&path, &read_file(&path)?)?.with_grid_prefs(&s.prefs);
     doc.template = false;
     // Back to the saved file: its recovery copy has nothing left to recover.
     let uid = s.doc()?.uid;
     crate::cmd::recovery::forget(s, uid);
     s.replace_document(index, doc);
+    if let Some(project) = project {
+        s.project_mut()?.install(project)?;
+    }
     Ok(json!({ "path": path }))
 }
 
@@ -945,7 +1002,7 @@ fn format_options(s: &mut Session, p: &Value) -> Result<Value> {
     let f = format(id)
         .filter(|f| f.write || SAVE_FORMATS.contains(&f.id) || TEMPLATE_FORMATS.contains(&f.id))
         .ok_or_else(|| bad(C, format!("`{id}` is no writable format (see document.formats)")))?;
-    let saved = st.filter(|d| d.format == f.id).map(remembered_save_options);
+    let saved = st.filter(|d| d.format == f.id).map(|st| remembered_save_options(st));
     // A native save compresses as Use Compression says, unless told otherwise.
     let prefs = with_compression_pref(&s.prefs, &json!({}));
     let mut v = f.to_json();
@@ -967,7 +1024,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Save Document",
             [],
             None,
-            "{path?, format?: vectorcraft|template|pdf|svg|svgz|ai (default: the path's extension, else the document's own format), options?: {…the format's options, see file.formatOptions; default: as last saved}, svg?: {…SVG options} (an SVG save keeps hidden layers, display:none, unless hiddenLayers is false), …the SVG and PDF options given flat instead (an option given flat or in svg and in options with different values is an error), compress?: bool (native, also in options: gzip; default: the useCompression preference; warnings say when the format doesn't read compress, version or preview given flat), version?: 4 (3, 2 or 1: for older VectorCraft versions; 1 and 2 are never compressed), preview?: false (embed a PNG of the first artboard, at most 256 px), separateArtboards?: false (native and .ai: also save each artboard of `range` to <name>-<artboard>.<ext> beside the file, holding that artboard and the art touching it; the result's files lists every file written), range?: \"1-3, 5\"|\"all\" (default; with separateArtboards), includeLinked?: false (keep linked files' own pixels, not just their previews; they stay linked), embedProfiles?: true (carry the ICC profiles loaded from files that the document is tagged with; opening the file installs them where missing), pdfCompatible?: false for native (also carry a PDF of every artboard) | true for .ai (false: blank pages, only the native document; a .ai file's compress, default true, is its compression.compressText), modified?: Unix seconds|null (the File Info modified date, and created date when there is none, a save to a file stamps; default now, recorded in the journal so a replay matches; null: leave the dates)} → {path, format, bytes, warnings, files?: [path…] (the file and its artboards' files), linked?: [path…] (images an SVG links to)}. Save writes one artboard, except a .ai file: a PDF-compatible file of every artboard carrying the native document (preserveEditing always on; PDF options flat or in options), which document.open restores exactly; separateArtboards writes more files, one per artboard. Without a path it writes the document's own file in its own format: a document opened from or saved as SVG/PDF saves as that again (warnings name what the format loses). No path known (never saved, converted from an older version, restored by Data Recovery, or another format) → {dataBase64, format, name, folder?, warnings} and the document stays modified",
+            "{path?, format?: vectorcraft|template|pdf|svg|svgz|ai (default: the path's extension, else the document's own format), options?: {…the format's options, see file.formatOptions; default: as last saved}, svg?: {…SVG options} (an SVG save keeps hidden layers, display:none, unless hiddenLayers is false), …the SVG and PDF options given flat instead (an option given flat or in svg and in options with different values is an error), compress?: bool (native, also in options: gzip; default: the useCompression preference; warnings say when the format doesn't read compress, version or preview given flat), version?: 5 (4, 3, 2 or 1: single-page files for older VectorCraft versions; 1 and 2 are never compressed), preview?: false (embed a PNG of the first artboard, at most 256 px), separateArtboards?: false (native and .ai: also save each artboard of `range` to <name>-<artboard>.<ext> beside the file, holding that artboard and the art touching it; the result's files lists every file written), range?: \"1-3, 5\"|\"all\" (default; with separateArtboards), includeLinked?: false (keep linked files' own pixels, not just their previews; they stay linked), embedProfiles?: true (carry the ICC profiles loaded from files that the document is tagged with; opening the file installs them where missing), pdfCompatible?: false for native (also carry a PDF of every artboard) | true for .ai (false: blank pages, only the native document; a .ai file's compress, default true, is its compression.compressText), modified?: Unix seconds|null (the File Info modified date, and created date when there is none, a save to a file stamps; default now, recorded in the journal so a replay matches; null: leave the dates)} → {path, format, bytes, warnings, files?: [path…] (the file and its artboards' files), linked?: [path…] (images an SVG links to)}. Save writes one artboard, except a .ai file: a PDF-compatible file of every artboard carrying the native document (preserveEditing always on; PDF options flat or in options), which document.open restores exactly; separateArtboards writes more files, one per artboard. Without a path it writes the document's own file in its own format: a document opened from or saved as SVG/PDF saves as that again (warnings name what the format loses). No path known (never saved, converted from an older version, restored by Data Recovery, or another format) → {dataBase64, format, name, folder?, warnings} and the document stays modified",
             has_doc,
             |s, p| save(s, SaveMode::Save, p)
         ),

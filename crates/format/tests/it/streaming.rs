@@ -133,10 +133,10 @@ fn entries_in_any_order_or_shared_read_back() {
     let plain = save_with(&d, &SaveOptions::default()).unwrap();
     // Swap the entries' places (b's bytes listed first), and point a third image at a's bytes.
     let file = with_json(&plain, |v| {
-        let (a, b) = (v["images"]["a"]["blob"].clone(), v["images"]["b"]["blob"].clone());
-        v["images"]["a"]["blob"] = b.clone();
-        v["images"]["b"]["blob"] = a.clone();
-        v["images"]["c"] = serde_json::json!({"mime": "image/png", "blob": b});
+        let (a, b) = (v["pages"][0]["images"]["a"]["blob"].clone(), v["pages"][0]["images"]["b"]["blob"].clone());
+        v["pages"][0]["images"]["a"]["blob"] = b.clone();
+        v["pages"][0]["images"]["b"]["blob"] = a.clone();
+        v["pages"][0]["images"]["c"] = serde_json::json!({"mime": "image/png", "blob": b});
     });
     for bytes in [file.clone(), gzip(&file)] {
         let back = load(&bytes).unwrap();
@@ -151,17 +151,17 @@ fn limits_apply_per_entry_and_to_all_entries() {
     let d = doc_with(&[("a", "image/png", INLINE_MAX), ("b", "image/png", INLINE_MAX)]);
     let plain = save_with(&d, &SaveOptions::default()).unwrap();
     // One entry past the limit: refused before anything is allocated.
-    let huge = with_json(&plain, |v| v["images"]["a"]["blob"] = serde_json::json!([0, MAX_BLOB + 1]));
+    let huge = with_json(&plain, |v| v["pages"][0]["images"]["a"]["blob"] = serde_json::json!([0, MAX_BLOB + 1]));
     assert!(matches!(load_file(&gzip(&huge)), Err(FormatError::TooBig)));
     // Each within it, together past the limit for all.
     let many = with_json(&plain, |v| {
         for i in 0..5 {
-            v["images"][format!("x{i}")] = serde_json::json!({"mime": "image/png", "blob": [0, MAX_BLOB]});
+            v["pages"][0]["images"][format!("x{i}")] = serde_json::json!({"mime": "image/png", "blob": [0, MAX_BLOB]});
         }
     });
     assert!(matches!(load_file(&gzip(&many)), Err(FormatError::TooBig)));
     // A length the data doesn't have: the image is damaged, nothing more.
-    let short = with_json(&plain, |v| v["images"]["a"]["blob"] = serde_json::json!([0, 1u64 << 20]));
+    let short = with_json(&plain, |v| v["pages"][0]["images"]["a"]["blob"] = serde_json::json!([0, 1u64 << 20]));
     assert!(matches!(load_file(&gzip(&short)), Err(FormatError::BadImage(_))));
     // Uncompressed files have no limits to apply (the file is all there is).
     assert!(matches!(load_file(&huge), Err(FormatError::BadImage(_))));
@@ -186,8 +186,8 @@ fn documents_read_whatever_their_key_order_and_keep_keys_they_dont_know() {
         // serde_json's map keeps keys sorted: `type` is no longer first in the node kinds (a
         // layer's `children`, `clip` and `color` come before it), and the document's fields come
         // in another order.
-        v["document"]["aaa_from_a_newer_version"] = serde_json::json!({"x": [1, 2]});
-        v["document"]["zzz_too"] = serde_json::json!("kept");
+        v["pages"][0]["doc"]["aaa_from_a_newer_version"] = serde_json::json!({"x": [1, 2]});
+        v["pages"][0]["doc"]["zzz_too"] = serde_json::json!("kept");
     });
     let text = String::from_utf8_lossy(&file);
     assert!(!text.contains(r#"{"type":"layer""#) && text.contains(r#""type":"layer""#), "`type` isn't first");

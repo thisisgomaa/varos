@@ -542,6 +542,7 @@ pub fn leave(s: &mut Session) {
 /// A document's recovery copy: its entry and the document it holds.
 #[derive(Clone, Debug)]
 pub struct RecoveryCopy {
+    pages: Vec<(String, String, Arc<Document>)>,
     /// The copy's name in the store (`<area>/<name>`, without extension).
     pub file: String,
     /// The document as last copied (unchanged since: no new copy needed).
@@ -672,6 +673,16 @@ impl RecoveryJob {
     /// Encode the snapshot and store it with its details and the images the area doesn't have
     /// yet → `{file, title, bytes (the document's), imageBytes (images written now)}`.
     pub fn write(&self, store: &dyn RecoveryStore) -> std::result::Result<Value, String> {
+        if self.save.project_source().pages().len() > 1 {
+            let enc = self.save.encode().map_err(|e| e.to_string())?;
+            let bytes = enc.files.first().map(|f| f.1.as_slice()).ok_or("nothing encoded")?;
+            let mut meta = self.meta.clone();
+            meta.images.clear();
+            // The v5 envelope contains each page's own resources atomically.
+            store.write(&format!("{}{DOC_EXT}", self.file), bytes)?;
+            store.write(&format!("{}{META_EXT}", self.file), &serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?)?;
+            return Ok(json!({"file":self.file,"title":self.title,"bytes":bytes.len(),"imageBytes":0}));
+        }
         let doc = self.save.doc();
         // A linked image keeps its preview, as a save writes it.
         let linked = doc.linked_only_images();
@@ -726,7 +737,7 @@ impl RecoveryJob {
     /// meanwhile has nothing left to recover: its copy goes at once.
     pub fn finish(self, s: &mut Session) {
         let snapshot = self.save.snapshot().clone();
-        let copy = RecoveryCopy { file: self.file.clone(), doc: snapshot };
+        let copy = RecoveryCopy { pages: self.save.project_source().content_snapshot(), file: self.file.clone(), doc: snapshot };
         match s.document_mut(self.uid).filter(|st| st.is_dirty()) {
             Some(st) => st.recovery = Some(copy),
             None => remove_copy(s, &self.file),
@@ -742,13 +753,15 @@ fn object_count(doc: &Document) -> usize {
 /// Why document `st` gets no recovery copy now, if it doesn't: unchanged since its last copy (or
 /// never changed), or complex while the preference turns Data Recovery off for those.
 pub fn skip_reason(s: &Session, st: &DocState) -> Option<&'static str> {
-    if !st.is_dirty() {
+    let project = s.documents().iter().find(|p| p.uid == st.uid);
+    if !project.map_or_else(|| st.is_dirty(), |p| p.is_dirty()) {
         return Some("no unsaved changes");
     }
-    if st.recovery.as_ref().is_some_and(|c| st.same_content(&c.doc)) {
+    if st.recovery.as_ref().is_some_and(|c| project.map_or_else(|| st.same_content(&c.doc), |p| p.same_pages(&c.pages))) {
         return Some("unchanged since its last recovery copy");
     }
-    if s.prefs.recovery_off_for_complex && object_count(&st.doc) > COMPLEX_OBJECTS {
+    let objects = project.map_or_else(|| object_count(&st.doc), |p| p.pages().iter().map(|page| object_count(&page.doc.doc)).sum());
+    if s.prefs.recovery_off_for_complex && objects > COMPLEX_OBJECTS {
         return Some("complex document (Data Recovery is off for complex documents)");
     }
     None
@@ -1041,6 +1054,13 @@ fn restore_one(s: &mut Session, store: &Arc<dyn RecoveryStore>, file: &str) -> R
     // Linked files are looked for from the document's own folder.
     let links = super::links::resolve(&mut doc, meta.path.as_deref(), s.prefs.update_links == "automatically", s.prefs.low_res_proxy_eps);
     let index = s.add_document(doc, meta.path.clone());
+    let mut project = vectorcraft_format::load_file(&bytes).map_err(|e| EngineError::Other(e.to_string()))?.project;
+    if let Some(page) = project.pages.get_mut(project.active) {
+        page.doc = (*s.doc()?.doc).clone();
+        page.doc.last_view = s.doc()?.view.clone();
+    }
+    s.project_mut()?.install(project)?;
+    let pages = s.project()?.content_snapshot();
     let st = s.doc_mut()?;
     st.recovered = true;
     st.imported_from = meta.imported_from.clone();
@@ -1048,7 +1068,7 @@ fn restore_one(s: &mut Session, store: &Arc<dyn RecoveryStore>, file: &str) -> R
     st.format = SAVE_FORMATS.iter().copied().find(|f| *f == meta.format).unwrap_or("vectorcraft");
     st.mark_unsaved();
     // The copy stays until the document is saved or closed.
-    st.recovery = Some(RecoveryCopy { file: mine.clone(), doc: st.doc.clone() });
+    st.recovery = Some(RecoveryCopy { pages, file: mine.clone(), doc: st.doc.clone() });
     let title = st.title();
     Ok(super::fileio::merge(json!({ "index": index, "title": title, "file": mine, "path": meta.path, "warnings": warnings }), links.to_json()))
 }

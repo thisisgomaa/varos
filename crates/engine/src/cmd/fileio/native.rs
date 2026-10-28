@@ -26,8 +26,8 @@ pub const OPTIONS: &[FormatOption] = &[
     FormatOption {
         name: "version",
         ty: "integer",
-        default: "4",
-        description: "the format version to write: 4 (current), or 3, 2 or 1 for older VectorCraft versions (1 and 2 are never compressed; newer features they don't know are lost there)",
+        default: "5",
+        description: "the format version to write: 5 (current, project pages), or 4, 3, 2 or 1 for a single page in older VectorCraft versions (1 and 2 are never compressed; newer features they don't know are lost there)",
     },
     FormatOption {
         name: "preview",
@@ -172,11 +172,7 @@ pub(super) fn encode(cmd: &str, f: &Format, doc: &Document, p: &Value) -> Result
 pub(super) fn encode_to(cmd: &str, f: &Format, doc: &Document, p: &Value, w: impl std::io::Write) -> Result<()> {
     let (mut so, extras) = save_options(cmd, f, doc, p)?;
     // Include Linked Files keeps placed documents' files; older versions get their art.
-    let full = if so.include_linked || so.version < vectorcraft_format::VERSION {
-        crate::cmd::place::document::full_documents(doc).0
-    } else {
-        std::borrow::Cow::Borrowed(doc)
-    };
+    let full = if so.include_linked || so.version < 4 { crate::cmd::place::document::full_documents(doc).0 } else { std::borrow::Cow::Borrowed(doc) };
     if extras.preview {
         so.preview = preview_png(&full)?;
     }
@@ -186,7 +182,7 @@ pub(super) fn encode_to(cmd: &str, f: &Format, doc: &Document, p: &Value, w: imp
         so.pdf = Some(super::pdf::encode(cmd, &full, &json!({ "range": "all", "preserveEditing": false }))?.0);
     }
     let native = match full {
-        Cow::Owned(full) if so.include_linked && so.version >= vectorcraft_format::VERSION => {
+        Cow::Owned(full) if so.include_linked && so.version >= 4 => {
             // Include available bytes without replacing missing, relinkable placed objects.
             let mut original = doc.clone();
             original.images = full.images;
@@ -285,4 +281,36 @@ pub fn with_compression_pref(prefs: &crate::Prefs, p: &Value) -> Value {
         o.insert("compress".into(), Value::Bool(prefs.use_compression));
     }
     q
+}
+
+/// Whole-project native save, preserving every page's view and resources.
+pub(super) fn encode_project(cmd: &str, f: &Format, project: &vectorcraft_format::Project, p: &Value) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    encode_project_to(cmd, f, project, p, &mut bytes)?;
+    Ok(bytes)
+}
+pub(super) fn encode_project_to(cmd: &str, f: &Format, project: &vectorcraft_format::Project, p: &Value, w: impl std::io::Write) -> Result<()> {
+    let active = project.pages.get(project.active).ok_or_else(|| bad(cmd, "missing active page"))?;
+    let (mut options, extras) = save_options(cmd, f, &active.doc, p)?;
+    let mut project = project.clone();
+    for page in &mut project.pages {
+        if options.include_linked {
+            let full = crate::cmd::place::document::full_documents(&page.doc).0;
+            page.doc.images = full.images.clone();
+        }
+        if f.id == "template" {
+            page.doc.template = true;
+        }
+        if bool_or(p, "embedProfiles", true) {
+            options.profiles.extend(embedded_profiles(&page.doc));
+        }
+    }
+    if extras.preview {
+        options.preview = preview_png(&active.doc)?;
+    }
+    if extras.pdf {
+        options.pdf = Some(super::pdf::encode_project(cmd, &project, &json!({"allPages":true, "preserveEditing":false}))?.0);
+    }
+    options.pretty = project.pages.iter().all(|p| options.pretty_fits(&p.doc));
+    vectorcraft_format::save_project_to(&project, &options, w).map_err(|e| bad(cmd, e.to_string()))
 }

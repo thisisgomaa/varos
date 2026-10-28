@@ -36,8 +36,8 @@ pub(crate) fn export_art(doc: &Document, p: &Value) -> bool {
 /// A PDF needs a finite page. Adapt only the output copy, leaving the editable native
 /// document (including its empty artboard list) in the PDF's editing attachment.
 pub(crate) fn pdf_document(cmd: &str, doc: &Document, p: &Value) -> Result<Option<Document>> {
-    if !export_art(doc, p)
-        && !(doc.artboards.is_empty()
+    if !(export_art(doc, p)
+        || doc.artboards.is_empty()
             && p.get("range").and_then(Value::as_str) == Some("all")
             && ["artboard", "artboards"].iter().all(|k| p.get(k).is_none_or(Value::is_null)))
     {

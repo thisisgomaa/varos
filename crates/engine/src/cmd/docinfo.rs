@@ -406,8 +406,18 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
     out["document"]["name"] = json!(st.title());
     let sections = sections(d, &out, &fonts, &image_rows, &repeat_rows, category);
     if text {
-        return Ok(json!({ "text": report_text(&st.title(), selection_only, &sections) }));
+        let mut text = report_text(&st.title(), selection_only, &sections);
+        if s.project()?.pages().len() > 1 {
+            for page in s.project()?.pages() {
+                text.push_str(&format!("\n{}: {} artboards, {} objects\n", page.name, page.doc.doc.artboards.len(), page.doc.doc.node_count()));
+            }
+        }
+        return Ok(json!({ "text": text }));
     }
+    out["pages"] = s.project()?.pages().iter().enumerate().map(|(index,page)| {
+        let objects = page.doc.doc.node_count();
+        json!({"page_id":page.id,"page_name":page.name,"active": index == s.project().map_or(0, |p| p.active_page()), "artboards":page.doc.doc.artboards.len(),"objects":objects})
+    }).collect();
     out["sections"] = sections.iter().map(|s| json!({ "id": s.id, "title": s.title, "rows": s.rows })).collect();
     Ok(out)
 }

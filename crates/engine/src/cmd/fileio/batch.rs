@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use vectorcraft_doc::Document;
 
 use super::super::*;
-use crate::{DocState, EngineError};
+use crate::{DocState, EngineError, Project};
 
 pub(super) fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let mut cmds = p.get("commands").and_then(Value::as_array).ok_or_else(|| bad("command.batch", "missing commands"))?.clone();
@@ -44,7 +44,8 @@ pub(super) fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     };
     // Each document the steps edited keeps them as one undo step.
     s.remember_pending_paint();
-    for st in &mut s.docs {
+    for project in &mut s.docs {
+        let st: &mut DocState = project;
         if let Some(it) = st.interaction.take() {
             st.keep_interaction(it);
         }
@@ -143,10 +144,11 @@ fn step_groups(s: &Session, start: Option<u64>, held: &[(u64, Arc<Document>)]) -
 /// a Save As step's new file and an Undo step's history in place). Files the steps wrote stay
 /// written. Lock Guides, Lock Slices and Hide Slices stay as the steps left them, and the guides
 /// and slices they keep from being selected are deselected.
-fn roll_back(s: &mut Session, start: Vec<DocState>, stash: &[DocState]) {
+fn roll_back(s: &mut Session, start: Vec<Project>, stash: &[Project]) {
     let open = std::mem::take(&mut s.docs);
     s.docs = start;
-    for st in &mut s.docs {
+    for project in &mut s.docs {
+        let st: &mut DocState = project;
         // Past the newest revision the document reached, so the restored one redraws.
         let newest = open.iter().chain(stash).filter(|d| d.uid == st.uid).map(|d| d.revision).max().unwrap_or(st.revision);
         st.revision = newest.saturating_add(1);

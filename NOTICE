@@ -169,3 +169,7 @@ copyright 2026 Ahmed Gomaa and the Varos contributors, MIT OR Apache-2.0; see
 crates/ui-egui/assets/varos/icons/LICENSE-MIT and LICENSE-APACHE.
 
 Varos VQA icons (crates/ui-egui/assets/varos/icons/vqa-*.svg): original geometric artwork by Varos contributors, MIT OR Apache-2.0; see repository LICENSE-MIT and LICENSE-APACHE.
+
+Varos Pages panel capture and native pages fixtures (2026-10-28): original work
+by Varos contributors, licensed MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
+The capture uses the already-attributed Lucide icons and bundled UI font.

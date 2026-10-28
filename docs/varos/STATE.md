@@ -1,6 +1,6 @@
 # Varos fork: state
 
-The one truth table for what exists today. Updated: 2026-10-27 (evening). Upstream base: `1cdc9873`
+The one truth table for what exists today. Updated: 2026-10-28 (pages lane). Upstream base: `1cdc9873`
 (storytold/vectorcraft `main`, 2026-10-26), merged onto Varos `main` `f4b20c72` + Varos lanes (see
 `lanes/upstream-merge.log`). If anything else disagrees with this file, this file wins until it is
 corrected.
@@ -14,6 +14,7 @@ Status values:
 
 | Item | Status | What is true | Evidence |
 |---|---|---|---|
+| Project pages | provisional (awaits owner) | Native v5 projects hold independent pages; commands, generic Pages panel, project save/recovery/package, all-pages PDF and additive MCP/CLI support. Persistent chrome readout awaits the shell owner hook. | [PAGES.md](PAGES.md), format/engine/MCP/egui page suites |
 | Name / branding | done | Window, menus, About, Home, pickers, messages and packaging show "Varos"; bundle id `com.varos.app`; data folder `Application Support/Varos` (no automatic migration from `VectorCraft`). Owner: name OK. | `lanes/brand-cursors-perf-report.txt` (lane brand: UI suite 1665 passed); `crates/ui-egui/src/varos/names.rs` |
 | No Discord / community promotion | done | Community module, header button, Home/About/Help promotion rows and the Discord command/URL removed; contributor attribution kept. | `lanes/brand-cursors-perf-report.txt` (lane brand) |
 | Real app icon | provisional (awaits owner) | All 15 icon files are the original Varos icon, byte-identical to `/Applications/Varos.app/Contents/Resources/Varos.icns`. Dock/Finder appearance in an installed bundle not checked. | `lanes/brand2-report.txt` (SHA-256 check, 1682 passed / 2 ignored) |

@@ -868,6 +868,11 @@ pub fn export(app: &mut VectorcraftApp, format: Option<&str>, path: Option<Strin
     };
     // Background Export: encoded and written from this snapshot while editing goes on. The
     // encoder is told the file it writes (an exporter plug-in gets its name and extension).
+    let project = if f.id == "pdf" && params.get("allPages").and_then(Value::as_bool) == Some(true) {
+        Some(app.session.project().map_err(|e| e.to_string())?.snapshot())
+    } else {
+        None
+    };
     let label = format!("Exporting {}", fileio::file_name(&path));
     let (mut params, target) = (params.clone(), path.clone());
     if let Some(o) = params.as_object_mut() {
@@ -880,7 +885,12 @@ pub fn export(app: &mut VectorcraftApp, format: Option<&str>, path: Option<Strin
     let work = move |write: Writer| {
         progress::scope(&reporting, || {
             cancel::check().map_err(|e| e.to_string())?;
-            let enc = fileio::encode_all(&doc, f.id, &params).map_err(|e| e.to_string())?;
+            let enc = if let Some(project) = &project {
+                let (bytes, warnings) = fileio::pdf::encode_project("document.export", project, &params).map_err(|e| e.to_string())?;
+                fileio::Encoded { warnings, files: vec![(None, bytes)], ..Default::default() }
+            } else {
+                fileio::encode_all(&doc, f.id, &params).map_err(|e| e.to_string())?
+            };
             cancel::check().map_err(|e| e.to_string())?;
             let files = write_encoded(write, &doc, &path, &enc)?;
             let mut out = json!({ "path": files.first().unwrap_or(&path), "warnings": enc.warnings });

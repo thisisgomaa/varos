@@ -258,7 +258,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Previews show brush art with the document's patterns, symbols and other resources; the
     // definitions and preview keys are the document version's, worked out once.
     let doc = app.session.active().map(|d| d.doc.clone());
-    let memo = app.session.active().map(document_brushes).unwrap_or_default();
+    let memo = app.session.active().map(|p| document_brushes(p)).unwrap_or_default();
     let defs: HashMap<&str, &Shown> = memo.iter().map(|b| (b.name.as_str(), b)).collect();
     let mut clicked: Option<(String, egui::Modifiers)> = None;
     let mut options: Option<String> = None;
@@ -1229,7 +1229,8 @@ mod tests {
         let mut def = serde_json::to_value(lib.brush("Striped Ribbon").unwrap()).unwrap();
         let options = |app: &VectorcraftApp, def: &Value| {
             let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 100.0))), ..Default::default() };
-            let mut out = ctx.run_ui(raw, |ui| definition_chip(ui, Rect::from_min_size(Pos2::ZERO, vec2(200.0, 40.0)), app.session.active(), def));
+            let mut out = ctx
+                .run_ui(raw, |ui| definition_chip(ui, Rect::from_min_size(Pos2::ZERO, vec2(200.0, 40.0)), app.session.active().map(|p| &**p), def));
             out.textures_delta.clear();
         };
         options(&app, &def);

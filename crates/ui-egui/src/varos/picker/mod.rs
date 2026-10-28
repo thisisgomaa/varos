@@ -543,8 +543,7 @@ fn settle(app: &mut VectorcraftApp, ctx: &egui::Context, st: &mut State, v: &Vie
             }
             Action::Solid => {
                 finish(app, st);
-                if !app.ui.dialog.as_ref().is_some_and(|d| d.kind == "gradientStop") && matches!(crate::panels::active_paint(app), Paint::Gradient(_))
-                {
+                if app.ui.dialog.as_ref().is_none_or(|d| d.kind != "gradientStop") && matches!(crate::panels::active_paint(app), Paint::Gradient(_)) {
                     let command = if app.session.fill_active { "paint.setFill" } else { "paint.setStroke" };
                     if let Err(e) = app.run(command, json!({"color": crate::panels::color_json(&st.out_color())})) {
                         app.status(e);

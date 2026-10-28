@@ -1418,8 +1418,11 @@ impl Default for Prefs {
     }
 }
 
+pub mod project;
+pub use project::Project;
+
 pub struct Session {
-    docs: Vec<DocState>,
+    docs: Vec<Project>,
     active: Option<usize>,
     pub prefs: Prefs,
     /// Fill/stroke for new art (the toolbar proxy).
@@ -1519,7 +1522,7 @@ pub struct Session {
     pub(crate) explicit_undo_group: Option<Option<String>>,
     /// While `command.batch` runs: the documents its steps closed or replaced (Revert), which an
     /// error brings back; `None` otherwise.
-    pub(crate) batch_stash: Option<Vec<DocState>>,
+    pub(crate) batch_stash: Option<Vec<Project>>,
     /// After `command.batch` ran its steps, until the top-level command notes its entry in the undo
     /// groups: for each step, the documents ([`DocState::uid`]) whose undo groups it belongs to, and
     /// the index of the document it left active when it changed the active document.
@@ -1695,11 +1698,10 @@ impl Session {
     /// meanwhile, carry it ([`HistoryEntry::actor`]).
     pub fn set_actor(&mut self, actor: Option<u64>) {
         self.actor = actor;
-        for st in &mut self.docs {
-            st.history.actor = actor;
-        }
-        for st in self.batch_stash.iter_mut().flatten() {
-            st.history.actor = actor;
+        for project in self.docs.iter_mut().chain(self.batch_stash.iter_mut().flatten()) {
+            for st in project.page_states_mut() {
+                st.history.actor = actor;
+            }
         }
     }
 
@@ -1720,24 +1722,30 @@ impl Session {
         }
     }
 
-    pub fn documents(&self) -> &[DocState] {
+    pub fn documents(&self) -> &[Project] {
         &self.docs
     }
     /// The open document with [`DocState::uid`] `uid` (it may have closed since it was looked up).
-    pub fn document_mut(&mut self, uid: u64) -> Option<&mut DocState> {
+    pub fn document_mut(&mut self, uid: u64) -> Option<&mut Project> {
         self.docs.iter_mut().find(|d| d.uid == uid)
+    }
+    pub fn project(&self) -> Result<&Project> {
+        self.active().ok_or(EngineError::NoDocument)
+    }
+    pub fn project_mut(&mut self) -> Result<&mut Project> {
+        self.active.and_then(|i| self.docs.get_mut(i)).ok_or(EngineError::NoDocument)
     }
     pub fn active_index(&self) -> Option<usize> {
         self.active
     }
-    pub fn active(&self) -> Option<&DocState> {
+    pub fn active(&self) -> Option<&Project> {
         self.active.and_then(|i| self.docs.get(i))
     }
     pub fn active_mut(&mut self) -> Option<&mut DocState> {
-        self.active.and_then(|i| self.docs.get_mut(i))
+        self.active.and_then(|i| self.docs.get_mut(i)).map(|p| &mut **p)
     }
     pub fn doc(&self) -> Result<&DocState> {
-        self.active().ok_or(EngineError::NoDocument)
+        self.active().map(|p| &**p).ok_or(EngineError::NoDocument)
     }
     pub fn doc_mut(&mut self) -> Result<&mut DocState> {
         self.active_mut().ok_or(EngineError::NoDocument)
@@ -1811,7 +1819,7 @@ impl Session {
         let mut st = DocState::new(doc, path);
         st.history.limit = self.prefs.history_states as usize;
         st.history.actor = self.actor; // Varos: made or opened by the agent whose request runs
-        self.docs.push(st);
+        self.docs.push(st.into());
         let i = self.docs.len() - 1;
         self.active = Some(i);
         if self.depth == 0
@@ -1860,7 +1868,7 @@ impl Session {
         st.import_losses = old.import_losses.clone();
         st.view = old.view.clone();
         st.layers_open = old.layers_open.clone();
-        let old = std::mem::replace(&mut self.docs[index], st);
+        let old = std::mem::replace(&mut self.docs[index], st.into());
         if let Some(stash) = &mut self.batch_stash {
             stash.push(old);
         }
@@ -2106,7 +2114,8 @@ impl Session {
         };
         // Undo, Redo and a failed batch bring back documents with their selections: each document
         // gets its selection's new art on a locked artboard.
-        for st in &mut self.docs {
+        for project in &mut self.docs {
+            let st: &mut DocState = project;
             st.sync_new_art();
         }
         r
@@ -2437,7 +2446,8 @@ impl Session {
     /// entry that made the document stays.
     fn open_undo_groups_in_new_documents(&mut self, open: &[u64]) {
         let Some(label) = &self.explicit_undo_group else { return };
-        for st in &mut self.docs {
+        for project in &mut self.docs {
+            let st: &mut DocState = project;
             if !open.contains(&st.uid) && st.undo_group.is_none() {
                 let actor = st.history.actor; // Varos: whose group it is
                 st.undo_group = Some(UndoGroup { first: None, journal: vec![], steps: vec![], label: label.clone(), actor, resumed: false });
@@ -2461,7 +2471,8 @@ impl Session {
         let active = self.active().map(|d| d.uid);
         let switched = if active == doc { None } else { self.active };
         let batch = self.batch_steps.take().filter(|_| to > from && self.journal.get(to - 1).is_some_and(|(id, _)| id == "command.batch"));
-        for st in &mut self.docs {
+        for project in &mut self.docs {
+            let st: &mut DocState = project;
             let Some(g) = &mut st.undo_group else { continue };
             // Varos: another actor's entries stay out of the group, as its edits do (`push_undo`).
             if g.actor != st.history.actor {
@@ -2501,7 +2512,8 @@ impl Session {
     fn close_undo_groups(&mut self, cancel: bool, only: Option<u64>) {
         let mut journal: Vec<(usize, Option<usize>)> = vec![];
         let mut steps: Vec<BatchSteps> = vec![];
-        for st in &mut self.docs {
+        for project in &mut self.docs {
+            let st: &mut DocState = project;
             if only.is_some_and(|uid| uid != st.uid) {
                 continue;
             }
@@ -2628,6 +2640,7 @@ impl Session {
         };
         let menu = self.menu.clone();
         let Some(st) = self.document_mut(scope.uid) else { return };
+        let st: &mut DocState = st;
         let Some(g) = &mut st.undo_group else { return };
         let newest = g.first.as_ref().is_some_and(|f| st.history.undo.last().is_some_and(|e| Arc::ptr_eq(&e.doc, f)));
         if !cancel || !newest {
@@ -3082,3 +3095,6 @@ fn given_ids(description: &'static str, params: &Value) -> Option<Vec<NodeId>> {
     }
     .filter(|ids| !ids.is_empty())
 }
+
+#[cfg(test)]
+mod tests_pages;

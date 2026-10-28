@@ -2135,6 +2135,104 @@ fn break_hyphen(g: &vectorcraft_text::PositionedGlyph) -> Option<std::ops::Range
     BREAK_HYPHENS.char_indices().find(|&(_, c)| face.glyph_for(c) == g.gid).map(|(i, c)| i..i + c.len_utf8())
 }
 
+/// Concatenate independent canvases into one PDF, retaining their artboard order and sizes.
+pub fn export_documents(docs: &[Document], opts: &PdfOptions) -> Result<ExportReport, PdfError> {
+    write::guard(|| {
+        let first = docs.first().ok_or(PdfError::NoPages)?;
+        leaving_out_undecodable(first, |left_out| {
+            let set = &opts.settings;
+            set.check()?;
+            let title = crate::pdfx::title(set.standard, opts.title.clone().unwrap_or_else(|| first.title.clone()));
+            let now = vectorcraft_doc::metadata::output_time();
+            let created_at = opts.created.or(now);
+            crate::pdfx::require_date(set.standard, created_at)?;
+            let mut w = Writer::new(first, set, &title, created_at, first.color_mode == vectorcraft_doc::ColorMode::Cmyk)?;
+            let mut warnings = set.warnings();
+            let native = opts.native.as_deref().filter(|_| set.preserve_editing);
+            if let Some(native) = native {
+                w.pdf.document_mut().embed_file(crate::editing::embedded_file(native, set.compression.compress_text, now.map(date_time)));
+            }
+            let mut units = Vec::new();
+            let mut layer_doc = first.clone();
+            layer_doc.layers.clear();
+            let (mut layer_offset, mut overprinted, mut invisible) = (0, false, false);
+            for doc in docs {
+                vectorcraft_doc::cancel::check().map_err(|_| PdfError::Cancelled)?;
+                let baked = vectorcraft_effects::bake_document(doc);
+                let doc = baked.as_ref().unwrap_or(doc);
+                let pages = pages(doc, opts)?;
+                let mut ex = Exporter::new(doc, set);
+                ex.non_printing = set.include_non_printing || set.create_layers;
+                ex.out = w.out.clone();
+                ex.left_out = left_out.clone();
+                // A knockout page group draws the layers' objects one by one, not layer by layer.
+                ex.layers = set.writes_layers() && !doc.page_knockout;
+                for index in ex.layer_index.values_mut() {
+                    *index += layer_offset;
+                }
+                layer_offset += crate::forms::pdf_layers(doc).len();
+                layer_doc.layers.extend(doc.layers.iter().cloned());
+                if set.writes_layers() && doc.page_knockout {
+                    warnings.push("PDF layers can't be written with a knockout page group: every layer is plain page content".into());
+                }
+                ex.overprint = set.advanced.overprint == crate::Overprint::Preserve;
+                let bleed = set.bleed_of(doc);
+                let marks = set.marks.printer_marks();
+                // In PDF 1.6 and later files that aren't PDF/X files, a page with a side longer than
+                // [`MAX_PAGE_SIDE`] is written in larger units; other files have every page in points.
+                let scales = set.compatibility.has_user_unit() && !set.standard.is_pdfx();
+
+                let total = pages.len() as u64;
+                for (written, (i, boxes)) in pages.into_iter().enumerate() {
+                    // The page count and the page being written, for a client that asked for progress.
+                    vectorcraft_doc::cancel::check().map_err(|_| PdfError::Cancelled)?;
+                    vectorcraft_doc::cancel::progress(written as u64 + 1, total, &format!("Writing page {} of {total}", written + 1));
+                    let (m, r) = (boxes.media, boxes.bleed);
+                    let info = if marks.page_info { crate::marks::page_info(doc, &title, i, now) } else { String::new() };
+                    let art = crate::marks::art(doc, &marks, &boxes, bleed, &info);
+                    // The page is the media box, y down from its top-left corner (like ours), in units of
+                    // `unit` points.
+                    let unit = if scales { user_unit(m.width(), m.height()) } else { 1.0 };
+                    units.push(unit);
+                    let shift = Affine::translate((-m.x0, -m.y0));
+                    let view = if unit > 1.0 { Affine::scale(1.0 / unit) * shift } else { shift };
+                    let sheet = Sheet {
+                        size: (m.width() / unit, m.height() / unit),
+                        unit,
+                        trim: view.transform_rect_bbox(boxes.trim),
+                        bleed: view.transform_rect_bbox(r),
+                        view,
+                        window: None,
+                        place: Affine::IDENTITY,
+                        area: r,
+                        // Art reaches as far as the bleed: the marks lie outside it.
+                        clip: m != r,
+                        marks: art.as_ref(),
+                        negative: false,
+                    };
+                    w.page(&mut ex, &sheet).map_err(|_| PdfError::BadArtboard(i))?;
+                }
+                vectorcraft_doc::cancel::check().map_err(|_| PdfError::Cancelled)?;
+
+                overprinted |= ex.overprinted;
+                invisible |= ex.invisible;
+                w.absorb(ex);
+            }
+            let (bytes, more) = w.finish(left_out, opts.display_doc_title)?;
+            let bytes = crate::forms::finish(bytes, &layer_doc, set, set.writes_layers(), overprinted, invisible)?;
+            let bytes = match opts.modified.filter(|m| Some(*m) != created_at) {
+                Some(modified) => crate::post::modification_date(bytes, modified)?,
+                None => bytes,
+            };
+            warnings.extend(more);
+            let bytes = crate::post::rights(bytes, &first.metadata)?;
+            let bytes = crate::post::user_units(bytes, &units)?;
+            let bytes = crate::post::finish(bytes, opts, native.is_some(), &mut warnings)?;
+            Ok(ExportReport { bytes, warnings })
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -19,6 +19,9 @@ pub(super) fn serialize(s: &mut Session, p: &Value) -> Result<Value> {
     let f = writable("document.serialize", Some(str_param(p, "format").unwrap_or("vectorcraft")), None)?;
     let expanded = expand_presets(s, "document.serialize", p)?;
     let p = with_black_output(s, &expanded);
+    let project = (matches!(f.id, "vectorcraft" | "template") || (f.id == "pdf" && bool_or(&p, "allPages", false)))
+        .then(|| s.project().map(|p| p.snapshot()))
+        .transpose()?;
     let (doc, display_doc_title) = source(s, f, &p, "document.serialize")?;
     let doc = &*doc;
     let mut q = p.clone();
@@ -27,7 +30,20 @@ pub(super) fn serialize(s: &mut Session, p: &Value) -> Result<Value> {
     {
         o.insert("_displayDocTitle".into(), json!(display_doc_title));
     }
-    let enc = encode_all(doc, f.id, &q)?;
+    let enc = if matches!(f.id, "vectorcraft" | "template") && !bool_or(&q, "selectedOnly", false) {
+        super::Encoded::one(super::native::encode_project(
+            "document.export",
+            f,
+            project.as_ref().ok_or_else(|| bad("document.export", "missing project"))?,
+            &q,
+        )?)
+    } else if f.id == "pdf" && bool_or(&q, "allPages", false) {
+        let (bytes, warnings) =
+            super::pdf::encode_project("document.export", project.as_ref().ok_or_else(|| bad("document.export", "missing project"))?, &q)?;
+        super::Encoded { warnings, ..super::Encoded::one(bytes) }
+    } else {
+        encode_all(doc, f.id, &q)?
+    };
     let files = enc.named(doc, &default_name(doc, f.extensions[0]));
     let (main, linked) = files.split_at(enc.files.len());
     // Text formats come back as text; an SVG in UTF-16 or ISO 8859-1 also as its bytes.
@@ -60,6 +76,9 @@ pub(super) fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let f = writable("document.export", str_param(p, "format"), path)?;
     let expanded = expand_presets(s, "document.export", p)?;
     let p = with_black_output(s, &expanded);
+    let project = (matches!(f.id, "vectorcraft" | "template") || (f.id == "pdf" && bool_or(&p, "allPages", false)))
+        .then(|| s.project().map(|p| p.snapshot()))
+        .transpose()?;
     let (doc, display_doc_title) = source(s, f, &p, "document.export")?;
     let doc = &*doc;
     let mut q = p.clone();
@@ -68,7 +87,20 @@ pub(super) fn export(s: &mut Session, p: &Value) -> Result<Value> {
     {
         o.insert("_displayDocTitle".into(), json!(display_doc_title));
     }
-    let enc = encode_all(doc, f.id, &q)?;
+    let enc = if matches!(f.id, "vectorcraft" | "template") && !bool_or(&q, "selectedOnly", false) {
+        super::Encoded::one(super::native::encode_project(
+            "document.export",
+            f,
+            project.as_ref().ok_or_else(|| bad("document.export", "missing project"))?,
+            &q,
+        )?)
+    } else if f.id == "pdf" && bool_or(&q, "allPages", false) {
+        let (bytes, warnings) =
+            super::pdf::encode_project("document.export", project.as_ref().ok_or_else(|| bad("document.export", "missing project"))?, &q)?;
+        super::Encoded { warnings, ..super::Encoded::one(bytes) }
+    } else {
+        encode_all(doc, f.id, &q)?
+    };
     write_encoded(path, &default_name(doc, f.extensions[0]), doc, &enc, json!({ "format": f.id, "warnings": enc.warnings }))
 }
 

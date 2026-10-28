@@ -53,6 +53,7 @@ pub(crate) mod objects_on_path;
 mod opacitymask;
 mod overprint;
 pub mod package;
+mod pages;
 mod paint;
 mod panelcmds;
 pub mod params;
@@ -309,6 +310,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(perspgrid::specs());
         v.extend(shortcutset::specs());
         v.extend(importmatches::specs());
+        v.extend(pages::specs());
         v.extend(varos_arabic::specs()); // Varos
         v
     })

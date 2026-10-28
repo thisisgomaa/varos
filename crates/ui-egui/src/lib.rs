@@ -466,6 +466,7 @@ pub struct VectorcraftApp {
     pub session: Session,
     pub ui: UiState,
     pub views: Vec<View>,
+    page_views: std::collections::HashMap<(u64, String), View>,
     pub services: Services,
     pub canvas: CanvasCache,
     pub perf: Perf,
@@ -763,11 +764,12 @@ impl VectorcraftApp {
         // The place cursor's clicks and drags place their files through the app
         // ([`place::place_from_cursor`]).
         session.place_cursor_requests = true;
-        let views = session.documents().iter().map(View::of).collect();
+        let views = session.documents().iter().map(|p| View::of(p)).collect();
         Self {
             session,
             ui: UiState { brightness: theme::Brightness::Dark, ..Default::default() }, // Varos: fresh UI default.
             views,
+            page_views: Default::default(),
             services,
             canvas: CanvasCache {
                 renderer: vectorcraft_render::Renderer::new(),
@@ -916,7 +918,7 @@ impl VectorcraftApp {
     pub fn sync_views(&mut self) {
         let docs = self.session.documents();
         self.views.truncate(docs.len());
-        self.views.extend(docs.iter().skip(self.views.len()).map(View::of));
+        self.views.extend(docs.iter().skip(self.views.len()).map(|p| View::of(p)));
         for (view, doc) in self.views.iter_mut().zip(docs) {
             view.artboard = view.artboard.min(doc.doc.artboards.len().saturating_sub(1));
         }
@@ -1113,7 +1115,30 @@ impl VectorcraftApp {
         let ime_view = self.view_info();
         let ime_target = crate::ime::target(&mut self.session, ime_view);
         let ime_before = crate::ime::stamp(&mut self.session, ime_view);
+        let previous_page = self.session.active().map(|p| p.page_id().to_owned());
+        if id.starts_with("page.") {
+            io::remember_view(self);
+            if let (Some(project), Some(view)) = (self.session.active(), self.view()) {
+                self.page_views.insert((project.uid, project.page_id().to_owned()), *view);
+            }
+        }
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        if r.is_ok() && self.session.active().map(|p| p.page_id()) != previous_page.as_deref() {
+            if let Some(index) = self.session.active_index()
+                && let Some(view) = self.views.get_mut(index)
+                && let Some(page) = self.session.active()
+            {
+                *view = self.page_views.get(&(page.uid, page.page_id().to_owned())).copied().unwrap_or_else(|| View::of(page));
+            }
+            self.canvas.key = None;
+        }
+        if r.is_ok()
+            && id.starts_with("page.")
+            && id != "page.list"
+            && let Some(status) = crate::varos::pages::status(self)
+        {
+            self.ui.status = status;
+        }
         if r.is_ok()
             && let Some(ctx) = self.ui_ctx.clone()
         {
@@ -1368,7 +1393,7 @@ impl VectorcraftApp {
         let scale = f64::from(ctx.pixels_per_point());
         let pixels = |points: f32, what: &str| -> Result<usize, String> {
             let value = f64::from(points) * scale;
-            if !value.is_finite() || value < 1.0 || value > 100_000.0 {
+            if !value.is_finite() || !(1.0..=100_000.0).contains(&value) {
                 return Err(format!("the window's {what} ({points} points × {scale} DPI) cannot size a screenshot"));
             }
             Ok(value.round() as usize)
