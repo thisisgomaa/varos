@@ -236,3 +236,48 @@ fn pages_deleting_the_active_canvas_resets_tool_state() {
     assert!(s.execute("page.delete", &json!({})).is_err());
     assert_eq!(s.tool_resets, resets + 1, "refusing the last page leaves the tool alone");
 }
+
+#[test]
+fn pages_delete_undo_restores_art_selection_view_and_canvas_undo_redo() {
+    let mut s = session();
+    rect(&mut s);
+    rect(&mut s);
+    s.execute("edit.undo", &json!({})).unwrap();
+    let before = s.doc().unwrap().clone();
+    s.execute("page.add", &json!({})).unwrap();
+    s.execute("page.delete", &json!({"page":0})).unwrap();
+    assert_eq!(s.execute("edit.undo", &json!({})).unwrap()["undone"], "Delete Page");
+    let st = s.doc().unwrap();
+    assert_eq!(st.doc, before.doc);
+    assert_eq!(st.selection, before.selection);
+    assert_eq!(st.view, before.view);
+    assert_eq!(st.history.undo.len(), before.history.undo.len());
+    assert_eq!(st.history.redo.len(), before.history.redo.len());
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.project().unwrap().pages().len(), 1);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().history.redo.len(), 1);
+}
+
+#[test]
+fn pages_structural_undo_redo_preserves_canvas_stacks() {
+    let mut s = session();
+    rect(&mut s);
+    for (op, params, label) in [
+        ("page.rename", json!({"name":"Cover"}), "Rename Page"),
+        ("page.duplicate", json!({}), "Duplicate Page"),
+        ("page.move", json!({"page":0,"index":1}), "Move Page"),
+        ("page.add", json!({}), "Add Page"),
+    ] {
+        let before = s.project().unwrap().list_pages();
+        s.execute(op, &params).unwrap();
+        let after = s.project().unwrap().list_pages();
+        assert_eq!(s.doc().unwrap().history.undo.len(), 1);
+        assert_eq!(s.execute("edit.undo", &json!({})).unwrap()["undone"], label);
+        assert_eq!(s.project().unwrap().list_pages(), before);
+        assert_eq!(s.execute("edit.redo", &json!({})).unwrap()["redone"], label);
+        assert_eq!(s.project().unwrap().list_pages(), after);
+        assert_eq!(s.doc().unwrap().history.undo.len(), 1);
+        assert!(s.doc().unwrap().history.redo.is_empty());
+    }
+}

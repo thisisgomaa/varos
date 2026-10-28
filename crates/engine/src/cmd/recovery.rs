@@ -553,6 +553,9 @@ pub struct RecoveryCopy {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Meta {
+    generation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous: Option<Box<Meta>>,
     title: String,
     /// The document's file when it was copied, if it had one.
     path: Option<String>,
@@ -642,7 +645,11 @@ fn sweep(store: &dyn RecoveryStore, area: &str) {
     let in_area = |n: &&String| n.split_once('/').is_some_and(|(a, _)| a == area);
     let mut named = BTreeSet::new();
     for meta in names.iter().filter(in_area).filter_map(|n| n.strip_suffix(META_EXT)) {
-        named.extend(read_meta(store, meta).images.into_values().map(|r| r.blob));
+        let meta = read_meta(store, meta);
+        named.extend(meta.images.into_values().map(|r| r.blob));
+        if let Some(previous) = meta.previous {
+            named.extend(previous.images.into_values().map(|r| r.blob));
+        }
     }
     for n in names.iter().filter(in_area).filter(|n| n.ends_with(BLOB_EXT)) {
         if n.split_once('/').is_some_and(|(_, b)| !named.contains(b)) {
@@ -653,6 +660,20 @@ fn sweep(store: &dyn RecoveryStore, area: &str) {
 
 fn read_meta(store: &dyn RecoveryStore, file: &str) -> Meta {
     store.read(&format!("{file}{META_EXT}")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Legacy metadata has no generation; new metadata must match the snapshot bytes.
+fn matching_meta(mut meta: Meta, bytes: &[u8]) -> Meta {
+    let generation = blob_name(&Arc::new(bytes.to_vec()));
+    let previous = meta.previous.take();
+    if meta.generation.as_ref().is_none_or(|g| g == &generation) {
+        return meta;
+    }
+    if let Some(old) = previous.filter(|m| m.generation.as_ref() == Some(&generation)) {
+        return *old;
+    }
+    meta.images.clear();
+    meta
 }
 
 /// A copy of one document, snapshotted and ready to encode and store anywhere (the background
@@ -678,9 +699,8 @@ impl RecoveryJob {
             let bytes = enc.files.first().map(|f| f.1.as_slice()).ok_or("nothing encoded")?;
             let mut meta = self.meta.clone();
             meta.images.clear();
-            // The v5 envelope contains each page's own resources atomically.
-            store.write(&format!("{}{DOC_EXT}", self.file), bytes)?;
-            store.write(&format!("{}{META_EXT}", self.file), &serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?)?;
+            let _turn = WRITES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.write_generation(store, bytes, meta)?;
             return Ok(json!({"file":self.file,"title":self.title,"bytes":bytes.len(),"imageBytes":0}));
         }
         let doc = self.save.doc();
@@ -701,7 +721,6 @@ impl RecoveryJob {
             meta.images.insert(key.clone(), ImageRef { mime: mime.into(), blob: blob.clone(), proxy });
             images.push((blob, data));
         }
-        let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?;
         let area = self.file.split_once('/').map_or("", |(a, _)| a);
         let _turn = WRITES.lock().unwrap_or_else(|e| e.into_inner());
         let have: BTreeSet<String> = if images.is_empty() { BTreeSet::new() } else { store.list()?.into_iter().collect() };
@@ -713,23 +732,38 @@ impl RecoveryJob {
                 image_bytes += data.len();
             }
         }
-        let meta_name = format!("{}{META_EXT}", self.file);
-        // The details name the images, so a crash between writing the document and its details
-        // would pair the new document with the old copy's images: when the new document has
-        // images the old details don't name, they name both until the new document is in.
-        let old = read_meta(store, &self.file).images;
-        if meta.images.iter().any(|(k, r)| old.get(k).is_none_or(|o| o.blob != r.blob)) {
-            let mut both = meta.clone();
-            for (k, r) in old {
-                both.images.entry(k).or_insert(r);
-            }
-            store.write(&meta_name, &serde_json::to_vec_pretty(&both).map_err(|e| e.to_string())?)?;
-        }
-        store.write(&format!("{}{DOC_EXT}", self.file), bytes)?;
-        store.write(&meta_name, &meta_bytes)?;
+        self.write_generation(store, bytes, meta)?;
         // Images this copy no longer shows, nor any other.
         sweep(store, area);
         Ok(json!({ "file": self.file, "title": self.title, "bytes": bytes.len(), "imageBytes": image_bytes }))
+    }
+
+    /// Stage both metadata generations, then atomically switch the document entry.
+    /// A crash on either side of that switch always has matching metadata available.
+    fn write_generation(&self, store: &dyn RecoveryStore, bytes: &[u8], mut meta: Meta) -> std::result::Result<(), String> {
+        // Include resource identity even when a lean document's JSON is unchanged (same
+        // image key, different pixels). Recovery encoding is explicitly uncompressed.
+        let images = serde_json::to_vec(&meta.images).map_err(|e| e.to_string())?;
+        let image_generation = blob_name(&Arc::new(images));
+        let Some((b'{', rest)) = bytes.split_first() else {
+            return Err("recovery snapshot is not plain native JSON".into());
+        };
+        let mut snapshot = format!("{{\"recovery_images_generation\":\"{image_generation}\",").into_bytes();
+        snapshot.extend_from_slice(rest);
+        let bytes = snapshot.as_slice();
+        meta.generation = Some(blob_name(&Arc::new(bytes.to_vec())));
+        let old_bytes = store.read(&format!("{}{DOC_EXT}", self.file)).ok();
+        let mut old = read_meta(store, &self.file);
+        if let Some(bytes) = old_bytes {
+            old = matching_meta(old, &bytes);
+            old.generation = Some(blob_name(&Arc::new(bytes)));
+            meta.previous = Some(Box::new(old));
+        }
+        let name = format!("{}{META_EXT}", self.file);
+        store.write(&name, &serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?)?;
+        store.write(&format!("{}{DOC_EXT}", self.file), bytes)?;
+        meta.previous = None;
+        store.write(&name, &serde_json::to_vec_pretty(&meta).map_err(|e| e.to_string())?)
     }
 
     /// Once stored: the document (if still open) remembers the copy, so it isn't written again
@@ -825,7 +859,7 @@ pub fn jobs(s: &mut Session, store: &Arc<dyn RecoveryStore>) -> Result<(Vec<Reco
             mode: SaveMode::Copy,
             path: st.path.clone(),
             format: native,
-            options: Default::default(),
+            options: serde_json::Map::from_iter([("compress".into(), Value::Bool(false))]),
             name: format!("{file}{DOC_EXT}"),
             folder: None,
             modified: None,
@@ -841,6 +875,8 @@ pub fn jobs(s: &mut Session, store: &Arc<dyn RecoveryStore>) -> Result<(Vec<Reco
             import_losses: st.import_losses.clone(),
             // Filled in as the copy is written.
             images: BTreeMap::new(),
+            generation: None,
+            previous: None,
         };
         out.push(RecoveryJob { uid: st.uid, file, title, meta, save });
     }
@@ -1007,7 +1043,8 @@ fn targets(s: &mut Session, store: &dyn RecoveryStore, cmd: &str, p: &Value) -> 
 fn restore_one(s: &mut Session, store: &Arc<dyn RecoveryStore>, file: &str) -> Result<Value> {
     let bytes = store.read(&format!("{file}{DOC_EXT}")).map_err(EngineError::Other)?;
     let meta_bytes = store.read(&format!("{file}{META_EXT}")).unwrap_or_default();
-    let meta: Meta = serde_json::from_slice(&meta_bytes).unwrap_or_default();
+    let meta = matching_meta(serde_json::from_slice(&meta_bytes).unwrap_or_default(), &bytes);
+    let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(|e| EngineError::Other(e.to_string()))?;
     let (mut doc, _, mut warnings) = fileio::native_file(&bytes).map_err(|e| EngineError::Other(format!("recovery copy `{file}`: {e}")))?;
     // A frame whose first paragraph continues from the frame before draws it without the
     // paragraph's first-line indent and list marker.

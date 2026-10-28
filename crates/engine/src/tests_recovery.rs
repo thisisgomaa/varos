@@ -648,6 +648,7 @@ fn copies_from_before_images_were_kept_apart_still_restore() {
 /// A store whose app dies right after writing a copy's document entry: later writes fail, so the
 /// copy's details stay as the last interval left them.
 struct DiesAfterDocument {
+    before: bool,
     inner: Arc<MemoryStore>,
     dead: std::sync::atomic::AtomicBool,
 }
@@ -662,6 +663,9 @@ impl RecoveryStore for DiesAfterDocument {
     fn write(&self, name: &str, bytes: &[u8]) -> std::result::Result<(), String> {
         if self.dead.load(std::sync::atomic::Ordering::Relaxed) {
             return Err("the app is gone".into());
+        }
+        if self.before && name.ends_with(".vectorcraft") {
+            return Err("the app is gone before the document switch".into());
         }
         self.inner.write(name, bytes)?;
         if name.ends_with(".vectorcraft") {
@@ -696,11 +700,34 @@ fn a_crash_between_a_copys_document_and_its_details_keeps_every_image() {
         }
         place_png(&mut s, "blue.png", crate::tests_links::BLUE);
         let images = images_of(&s);
-        s.recovery.set_store(Arc::new(DiesAfterDocument { inner: store.clone(), dead: Default::default() }));
+        s.recovery.set_store(Arc::new(DiesAfterDocument { before: false, inner: store.clone(), dead: Default::default() }));
         assert!(s.execute("file.recovery.save", &json!({})).is_err(), "the details weren't written");
         drop(s);
         let mut s = relaunch(&store);
         assert_eq!(restored(s.execute("file.recovery.restore", &json!({})).unwrap()), 1, "first copy: {first}");
         assert_eq!(images_of(&s), images, "first copy: {first}");
+    }
+}
+
+#[test]
+fn interrupted_multipage_recovery_never_overlays_old_pixels_for_a_reused_key() {
+    for (before, add_pages) in [(true, true), (false, true), (true, false), (false, false)] {
+        let (mut s, store) = session();
+        let red = place_png(&mut s, "red.png", crate::tests_links::RED);
+        s.execute("file.recovery.save", &json!({})).unwrap();
+        let key = s.doc().unwrap().doc.images.keys().next().unwrap().clone();
+        let blue = crate::tests_links::png(64, 48, crate::tests_links::BLUE);
+        Arc::make_mut(&mut s.doc_mut().unwrap().doc).images.insert(key.clone(), vectorcraft_doc::ImageBlob::new("image/png", blue.clone()));
+        if add_pages {
+            s.execute("page.add", &json!({})).unwrap();
+        }
+        let jobs = crate::cmd::recovery::jobs(&mut s, &(store.clone() as Arc<dyn RecoveryStore>)).unwrap().0;
+        let interrupted = DiesAfterDocument { before, inner: store.clone(), dead: Default::default() };
+        assert!(jobs[0].write(&interrupted).is_err());
+        drop(s);
+        let mut s = relaunch(&store);
+        assert_eq!(restored(s.execute("file.recovery.restore", &json!({})).unwrap()), 1);
+        assert_eq!(s.project().unwrap().pages().len(), if before || !add_pages { 1 } else { 2 });
+        assert_eq!(s.doc().unwrap().doc.images[&key].bytes.as_slice(), if before { red } else { blue });
     }
 }

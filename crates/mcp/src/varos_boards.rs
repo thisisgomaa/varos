@@ -315,6 +315,7 @@ mod tests {
     /// A stand-in for Varos with two boards: it records every line's method, params and target,
     /// answers inspect / create calls with plain ids, and says where each ran.
     struct FakeVaros {
+        frozen_ids: bool,
         target: Option<Value>,
         seen: Vec<(String, Value, Option<Value>)>,
         last: Value,
@@ -326,6 +327,7 @@ mod tests {
             let board = self.target.as_ref().and_then(|t| t.get("board")).cloned();
             self.last = json!({"board": board, "revision": 7, "front": boards::board_id(1), "opened": []});
             match method {
+                boards::LIST if self.frozen_ids => Ok(json!({"boards":[{"board":"fixture-1","front":true},{"board":"fixture-2","front":false}]})),
                 boards::LIST => {
                     Ok(json!({"boards": [{"board": boards::board_id(1), "front": true}, {"board": boards::board_id(2), "front": false}]}))
                 }
@@ -354,7 +356,7 @@ mod tests {
     }
 
     fn fake() -> FakeVaros {
-        FakeVaros { target: None, seen: vec![], last: Value::Null }
+        FakeVaros { frozen_ids: false, target: None, seen: vec![], last: Value::Null }
     }
 
     fn json_of(r: &ToolResult) -> Value {
@@ -384,6 +386,18 @@ mod tests {
             assert_eq!(target, &Some(json!({"board": a, "revision": 7})));
             assert!(!params.to_string().contains(&a), "references are plain ids on the way in: {params}");
         }
+    }
+
+    #[test]
+    fn default_page_contract_is_byte_frozen() {
+        let mut b = fake();
+        b.frozen_ids = true;
+        let actual = serde_json::to_vec_pretty(&json!({
+            "capabilities": call_tool(&mut b, CAPABILITIES, &json!({})).to_value(),
+            "list_boards": call_tool(&mut b, LIST_BOARDS, &json!({})).to_value(),
+        }))
+        .unwrap();
+        assert_eq!(actual, include_bytes!("../fixtures/pages-default.json"));
     }
 
     #[test]

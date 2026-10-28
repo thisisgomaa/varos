@@ -19,6 +19,16 @@ pub struct Project {
     active: usize,
     saved_pages: Vec<(String, String)>,
     file_title: String,
+    page_undo: Vec<PageStep>,
+    page_redo: Vec<PageStep>,
+}
+/// Structural snapshots retain deleted canvases, but live canvases are never rolled back.
+#[derive(Clone, Debug)]
+struct PageStep {
+    label: String,
+    pages: Vec<Page>,
+    active: String,
+    boundary: Vec<(String, std::sync::Arc<Document>)>,
 }
 impl Deref for Project {
     type Target = DocState;
@@ -35,10 +45,60 @@ impl From<DocState> for Project {
     fn from(doc: DocState) -> Self {
         let file_title = doc.doc.title.clone();
         let pages = vec![Page { id: "page-1".into(), name: "Page 1".into(), doc }];
-        Self { file_title, saved_pages: vec![("page-1".into(), "Page 1".into())], pages, active: 0 }
+        Self { page_undo: Vec::new(), page_redo: Vec::new(), file_title, saved_pages: vec![("page-1".into(), "Page 1".into())], pages, active: 0 }
     }
 }
 impl Project {
+    fn page_step(&self, label: String) -> PageStep {
+        PageStep { label, pages: self.pages.clone(), active: self.page_id().to_owned(), boundary: Vec::new() }
+    }
+    fn boundary(&self) -> Vec<(String, std::sync::Arc<Document>)> {
+        self.pages.iter().map(|p| (p.id.clone(), p.doc.doc.clone())).collect()
+    }
+    /// Structural history takes precedence only after later canvas edits have been undone.
+    pub fn page_history_label(&self, redo: bool) -> Option<&str> {
+        let step = if redo { self.page_redo.last() } else { self.page_undo.last() }?;
+        step.boundary
+            .iter()
+            .all(|(id, doc)| self.pages.iter().find(|p| &p.id == id).is_none_or(|p| p.doc.same_content(doc)))
+            .then_some(step.label.as_str())
+    }
+    pub(crate) fn turn_page_history(&mut self, redo: bool) -> Option<String> {
+        self.page_history_label(redo)?;
+        let step = if redo { self.page_redo.pop() } else { self.page_undo.pop() }?;
+        let mut inverse = self.page_step(step.label.clone());
+        let identity = self.deref().clone();
+        let mut live: std::collections::HashMap<_, _> = std::mem::take(&mut self.pages).into_iter().map(|p| (p.id.clone(), p.doc)).collect();
+        self.pages = step
+            .pages
+            .into_iter()
+            .map(|mut p| {
+                if let Some(doc) = live.remove(&p.id) {
+                    p.doc = doc;
+                }
+                p
+            })
+            .collect();
+        self.active = self.pages.iter().position(|p| p.id == step.active).unwrap_or(0);
+        // File state may have changed since the operation (for example Save As).
+        for p in &mut self.pages {
+            p.doc.path = identity.path.clone();
+            p.doc.uid = identity.uid;
+            p.doc.format = identity.format;
+            p.doc.save_options = identity.save_options.clone();
+            p.doc.recovery = identity.recovery.clone();
+            p.doc.history.actor = identity.history.actor;
+        }
+        self.revision = identity.revision.saturating_add(1);
+        inverse.boundary = self.boundary();
+        let label = step.label;
+        if redo {
+            self.page_undo.push(inverse);
+        } else {
+            self.page_redo.push(inverse);
+        }
+        Some(label)
+    }
     pub fn title(&self) -> String {
         if self.path.is_some() || self.converted || self.recovered { self.deref().title() } else { self.file_title.clone() }
     }
@@ -144,6 +204,8 @@ impl Project {
                 Page { id: p.id, name: p.name, doc: st }
             })
             .collect();
+        self.page_undo.clear();
+        self.page_redo.clear();
         self.pages = pages;
         self.active = project.active;
         self.saved_pages = self.signature();
@@ -211,6 +273,17 @@ pub(crate) fn command(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
     } else {
         None
     };
+    let before = s.project()?.page_step(
+        match op {
+            "add" => "Add Page",
+            "duplicate" => "Duplicate Page",
+            "rename" => "Rename Page",
+            "delete" => "Delete Page",
+            "move" => "Move Page",
+            _ => "Page",
+        }
+        .into(),
+    );
     if op == "delete" && s.project()?.pages.len() > 1 && index == s.project()?.active {
         // Deleting the visible canvas is also a document switch: clear idle tool caches.
         s.switch_page(if index == 0 { 1 } else { index - 1 })?;
@@ -270,6 +343,15 @@ pub(crate) fn command(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
             project.active = project.pages.iter().position(|p| p.id == active_id).unwrap_or(0);
         }
         _ => return Err(crate::cmd::bad(&cmd, "unknown page command")),
+    }
+    if project.signature() != before.pages.iter().map(|p| (p.id.clone(), p.name.clone())).collect::<Vec<_>>() {
+        let mut step = before;
+        step.boundary = project.boundary();
+        project.page_undo.push(step);
+        if project.page_undo.len() > 100 {
+            project.page_undo.remove(0);
+        }
+        project.page_redo.clear();
     }
     project.revision = project.revision.saturating_add(1);
     Ok(project.list_pages())
