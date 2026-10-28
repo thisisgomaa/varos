@@ -15,7 +15,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let rename_key = format!("pages-rename-{}", app.session.active().map_or(0, |p| p.uid));
     let mut editing: Editing = panels::pstate(ui.ctx(), &rename_key);
     ui.horizontal(|ui| {
-        ui.strong("Pages");
+        // The Varos shell's tab already names the panel: only the add button stays.
+        if !crate::varos::shell::enabled(app) {
+            ui.strong("Pages");
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if crate::widgets::icon_button(ui, "plus", "Add page", false, 24.0).clicked() {
                 run(app, "page.add", json!({}));

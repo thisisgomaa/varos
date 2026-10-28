@@ -711,7 +711,11 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         go = Some(json!(to));
                     }
                 }
-                if let Some(i) = artboard_list(app, ui, cur) {
+                // Varos shell: the page and artboard readout ("Page 2 of 3 · Artboard 1 / 4") between
+                // the arrows, in place of the artboard list.
+                if let Some(text) = crate::varos::shell::enabled(app).then(|| crate::varos::pages::status(app)).flatten() {
+                    ui.label(egui::RichText::new(text).size(11.0).color(t.text_dim));
+                } else if let Some(i) = artboard_list(app, ui, cur) {
                     go = Some(json!(i));
                 }
                 for (icon, to, tip) in [("chevron-right", "next", tl!("Next Artboard")), ("chevrons-right", "last", tl!("Last Artboard"))] {

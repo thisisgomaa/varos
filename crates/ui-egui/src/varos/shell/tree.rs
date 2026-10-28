@@ -22,6 +22,8 @@ pub(crate) const BOARD_RATIO: f32 = 0.72;
 pub(crate) const ROW: f32 = 36.0;
 /// No ratio is stored outside this range (a hand-edited file, a NaN).
 const RATIO_RANGE: std::ops::RangeInclusive<f32> = 0.02..=0.98;
+/// The Design layout's Pages box: the top fifth of the left column (a header and a few rows).
+const PAGES_RATIO: f32 = 0.2;
 
 /// The way a split lays out its two children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,12 +169,13 @@ fn ratio_bounds(room: f32, a_min: f32, b_min: f32) -> (f32, f32) {
 }
 
 impl Node {
-    /// Design: Layers | Artboards on the left, Board in the middle, Properties on the right.
+    /// Design: Pages over Layers | Artboards on the left, Board in the middle, Properties on the
+    /// right (the simple-shell mockup's columns; every group stays a dockable box).
     pub fn default_layout() -> Node {
         split(
             Axis::Horizontal,
             232.0 / 1360.0,
-            leaf(2, &["layers", "artboards"]),
+            split(Axis::Vertical, PAGES_RATIO, leaf(4, &["pages"]), leaf(2, &["layers", "artboards"])),
             split(Axis::Horizontal, 880.0 / 1128.0, leaf(1, &[BOARD]), leaf(3, &["properties"])),
         )
     }
@@ -649,9 +652,15 @@ mod tests {
     #[test]
     fn simple_default_layout_matches_the_editor_columns() {
         let tree = Node::default_layout();
-        assert_eq!(tabs(&tree), [vec!["layers", "artboards"], vec![BOARD], vec!["properties"]]);
+        assert_eq!(tabs(&tree), [vec!["pages"], vec!["layers", "artboards"], vec![BOARD], vec!["properties"]]);
         let layout = tree.layout(Rect::from_min_size(egui::Pos2::ZERO, vec2(1360.0, 836.0)));
-        let left = layout.rect_of(2).unwrap();
+        let pages = layout.rect_of(4).unwrap();
+        let layers = layout.rect_of(2).unwrap();
+        assert_eq!((pages.left(), pages.top(), pages.width()), (layers.left(), 0.0, layers.width()));
+        assert_eq!(layers.top() - pages.bottom(), 1.0, "one hairline between Pages and Layers");
+        assert!((pages.height() - 835.0 * PAGES_RATIO).abs() <= 1.0, "{pages:?}");
+        assert_eq!(layers.bottom(), 836.0);
+        let left = pages.union(layers);
         let board = layout.rect_of(1).unwrap();
         let right = layout.rect_of(3).unwrap();
         assert!((left.width() - 232.0).abs() <= 1.0);
