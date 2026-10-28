@@ -3111,17 +3111,54 @@ fn simple_review_home_has_one_bar_and_editor_keeps_its_bar() {
 }
 
 #[test]
-fn simple_review_three_column_tool_flyout_clears_strip() {
-    let mut h = Harness::new();
+fn simple_review_home_bar_is_the_window_title_bar() {
+    // Home's own bar replaces the app bar, so it carries the title-bar duties: window drag, room
+    // for the macOS window buttons and the custom caption buttons.
+    let mut h = Harness::without_document();
     h.shell(true);
-    h.app.ui.varos_shell.tools_columns = 3;
+    h.app.custom_titlebar = true;
+    h.app.titlebar_inset = 80.0;
+    let output = h.frame_full(vec![]);
     h.settle();
-    review_open_tool_flyout(&mut h);
-    let area = egui::AreaState::load(&h.ctx, egui::Id::unique("tool-flyout")).unwrap().rect();
-    let strip = h.rect(&Hit::Tools);
-    assert!(!area.intersects(strip), "{area:?} overlaps {strip:?}");
-    assert!((area.left() - strip.right() - 6.0).abs() < 0.1);
-    assert!((area.width() - 240.0).abs() < 0.1, "{area:?}");
+    let close = h.ctx.read_response(egui::Id::unique(("titlebar-caption", 2u8))).expect("Home draws the caption buttons").rect;
+    assert_eq!((close.right(), close.top()), (SCREEN.x, 0.0), "Close sits in the window's corner");
+    let brand = output
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            egui::Shape::Text(text) if text.galley.text() == "Varos" => Some(text.pos.x),
+            _ => None,
+        })
+        .expect("the brand name");
+    assert!(brand >= 80.0 + 30.0, "the brand clears the window buttons: {brand}");
+    let empty = pos2(600.0, 20.0);
+    let cmds: Vec<_> = [
+        vec![egui::Event::PointerMoved(empty)],
+        vec![button(empty, true)],
+        vec![egui::Event::PointerMoved(empty + vec2(12.0, 4.0))],
+        vec![egui::Event::PointerMoved(empty + vec2(30.0, 8.0))],
+        vec![button(empty + vec2(30.0, 8.0), false)],
+    ]
+    .into_iter()
+    .flat_map(|events| h.frame_full(events).viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default())
+    .collect();
+    assert!(cmds.iter().any(|c| matches!(c, egui::ViewportCommand::StartDrag)), "Home's bar drags the window: {cmds:?}");
+}
+
+#[test]
+fn simple_review_multi_column_tool_flyout_clears_strip() {
+    for columns in [2, 3] {
+        let mut h = Harness::new();
+        h.shell(true);
+        h.app.ui.varos_shell.tools_columns = columns;
+        h.settle();
+        review_open_tool_flyout(&mut h);
+        let area = egui::AreaState::load(&h.ctx, egui::Id::unique("tool-flyout")).unwrap().rect();
+        let strip = h.rect(&Hit::Tools);
+        assert!(!area.intersects(strip), "{columns} columns: {area:?} overlaps {strip:?}");
+        assert!((area.left() - strip.right() - 6.0).abs() < 0.1, "{columns} columns: {area:?} beside {strip:?}");
+        assert!((area.width() - 240.0).abs() < 0.1, "{columns} columns: {area:?}");
+    }
 }
 
 #[test]
