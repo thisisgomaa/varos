@@ -20,16 +20,42 @@ pdftotext /tmp/arabic-pdf/force-stroked.pdf -
 - `force-unstroked.pdf`: the same logical copy-back with a fill and no stroke.
 - `digits.pdf`, `repeated.pdf`, `latin.pdf`: authored digits drawn as Hindi digits,
   repeated ligatures and unchanged Latin text.
+- `auto-area.pdf`: justified area type (not point type), Auto at strength 100, wide
+  enough that virtual kashida is inserted. Copy-back is the authored string; the
+  tatweels are not in it. The test checks that non-space glyph advances grew.
+- `mixed.pdf`: one paragraph, `مرحبا (Office), 2026. سنة ٠١٢٣`, Arabic in Noto Sans
+  Arabic and the Latin run (parentheses, comma, period, ASCII digits) in Source Sans 3,
+  then Arabic-Indic digits.
+- `persian-zwnj.pdf`: `کتاب‌ها بالا` (ZWNJ, and a lam-alef ligature) in Noto Sans Arabic.
+- Hebrew niqqud is not generated here. None of the committed fixture fonts (Noto Sans
+  Arabic, IBM Plex Sans Arabic, Source Sans 3, Source Serif 4, Inter, JetBrains Mono)
+  cover Hebrew. The test skips that case and says so; it does not use an installed
+  system font.
+- `latin-frozen.pdf`: `Hello, world. (2026)` in Source Sans 3, creation date pinned to
+  2020-01-01 UTC. The writer has no switch for the Arabic mapping. The test locks the
+  PDF's sha256. On failure it prints the new digest; paste it into `LATIN_ONLY_SHA256`
+  in `arabic_copy_back.rs` and rerun:
+
+```sh
+CARGO_TARGET_DIR="~/Documents/AI workspace/lanes/_target-shared" \
+  cargo test -p vectorcraft-pdf --test arabic_copy_back --release --offline -j 2 -- \
+  --test-threads=2 latin_only_pdf_bytes_stay_frozen --nocapture
+```
 - `aat-*.pdf`: the same two cases for installed morx fonts (Geeza Pro, Al Nile,
   Baghdad, Damascus, KufiStandardGK, Diwan Thuluth). The test checks actual morx
   support, no fallback in the Force case, and actual virtual elongation. It reports
   how many fonts ran; none were available in the Linux cloud environment (all 557
-  Fontconfig font files were inspected; none contained a morx/mort table).
+  Fontconfig font files were inspected; none contained a morx/mort table). A face
+  whose shaped outlines the reader will not accept as that face (it warns that the
+  glyphs differ from the installed font and keeps paths) is skipped with a visible
+  note: the PDF still has a text layer, but this reader does not return it.
 
 Both the crate reader and Poppler must return the authored string. The Poppler
 checks run in default and `-layout` modes, stripping only Poppler's bidi embedding
 controls and page/line terminators, never internal spaces or tatweels. Poppler is
-optional in ordinary crate builds; `REQUIRE_PDFTOTEXT=1` makes absence an error.
+optional in ordinary crate builds: `which pdftotext` decides. When it is absent the
+external assertions are skipped and the test prints `SKIP pdftotext`; they are not
+reported as passed. `REQUIRE_PDFTOTEXT=1` makes absence an error.
 The rendering test also compares Poppler pixels against an outline-only export:
 adding the searchable layer must leave the painted stroked word identical.
 
