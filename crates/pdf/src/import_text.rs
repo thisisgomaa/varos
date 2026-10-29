@@ -334,7 +334,7 @@ impl TextLine {
             if !on_line && !on_curve {
                 return false;
             }
-            if !run.ends_with(' ') && !text.starts_with(' ') {
+            if !text.is_empty() && !run.ends_with(' ') && !text.starts_with(' ') {
                 self.gaps.push(Gap { at: bytes, width: gap, em: self.last_size.min(at.size), on_line });
             }
             // A space the file draws between two glyphs spans the gaps on both sides of it.

@@ -37,18 +37,21 @@ pdftotext /tmp/arabic-pdf/force-stroked.pdf -
   in `arabic_copy_back.rs` and rerun:
 
 ```sh
-CARGO_TARGET_DIR="~/Documents/AI workspace/lanes/_target-shared" \
-  cargo test -p vectorcraft-pdf --test arabic_copy_back --release --offline -j 2 -- \
+cargo test -p vectorcraft-pdf --test arabic_copy_back --release --offline -j 2 -- \
   --test-threads=2 latin_only_pdf_bytes_stay_frozen --nocapture
 ```
+- `latin-rich.pdf`: several runs and lines in Source Sans 3 and Source Serif 4, with an
+  underline, a character stroke and a bulleted list. Creation date pinned to 2020-01-01 UTC.
+  Latin takes the run-index writer. The test locks the sha256 the same way
+  (`latin_rich_pdf_bytes_stay_frozen`).
 - `aat-*.pdf`: the same two cases for installed morx fonts (Geeza Pro, Al Nile,
   Baghdad, Damascus, KufiStandardGK, Diwan Thuluth). The test checks actual morx
   support, no fallback in the Force case, and actual virtual elongation. It reports
   how many fonts ran; none were available in the Linux cloud environment (all 557
   Fontconfig font files were inspected; none contained a morx/mort table). A face
   whose shaped outlines the reader will not accept as that face (it warns that the
-  glyphs differ from the installed font and keeps paths) is skipped with a visible
-  note: the PDF still has a text layer, but this reader does not return it.
+  glyphs differ from the installed font and keeps paths) still runs `pdftotext`; only the
+  crate-reader assert is skipped, and the test says so.
 
 Both the crate reader and Poppler must return the authored string. The Poppler
 checks run in default and `-layout` modes, stripping only Poppler's bidi embedding

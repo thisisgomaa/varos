@@ -84,7 +84,20 @@ pub use presets::*;
 pub use print::*;
 pub use settings::*;
 
+use sha2::{Digest, Sha256};
 use vectorcraft_doc::Document;
+
+/// Lowercase hex SHA-256. The integration tests lock frozen PDF bytes with it: that crate
+/// cannot name the `sha2` dependency this library already uses.
+#[doc(hidden)]
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let dig = Sha256::digest(bytes);
+    let mut out = String::with_capacity(dig.len() * 2);
+    for b in dig {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
 
 /// Export options: the Save PDF settings plus what one export run decides (pages, title, date).
 #[derive(Clone, Debug, Default)]

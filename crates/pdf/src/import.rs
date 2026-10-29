@@ -834,6 +834,23 @@ struct Saved {
     pending: bool,
 }
 
+/// One open marked-content sequence. `text` is its `/ActualText` (PDF text string, decoded);
+/// `used` is set once a glyph has placed that string.
+struct ActualSpan {
+    text: Option<String>,
+    used: bool,
+}
+
+/// How the open `/ActualText` applies to the glyph being read.
+enum ActualMode {
+    /// No actual text: use ToUnicode.
+    Plain,
+    /// This glyph places the span's string.
+    Replace(String),
+    /// The string is already placed; this glyph only advances the pen.
+    Pen,
+}
+
 struct Builder<'p> {
     colors: Colors<'p>,
     next: u64,
@@ -911,6 +928,9 @@ struct Builder<'p> {
     last_fill: Option<(NodeId, BezPath)>,
     /// What each line of type made tells beyond its text object ([`crate::import_lines`]).
     lines: HashMap<NodeId, LineFacts>,
+    /// Open marked-content sequences. `/ActualText`, when the sequence has one, replaces the
+    /// Unicode of the first glyph drawn in it; later glyphs only advance the pen.
+    actual: Vec<ActualSpan>,
 }
 
 fn blend(b: craft_pdf::interpret::BlendMode) -> BlendMode {
@@ -1071,6 +1091,25 @@ impl<'p> Builder<'p> {
             white_images: false,
             last_fill: None,
             lines: HashMap::new(),
+            actual: Vec::new(),
+        }
+    }
+
+    fn actual_mode(&self) -> ActualMode {
+        let Some(idx) = self.actual.iter().rposition(|f| f.text.as_ref().is_some_and(|s| !s.is_empty())) else {
+            return ActualMode::Plain;
+        };
+        if self.actual.get(idx).is_some_and(|f| f.used) {
+            ActualMode::Pen
+        } else {
+            ActualMode::Replace(self.actual.get(idx).and_then(|f| f.text.clone()).unwrap_or_default())
+        }
+    }
+
+    fn mark_actual_used(&mut self) {
+        let Some(idx) = self.actual.iter().rposition(|f| f.text.as_ref().is_some_and(|s| !s.is_empty())) else { return };
+        if let Some(frame) = self.actual.get_mut(idx) {
+            frame.used = true;
         }
     }
 
@@ -1760,8 +1799,16 @@ impl<'p> Builder<'p> {
         };
         // Adobe's CID tables map some ideographs to their look-alike Kangxi radicals.
         let text: String = if from_cid { text.chars().map(unify_radical).collect() } else { text };
+        let mode = self.actual_mode();
+        let text = match &mode {
+            ActualMode::Replace(repl) => repl.clone(),
+            ActualMode::Pen => String::new(),
+            ActualMode::Plain => text,
+        };
         let Some(at) = Placement::of(m) else { return false };
-        if text.is_empty() || text.chars().any(|c| c.is_control()) {
+        // A later glyph of an `/ActualText` span only moves the pen: the first glyph already
+        // placed the string. An empty advance here must not become a word space.
+        if !matches!(&mode, ActualMode::Pen) && (text.is_empty() || text.chars().any(|c| c.is_control())) {
             return false;
         }
         let width = o.advance_width().filter(|w| w.is_finite());
@@ -1851,6 +1898,9 @@ impl<'p> Builder<'p> {
             let mut line = TextLine::new(at, opacity);
             place(&mut line);
             self.text = Some(line);
+        }
+        if matches!(&mode, ActualMode::Replace(_)) {
+            self.mark_actual_used();
         }
         // Its ink: a stroke the file draws as outlines of the glyphs is told by it.
         let mut ink = o.outline();
@@ -2204,6 +2254,7 @@ impl<'a> Device<'a> for Builder<'_> {
         if self.nested > 0 {
             return;
         }
+        self.actual.push(ActualSpan { text: None, used: false });
         let at = self.tag_at;
         self.tag_at += 1;
         let group = match self.scan.tags.get(at) {
@@ -2241,5 +2292,36 @@ impl<'a> Device<'a> for Builder<'_> {
             self.flush();
         }
         self.marked.pop();
+        self.actual.pop();
+    }
+
+    fn actual_text(&mut self, text: &[u8]) {
+        if self.nested > 0 {
+            return;
+        }
+        if let Some(frame) = self.actual.last_mut() {
+            frame.text = Some(pdf_text_string(text));
+            frame.used = false;
+        }
+    }
+}
+
+/// A PDF text string (ISO 32000-1 §7.9.2.2): UTF-16BE with a FE FF BOM, otherwise PDFDocEncoding
+/// as the byte's Unicode scalar (the joiners we write are not in PDFDocEncoding, so they arrive
+/// as UTF-16).
+fn pdf_text_string(bytes: &[u8]) -> String {
+    match bytes {
+        [0xFE, 0xFF, rest @ ..] => {
+            let mut units = Vec::with_capacity(rest.len() / 2);
+            let mut i = 0;
+            while i + 1 < rest.len() {
+                if let (Some(&hi), Some(&lo)) = (rest.get(i), rest.get(i + 1)) {
+                    units.push(u16::from_be_bytes([hi, lo]));
+                }
+                i += 2;
+            }
+            String::from_utf16_lossy(&units)
+        }
+        _ => bytes.iter().map(|&b| char::from(b)).collect(),
     }
 }

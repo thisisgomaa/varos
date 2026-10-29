@@ -42,5 +42,3 @@ vectorcraft-text = { workspace = true, features = ["test-fonts"] }
 serde_json = { workspace = true }
 # `draw_text`, to write test files with live text as other writers do.
 krilla = { workspace = true, features = ["simple-text"] }
-# Frozen Latin PDF bytes (`tests/arabic_copy_back.rs`); same crate the writer already uses.
-sha2 = { version = "0.10", default-features = false }
