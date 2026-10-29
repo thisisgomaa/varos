@@ -29,7 +29,7 @@ pub(crate) const EDGE_BAND: f32 = 24.0;
 /// The drop line's thickness.
 const LINE: f32 = 2.0;
 /// The ghost's opacity.
-const GHOST_ALPHA: f32 = 0.7;
+const GHOST_ALPHA: f32 = 0.6;
 /// An icon ghost's size.
 const ICON: f32 = 26.0;
 
@@ -150,10 +150,14 @@ pub(crate) fn begin(app: &mut VectorcraftApp, ctx: &egui::Context, item: Item, s
     if mode == DragMode::Duplicate && !duplicates(&item) {
         app.status("duplicate: later");
     }
-    let ghost = match item {
+    let ghost = match &item {
         Item::Tab(_) | Item::Float { .. } => source.size(),
         Item::Resize { .. } => Vec2::ZERO,
-        _ => vec2(ICON, ICON),
+        Item::Group { group, .. } => vec2(floats::STRIP_W, floats::pill_height(group.panels.len())),
+        Item::Strip(id) => {
+            app.ui.varos_shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.size()).unwrap_or(vec2(floats::STRIP_W, floats::pill_height(1)))
+        }
+        Item::Icon(_) | Item::Tools => vec2(ICON, ICON),
     };
     // A resize holds the float's lower-right corner (`source` is the float): from the pointer.
     let grab = match item {
@@ -241,12 +245,24 @@ pub(crate) fn before(app: &mut VectorcraftApp, ctx: &egui::Context, region: Rect
         {
             let now = f.rect();
             let new = match d.item {
-                Item::Resize { corner, .. } => floats::resized(now, p + d.grab, corner, region),
+                Item::Resize { corner, .. } => {
+                    let min_w = f.panels.tabs.iter().map(|id| super::tree::panel_min_width(id)).fold(180.0, f32::max);
+                    floats::resized(now, p + d.grab, corner, region, min_w)
+                }
                 _ => floats::clamp_into(Rect::from_min_size(p - d.grab, now.size()), region),
             };
             f.set_rect(new);
         }
         if released {
+            if let Item::Float { id, .. } = d.item {
+                let over_strip = super::hit_rects(ctx).iter().any(|(h, r)| *h == Hit::Strip && r.contains(p));
+                if over_strip {
+                    app.ui.varos_shell.drag = None;
+                    app.ui.varos_shell.close_float(id);
+                    ctx.request_repaint();
+                    return;
+                }
+            }
             app.ui.varos_shell.drag = None;
         }
         return;
@@ -291,6 +307,24 @@ pub(crate) fn after(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, h
         _ => CursorIcon::Grabbing,
     });
     if d.item.in_place() {
+        if let Item::Float { id, .. } = d.item
+            && let Some(p) = ctx.input(|i| i.pointer.latest_pos())
+            && hits.iter().any(|(h, r)| *h == Hit::Strip && r.contains(p))
+        {
+            let accent = crate::varos::theme::ACCENT;
+            let panel = app.ui.varos_shell.floats.iter().find(|f| f.panels.id == id).and_then(|f| f.panels.tabs.first().cloned());
+            let (line, vertical, target) =
+                panel.as_deref().and_then(|panel| restore_preview(&app.ui.varos_shell, hits, panel)).unwrap_or_else(|| {
+                    let rail = hits.iter().find(|(h, _)| *h == Hit::Strip).map(|(_, r)| *r).unwrap_or(region);
+                    (
+                        hline(rail.bottom() - 6.0, rail.left() + 4.0, rail.right() - 4.0),
+                        false,
+                        Target::Strip { strip: StripRef::Board, slot: Slot::NewGroup { before: None } },
+                    )
+                });
+            ctx.layer_painter(preview_layer()).rect_filled(line, CornerRadius::same(1), accent);
+            hits.push((Hit::DropLine { vertical, target }, line));
+        }
         return;
     }
     let Some(p) = ctx.input(|i| i.pointer.latest_pos()) else { return };
@@ -321,12 +355,13 @@ pub(crate) fn after(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, h
     hits.push((Hit::Ghost, ghost));
 }
 
-/// The ghost: a tab pill with its label, or the icon (a group's and a strip's first), at 70 %.
+/// The ghost: a tab pill, or every icon of a group or a lone-icon pill, at 60 %.
 fn paint_ghost(app: &VectorcraftApp, ui: &mut egui::Ui, layer: LayerId, d: &Drag, ghost: Rect) {
     let t = crate::theme::Tokens::get(ui.ctx());
     let fade = |c: egui::Color32| c.gamma_multiply(GHOST_ALPHA);
     let painter = ui.ctx().layer_painter(layer);
-    let panel = item_panels(&app.ui.varos_shell, &d.item).into_iter().next().unwrap_or_default();
+    let panels = item_panels(&app.ui.varos_shell, &d.item);
+    let panel = panels.first().cloned().unwrap_or_default();
     if let Item::Tab(_) = d.item {
         let radius = CornerRadius::same((ghost.height() / 2.0).min(127.0) as u8);
         painter.rect_filled(ghost, radius, fade(t.button));
@@ -338,10 +373,17 @@ fn paint_ghost(app: &VectorcraftApp, ui: &mut egui::Ui, layer: LayerId, d: &Drag
     painter.rect_filled(ghost, CornerRadius::same(3), fade(t.button));
     let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(ghost));
     paint_ui.set_clip_rect(ghost);
-    let icon = crate::state::rail_panel(super::persist::instance_kind(&panel)).map_or("panel-left", |p| p.2);
-    egui::Image::new(crate::icons::source(icon))
-        .tint(fade(t.text_strong))
-        .paint_at(&paint_ui, Rect::from_center_size(ghost.center(), vec2(16.0, 16.0)));
+    let stacked = matches!(d.item, Item::Group { .. } | Item::Strip(_));
+    if stacked {
+        painter.rect_filled(Rect::from_min_size(ghost.min, vec2(ghost.width(), floats::PILL_GRIP)), CornerRadius::same(2), fade(t.hover));
+    }
+    let icons = if stacked { panels } else { vec![panel] };
+    for (i, panel) in icons.iter().enumerate() {
+        let icon = crate::state::rail_panel(super::persist::instance_kind(panel)).map_or("panel-left", |p| p.2);
+        let center =
+            if stacked { pos2(ghost.center().x, ghost.top() + floats::PILL_GRIP + i as f32 * floats::PILL_ROW + 14.0) } else { ghost.center() };
+        egui::Image::new(crate::icons::source(icon)).tint(fade(t.text_strong)).paint_at(&paint_ui, Rect::from_center_size(center, vec2(16.0, 16.0)));
+    }
 }
 
 /// Where the dragged thing is drawn: a tab's pill, an icon, a group (grip and icons), a strip. A
@@ -406,6 +448,69 @@ fn item_groups(shell: &VarosShell, item: &Item) -> Vec<Group> {
 }
 
 /// A line `LINE` thick: vertical through `x` from `y0` to `y1`, or horizontal.
+/// The azure line for dropping a float: the same slot [`VarosShell::close_float`] restores.
+fn restore_preview(shell: &VarosShell, hits: &[(Hit, Rect)], panel: &str) -> Option<(Rect, bool, Target)> {
+    use super::persist::PanelHome;
+    let home = shell.homes.get(panel)?;
+    match home {
+        PanelHome::Tabs { box_id, index } => {
+            let row = hits.iter().find(|(h, _)| matches!(h, Hit::TabRow(id) if *id == *box_id)).map(|(_, r)| *r)?;
+            let before = tab_name(shell, *box_id, *index);
+            let x = before.as_ref().and_then(|name| {
+                hits.iter().find(|(h, _)| matches!(h, Hit::Tab { box_id: id, panel } if *id == *box_id && panel == name)).map(|(_, r)| r.left())
+            });
+            let x = x.unwrap_or(row.right());
+            Some((vline(x, row.center().y - 10.0, row.center().y + 10.0), true, Target::Tabs { box_id: *box_id, before }))
+        }
+        PanelHome::Strip { strip, index, peers, before_group, .. } => {
+            let mut icons: Vec<(String, Rect)> = peers.iter().filter_map(|p| icon_rect(hits, *strip, p).map(|r| (p.clone(), r))).collect();
+            icons.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+            if !icons.is_empty() {
+                let y = icons.get(*index).map(|(_, r)| r.top()).unwrap_or_else(|| icons.last().map(|(_, r)| r.bottom()).unwrap_or(0.0));
+                let span = icons.first().map(|(_, r)| *r).unwrap_or(Rect::NOTHING);
+                let group_of = icons.first().map(|(p, _)| p.clone()).unwrap_or_default();
+                let before = icons.get(*index).map(|(p, _)| p.clone());
+                return Some((hline(y, span.left(), span.right()), false, Target::Strip { strip: *strip, slot: Slot::Join { group_of, before } }));
+            }
+            if let Some(marker) = before_group.as_ref()
+                && let Some(grip) = icon_rect(hits, *strip, marker)
+            {
+                return Some((
+                    hline(grip.top(), grip.left(), grip.right()),
+                    false,
+                    Target::Strip { strip: *strip, slot: Slot::NewGroup { before: Some(marker.clone()) } },
+                ));
+            }
+            let rail = match strip {
+                StripRef::Board => hits.iter().find(|(h, _)| *h == Hit::Strip).map(|(_, r)| *r),
+                StripRef::Float(id) => hits.iter().find(|(h, _)| matches!(h, Hit::FloatStrip(fid) if fid == id)).map(|(_, r)| *r),
+            }?;
+            Some((
+                hline(rail.bottom() - 4.0, rail.left() + 4.0, rail.right() - 4.0),
+                false,
+                Target::Strip { strip: *strip, slot: Slot::NewGroup { before: None } },
+            ))
+        }
+    }
+}
+
+fn tab_name(shell: &VarosShell, box_id: u32, index: usize) -> Option<String> {
+    if let Some(b) = shell.tree.find_box(box_id) {
+        return b.tabs.get(index).cloned();
+    }
+    shell.floats.iter().find(|f| f.panels.id == box_id).and_then(|f| f.panels.tabs.get(index).cloned())
+}
+
+fn icon_rect(hits: &[(Hit, Rect)], strip: StripRef, panel: &str) -> Option<Rect> {
+    hits.iter()
+        .find(|(h, _)| match (strip, h) {
+            (StripRef::Board, Hit::StripIcon(p)) => p == panel,
+            (StripRef::Float(id), Hit::FloatStripIcon { strip: sid, panel: p }) => *sid == id && p == panel,
+            _ => false,
+        })
+        .map(|(_, r)| *r)
+}
+
 fn vline(x: f32, y0: f32, y1: f32) -> Rect {
     Rect::from_min_max(pos2(x - LINE / 2.0, y0), pos2(x + LINE / 2.0, y1))
 }
@@ -571,7 +676,9 @@ fn strip_target(shell: &VarosShell, hits: &[(Hit, Rect)], sref: StripRef, rail: 
     // Over grip dots: a new group before that group.
     for (i, _) in groups.iter().enumerate() {
         let Some(grip) = rect_of(&sref.group_hit(i)) else { continue };
-        if p.y >= grip.top() - 6.0 && p.y < grip.bottom() {
+        // The band is only the top of the group. A y-only test matched every icon under a
+        // full-height grip, so a drop on an icon never joined the group.
+        if p.x >= grip.left() && p.x < grip.right() && p.y >= grip.top() - 6.0 && p.y < grip.bottom() {
             let before = groups[i..].iter().find_map(free);
             return Some((Target::Strip { strip: sref, slot: Slot::NewGroup { before } }, Some((hline(grip.top(), x0, x1), false))));
         }
@@ -704,7 +811,8 @@ pub(crate) fn apply(shell: &mut VarosShell, item: &Item, t: &Target, at: Pos2, p
         }
         Target::LoneIcon => {
             let id = shell.fresh_strip_id();
-            let pos = p - vec2(floats::STRIP_W / 2.0, floats::STRIP_TITLE + strip::GRIP + strip::ICON_ROW / 2.0);
+            let n = groups.iter().map(|g| g.panels.len()).sum::<usize>();
+            let pos = p - vec2(floats::STRIP_W / 2.0, floats::pill_height(n) / 2.0);
             shell.float_strips.push(FloatStrip { id, pos: [pos.x, pos.y], groups });
             true
         }

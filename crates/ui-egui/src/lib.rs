@@ -765,9 +765,20 @@ impl VectorcraftApp {
         // ([`place::place_from_cursor`]).
         session.place_cursor_requests = true;
         let views = session.documents().iter().map(|p| View::of(p)).collect();
+        // The product starts on the new shell. The test binary starts on the classic dock: that
+        // suite builds an app and looks at the dock. Shell tests turn the shell on. The default
+        // itself is checked on `UiState`, not on this constructor.
+        #[cfg(test)]
+        let ui = {
+            let mut ui = UiState { brightness: theme::Brightness::Dark, ..Default::default() };
+            ui.varos_shell.enabled = false;
+            ui
+        };
+        #[cfg(not(test))]
+        let ui = UiState { brightness: theme::Brightness::Dark, ..Default::default() }; // Varos: fresh UI default.
         Self {
             session,
-            ui: UiState { brightness: theme::Brightness::Dark, ..Default::default() }, // Varos: fresh UI default.
+            ui,
             views,
             page_views: Default::default(),
             services,
@@ -1047,6 +1058,9 @@ impl VectorcraftApp {
 
     /// [`Self::run`] it, inside what asks for file dialogs.
     fn run_now(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A command the picker did not issue must not join the popover's undo group (an agent
+        // edit through this same entry point included). The group's edits stay one step.
+        crate::varos::picker::seal_foreign(self);
         crate::state::sync_zoom_stops_display_print_size(self.session.prefs.display_print_size);
         self.run_count = self.run_count.wrapping_add(1);
         // In debug builds the app's own calls are held to the params descriptions too (#1442): a

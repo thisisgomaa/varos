@@ -12,8 +12,25 @@ use serde::{Deserialize, Serialize};
 pub(crate) const BOARD: &str = "board";
 /// The void between two boxes (and around them): the old shell's `SEAM_GAP`.
 pub(crate) const SEAM: f32 = 1.0;
-/// The smallest an ordinary box may be made by a divider.
-pub(crate) const BOX_MIN: Vec2 = vec2(190.0, 120.0);
+/// The smallest an ordinary box may be made by a divider (height; width comes from [`panel_min_width`]).
+pub(crate) const BOX_MIN: Vec2 = vec2(180.0, 120.0);
+
+/// How far past the column's minimum the pointer must be before the azure hint shows and,
+/// on release, the column collapses. One threshold for both.
+pub(crate) const COLLAPSE_RELEASE: f32 = 32.0;
+pub(crate) const COLLAPSE_HINT: f32 = COLLAPSE_RELEASE;
+
+/// The narrowest a panel's column may be drawn. Dividers stop here; dragging past it collapses
+/// the column into the strip.
+pub(crate) fn panel_min_width(id: &str) -> f32 {
+    let kind = id.split_once('@').map(|(kind, _)| kind).unwrap_or(id);
+    match kind {
+        "color" => 240.0,
+        "properties" | "character" | "paragraph" => 300.0,
+        "layers" => 200.0,
+        _ => 180.0,
+    }
+}
 /// The smallest the Board may be made by a divider.
 pub(crate) const BOARD_MIN: Vec2 = vec2(240.0, 180.0);
 /// The Board's share of the window's width in the default layout.
@@ -75,10 +92,9 @@ impl PanelBox {
     fn min_size(&self) -> Vec2 {
         if self.is_board() {
             BOARD_MIN
-        } else if self.collapsed {
-            vec2(BOX_MIN.x, ROW)
         } else {
-            BOX_MIN
+            let width = self.tabs.iter().map(|id| panel_min_width(id)).fold(180.0, f32::max);
+            if self.collapsed { vec2(width, ROW) } else { vec2(width, BOX_MIN.y) }
         }
     }
 
@@ -503,6 +519,108 @@ impl Node {
         }
     }
 
+    /// How far `center` wants a horizontal split's side past its minimum, and `true` when that side
+    /// is `a`. None while both sides still fit, the axis is vertical, or the short side is the Board.
+    /// The layout itself stays clamped at the minimum. The hint and the collapse share one
+    /// threshold, 32 pt ([`COLLAPSE_RELEASE`]).
+    pub fn side_overshoot(&self, path: &[u8], center: f32, span: Rect) -> Option<(bool, f32)> {
+        let Node::Split { axis, a, b, .. } = self.split_at(path)? else { return None };
+        if *axis != Axis::Horizontal {
+            return None;
+        }
+        let start = axis.of(span.min.to_vec2());
+        let room = (axis.of(span.size()) - SEAM).max(0.0);
+        let a_len = center - start - SEAM / 2.0;
+        let a_min = axis.of(a.min_size());
+        let b_min = axis.of(b.min_size());
+        let past_a = a_min - a_len;
+        let past_b = b_min - (room - a_len);
+        if past_a > 0.0 && !a.contains_board() {
+            Some((true, past_a))
+        } else if past_b > 0.0 && !b.contains_board() {
+            Some((false, past_b))
+        } else {
+            None
+        }
+    }
+
+    /// Replace the split at `path` with the child that stays (`take_a` removes `a`). The removed
+    /// subtree comes back; the tree is left unchanged when `path` is not a split.
+    pub fn detach_child(&mut self, path: &[u8], take_a: bool) -> Option<Node> {
+        fn walk(node: &mut Node, path: &[u8], take_a: bool) -> Option<Node> {
+            if path.is_empty() {
+                let current = std::mem::replace(node, Node::Leaf(PanelBox { id: 0, tabs: Vec::new(), active: 0, collapsed: false }));
+                let Node::Split { a, b, .. } = current else {
+                    *node = current;
+                    return None;
+                };
+                if take_a {
+                    *node = *b;
+                    Some(*a)
+                } else {
+                    *node = *a;
+                    Some(*b)
+                }
+            } else {
+                match (path.first().copied(), node) {
+                    (Some(0), Node::Split { a, .. }) => walk(a, &path[1..], take_a),
+                    (Some(1), Node::Split { b, .. }) => walk(b, &path[1..], take_a),
+                    _ => None,
+                }
+            }
+        }
+        walk(self, path, take_a)
+    }
+
+    fn contains_board(&self) -> bool {
+        self.boxes().iter().any(|b| b.is_board())
+    }
+
+    /// Ordinary boxes' tabs, top to bottom (the Board is skipped).
+    pub(crate) fn panel_groups(&self) -> Vec<Vec<String>> {
+        let mut out = Vec::new();
+        fn walk(node: &Node, out: &mut Vec<Vec<String>>) {
+            match node {
+                Node::Leaf(b) if !b.is_board() && !b.tabs.is_empty() => out.push(b.tabs.clone()),
+                Node::Split { a, b, .. } => {
+                    walk(a, out);
+                    walk(b, out);
+                }
+                Node::Leaf(_) => {}
+            }
+        }
+        walk(self, &mut out);
+        out
+    }
+
+    /// Put `column` beside the Board (`right`: the Board stays on the left). The Board's share of
+    /// that split is `board_ratio`.
+    pub fn attach_beside_board(&mut self, column: Node, right: bool, board_ratio: f32) -> bool {
+        fn walk(node: &mut Node, column: &mut Option<Node>, right: bool, ratio: f32) -> bool {
+            match node {
+                Node::Leaf(b) if b.is_board() => {
+                    let board = std::mem::replace(node, Node::Leaf(PanelBox { id: 0, tabs: Vec::new(), active: 0, collapsed: false }));
+                    let Some(col) = column.take() else {
+                        *node = board;
+                        return false;
+                    };
+                    let ratio = ratio.clamp(0.05, 0.95);
+                    *node = if right {
+                        Node::Split { axis: Axis::Horizontal, ratio, reset: ratio, a: Box::new(board), b: Box::new(col) }
+                    } else {
+                        let share = 1.0 - ratio;
+                        Node::Split { axis: Axis::Horizontal, ratio: share, reset: share, a: Box::new(col), b: Box::new(board) }
+                    };
+                    true
+                }
+                Node::Split { a, b, .. } => walk(a, column, right, ratio) || walk(b, column, right, ratio),
+                Node::Leaf(_) => false,
+            }
+        }
+        let mut column = Some(column);
+        walk(self, &mut column, right, board_ratio)
+    }
+
     /// The split's ratio that puts its divider's centre at `center` along its axis in `span`.
     pub fn ratio_for(&self, path: &[u8], center: f32, span: Rect) -> f32 {
         let Some(Node::Split { axis, .. }) = self.split_at(path) else { return 0.5 };
@@ -664,7 +782,7 @@ mod tests {
         let board = layout.rect_of(1).unwrap();
         let right = layout.rect_of(3).unwrap();
         assert!((left.width() - 232.0).abs() <= 1.0);
-        assert!((right.width() - 248.0).abs() <= 1.0);
+        assert!((right.width() - 300.0).abs() <= 1.0, "Properties' column stops at 300: {right:?}");
         assert_eq!(left.left(), 0.0);
         assert_eq!(right.right(), 1360.0);
         assert_eq!(board.left() - left.right(), 1.0);
@@ -736,7 +854,8 @@ mod tests {
             t.layout(rect)
         };
         let right = layout.rect_of(3).unwrap();
-        assert!((right.width() - BOX_MIN.x).abs() < 1.0, "{right:?}");
+        // Properties is in that column: 300, not a generic box.
+        assert!((right.width() - 300.0).abs() < 1.0, "{right:?}");
         // Far left: the Board keeps 240.
         let r = tree.ratio_for(&[], -5000.0, rect);
         let mut t = tree.clone();
@@ -750,7 +869,7 @@ mod tests {
         // A stored ratio out of bounds is laid out within them anyway (a window made smaller).
         let mut t = tree.clone();
         t.set_ratio(&[], 0.98);
-        assert!(t.layout(rect).rect_of(3).unwrap().width() >= BOX_MIN.x - 0.5);
+        assert!(t.layout(rect).rect_of(3).unwrap().width() >= 300.0 - 0.5);
         // A window too small for both: no negative sizes.
         let tiny = Rect::from_min_size(egui::Pos2::ZERO, vec2(200.0, 100.0));
         assert!(t.layout(tiny).boxes.iter().all(|(_, r)| r.width() >= 0.0 && r.height() >= 0.0));
@@ -806,7 +925,8 @@ mod tests {
     #[test]
     fn the_minimum_size_adds_up_the_seams() {
         let tree = historical_layout();
-        assert_eq!(tree.min_size(), vec2(BOARD_MIN.x + SEAM + BOX_MIN.x, (BOX_MIN.y * 2.0 + SEAM).max(BOARD_MIN.y)));
+        // The right column's width is Properties' 300 (the wider of the two stacked boxes).
+        assert_eq!(tree.min_size(), vec2(BOARD_MIN.x + SEAM + 300.0, (BOX_MIN.y * 2.0 + SEAM).max(BOARD_MIN.y)));
     }
 
     #[test]

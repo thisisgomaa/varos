@@ -516,6 +516,114 @@ fn crop_options(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.separator();
 }
 
+/// The shell's fill/stroke wells: the picker's overlapping circles, scaled into the strip
+/// (28 pt in one column, 40 pt in two or three), with the swap arrow and the default-colours squares.
+fn shell_wells(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens, cols: usize) {
+    let size = if cols <= 1 { 28.0 } else { 40.0 };
+    let (rect, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    // The picker's pair: fill at the top-left, stroke at the bottom-right, each 62% of the
+    // cluster, so they overlap and each well's own outer corner stays on that well.
+    let side = size * 0.62;
+    let fill_rect = egui::Rect::from_min_size(rect.min, vec2(side, side));
+    let stroke_rect = egui::Rect::from_min_size(rect.max - vec2(side, side), vec2(side, side));
+    let fill_c = fill_rect.center();
+    let stroke_c = stroke_rect.center();
+    let fill_r = side * 0.5;
+    let stroke_r = side * 0.5;
+    let swap = egui::Rect::from_min_size(pos2(rect.right() - size * 0.40, rect.top()), vec2(size * 0.40, size * 0.34));
+    let defaults = egui::Rect::from_min_size(pos2(rect.left(), rect.bottom() - size * 0.30), vec2(size * 0.46, size * 0.30));
+    let open = app.ui.varos_picker_anchor.is_some();
+    let outline = |active: bool| Stroke::new(1.0, if open && active { t.accent } else { t.button_border });
+    let (fill_paint, stroke_paint) = crate::panels::current_paints(app);
+    let painter = ui.painter().clone();
+    let draw_circle = |center: egui::Pos2, radius: f32, paint: &Paint, active: bool| {
+        painter.circle_filled(center, radius, t.input);
+        if let Some(color) = paint.color() {
+            painter.circle_filled(center, radius - 1.0, crate::panels::c32(&color));
+        }
+        painter.circle_stroke(center, radius, outline(active));
+    };
+    // The focused circle is painted in front, as in the picker.
+    if app.session.fill_active {
+        draw_circle(stroke_c, stroke_r, &stroke_paint, false);
+        draw_circle(fill_c, fill_r, &fill_paint, true);
+    } else {
+        draw_circle(fill_c, fill_r, &fill_paint, false);
+        draw_circle(stroke_c, stroke_r, &stroke_paint, true);
+    }
+    let square = size * 0.16;
+    for (i, color) in [Color32::WHITE, Color32::BLACK].into_iter().enumerate() {
+        let r = egui::Rect::from_min_size(defaults.min + vec2(i as f32 * square, size * 0.06), vec2(square, square));
+        painter.rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, t.button_border), egui::StrokeKind::Inside);
+        painter.rect_filled(r.shrink(1.0), CornerRadius::ZERO, color);
+    }
+    icons::paint(ui, "dc-swap", swap.shrink(size * 0.06), t.text);
+    for stroke in [app.session.fill_active, !app.session.fill_active] {
+        crate::varos::picker::register_well(ui.ctx(), if stroke { stroke_rect } else { fill_rect }, stroke);
+    }
+    if resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        if swap.contains(p) {
+            app.run("paint.swap", json!({})).ok();
+        } else if defaults.contains(p) {
+            app.run("paint.default", json!({})).ok();
+        } else {
+            // The square in front owns the overlap; a well's outer corner stays its own.
+            let front_fill = app.session.fill_active;
+            let in_fill = fill_rect.contains(p);
+            let in_stroke = stroke_rect.contains(p);
+            let on_fill = in_fill && (front_fill || !in_stroke);
+            let on_stroke = in_stroke && (!front_fill || !in_fill);
+            if on_fill || on_stroke {
+                let stroke = on_stroke;
+                if stroke == app.session.fill_active {
+                    app.run("paint.toggleActive", json!({})).ok();
+                }
+                crate::varos::picker::open_for(app, stroke, if stroke { stroke_rect } else { fill_rect });
+            }
+        }
+    }
+    ui.add_space(6.0);
+}
+
+/// Color, Gradient and None at the strip's tile size: one row when three fit, else a column.
+fn shell_chips(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let chip = 28.0;
+    let gap = 4.0;
+    let items = [("Color (,)", "paint.lastColor"), ("Gradient (.)", "paint.lastGradient"), ("None (/)", "paint.none")];
+    let mut clicked = None;
+    {
+        let place = |ui: &mut Ui, clicked: &mut Option<&str>| {
+            ui.spacing_mut().item_spacing = vec2(gap, gap);
+            for (tip, cmd) in items {
+                let (r, resp) = ui.allocate_exact_size(vec2(chip, chip), Sense::click());
+                match cmd {
+                    "paint.lastColor" => widgets::paint_chip(ui, r, &Paint::solid(app.session.last_solid)),
+                    "paint.lastGradient" => widgets::gradient_chip(ui, r, &app.session.last_gradient),
+                    _ => widgets::paint_chip(ui, r, &Paint::None),
+                }
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!(tip)));
+                if resp.on_hover_text(tl!(tip)).clicked() {
+                    *clicked = Some(cmd);
+                }
+            }
+        };
+        if ui.available_width() >= 3.0 * chip + 2.0 * gap {
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 3.0 * chip - 2.0 * gap) / 2.0);
+                place(ui, &mut clicked);
+            });
+        } else {
+            ui.vertical_centered(|ui| place(ui, &mut clicked));
+        }
+    }
+    if let Some(cmd) = clicked {
+        app.run(cmd, json!({})).ok();
+    }
+    ui.add_space(6.0);
+}
+
 /// The Fill/Stroke proxy, Color/Gradient/None, the drawing modes, screen mode and Edit Toolbar, as
 /// large as the toolbar's `cols` (one or two) leave room for (#1129): in two columns the proxy and
 /// buttons grow and the three drawing modes show side by side.
@@ -524,30 +632,18 @@ pub(crate) fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens,
     let two = cols == 2;
     let show = app.ui.toolbar_show;
     if show.fill_stroke {
-        ui.vertical_centered(|ui| {
-            crate::panels::proxy(
-                app,
-                ui,
-                if two {
-                    54.0
-                } else if crate::varos::shell::enabled(app) {
-                    30.0
-                } else {
-                    36.0
-                },
-            )
-        });
-        ui.add_space(5.0);
+        if crate::varos::shell::enabled(app) {
+            shell_wells(app, ui, t, cols);
+        } else {
+            ui.vertical_centered(|ui| crate::panels::proxy(app, ui, if two { 54.0 } else { 36.0 }));
+            ui.add_space(5.0);
+        }
     }
     // Color (the last solid colour), Gradient (the last gradient) and None, as commands.
-    let (chip, gap) = if two {
-        (17.0, 4.0)
-    } else if crate::varos::shell::enabled(app) {
-        (10.0, 1.0)
-    } else {
-        (11.0, 2.0)
-    };
-    if show.coloring {
+    let (chip, gap) = if two { (17.0, 4.0) } else { (11.0, 2.0) };
+    if show.coloring && crate::varos::shell::enabled(app) {
+        shell_chips(app, ui);
+    } else if show.coloring {
         ui.horizontal(|ui| {
             ui.add_space((ui.available_width() - 3.0 * chip - 2.0 * gap) / 2.0);
             ui.spacing_mut().item_spacing.x = gap;

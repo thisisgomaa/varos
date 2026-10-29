@@ -58,6 +58,32 @@ fn options_key(panel: &str) -> Option<&'static str> {
     }
 }
 
+fn ellipsize(painter: &egui::Painter, text: &str, font: egui::FontId, color: egui::Color32, max_w: f32) -> std::sync::Arc<egui::Galley> {
+    let full = painter.layout_no_wrap(text.to_string(), font.clone(), color);
+    if full.size().x <= max_w + 0.5 {
+        return full;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut best = painter.layout_no_wrap("…".to_string(), font.clone(), color);
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let mut s: String = chars.iter().take(mid).collect();
+        s.push('…');
+        let galley = painter.layout_no_wrap(s, font.clone(), color);
+        if galley.size().x <= max_w + 0.5 {
+            best = galley;
+            lo = mid;
+        } else if mid == 0 {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    best
+}
+
 fn option_width(panel: &str) -> f32 {
     if options_key(panel).is_some() { 18.0 } else { 0.0 }
 }
@@ -65,7 +91,7 @@ fn option_width(panel: &str) -> f32 {
 /// The pills of `tabs` (labels) in `row` with tab `active` in front (semibold, so wider), and
 /// each label's galley; narrower than their labels when they don't all fit.
 fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> Vec<(Rect, std::sync::Arc<egui::Galley>)> {
-    let galleys: Vec<_> = tabs
+    let mut galleys: Vec<_> = tabs
         .iter()
         .enumerate()
         .map(|(i, (_, label))| {
@@ -73,51 +99,48 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
             painter.layout_no_wrap(label.clone(), font, t.text)
         })
         .collect();
-    let widths: Vec<f32> = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + option_width(id)).collect();
-    let overflow = widths.iter().sum::<f32>() + PILL_GAP * widths.len().saturating_sub(1) as f32 > row.width();
-    let room = (row.width() - if overflow { 24.0 } else { 0.0 }).max(0.0);
-    let active_width = widths.get(active).copied().unwrap_or(0.0);
-    let mut remaining = (room - active_width).max(0.0);
-    let visible: Vec<bool> = widths
-        .iter()
-        .enumerate()
-        .map(|(i, w)| {
-            if i == active {
-                return true;
-            }
-            if *w + PILL_GAP <= remaining {
-                remaining -= *w + PILL_GAP;
-                true
-            } else {
-                false
-            }
-        })
-        .collect();
+    let mut widths: Vec<f32> = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + option_width(id)).collect();
+    let natural = widths.iter().sum::<f32>() + PILL_GAP * widths.len().saturating_sub(1) as f32;
+    let overflow = natural > row.width();
+    // One 28-point overflow control, then as many whole pills as fit. A pill is never narrowed,
+    // so a label is never cut mid-word — unless the active pill itself does not fit beside `»`,
+    // in which case that one pill is ellipsized and the rest stay in the menu.
+    let room = if overflow { (row.width() - 28.0).max(0.0) } else { row.width() };
+    let mut visible = vec![false; widths.len()];
+    let mut used = 0.0;
+    let consider = |i: usize, widths: &[f32], used: &mut f32, visible: &mut [bool]| {
+        let need = widths[i] + if *used > 0.0 { PILL_GAP } else { 0.0 };
+        if *used + need <= room + 0.5 {
+            *used += need;
+            visible[i] = true;
+        }
+    };
+    if active < widths.len() {
+        consider(active, &widths, &mut used, &mut visible);
+    }
+    if overflow && active < widths.len() && !visible[active] && room > 8.0 {
+        let text_w = (room - 2.0 * PILL_PAD - option_width(&tabs[active].0)).max(4.0);
+        let font = crate::theme::semibold(LABEL);
+        galleys[active] = ellipsize(painter, &tabs[active].1, font, t.text, text_w);
+        widths[active] = (galleys[active].size().x + 2.0 * PILL_PAD + option_width(&tabs[active].0)).min(room);
+        visible[active] = true;
+    }
+    for i in 0..widths.len() {
+        if i != active {
+            consider(i, &widths, &mut used, &mut visible);
+        }
+    }
     let mut x = row.left();
     galleys
         .into_iter()
         .zip(widths)
         .zip(visible)
-        .zip(tabs)
-        .map(|(((mut galley, width), visible), (id, label))| {
-            if !visible {
+        .map(|((galley, width), show)| {
+            if !show {
                 return (Rect::NOTHING, galley);
             }
-            let pill = Rect::from_min_size(pos2(x, row.center().y - PILL_H / 2.0), vec2(width.min(room), PILL_H));
+            let pill = Rect::from_min_size(pos2(x, row.center().y - PILL_H / 2.0), vec2(width, PILL_H));
             x = pill.right() + PILL_GAP;
-            let text_room = (pill.width() - 2.0 * PILL_PAD - option_width(id)).max(0.0);
-            if galley.size().x > text_room {
-                let mut job = egui::text::LayoutJob::simple(
-                    label.clone(),
-                    galley.job.sections.first().map_or_else(|| egui::FontId::proportional(LABEL), |s| s.format.font_id.clone()),
-                    t.text,
-                    text_room,
-                );
-                job.wrap.max_rows = 1;
-                job.wrap.break_anywhere = false;
-                job.wrap.overflow_character = Some('…');
-                galley = painter.layout_job(job);
-            }
             (pill, galley)
         })
         .collect()
@@ -147,14 +170,26 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
         })
         .collect();
     let mut clicked = responses.iter().position(|r| r.clicked()).filter(|i| *i != active);
-    if before.iter().any(|(r, _)| !r.is_positive()) {
-        let more = Rect::from_center_size(pos2(row.right() - 12.0, row.center().y), vec2(24.0, 24.0));
+    let hidden = before.iter().filter(|(r, _)| !r.is_positive()).count();
+    let truncated = before.iter().any(|(_, galley)| galley.text().contains('…'));
+    // `»` also stays when the only overflow is the active pill, which is drawn truncated.
+    if hidden > 0 || truncated {
+        let more = Rect::from_min_size(pos2(row.right() - 28.0, row.center().y - 14.0), vec2(28.0, 28.0));
         let response = ui.interact(more, ui.scope_id().with("tab-overflow"), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("More tabs")));
-        crate::icons::paint(ui, "ellipsis", more.shrink(4.0), t.text_dim);
-        let response = response.on_hover_text(tl!("More tabs"));
+        crate::icons::paint(ui, "shell-chevrons-right", Rect::from_center_size(more.center(), vec2(16.0, 16.0)), t.text_dim);
+        // A lone truncated active pill still shows `»`, with no "1 more panels" tip.
+        let response = if hidden >= 1 {
+            let tip = crate::i18n::trn(crate::i18n::current(), hidden as u64, "{n} more panel", "{n} more panels");
+            response.on_hover_text(tip)
+        } else {
+            response
+        };
         egui::Popup::menu(&response).show(|ui| {
             for (i, (_, label)) in tabs.iter().enumerate() {
+                if before.get(i).is_some_and(|(pill, _)| pill.is_positive()) {
+                    continue;
+                }
                 if ui.selectable_label(i == active, label).clicked() {
                     clicked = Some(i);
                     ui.close();
@@ -246,6 +281,8 @@ pub(crate) enum Ask {
     Maximize(u32),
     /// Another Properties editor beside Properties editor `0` (the ≡ menu's Duplicate Panel).
     Duplicate(String),
+    /// Collapse box `0`'s tabs into the Board's strip as icons.
+    ToIcon(u32),
 }
 
 /// Draw ordinary box `b` in `rect`: tab row, ≡, the front panel's body (none while it is collapsed).
@@ -305,11 +342,12 @@ pub(crate) fn show(
     }
     if let Some(front) = &front {
         hits.push((Hit::Menu(b.id), menu));
-        let extras = MenuExtras { duplicate: true, maximized: (!floating).then(|| app.ui.varos_shell.maximized_box() == Some(b.id)) };
+        let extras = MenuExtras { duplicate: true, maximized: (!floating).then(|| app.ui.varos_shell.maximized_box() == Some(b.id)), to_icon: true };
         match panel_menu(app, ui, menu, b.id, front, &t, extras) {
             Some(MenuPick::Close) => ask = Some(Ask::Close(front.clone())),
             Some(MenuPick::Maximize) => ask = Some(Ask::Maximize(b.id)),
             Some(MenuPick::Duplicate) => ask = Some(Ask::Duplicate(front.clone())),
+            Some(MenuPick::ToIcon) => ask = Some(Ask::ToIcon(b.id)),
             None => {}
         }
     }
@@ -338,6 +376,8 @@ pub(crate) enum MenuPick {
     Close,
     Maximize,
     Duplicate,
+    /// Every tab of the box goes back to the Board's strip as icons.
+    ToIcon,
 }
 
 /// The Board's ≡ (at the top of its strip): Maximize Board, or Restore Layout while it is
@@ -373,6 +413,8 @@ pub(crate) struct MenuExtras {
     pub duplicate: bool,
     /// Maximize Box, or Restore Layout while it is maximized (a box of the tree).
     pub maximized: Option<bool>,
+    /// Collapse to icon: the box's tabs return to the Board's strip.
+    pub to_icon: bool,
 }
 
 /// A flyout's ≡ button: the panel's own menu items (`panels::panel_menu_items`) and Close Panel;
@@ -412,6 +454,9 @@ fn panel_menu(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, box_id: u
                 && crate::widgets::menu_item(ui, if max { "Restore Layout" } else { "Maximize Box" }, true, false)
             {
                 pick = Some(MenuPick::Maximize);
+            }
+            if extras.to_icon && crate::widgets::menu_item(ui, "Collapse to icon", true, false) {
+                pick = Some(MenuPick::ToIcon);
             }
             if crate::widgets::menu_item(ui, "Close Panel", true, false) {
                 pick = Some(MenuPick::Close);

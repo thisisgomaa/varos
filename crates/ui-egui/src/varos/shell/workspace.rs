@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::floats::{Float, FloatStrip};
-use super::persist::VarosShell;
+use super::persist::{CollapsedColumn, VarosShell};
 use super::strip::Strip;
 use super::tree::Node;
 use crate::VectorcraftApp;
@@ -45,6 +45,9 @@ pub struct Arrangement {
     pub views: BTreeMap<String, PropertiesView>,
     #[serde(default)]
     pub maximized: Option<u32>,
+    /// Columns collapsed into the strip; restored with the workspace.
+    #[serde(default)]
+    pub collapsed_columns: Vec<CollapsedColumn>,
 }
 
 impl Arrangement {
@@ -60,6 +63,7 @@ impl Arrangement {
             float_strips: self.float_strips,
             views: self.views,
             maximized: self.maximized,
+            collapsed_columns: self.collapsed_columns,
             ..VarosShell::default()
         };
         shell.sanitize(false);
@@ -100,6 +104,7 @@ fn preset_named(name: &str) -> Arrangement {
         float_strips: Vec::new(),
         views: BTreeMap::new(),
         maximized: None,
+        collapsed_columns: Vec::new(),
     }
 }
 
@@ -120,6 +125,7 @@ impl VarosShell {
             float_strips: self.float_strips.clone(),
             views,
             maximized: self.maximized_box(),
+            collapsed_columns: self.collapsed_columns.clone(),
         }
     }
 
@@ -133,6 +139,7 @@ impl VarosShell {
         self.float_strips = a.float_strips.clone();
         self.views = a.views.clone();
         self.maximized = a.maximized;
+        self.collapsed_columns = a.collapsed_columns.clone();
         self.workspace = a.name.clone();
         self.open = None;
         self.drag = None;

@@ -605,6 +605,14 @@ pub struct UiState {
     /// Transient colour well anchor, never restored on launch.
     #[serde(skip)]
     pub varos_picker_anchor: Option<egui::Rect>,
+    /// The shell popover opened an undo group that is still open. A command that did not come from
+    /// the picker closes it (the edits stay) so that command is its own step.
+    #[serde(skip)]
+    pub varos_picker_group: bool,
+    /// The fill/stroke defaults when the popover's group opened. They are not in the document's
+    /// undo history, so Cancel puts them back; a commit drops the snapshot.
+    #[serde(skip)]
+    pub varos_picker_defaults: Option<vectorcraft_tools::PaintDefaults>,
     /// Varos: Preferences › Varos shell (new) and the shell's box layout (`crate::varos::shell`),
     /// saved apart from [`Self::docking`]; a missing or malformed value reads as the defaults.
     #[serde(default, deserialize_with = "crate::varos::shell::persist::lenient")]
@@ -912,6 +920,8 @@ impl Default for UiState {
             varos_me_folded: Default::default(),
             varos_picker: Default::default(),
             varos_picker_anchor: None,
+            varos_picker_group: false,
+            varos_picker_defaults: None,
             varos_shell: Default::default(),
         }
     }
