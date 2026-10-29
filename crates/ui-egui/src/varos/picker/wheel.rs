@@ -170,9 +170,10 @@ fn marker(p: &egui::Painter, c: Pos2, r: f32, color: Color32) {
 /// `harmony` marks the linked hues of the Harmony tab.
 pub(super) fn wheel(ui: &mut Ui, rect: Rect, st: &mut State, harmony: Option<super::Rule>) {
     let simple = ui.stack().iter().any(|node| node.tags().contains("simple-picker"));
-    let ring_r = if simple { 90.0 } else { RING_R };
-    let triangle_r = if simple { 75.0 } else { TRIANGLE_R };
-    let c = rect.min + vec2(CENTER[0], CENTER[1]);
+    let scale = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::unique("varos-picker-scale"))).unwrap_or(1.0).clamp(0.5, 1.0);
+    let ring_r = (if simple { 90.0 } else { RING_R }) * scale;
+    let triangle_r = (if simple { 75.0 } else { TRIANGLE_R }) * scale;
+    let c = rect.min + vec2(CENTER[0] * scale, CENTER[1] * scale);
     let hit =
         ui.interact(Rect::from_center_size(c, egui::Vec2::splat(ring_r * 2.0)), ui.scope_id().with("varos-picker-wheel"), Sense::click_and_drag());
     let pos = hit.interact_pointer_pos();

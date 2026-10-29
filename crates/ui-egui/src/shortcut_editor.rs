@@ -1023,6 +1023,9 @@ mod tests {
     #[test]
     fn another_tests_frames_leave_this_tests_mirror_alone() {
         let mut ui = UiState::default();
+        // This test's mirror is the classic workspace list. A fresh config has the shell on, and
+        // that menu lists the shell's workspaces instead.
+        ui.varos_shell.enabled = false;
         crate::keymap::set_override(&mut ui.shortcut_overrides, "tool:measure", "Shift+8");
         crate::workspaces::save_as(&mut ui, "Mine").unwrap();
         sync(&ui);

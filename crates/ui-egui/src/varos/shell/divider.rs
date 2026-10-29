@@ -2,8 +2,9 @@
 //! (the new ratio is laid out in the same frame, within both sides' minimum sizes); a double-click
 //! puts the split's default ratio back. No line, no motion.
 
-use egui::{CursorIcon, Sense};
+use egui::{CursorIcon, Rect, Sense};
 
+use super::Hit;
 use super::tree::{Axis, Layout};
 use crate::VectorcraftApp;
 
@@ -15,6 +16,16 @@ pub(crate) fn id(path: &[u8]) -> egui::Id {
 /// Where along its axis the pointer held the divider, from its centre (kept while it is dragged).
 fn grab_id(path: &[u8]) -> egui::Id {
     id(path).with("grab")
+}
+
+/// The pointer's axis coordinate this drag (so release can see it after the pointer is up).
+fn center_id(path: &[u8]) -> egui::Id {
+    id(path).with("center")
+}
+
+/// Set while the pointer wants a column narrower than its minimum (the azure collapse hint).
+fn past_id(path: &[u8]) -> egui::Id {
+    id(path).with("past")
 }
 
 /// Take this frame's input on `layout`'s dividers; true when a ratio changed (the caller lays the
@@ -35,43 +46,84 @@ pub(crate) fn interact(app: &mut VectorcraftApp, ui: &mut egui::Ui, layout: &Lay
             });
         }
         let along = |p: egui::Pos2| d.axis.of(p.to_vec2());
-        let tree = &mut app.ui.varos_shell.tree;
-        if response.double_clicked() {
-            tree.reset_ratio(&d.path);
-            ctx.data_mut(|m| m.remove_temp::<f32>(grab_id(&d.path)));
-            changed = true;
-            continue;
-        }
-        if response.drag_started() {
-            let origin = ctx.input(|i| i.pointer.press_origin()).or(response.interact_pointer_pos()).unwrap_or(d.rect.center());
-            let grab = along(origin) - along(d.rect.center());
-            ctx.data_mut(|m| m.insert_temp(grab_id(&d.path), grab));
-        }
-        if response.dragged()
-            && let Some(p) = response.interact_pointer_pos()
+        let mut collapse: Option<bool> = None;
         {
-            let grab = ctx.data(|m| m.get_temp::<f32>(grab_id(&d.path))).unwrap_or(0.0);
-            let ratio = tree.ratio_for(&d.path, along(p) - grab, d.span);
-            if tree.ratio(&d.path) != Some(ratio) {
-                tree.set_ratio(&d.path, ratio);
+            let tree = &mut app.ui.varos_shell.tree;
+            if response.double_clicked() {
+                tree.reset_ratio(&d.path);
+                ctx.data_mut(|m| {
+                    m.remove_temp::<f32>(grab_id(&d.path));
+                    m.remove_temp::<f32>(center_id(&d.path));
+                    m.remove_temp::<bool>(past_id(&d.path));
+                });
                 changed = true;
+                continue;
+            }
+            if response.drag_started() {
+                let origin = ctx.input(|i| i.pointer.press_origin()).or(response.interact_pointer_pos()).unwrap_or(d.rect.center());
+                let grab = along(origin) - along(d.rect.center());
+                ctx.data_mut(|m| m.insert_temp(grab_id(&d.path), grab));
+            }
+            if response.dragged()
+                && let Some(p) = response.interact_pointer_pos()
+            {
+                let grab = ctx.data(|m| m.get_temp::<f32>(grab_id(&d.path))).unwrap_or(0.0);
+                let center = along(p) - grab;
+                let ratio = tree.ratio_for(&d.path, center, d.span);
+                if tree.ratio(&d.path) != Some(ratio) {
+                    tree.set_ratio(&d.path, ratio);
+                    changed = true;
+                }
+                let past = tree.side_below_min(&d.path, center, d.span).is_some();
+                ctx.data_mut(|m| {
+                    m.insert_temp(center_id(&d.path), center);
+                    if past {
+                        m.insert_temp(past_id(&d.path), true);
+                    } else {
+                        m.remove_temp::<bool>(past_id(&d.path));
+                    }
+                });
+            }
+            if response.drag_stopped() {
+                let center = ctx.data(|m| m.get_temp::<f32>(center_id(&d.path)));
+                ctx.data_mut(|m| {
+                    m.remove_temp::<f32>(grab_id(&d.path));
+                    m.remove_temp::<f32>(center_id(&d.path));
+                    m.remove_temp::<bool>(past_id(&d.path));
+                });
+                if let Some(center) = center {
+                    collapse = tree.side_below_min(&d.path, center, d.span);
+                }
             }
         }
-        if response.drag_stopped() {
-            ctx.data_mut(|m| m.remove_temp::<f32>(grab_id(&d.path)));
+        if let Some(take_a) = collapse
+            && app.ui.varos_shell.collapse_side(&d.path, take_a)
+        {
+            changed = true;
         }
     }
     changed
 }
 
-/// One separator per split, painted over neighboring surfaces.
-pub(crate) fn paint(ui: &egui::Ui, layout: &Layout) {
+/// One separator per split, painted over neighboring surfaces. Past a column's minimum the seam
+/// is the azure collapse hint ([`Hit::AzureHint`]).
+pub(crate) fn paint(ui: &egui::Ui, layout: &Layout, hits: &mut Vec<(Hit, Rect)>) {
     for d in &layout.dividers {
         let response = ui.ctx().read_response(id(&d.path));
+        let past = ui.ctx().data(|m| m.get_temp::<bool>(past_id(&d.path))).unwrap_or(false);
+        if past {
+            hits.push((Hit::AzureHint, d.rect));
+        }
         let t = crate::theme::Tokens::get(ui.ctx());
         let stroke = egui::Stroke::new(
-            if response.as_ref().is_some_and(|r| r.hovered()) || response.as_ref().is_some_and(|r| r.dragged()) { 2.0 } else { 1.0 },
-            if response.as_ref().is_some_and(|r| r.dragged()) {
+            if past {
+                3.0
+            } else if response.as_ref().is_some_and(|r| r.hovered()) || response.as_ref().is_some_and(|r| r.dragged()) {
+                2.0
+            } else {
+                1.0
+            },
+            if past || response.as_ref().is_some_and(|r| r.dragged()) {
                 t.accent
             } else if response.as_ref().is_some_and(|r| r.hovered()) {
                 t.hover

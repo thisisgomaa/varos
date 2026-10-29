@@ -765,9 +765,20 @@ impl VectorcraftApp {
         // ([`place::place_from_cursor`]).
         session.place_cursor_requests = true;
         let views = session.documents().iter().map(|p| View::of(p)).collect();
+        // The product starts on the new shell. The test binary starts on the classic dock: that
+        // suite builds an app and looks at the dock. Shell tests turn the shell on. The default
+        // itself is checked on `UiState`, not on this constructor.
+        #[cfg(test)]
+        let ui = {
+            let mut ui = UiState { brightness: theme::Brightness::Dark, ..Default::default() };
+            ui.varos_shell.enabled = false;
+            ui
+        };
+        #[cfg(not(test))]
+        let ui = UiState { brightness: theme::Brightness::Dark, ..Default::default() }; // Varos: fresh UI default.
         Self {
             session,
-            ui: UiState { brightness: theme::Brightness::Dark, ..Default::default() }, // Varos: fresh UI default.
+            ui,
             views,
             page_views: Default::default(),
             services,

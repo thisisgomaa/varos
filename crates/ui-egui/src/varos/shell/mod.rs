@@ -128,10 +128,18 @@ pub(crate) enum Hit {
     WorkspaceTab(String),
     WorkspaceOverflow(bool),
     WorkspaceNew,
-    /// The Board's ≡ (Maximize Board / Restore Layout), at the top of its strip, and the empty
+    /// The Board's ≡ (Maximize Board / Restore Layout), at the bottom of its strip, and the empty
     /// space of its document tabs' row (a double-click maximizes or restores).
     BoardMenu,
     BoardHeader,
+    /// The azure line shown while a divider is dragged past a column's minimum (release collapses
+    /// that column into the strip).
+    AzureHint,
+    /// The canvas-side edge of the Board's strip, while a column is collapsed: dragging it outward
+    /// past ~120 pt opens the column again.
+    StripEdge,
+    /// The canvas-side edge of the tool strip: dragging it snaps between 1, 2 and 3 columns.
+    ToolsEdge,
 }
 
 fn hits_id() -> egui::Id {
@@ -196,6 +204,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         hits.push((Hit::Board, area));
         let canvas = if crate::varos::home::is_home(app) { area } else { tools::show(app, ui, area, region, &mut hits) };
         board(app, ui, canvas, false, &mut hits);
+        tools::finish_edge(app, ui, &mut hits);
     } else {
         // The workspace row on top; the boxes, floats and drags below it.
 
@@ -222,7 +231,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                 asks.push(ask);
             }
         }
-        divider::paint(ui, &layout);
+        divider::paint(ui, &layout, &mut hits);
         for ask in asks {
             match ask {
                 boxes::Ask::Close(panel) => {
@@ -240,6 +249,9 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                 boxes::Ask::Duplicate(panel) => {
                     duplicate_properties(app, &panel);
                 }
+                boxes::Ask::ToIcon(id) => {
+                    app.ui.varos_shell.collapse_box_to_strip(id);
+                }
             }
             ui.ctx().request_repaint();
         }
@@ -251,6 +263,8 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             strip::close(app);
         }
         drag::after(app, ui, region, &mut hits);
+        strip::finish_edge(app, ui, &mut hits);
+        tools::finish_edge(app, ui, &mut hits);
     }
     if !crate::varos::home::is_home(app) && app.ui.toolbar && app.ui.screen_mode < 3 {
         crate::toolbar::shell_popovers(app, ui.ctx(), region);
@@ -263,6 +277,31 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     if app.ui.open_panel != app.ui.varos_shell.open {
         ui.ctx().request_repaint();
     }
+}
+
+/// A rect remembered for this frame only. egui's temp map can drop a `Default` value, and
+/// [`egui::Rect`] is not one, so the frame number says which pass stored it.
+#[derive(Clone, Copy, Default)]
+struct StampedRect {
+    frame: u64,
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+pub(crate) fn stamp_rect(ctx: &egui::Context, id: egui::Id, rect: egui::Rect) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| {
+        d.insert_temp(id, StampedRect { frame, min_x: rect.min.x, min_y: rect.min.y, max_x: rect.max.x, max_y: rect.max.y });
+    });
+}
+
+pub(crate) fn stamped_rect(ctx: &egui::Context, id: egui::Id) -> Option<egui::Rect> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<StampedRect>(id))
+        .filter(|s| s.frame == frame)
+        .map(|s| egui::Rect::from_min_max(egui::pos2(s.min_x, s.min_y), egui::pos2(s.max_x, s.max_y)))
 }
 
 /// Where boxes, floats and drags live in the central region `area`: below the workspace row.

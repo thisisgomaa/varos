@@ -193,7 +193,7 @@ pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 /// Toggle gestures execute once even if egui discards a sizing pass and draws it again.
-fn clicked_once(ctx: &egui::Context, id: egui::Id, clicked: bool) -> bool {
+pub(crate) fn clicked_once(ctx: &egui::Context, id: egui::Id, clicked: bool) -> bool {
     if !clicked {
         return false;
     }
@@ -207,6 +207,35 @@ fn clicked_once(ctx: &egui::Context, id: egui::Id, clicked: bool) -> bool {
             true
         }
     })
+}
+
+/// Grab the strip's canvas-side edge after the columns, so a box beside the strip does not take
+/// the 8 pt band. Dragging outward past 120 pt restores the last collapsed column.
+pub(crate) fn finish_edge(app: &mut VectorcraftApp, ui: &mut egui::Ui, hits: &mut Vec<(Hit, Rect)>) {
+    let Some(edge) = super::stamped_rect(ui.ctx(), egui::Id::unique("shell-strip-edge")) else { return };
+    let rail = super::stamped_rect(ui.ctx(), egui::Id::unique("shell-strip-rail")).unwrap_or(edge);
+    let edge_id = ui.scope_id().with("strip-restore");
+    let edge_response = ui.interact(edge, edge_id, egui::Sense::drag());
+    if edge_response.hovered() || edge_response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if let Some(p) = edge_response.interact_pointer_pos() {
+        let outward = rail.left() - p.x;
+        ui.ctx().data_mut(|d| d.insert_temp(edge_id.with("out"), outward));
+        if edge_response.dragged() && outward >= 120.0 {
+            let hint = Rect::from_center_size(pos2(rail.left() - 120.0, rail.center().y), vec2(2.0, rail.height()));
+            ui.painter().vline(rail.left() - 120.0, rail.y_range(), egui::Stroke::new(3.0, crate::varos::theme::ACCENT));
+            hits.push((Hit::AzureHint, hint));
+        }
+    }
+    if edge_response.drag_stopped() {
+        let outward = ui.ctx().data(|d| d.get_temp::<f32>(edge_id.with("out"))).unwrap_or(0.0);
+        ui.ctx().data_mut(|d| d.remove_temp::<f32>(edge_id.with("out")));
+        if outward >= 120.0 {
+            app.ui.varos_shell.restore_collapsed();
+            ui.ctx().request_repaint();
+        }
+    }
 }
 
 pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hits: &mut Vec<(Hit, Rect)>) -> Rect {
@@ -237,9 +266,10 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     let width = width_for(app).min(board.width());
     let rail = Rect::from_min_max(pos2(board.right() - width, board.top()), board.max);
     hits.push((Hit::Strip, rail));
-    // The Board's ≡ on top: Maximize Board, or Restore Layout.
-    let menu_row = Rect::from_min_size(pos2(rail.left(), (rail.bottom() - 48.0).max(rail.top())), vec2(width, 24.0));
-    let toggle = Rect::from_min_size(pos2(rail.left(), menu_row.bottom()), vec2(width, 24.0));
+    // `<<` / `>>` at the top, a 16-point glyph in a 28-point tile. The Board's ≡ is the only
+    // control at the bottom.
+    let toggle = Rect::from_center_size(pos2(rail.center().x, rail.top() + 14.0), vec2(28.0, 28.0));
+    let menu_row = Rect::from_center_size(pos2(rail.center().x, rail.bottom() - 14.0), vec2(28.0, 28.0));
     let toggle_response = ui.interact(toggle, toggle_id, Sense::click());
     toggle_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Toggle panel labels"));
     hits.push((Hit::StripToggle, toggle));
@@ -265,10 +295,19 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
         Rect::from_center_size(toggle.center(), vec2(16.0, 16.0)),
         t.text_dim,
     );
+    if !app.ui.varos_shell.collapsed_columns.is_empty() {
+        let edge = Rect::from_min_max(pos2(rail.left() - 4.0, rail.top()), pos2(rail.left() + 4.0, rail.bottom()));
+        hits.push((Hit::StripEdge, edge));
+        // The column beside the strip is drawn later and would take this band. `finish_edge`
+        // grabs it last.
+        super::stamp_rect(ui.ctx(), egui::Id::unique("shell-strip-edge"), edge);
+        super::stamp_rect(ui.ctx(), egui::Id::unique("shell-strip-rail"), rail);
+    }
     let groups = app.ui.varos_shell.strip.groups.clone();
     let mut tops = Vec::new();
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(rail.min, pos2(rail.right(), menu_row.top()))));
-    child.set_clip_rect(rail.intersect(ui.clip_rect()));
+    let icons_rect = Rect::from_min_max(pos2(rail.left(), toggle.bottom()), pos2(rail.right(), menu_row.top()));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(icons_rect));
+    child.set_clip_rect(icons_rect.intersect(ui.clip_rect()));
     child.spacing_mut().item_spacing.y = 0.0;
     let mut icons = Vec::new();
     // Icons and grips are dragged; the column scrolls by wheel and bar only (egui drags it on touch).
@@ -284,7 +323,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     flyout(app, ui, bounds, rail, &tops, StripRef::Board, hits);
     // Paint after all strip and flyout input: exactly one active icon on the click frame.
     let mut paint_ui = child.new_child(egui::UiBuilder::new().max_rect(rail));
-    paint_ui.set_clip_rect(Rect::from_min_max(rail.min, pos2(rail.right(), menu_row.top())).intersect(ui.clip_rect()));
+    paint_ui.set_clip_rect(icons_rect.intersect(ui.clip_rect()));
     let mode = app.ui.varos_shell.strip.mode;
     paint_icons(app, &paint_ui, icons, mode, StripRef::Board, hits);
     Rect::from_min_max(board.min, pos2(rail.left().max(board.left()), board.bottom()))
@@ -449,7 +488,7 @@ pub(crate) fn flyout(
         && let Some(p) = r.interact_pointer_pos()
     {
         let wanted = if on_right { p.x - rail.right() - 6.0 } else { rail.left() - p.x - 6.0 };
-        width = wanted.clamp(190.0_f32.min(room), room);
+        width = wanted.clamp(super::tree::panel_min_width(&panel).min(room), room);
         rect = place(width);
         if let Some(g) = app.ui.varos_shell.strip_groups_mut(sref).and_then(|gs| gs.get_mut(index)) {
             g.width = width;
@@ -467,7 +506,7 @@ pub(crate) fn flyout(
         ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_width: 4.0, floating_width: 2.0, ..egui::style::ScrollStyle::floating() };
         ui.set_opacity(alpha);
         ui.set_min_size(rect.size());
-        ui.set_clip_rect(bounds);
+        ui.set_clip_rect(rect.intersect(bounds));
         let t = crate::theme::Tokens::get(&ctx);
         let head = Rect::from_min_size(rect.min, vec2(width, boxes::FLOAT_HEADER));
         let collapse = Rect::from_min_size(pos2(head.right() - 48.0, head.top() + 4.0), vec2(22.0, 24.0));

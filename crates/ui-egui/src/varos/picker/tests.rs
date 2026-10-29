@@ -16,6 +16,8 @@ fn app() -> VectorcraftApp {
     app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
     app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
     app.run("paint.setFill", json!({"color": "#3366cc"})).unwrap();
+    // These tests drive the picker. The shell's popover (OK / Cancel) is turned on by Harness::new(true).
+    app.ui.varos_shell.enabled = false;
     app
 }
 
@@ -802,6 +804,7 @@ struct Harness {
     app: VectorcraftApp,
     ctx: egui::Context,
     time: f64,
+    screen: egui::Vec2,
 }
 
 impl Harness {
@@ -810,26 +813,23 @@ impl Harness {
         app.ui.varos_shell.enabled = shell;
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let mut h = Self { app, ctx, time: 0.0 };
+        let mut h = Self { app, ctx, time: 0.0, screen: vec2(1400.0, 1000.0) };
         for _ in 0..5 {
             h.frame(vec![]);
         }
         h
     }
-    fn frame(&mut self, events: Vec<Event>) {
+    fn frame(&mut self, events: Vec<Event>) -> egui::FullOutput {
         self.time += 0.1;
         self.app.begin_host_iteration();
-        let raw = egui::RawInput {
-            events,
-            time: Some(self.time),
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 1000.0))),
-            ..Default::default()
-        };
+        let raw =
+            egui::RawInput { events, time: Some(self.time), screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.screen)), ..Default::default() };
         let mut out = self.ctx.run_ui(raw, |ui| {
             self.app.tick(ui.ctx());
             self.app.ui(ui);
         });
         out.textures_delta.clear();
+        out
     }
     fn click(&mut self, p: Pos2) {
         self.frame(vec![Event::PointerMoved(p), button(p, true)]);
@@ -869,17 +869,85 @@ fn toolbar_popover_anchor_dismiss_escape_and_target_switch_in_both_shells() {
         }
         assert!((r.width() - W).abs() < 1.0);
         h.click(stroke.right_bottom() - vec2(3.0, 3.0));
-        assert!(!h.app.session.fill_active);
+        assert!(!h.app.session.fill_active, "shell={shell} stroke={stroke:?}");
         assert_eq!(h.app.ui.varos_picker_anchor, Some(stroke));
         let selection = h.app.session.active().unwrap().selection.clone();
         let canvas = h.app.canvas_rect.unwrap();
         h.click(canvas.center());
-        assert!(h.app.ui.varos_picker_anchor.is_none());
+        if shell {
+            assert!(h.app.ui.varos_picker_anchor.is_some(), "an outside click leaves the shell popover open");
+        } else {
+            assert!(h.app.ui.varos_picker_anchor.is_none());
+        }
         assert_eq!(h.app.session.active().unwrap().selection.objects, selection.objects);
         h.click(fill.left_top() + vec2(3.0, 3.0));
         h.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
         assert!(h.app.ui.varos_picker_anchor.is_none());
     }
+}
+
+fn labelled(out: &egui::FullOutput, label: &str) -> Option<Pos2> {
+    fn walk(s: &egui::Shape, label: &str, out: &mut Option<Pos2>) {
+        match s {
+            egui::Shape::Text(t) if t.galley.text() == label => *out = Some(t.pos + t.galley.rect.center().to_vec2()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, label, out)),
+            _ => {}
+        }
+    }
+    let mut at = None;
+    for c in &out.shapes {
+        walk(&c.shape, label, &mut at);
+    }
+    at
+}
+
+#[test]
+fn shell_popover_from_the_bottom_well_shows_ok_and_cancel_and_ignores_outside_clicks() {
+    let mut h = Harness::new(true);
+    h.screen = vec2(1440.0, 900.0);
+    for _ in 0..4 {
+        h.frame(vec![]);
+    }
+    let fill = h.well(false);
+    let before = fill_hex(&h.app);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    let out = h.frame(vec![]);
+    let r = picker_rect(&h.ctx);
+    let pop = egui::AreaState::load(&h.ctx, egui::Id::unique("varos-picker-popover")).unwrap().rect();
+    assert!((r.width() - W).abs() < 1.0, "{r:?}");
+    assert!(pop.top() >= -1.0 && pop.bottom() <= 901.0, "the whole popover is on screen: {pop:?}");
+    assert!(pop.height() + 1.0 >= r.height() + 30.0, "OK/Cancel sit under the wheel and fields: {pop:?} {r:?}");
+    assert!(pop.contains_rect(r));
+    let ok = labelled(&out, "OK").expect("OK");
+    let cancel = labelled(&out, "Cancel").expect("Cancel");
+    assert!(pop.contains(ok) && pop.contains(cancel), "buttons inside the popover: {ok:?} {cancel:?} {pop:?}");
+    let hex_visible = {
+        fn has(s: &egui::Shape, pop: egui::Rect) -> bool {
+            match s {
+                egui::Shape::Text(t) => {
+                    t.galley.text().to_ascii_lowercase().contains("3366cc") && pop.contains(t.pos + t.galley.rect.center().to_vec2())
+                }
+                egui::Shape::Vec(v) => v.iter().any(|s| has(s, pop)),
+                _ => false,
+            }
+        }
+        out.shapes.iter().any(|c| has(&c.shape, pop))
+    };
+    assert!(hex_visible, "the hex field is visible");
+    h.click(h.app.canvas_rect.unwrap().center());
+    assert!(h.app.ui.varos_picker_anchor.is_some(), "outside click leaves it open");
+    h.app.run("paint.setFill", json!({"color": "#112233"})).unwrap();
+    h.frame(vec![]);
+    h.click(cancel);
+    assert!(h.app.ui.varos_picker_anchor.is_none(), "Cancel closes");
+    assert_eq!(fill_hex(&h.app), before, "Cancel restores the colour from when it opened");
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.app.run("paint.setFill", json!({"color": "#abcdef"})).unwrap();
+    let out = h.frame(vec![]);
+    let ok = labelled(&out, "OK").expect("OK");
+    h.click(ok);
+    assert!(h.app.ui.varos_picker_anchor.is_none());
+    assert_eq!(fill_hex(&h.app), "#abcdef");
 }
 
 #[test]

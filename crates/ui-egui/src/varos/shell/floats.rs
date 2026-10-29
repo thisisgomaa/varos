@@ -19,10 +19,17 @@ use super::tree::{BOX_MIN, PanelBox};
 use crate::VectorcraftApp;
 use crate::theme::Tokens;
 
-/// The title strip's height (floating panels and floating strips).
+/// The title strip's height (floating panels).
 pub(crate) const TITLE: f32 = 18.0;
-/// Narrow strips put the grip below the two 16-point buttons.
-pub(crate) const STRIP_TITLE: f32 = 32.0;
+/// A lone-icon pill: a 6-point grip, then 28-point tiles with 2-point gaps, then 6 points.
+pub(crate) const PILL_GRIP: f32 = 6.0;
+pub(crate) const PILL_ROW: f32 = 30.0;
+pub(crate) const PILL_PAD: f32 = 6.0;
+
+/// Height of a lone-icon pill of `n` icons: grip + n×30 + pad.
+pub(crate) fn pill_height(n: usize) -> f32 {
+    PILL_GRIP + n.max(1) as f32 * PILL_ROW + PILL_PAD
+}
 /// A floating panel's size when nothing remembers one.
 pub(crate) const DEFAULT_SIZE: Vec2 = vec2(260.0, 360.0);
 /// A floating strip's width (an Icons-mode strip's).
@@ -32,8 +39,6 @@ const BUTTON: Vec2 = vec2(16.0, 16.0);
 /// The lower-right resize corner and the right resize edge.
 const CORNER: f32 = 12.0;
 const EDGE: f32 = 5.0;
-/// Room below a floating strip's last icon.
-const STRIP_FOOT: f32 = 4.0;
 
 /// A floating panel: panels as tabs, above the boxes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -80,7 +85,7 @@ pub struct FloatStrip {
 impl FloatStrip {
     pub(crate) fn size(&self) -> Vec2 {
         let icons: usize = self.groups.iter().map(|g| g.panels.len()).sum();
-        vec2(STRIP_W, STRIP_TITLE + strip::GRIP * self.groups.len() as f32 + strip::ICON_ROW * icons as f32 + STRIP_FOOT)
+        vec2(STRIP_W, pill_height(icons))
     }
 
     pub(crate) fn rect(&self, region: Rect) -> Rect {
@@ -91,9 +96,9 @@ impl FloatStrip {
 /// Floating panel `rect` resized with the pointer at `p` (already offset by where it holds the
 /// corner): from its lower-right corner (`corner`) or its right edge; at least a box's minimum, at
 /// most to `region`'s edges.
-pub(crate) fn resized(rect: Rect, p: egui::Pos2, corner: bool, region: Rect) -> Rect {
+pub(crate) fn resized(rect: Rect, p: egui::Pos2, corner: bool, region: Rect, min_w: f32) -> Rect {
     let max = region.max - rect.min;
-    let w = (p.x - rect.left()).clamp(BOX_MIN.x.min(max.x), max.x.max(1.0));
+    let w = (p.x - rect.left()).clamp(min_w.min(max.x), max.x.max(1.0));
     let h = if corner { (p.y - rect.top()).clamp(BOX_MIN.y.min(max.y), max.y.max(1.0)) } else { rect.height() };
     Rect::from_min_size(rect.min, vec2(w, h))
 }
@@ -188,7 +193,7 @@ fn float(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, f: &Float, h
     let mut ask = None;
     egui::Area::new(area).order(Order::Middle).fixed_pos(rect.min).constrain(false).fade_in(false).movable(false).show(&ctx, |ui| {
         ui.set_min_size(rect.size());
-        ui.set_clip_rect(region);
+        ui.set_clip_rect(rect.intersect(region));
         let painter = ui.painter().clone();
         painter.rect_filled(rect, CornerRadius::same(boxes::RADIUS), t.panel);
         // The title strip moves it (under its buttons, which take the clicks).
@@ -257,6 +262,10 @@ fn float(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, f: &Float, h
             super::duplicate_properties(app, &panel);
             ctx.request_repaint();
         }
+        Some(Ask::Box(boxes::Ask::ToIcon(b))) => {
+            shell.collapse_box_to_strip(b);
+            ctx.request_repaint();
+        }
         // A floating panel is never maximized (it lies above the boxes).
         Some(Ask::Box(boxes::Ask::Maximize(_)) | Ask::Expand) | None => {}
     }
@@ -272,47 +281,64 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
     let key = format!("strip-{}", s.id);
     let rect = super::motion::settle(&ctx, &key, s.rect(region), region);
     ctx.memory_mut(|m| m.areas_mut().set_state(layer, egui::AreaState { pivot_pos: Some(rect.min), size: Some(rect.size()), ..Default::default() }));
-    let title = Rect::from_min_size(rect.min, vec2(rect.width(), STRIP_TITLE));
-    let close = Rect::from_min_size(title.min + vec2(1.0, 1.0), BUTTON);
-    let expand = Rect::from_min_size(pos2(title.right() - 1.0 - BUTTON.x, title.top() + 1.0), BUTTON);
-    let grip = Rect::from_min_max(pos2(title.left(), title.top() + 18.0), title.max);
+    let grip = Rect::from_min_size(rect.min, vec2(rect.width(), PILL_GRIP));
+    let expand = Rect::from_min_size(pos2(rect.right() - 18.0, rect.top()), BUTTON);
+    let grab_rect = Rect::from_min_max(grip.min, pos2(expand.left().max(grip.left()), grip.bottom()));
     let mut ask = None;
     let mut tops = Vec::new();
     let mut icons = Vec::new();
     egui::Area::new(area).order(Order::Middle).fixed_pos(rect.min).constrain(false).fade_in(false).movable(false).show(&ctx, |ui| {
         ui.set_min_size(rect.size());
-        ui.set_clip_rect(region);
+        ui.set_clip_rect(rect.intersect(region));
         let painter = ui.painter().clone();
         painter.rect_filled(rect, CornerRadius::same(boxes::RADIUS), t.panel);
-        // The title strip drags the whole strip (to the Board's edge, or elsewhere).
-        let grab = ui.interact(grip, area.with("title"), Sense::drag());
-        // The title remains draggable; the column below owns the only visible grip.
+        // The 6-point grip drags the whole pill. `>>` sits at its right end; there is no `×`.
+        let grab = ui.interact(grab_rect, area.with("title"), Sense::click_and_drag());
         if grab.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::Grab);
         }
         if grab.drag_started() {
-            drag::begin(app, &ctx, Item::Strip(id), title);
+            drag::begin(app, &ctx, Item::Strip(id), rect);
         }
-        if button(ui, close, area.with("close"), "×", "Close", &t) {
-            ask = Some(Ask::Close);
-        }
+        grab.context_menu(|ui| {
+            if ui.button("Collapse to icon").clicked() {
+                ask = Some(Ask::Close);
+                ui.close();
+            }
+            if ui.button("Close").clicked() {
+                ask = Some(Ask::Close);
+                ui.close();
+            }
+        });
         if button(ui, expand, area.with("expand"), ">>", "Expand panels", &t) {
             ask = Some(Ask::Expand);
         }
-        let mut column = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(("varos-shell-float-strip-column", id))
-                .max_rect(Rect::from_min_max(title.left_bottom(), rect.max))
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        column.spacing_mut().item_spacing.y = 0.0;
-        strip::column(app, &mut column, sref, &s.groups, rect.width(), rect, hits, &mut tops, &mut icons);
-        painter.hline((rect.left() + 1.0)..=(rect.right() - 1.0), title.bottom() - 0.5, Stroke::new(1.0, t.border));
+        let mut n = 0usize;
+        for g in &s.groups {
+            tops.push(rect.top() + PILL_GRIP + n as f32 * PILL_ROW);
+            hits.push((sref.group_hit(tops.len() - 1), grip));
+            for panel in &g.panels {
+                let tile = Rect::from_min_size(pos2(rect.left() + 6.0, rect.top() + PILL_GRIP + n as f32 * PILL_ROW), vec2(28.0, 28.0));
+                let hit_rect =
+                    if tile.intersects(expand) { Rect::from_min_max(tile.min, pos2(expand.left().max(tile.left()), tile.bottom())) } else { tile };
+                let r = ui.interact(hit_rect, area.with(("icon", panel)), Sense::click_and_drag());
+                if r.drag_started() {
+                    drag::begin(app, &ctx, Item::Icon(panel.clone()), tile);
+                } else if super::strip::clicked_once(&ctx, r.id, r.clicked()) {
+                    if app.ui.varos_shell.open.as_deref() == Some(panel) {
+                        super::strip::close(app);
+                    } else {
+                        super::strip::open(app, panel);
+                    }
+                }
+                icons.push((panel.clone(), tile, r));
+                n += 1;
+            }
+        }
         painter.rect_stroke(rect, CornerRadius::same(boxes::RADIUS), Stroke::new(1.0, t.border), StrokeKind::Inside);
     });
     hits.push((Hit::FloatStrip(id), rect));
     hits.push((Hit::FloatStripTitle(id), grip));
-    hits.push((Hit::FloatStripClose(id), close));
     hits.push((Hit::FloatStripExpand(id), expand));
     let mut bounds = region;
     for (hit, rail) in hits.iter() {

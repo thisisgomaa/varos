@@ -329,8 +329,14 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     let mut acts = Vec::new();
     let tall = height(&prefs);
-    let (outer, _) = ui.allocate_exact_size(vec2(ui.available_width().max(W), tall), Sense::hover());
-    let origin = pos2(outer.left() + ((outer.width() - W) / 2.0).max(0.0).round(), outer.top());
+    let avail = ui.available_width().max(1.0);
+    // Never wider than the panel. Below 240 the wheel scales down, and never below 160.
+    let scale = (avail / W).clamp(160.0 / W, 1.0);
+    let draw_w = W * scale;
+    let outer_w = if avail + 0.5 >= W { avail } else { draw_w };
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("varos-picker-scale"), scale));
+    let (outer, _) = ui.allocate_exact_size(vec2(outer_w, tall * scale), Sense::hover());
+    let origin = pos2(outer.left() + ((outer.width() - draw_w) / 2.0).max(0.0).round(), outer.top());
     header(
         ui,
         origin,
@@ -771,8 +777,20 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
             }
         }
     }
-    let h = height(&app.ui.varos_picker).min(screen.height());
-    let tall = tallest(&app.ui.varos_picker).min(screen.height());
+    let buttons = if shell { 36.0 } else { 0.0 };
+    let content_h = height(&app.ui.varos_picker) + buttons;
+    let content_tall = tallest(&app.ui.varos_picker) + buttons;
+    // Full size whenever the window can hold it. Scroll only when the content is taller than the screen.
+    let scroll = content_tall > screen.height();
+    let h = if scroll { screen.height() } else { content_h };
+    let tall = if scroll { screen.height() } else { content_tall };
+    if shell {
+        let key = egui::Id::unique("varos-picker-undo-group");
+        if ctx.data(|d| d.get_temp::<bool>(key)).is_none() {
+            app.session.begin_undo_group();
+            ctx.data_mut(|d| d.insert_temp(key, true));
+        }
+    }
     let frame_nr = ctx.cumulative_frame_nr();
     // This frame's wells, bottom-most first (the order they are drawn in).
     let wells: Vec<(Rect, bool)> = ctx
@@ -820,19 +838,38 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let frame =
         if shell { egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(10) } else { egui::Frame::NONE.fill(t.panel) };
-    let body = |app: &mut VectorcraftApp, ui: &mut Ui| {
+    let mut decision: Option<bool> = None;
+    let body = |app: &mut VectorcraftApp, ui: &mut Ui, decision: &mut Option<bool>| {
         ui.set_width(W);
-        egui::ScrollArea::vertical().max_height(screen.height()).show(ui, |ui| show(app, ui));
+        let scroll_h = if scroll { (screen.height() - buttons).max(32.0) } else { content_h };
+        egui::ScrollArea::vertical().max_height(scroll_h).show(ui, |ui| show(app, ui));
+        if shell {
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                if ui.button(tl!("OK")).clicked() {
+                    *decision = Some(true);
+                }
+                if ui.button(tl!("Cancel")).clicked() {
+                    *decision = Some(false);
+                }
+            });
+        }
     };
     if app.ui.dialog.is_some() {
         // Under an application dialog (its own backdrop takes the clicks): shown, inert.
         area.interactable(false).show(ctx, |ui| {
             ui.disable();
-            frame.show(ui, |ui| body(app, ui));
+            frame.show(ui, |ui| body(app, ui, &mut decision));
         });
         return;
     }
-    let modal = egui::Modal::new(id).area(area).backdrop_color(Color32::TRANSPARENT).frame(frame).show(ctx, |ui| body(app, ui));
+    let modal = egui::Modal::new(id).area(area).backdrop_color(Color32::TRANSPARENT).frame(frame).show(ctx, |ui| body(app, ui, &mut decision));
+    if let Some(ok) = decision {
+        finish_pending(app, ctx);
+        end_picker_group(app, ctx, !ok);
+        close(app);
+        return;
+    }
     let click = ctx.input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()).flatten());
     if !modal.any_popup_open
         && !egui::Popup::is_any_open(ctx)
@@ -847,9 +884,21 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
         finish_pending(app, ctx);
         if let Some((r, stroke)) = well {
             open_for(app, stroke, r);
-        } else {
+        } else if !shell {
+            // The classic dock still dismisses on an outside click. The shell closes only with
+            // OK, Cancel or Escape.
+            end_picker_group(app, ctx, true);
             close(app);
         }
+    }
+}
+
+/// Close the undo group the shell's popover opened, if it did. `cancel` restores the colour from
+/// when the popover opened.
+fn end_picker_group(app: &mut VectorcraftApp, ctx: &egui::Context, cancel: bool) {
+    let key = egui::Id::unique("varos-picker-undo-group");
+    if ctx.data_mut(|d| d.remove_temp::<bool>(key)).is_some() {
+        app.session.end_undo_group(cancel);
     }
 }
 
@@ -874,6 +923,7 @@ pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     }
     if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         finish_pending(app, ctx);
+        end_picker_group(app, ctx, true);
         close(app);
     }
     true

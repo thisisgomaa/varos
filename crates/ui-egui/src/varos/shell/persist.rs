@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use super::floats::{Float, FloatStrip};
 use super::strip::{Group, StripRef};
-use super::tree::{BOX_MIN, Node, PanelBox};
+use super::tree::{self, Axis, BOX_MIN, Node, PanelBox};
 use super::workspace::Arrangement;
 use crate::panels::properties::PropertiesView;
 
@@ -70,6 +70,19 @@ pub struct VarosShell {
     /// The drag under way; not saved.
     #[serde(skip)]
     pub drag: Option<super::drag::Drag>,
+    /// Columns collapsed into the Board's strip by dragging a divider past their minimum width,
+    /// newest last. Expanding the strip past ~120 pt restores the last one.
+    #[serde(default)]
+    pub collapsed_columns: Vec<CollapsedColumn>,
+}
+
+/// A dock column that was collapsed into the strip, so dragging the strip back open can rebuild it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CollapsedColumn {
+    /// Each inner list is one box's tabs, top to bottom.
+    pub boxes: Vec<Vec<String>>,
+    /// The column sat to the right of its sibling (the Board, in the usual layout).
+    pub right: bool,
 }
 
 pub(crate) fn default_columns() -> u8 {
@@ -83,7 +96,7 @@ fn default_workspace() -> String {
 impl Default for VarosShell {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             version: VERSION,
             strip: super::strip::Strip::default_for(&Node::default_layout()),
             tree: Node::default_layout(),
@@ -98,6 +111,7 @@ impl Default for VarosShell {
             workspace_changes: Vec::new(),
             open: None,
             drag: None,
+            collapsed_columns: Vec::new(),
         }
     }
 }
@@ -192,7 +206,8 @@ pub(crate) fn migrate_5_to_6(mut v: Value) -> Value {
 /// version migrated step by step; a layout of an unknown version, or one that doesn't read, is the
 /// default; unknown panel ids are dropped; a tree with no Board is the default layout.
 pub(crate) fn from_value(v: &Value) -> VarosShell {
-    let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+    // Absent means on: fresh configs and older ui.json files that never wrote the key.
+    let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(true);
     let version = v.get("version").and_then(Value::as_u64);
     let mut v = v.clone();
     if version == Some(1) {
@@ -250,6 +265,7 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
         workspace_changes,
         open: None,
         drag: None,
+        collapsed_columns: v.get("collapsed_columns").and_then(|c| Vec::<CollapsedColumn>::deserialize(c).ok()).unwrap_or_default(),
     };
     // Stage-2 state keeps its own strip arrangement rules (see `Strip::sanitize_owned`).
     shell.sanitize(matches!(version, Some(1 | 2)) || !readable);
@@ -450,15 +466,87 @@ impl VarosShell {
         }
     }
 
-    /// Floating panel `id`'s `<<`: a lone icon (a floating strip of one group) where it was.
+    /// A panel menu's Collapse to icon, and a floating panel's `<<`: every tab of box `id` goes
+    /// back to the Board's strip as one icon group. A docked box disappears (its sibling takes
+    /// the room).
+    pub(crate) fn collapse_box_to_strip(&mut self, id: u32) -> bool {
+        if self.floats.iter().any(|f| f.panels.id == id) {
+            self.close_float(id);
+            return true;
+        }
+        let Some(b) = self.tree.find_box(id).cloned() else { return false };
+        if b.is_board() || b.tabs.is_empty() {
+            return false;
+        }
+        let tabs = b.tabs.clone();
+        for panel in &tabs {
+            self.tree.remove_tab(panel);
+        }
+        self.strip.groups.push(Group {
+            temporary: tabs.iter().all(|p| !super::strip::Strip::is_default(p)),
+            panels: tabs,
+            width: 260.0,
+            height: 360.0,
+        });
+        self.settle();
+        true
+    }
+
+    /// The divider was released past this side's minimum: the whole column becomes icons in the
+    /// Board's strip, remembered so the strip's edge can open it again.
+    pub(crate) fn collapse_side(&mut self, path: &[u8], take_a: bool) -> bool {
+        let Some(node) = self.tree.split_at(path) else { return false };
+        let Node::Split { axis, a, b, .. } = node else { return false };
+        if *axis != Axis::Horizontal {
+            return false;
+        }
+        let side = if take_a { a.as_ref() } else { b.as_ref() };
+        if side.boxes().iter().any(|bx| bx.is_board()) {
+            return false;
+        }
+        let groups = side.panel_groups();
+        if groups.is_empty() || self.tree.detach_child(path, take_a).is_none() {
+            return false;
+        }
+        for tabs in &groups {
+            self.strip.groups.push(Group {
+                temporary: tabs.iter().all(|p| !super::strip::Strip::is_default(p)),
+                panels: tabs.clone(),
+                width: tabs.iter().map(|p| tree::panel_min_width(p)).fold(240.0, f32::max),
+                height: 360.0,
+            });
+        }
+        self.collapsed_columns.push(CollapsedColumn { boxes: groups, right: !take_a });
+        self.settle();
+        true
+    }
+
+    /// The last collapsed column opens again beside the Board.
+    pub(crate) fn restore_collapsed(&mut self) -> bool {
+        let Some(col) = self.collapsed_columns.pop() else { return false };
+        let boxes: Vec<Vec<String>> = col
+            .boxes
+            .into_iter()
+            .map(|tabs| tabs.into_iter().filter(|p| self.strip.group(p).is_some()).collect())
+            .filter(|tabs: &Vec<String>| !tabs.is_empty())
+            .collect();
+        if boxes.is_empty() {
+            return false;
+        }
+        for tabs in &boxes {
+            for panel in tabs {
+                self.strip.remove(panel);
+            }
+        }
+        let Some(column) = column_node(self, &boxes) else { return false };
+        let restored = self.tree.attach_beside_board(column, col.right, 0.72);
+        self.settle();
+        restored
+    }
+
+    /// Floating panel `id`'s `<<`: its panels go back to the Board's strip (the same as `×`).
     pub(crate) fn float_to_icon(&mut self, id: u32) {
-        let Some(i) = self.floats.iter().position(|f| f.panels.id == id) else { return };
-        let f = self.floats.remove(i);
-        let r = f.rect();
-        let temporary = f.panels.tabs.iter().all(|p| !super::strip::Strip::is_default(p));
-        let group = Group { panels: f.panels.tabs, temporary, width: r.width(), height: r.height() };
-        let id = self.fresh_strip_id();
-        self.float_strips.push(FloatStrip { id, pos: [r.left(), r.top()], groups: vec![group] });
+        self.close_float(id);
     }
 
     /// Floating strip `id`'s `×`: its panels go back to the Board's strip.
@@ -531,8 +619,9 @@ impl VarosShell {
             f.panels.active = front.and_then(|x| f.panels.tabs.iter().position(|t| *t == x)).unwrap_or(0);
             let r = f.rect();
             let ok = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+            let min_w = f.panels.tabs.iter().map(|t| tree::panel_min_width(t)).fold(180.0, f32::max);
             let size = egui::vec2(ok(r.width(), super::floats::DEFAULT_SIZE.x), ok(r.height(), super::floats::DEFAULT_SIZE.y))
-                .clamp(BOX_MIN, egui::vec2(4000.0, 4000.0));
+                .clamp(egui::vec2(min_w, BOX_MIN.y), egui::vec2(4000.0, 4000.0));
             f.set_rect(egui::Rect::from_min_size(egui::pos2(ok(r.left(), 0.0), ok(r.top(), 0.0)), size));
         }
         self.floats.retain(|f| !f.panels.tabs.is_empty());
@@ -568,6 +657,18 @@ impl VarosShell {
             .chain(self.float_strips.iter().flat_map(|s| s.groups.iter().flat_map(|g| g.panels.clone())))
             .collect();
         self.strip.sanitize_owned(&self.tree, &|p| elsewhere.iter().any(|e| e == p), legacy);
+        self.collapsed_columns = std::mem::take(&mut self.collapsed_columns)
+            .into_iter()
+            .filter_map(|col| {
+                let boxes: Vec<Vec<String>> = col
+                    .boxes
+                    .into_iter()
+                    .map(|tabs| tabs.into_iter().filter(|p| self.strip.group(p).is_some()).collect())
+                    .filter(|tabs: &Vec<String>| !tabs.is_empty())
+                    .collect();
+                if boxes.is_empty() { None } else { Some(CollapsedColumn { boxes, right: col.right }) }
+            })
+            .collect();
         // Views only for the Properties editors that are somewhere; the maximized box only while
         // the tree has it.
         let views = std::mem::take(&mut self.views);
@@ -621,6 +722,23 @@ impl VarosShell {
     }
 }
 
+/// A vertical stack of boxes, one per tab group, with ids the shell does not already use.
+fn column_node(shell: &VarosShell, boxes: &[Vec<String>]) -> Option<Node> {
+    let mut used: Vec<u32> = shell.tree.boxes().iter().map(|b| b.id).chain(shell.floats.iter().map(|f| f.panels.id)).collect();
+    let mut leaves = Vec::new();
+    for tabs in boxes {
+        let id = (1..u32::MAX).find(|i| !used.contains(i)).unwrap_or(u32::MAX);
+        used.push(id);
+        leaves.push(Node::Leaf(PanelBox { id, tabs: tabs.clone(), active: 0, collapsed: false }));
+    }
+    let mut iter = leaves.into_iter();
+    let mut node = iter.next()?;
+    for next in iter {
+        node = Node::Split { axis: Axis::Vertical, ratio: 0.5, reset: 0.5, a: Box::new(node), b: Box::new(next) };
+    }
+    Some(node)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -630,7 +748,7 @@ mod tests {
     #[test]
     fn the_switch_and_the_layout_round_trip_through_ui_json() {
         let mut ui = crate::state::UiState::default();
-        assert!(!ui.varos_shell.enabled, "off by default");
+        assert!(ui.varos_shell.enabled, "on by default");
         ui.varos_shell.enabled = true;
         ui.varos_shell.add_tab(3, "stroke");
         ui.varos_shell.tree.set_ratio(&[], 0.61);
@@ -640,6 +758,14 @@ mod tests {
         let back: crate::state::UiState = serde_json::from_value(saved).unwrap();
         assert_eq!(back.varos_shell, ui.varos_shell);
         assert!(back.docking.is_none(), "craft-ui's layout is its own");
+    }
+
+    #[test]
+    fn the_shell_is_on_when_the_key_is_absent_and_off_only_when_written_false() {
+        let missing: crate::state::UiState = serde_json::from_value(json!({"varos_shell": {"version": 6}})).unwrap();
+        assert!(missing.varos_shell.enabled, "an older ui.json without the key loads on");
+        let off: crate::state::UiState = serde_json::from_value(json!({"varos_shell": {"enabled": false, "version": 6}})).unwrap();
+        assert!(!off.varos_shell.enabled, "an explicit false stays off");
     }
 
     #[test]
