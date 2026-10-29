@@ -177,6 +177,11 @@ pub(crate) struct TextLine {
     upright: Option<Upright>,
     /// The glyphs make a column (vertical type), each below the last.
     column: bool,
+    /// Every glyph on the line was inside a span whose `/Lang` names a right-to-left language:
+    /// reorder this line that way.
+    pub(crate) rtl: bool,
+    /// Whether every glyph placed so far was inside such a span (`None`: none placed yet).
+    pub(crate) rtl_all: Option<bool>,
     /// Each glyph's ink box as drawn (document space), in drawing order; glyphs without ink are
     /// left out.
     pub ink: Vec<Rect>,
@@ -190,9 +195,11 @@ pub(crate) struct TextLine {
     /// A space the file drew after a glyph that isn't one, until the next glyph comes: its byte
     /// offset, and the gap before it plus its advance (points).
     drawn_space: Option<(usize, f64)>,
-    /// The strokes of its glyphs' outlines drawn between them, one per glyph with ink so far
-    /// (written right after the line).
+    /// The strokes of its glyphs' outlines drawn between them (written right after the line):
+    /// one per glyph, or one per run's piece when a piece is filled and then stroked.
     pub held: Vec<Node>,
+    /// How many of [`ink`](Self::ink) the held strokes cover: the glyphs after it have none yet.
+    pub stroked: usize,
 }
 
 /// Where the file put a glyph: the glyph's index in the line, and its advance in the file's font
@@ -234,11 +241,14 @@ impl TextLine {
             slots: vec![],
             upright: None,
             column: false,
+            rtl: false,
+            rtl_all: None,
             ink: vec![],
             gaps: vec![],
             drawn_spaces: vec![],
             drawn_space: None,
             held: vec![],
+            stroked: 0,
         }
     }
 
@@ -334,7 +344,7 @@ impl TextLine {
             if !on_line && !on_curve {
                 return false;
             }
-            if !run.ends_with(' ') && !text.starts_with(' ') {
+            if !text.is_empty() && !run.ends_with(' ') && !text.starts_with(' ') {
                 self.gaps.push(Gap { at: bytes, width: gap, em: self.last_size.min(at.size), on_line });
             }
             // A space the file draws between two glyphs spans the gaps on both sides of it.
@@ -351,13 +361,29 @@ impl TextLine {
             } else {
                 self.runs.push((look.clone(), shift, text.to_string()));
             }
+        } else if text.is_empty() {
+            // The line has no character yet. An empty run is discarded at the end, and this
+            // glyph's outline would go with it.
+            return false;
         } else {
             self.runs.push((look.clone(), 0.0, text.to_string()));
         }
         self.text_bytes = self.text_bytes.saturating_add(text.len());
-        let one = text.chars().count() == 1;
-        self.slots.push(Some(Slot { glyph, advance: one.then_some(advance) }));
-        self.slots.extend(text.chars().skip(1).map(|_| None));
+        if text.is_empty() {
+            // A later glyph of an /ActualText span places no character. A slot in the middle
+            // of the line survives `truncate` (that only trims the tail), so every later
+            // character would take the wrong glyph. Fold this advance into the previous slot.
+            if let Some(Some(slot)) = self.slots.last_mut()
+                && let Some(adv) = &mut slot.advance
+            {
+                *adv += advance;
+            }
+        } else {
+            let one = text.chars().count() == 1;
+            self.slots.push(Some(Slot { glyph, advance: one.then_some(advance) }));
+            self.slots.extend(text.chars().skip(1).map(|_| None));
+            self.baseline.push(at.origin);
+        }
         self.next = at.origin + at.dir * advance;
         if !text.trim().is_empty() {
             self.visible = self.next;
@@ -365,7 +391,6 @@ impl TextLine {
         self.last = at.origin;
         self.last_dir = at.dir;
         self.last_size = at.size;
-        self.baseline.push(at.origin);
         true
     }
 
@@ -415,7 +440,11 @@ impl TextLine {
         // Turned along a curve: type on a path through the glyphs.
         let path = if self.curved() { self.baseline_path() } else { None };
         facts.wraps = path.is_none() && self.upright.is_none() && self.runs.last().is_some_and(|(.., t)| t.ends_with(' '));
-        if let Some((.., last)) = self.runs.last_mut() {
+        // A right-to-left line keeps its trailing space: the lines are not one area-text object
+        // (the runs use different fonts), and trimming it would drop the space between them.
+        if !self.rtl
+            && let Some((.., last)) = self.runs.last_mut()
+        {
             last.truncate(last.trim_end().len());
         }
         self.runs.retain(|(.., t)| !t.is_empty());
@@ -501,7 +530,7 @@ impl TextLine {
         gaps.extend(self.drawn_spaces.iter().map(|&(b, width)| (b + spaces.iter().filter(|s| s.0 < b).count(), width)));
         gaps.sort_by_key(|&(b, _)| b);
         if self.upright.is_none() {
-            to_logical(&mut t);
+            to_logical(&mut t, self.rtl);
         }
         let angle = self.at.dir.atan2();
         // The glyphs' tops lean along the baseline (+x), up being -y in the type's own space.
@@ -989,8 +1018,9 @@ impl Families {
 
 /// Hebrew or Arabic comes from a PDF in visual order (each glyph where it is drawn): put `t`'s text
 /// back in logical order, with the paragraph direction that shows it as drawn.
-fn to_logical(t: &mut TextObject) {
-    let Some((order, rtl)) = vectorcraft_text::logical_order(&t.plain_text()) else { return };
+fn to_logical(t: &mut TextObject, rtl_line: bool) {
+    let direction = rtl_line.then_some(ParaDirection::RightToLeft);
+    let Some((order, rtl)) = vectorcraft_text::logical_order_in(&t.plain_text(), direction) else { return };
     let chars: Vec<(char, usize)> = t.runs.iter().enumerate().flat_map(|(i, r)| r.text.chars().map(move |c| (c, i))).collect();
     let mut runs: Vec<(usize, String)> = Vec::with_capacity(t.runs.len());
     for &(c, i) in order.iter().filter_map(|&k| chars.get(k)) {

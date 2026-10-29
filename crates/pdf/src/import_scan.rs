@@ -249,7 +249,7 @@ fn pdf_doc_char(c: u8) -> char {
 pub(crate) struct Scan {
     /// Each marked-content sequence: its tag ([`tag_key`]) and the group (index into
     /// [`Ocgs::list`]) it marks.
-    pub tags: Vec<(u64, Option<usize>)>,
+    pub tags: Vec<(u64, Option<usize>, Option<bool>)>,
     /// Each form transparency group: isolated, knockout.
     pub groups: Vec<(bool, bool)>,
     /// Content was incomplete or a scan limit was reached. No document may be returned from
@@ -707,6 +707,7 @@ impl Walker<'_, '_> {
             }
             match op {
                 TypedInstruction::BeginMarkedContentWithProperties(bdc) => {
+                    let rtl = span_rtl(bdc.1);
                     let oc = match bdc.1 {
                         Object::Name(n) => {
                             res.properties.get_ref(n.as_ref()).map(|r| (res.properties.get::<Dict<'_>>(n.as_ref()).unwrap_or_default(), r))
@@ -725,11 +726,11 @@ impl Walker<'_, '_> {
                             None
                         }
                     };
-                    self.out.tags.push((tag_key(bdc.0.as_ref()), group));
+                    self.out.tags.push((tag_key(bdc.0.as_ref()), group, rtl));
                 }
                 TypedInstruction::BeginMarkedContent(bmc) => {
                     self.begin(true);
-                    self.out.tags.push((tag_key(bmc.0.as_ref()), None));
+                    self.out.tags.push((tag_key(bmc.0.as_ref()), None, None));
                 }
                 TypedInstruction::EndMarkedContent(_) => {
                     self.visible.pop();
@@ -1105,4 +1106,15 @@ fn trailer_at(bytes: &[u8], at: usize) -> Option<&[u8]> {
     let open = from + rest.get(from..)?.windows(2).position(|w| w == b"<<")?;
     let d = Dict::from_bytes(rest.get(open..)?)?;
     Some(d.data())
+}
+
+/// `/Lang` on a marked-content span, when it names a right-to-left language (`ar`, `fa`, `he`, …).
+fn span_rtl(obj: &Object<'_>) -> Option<bool> {
+    let dict = match obj {
+        Object::Dict(d) => d,
+        other => dict_or_stream(other)?.0,
+    };
+    let lang = dict.get::<craft_pdf::syntax::object::String<'_>>(b"Lang").map(|s| text_string(s.as_bytes()))?;
+    let primary = lang.split(['-', '_']).next().unwrap_or("");
+    Some(matches!(primary, "ar" | "fa" | "he" | "iw" | "ur" | "ps" | "sd" | "yi" | "dv"))
 }

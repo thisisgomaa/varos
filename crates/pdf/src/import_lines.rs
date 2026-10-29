@@ -221,6 +221,13 @@ fn area_type(nodes: &[Arc<Node>], lines: &HashMap<NodeId, LineFacts>, b: &Block)
     tries.into_iter().find_map(|(justify, width, tracking, word)| laid_out(&texts, b, justify, width, tracking, word))
 }
 
+fn push_run(runs: &mut Vec<TextRun>, text: &str, style: CharStyle) {
+    match runs.last_mut() {
+        Some(last) if last.style == style => last.text.push_str(text),
+        _ => runs.push(TextRun { text: text.to_string(), style, inline: None }),
+    }
+}
+
 /// The area type of lines `texts` (block `b`): `width` wide, aligned `justify`, its characters
 /// tracked `tracking` and its spaces `word` more; `None` when it doesn't lay out as the lines did.
 fn laid_out(texts: &[(&TextObject, &LineFacts)], b: &Block, justify: Justify, width: f64, tracking: f64, word: f64) -> Option<TextObject> {
@@ -230,25 +237,23 @@ fn laid_out(texts: &[(&TextObject, &LineFacts)], b: &Block, justify: Justify, wi
     let explicit =
         (b.leading - size * 1.2).abs() > size * 1e-3 || texts.iter().any(|(t, _)| t.runs.iter().any(|r| (r.style.size - size).abs() > 1e-9));
     let mut runs: Vec<TextRun> = vec![];
-    let mut push = |text: &str, style: CharStyle| match runs.last_mut() {
-        Some(last) if last.style == style => last.text.push_str(text),
-        _ => runs.push(TextRun { text: text.to_string(), style, inline: None }),
-    };
     for (k, (t, f)) in texts.iter().enumerate() {
         let mut style = CharStyle::default();
         for r in &t.runs {
             style = r.style.clone();
             style.tracking = if r.text.trim().is_empty() { tracking + word } else { tracking };
             style.leading = explicit.then_some((b.leading * 1000.0).round() / 1000.0);
-            push(&r.text, style.clone());
+            push_run(&mut runs, &r.text, style.clone());
         }
-        // A wrapped line's space, or the end of a paragraph.
+        // A wrapped line's space, or the end of a paragraph. The line may already end in the
+        // space (a right-to-left line keeps it); adding another would double it.
         if k + 1 < texts.len() {
-            if f.wraps {
+            let spaced = runs.last().is_some_and(|r| r.text.ends_with(' '));
+            if f.wraps && !spaced {
                 style.tracking = tracking + word;
-                push(" ", style);
-            } else {
-                push("\n", style);
+                push_run(&mut runs, " ", style);
+            } else if !f.wraps {
+                push_run(&mut runs, "\n", style);
             }
         }
     }

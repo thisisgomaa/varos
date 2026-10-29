@@ -344,6 +344,11 @@ impl FontFace {
     pub fn glyph_for(&self, c: char) -> u32 {
         self.skrifa().and_then(|f| f.charmap().map(c)).map(|g| g.to_u32()).unwrap_or(0)
     }
+    /// Glyphs in the face, including `.notdef` (0 when the font can't be read).
+    pub fn glyph_count(&self) -> u32 {
+        use skrifa::raw::TableProvider;
+        self.skrifa().and_then(|f| f.maxp().ok()).map(|m| u32::from(m.num_glyphs())).unwrap_or(0)
+    }
     /// The file the face was read from (cataloged system fonts).
     pub fn path(&self) -> Option<&std::path::Path> {
         self.path.as_deref()

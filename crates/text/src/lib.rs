@@ -701,7 +701,14 @@ pub fn paragraph_is_rtl(text: &str, direction: Option<vectorcraft_doc::ParaDirec
 /// paragraph runs right to left; laid out that way, it reads as drawn. `None` when nothing in it is
 /// right to left (the order stands).
 pub fn logical_order(visual: &str) -> Option<(Vec<usize>, bool)> {
-    let bidi = layout::para_bidi(visual, None)?;
+    logical_order_in(visual, None)
+}
+
+/// [`logical_order`] with the paragraph direction `direction` instead of the first strong
+/// character. A right-to-left line whose visual start is left-to-right text would otherwise be
+/// read as a left-to-right paragraph.
+pub fn logical_order_in(visual: &str, direction: Option<vectorcraft_doc::ParaDirection>) -> Option<(Vec<usize>, bool)> {
+    let bidi = layout::para_bidi(visual, direction)?;
     let para = bidi.paragraphs.first()?;
     // Reordering is its own inverse for runs of one direction (the usual case): the visual order
     // of the visual text is its logical order.

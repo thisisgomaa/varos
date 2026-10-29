@@ -301,7 +301,7 @@ fn read_with_reader_options(bytes: &[u8], opts: &ImportOptions, reader: &craft_p
         }
         if route {
             let mut seen = HashSet::new();
-            let marked: Vec<usize> = scan.tags.iter().filter_map(|(_, g)| g.map(|g| top_group(g, &ocgs))).filter(|g| seen.insert(*g)).collect();
+            let marked: Vec<usize> = scan.tags.iter().filter_map(|(_, g, _)| g.map(|g| top_group(g, &ocgs))).filter(|g| seen.insert(*g)).collect();
             merge_order(&mut order, &mut known, &marked);
         }
         b.begin_page(scan);
@@ -659,7 +659,72 @@ fn matching_face(
             best = Some((d, f));
         }
     }
+    // A contextual Arabic form is not the cmap glyph of its character. The outline is still
+    // this face's (a presentation form or a ligature); rejecting the face would outline the line.
+    if best.is_none() && text.chars().any(arabic_script) && face_draws(face, text, o) {
+        return Some(face.clone());
+    }
     best.map(|(_, f)| f)
+}
+
+/// An Arabic-script character: a letter, mark or digit, or a presentation form.
+fn arabic_script(c: char) -> bool {
+    matches!(c, '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{08A0}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+}
+
+/// Does `face` draw `o`'s outline as a form of `text`, not as some other character's glyph?
+/// Only asked for Arabic-script text: the box test alone is too loose to name a Latin face.
+fn face_draws(face: &vectorcraft_text::FontFace, text: &str, o: &craft_pdf::interpret::font::OutlineGlyph) -> bool {
+    let embedded = o.outline();
+    if embedded.elements().is_empty() {
+        return false;
+    }
+    let eb = embedded.bounding_box();
+    let count = face.glyph_count().min(8_192);
+    if count <= 1 {
+        return false;
+    }
+    let k = 1000.0 / face.units_per_em();
+    if !k.is_finite() {
+        return false;
+    }
+    let db = vectorcraft_text::FontDb::global();
+    let (mut best_off, mut best_gid) = (f64::MAX, 0u32);
+    for gid in 1..count {
+        let installed = db.outline(face, gid);
+        if installed.elements().is_empty() {
+            continue;
+        }
+        let i = installed.bounding_box();
+        let i = Rect::new(i.x0 * k, -i.y1 * k, i.x1 * k, -i.y0 * k);
+        let off = [(eb.x0, i.x0), (eb.x1, i.x1), (eb.y0, i.y0), (eb.y1, i.y1)].iter().fold(0.0f64, |m, (a, b)| m.max((a - b).abs()));
+        if off < best_off {
+            best_off = off;
+            best_gid = gid;
+            if best_off == 0.0 {
+                break;
+            }
+        }
+    }
+    // An exact glyph of another character stays outlined: its ToUnicode name is not what it draws.
+    // A presentation form sits a few thousandths off every cmap glyph and still belongs to this face.
+    if best_off > 20.0 {
+        return false;
+    }
+    if best_off <= 2.0 {
+        let mapped = face.chars().into_iter().find(|(_, gid)| *gid == best_gid).map(|(c, _)| c);
+        // A presentation form (U+FE8E and its block) is that Arabic letter, not another character.
+        // An exact glyph of a different letter (`l` labelled `W`) stays outlined.
+        let same = mapped.is_none_or(|c| {
+            text.chars().any(|t| t == c)
+                || (matches!(c, '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+                    && text.chars().any(|t| matches!(t, '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}')))
+        });
+        if !same {
+            return false;
+        }
+    }
+    true
 }
 
 /// The characters a glyph no mapping names is looked for among (#811): those single-byte fonts
@@ -834,6 +899,26 @@ struct Saved {
     pending: bool,
 }
 
+/// One open marked-content sequence. `text` is its `/ActualText` (PDF text string, decoded);
+/// `used` is set once a glyph has placed that string.
+struct ActualSpan {
+    text: Option<String>,
+    used: bool,
+    /// The span's `/Lang` is a right-to-left language: the line's paragraph runs that way,
+    /// even when its visual start is left-to-right text.
+    rtl: bool,
+}
+
+/// How the open `/ActualText` applies to the glyph being read.
+enum ActualMode {
+    /// No actual text: use ToUnicode.
+    Plain,
+    /// This glyph places the span's string.
+    Replace(String),
+    /// The string is already placed; this glyph only advances the pen.
+    Pen,
+}
+
 struct Builder<'p> {
     colors: Colors<'p>,
     next: u64,
@@ -911,6 +996,9 @@ struct Builder<'p> {
     last_fill: Option<(NodeId, BezPath)>,
     /// What each line of type made tells beyond its text object ([`crate::import_lines`]).
     lines: HashMap<NodeId, LineFacts>,
+    /// Open marked-content sequences. `/ActualText`, when the sequence has one, replaces the
+    /// Unicode of the first glyph drawn in it; later glyphs only advance the pen.
+    actual: Vec<ActualSpan>,
 }
 
 fn blend(b: craft_pdf::interpret::BlendMode) -> BlendMode {
@@ -1071,6 +1159,30 @@ impl<'p> Builder<'p> {
             white_images: false,
             last_fill: None,
             lines: HashMap::new(),
+            actual: Vec::new(),
+        }
+    }
+
+    fn actual_mode(&self) -> ActualMode {
+        // The outermost non-empty /ActualText wins (ISO 32000-1 §14.9.4). An explicit empty
+        // string is absent: the glyphs keep their own characters, and the span is not consumed.
+        let Some(idx) = self.actual.iter().position(|f| f.text.as_ref().is_some_and(|s| !s.is_empty())) else {
+            return ActualMode::Plain;
+        };
+        let frame = self.actual.get(idx);
+        if frame.is_some_and(|f| f.used) {
+            return ActualMode::Pen;
+        }
+        match frame.and_then(|f| f.text.clone()).filter(|s| !s.is_empty()) {
+            Some(text) => ActualMode::Replace(text),
+            None => ActualMode::Plain,
+        }
+    }
+
+    fn mark_actual_used(&mut self) {
+        let Some(idx) = self.actual.iter().position(|f| f.text.as_ref().is_some_and(|s| !s.is_empty())) else { return };
+        if let Some(frame) = self.actual.get_mut(idx) {
+            frame.used = true;
         }
     }
 
@@ -1408,9 +1520,16 @@ impl<'p> Builder<'p> {
         }
         let (p, opacity) = self.paint(paint, true, walked);
         let Some(line) = &self.text else { return false };
-        let Some(ink) = line.ink.last() else { return false };
-        if line.held.len() + 1 != line.ink.len() || opacity < 0.999 || !line.last_fill().is_some_and(|f| *f == p) {
+        // The glyphs not yet given a stroke: one, when each glyph is stroked as it is drawn, or
+        // several, when a run's piece is filled and then stroked as one outline.
+        let pending = line.ink.get(line.stroked..).filter(|g| !g.is_empty());
+        let Some(pending) = pending else { return false };
+        if opacity < 0.999 || !line.last_fill().is_some_and(|f| *f == p) {
             return false;
+        }
+        let mut ink = *pending.first().unwrap_or(&Rect::ZERO);
+        for r in pending.iter().skip(1) {
+            ink = ink.union(*r);
         }
         let mut bp = path.clone();
         bp.apply_affine(transform);
@@ -1425,6 +1544,7 @@ impl<'p> Builder<'p> {
         let n = Node::path(self.id(), PathData::from_bezpath(&bp), Appearance { items: vec![AppearanceItem::Stroke(st)], ..Default::default() });
         if let Some(line) = &mut self.text {
             line.held.push(n);
+            line.stroked = line.ink.len();
         }
         true
     }
@@ -1760,8 +1880,21 @@ impl<'p> Builder<'p> {
         };
         // Adobe's CID tables map some ideographs to their look-alike Kangxi radicals.
         let text: String = if from_cid { text.chars().map(unify_radical).collect() } else { text };
+        let mode = self.actual_mode();
+        let text = match &mode {
+            ActualMode::Replace(repl) => repl.clone(),
+            ActualMode::Pen => String::new(),
+            ActualMode::Plain => text,
+        };
         let Some(at) = Placement::of(m) else { return false };
-        if text.is_empty() || text.chars().any(|c| c.is_control()) {
+        // A later glyph of an `/ActualText` span only moves the pen: the first glyph already
+        // placed the string. An empty advance here must not become a word space.
+        // A control inside /ActualText is part of the replacement. Dropping the glyph would
+        // drop the rest of the span with it. Plain text still skips controls (a soft hyphen).
+        if !matches!(&mode, ActualMode::Pen) && text.is_empty() {
+            return false;
+        }
+        if matches!(&mode, ActualMode::Plain) && text.chars().any(|c| c.is_control()) {
             return false;
         }
         let width = o.advance_width().filter(|w| w.is_finite());
@@ -1844,13 +1977,29 @@ impl<'p> Builder<'p> {
             && look.fill.is_none()
             && line.stroke_last(key, at, s.clone(), overprint)
         {
+            self.note_rtl();
             return true;
         }
-        if !self.text.as_mut().is_some_and(place) {
+        let mut placed = false;
+        if let Some(line) = self.text.as_mut() {
+            placed = place(line);
+        }
+        if !placed {
+            // Pen mode carries no character (the span's text is already placed). A line that
+            // will not take the glyph must leave its outline: a new line of empty text is
+            // dropped when the line is finished, and the glyph would vanish.
+            if matches!(&mode, ActualMode::Pen) {
+                return false;
+            }
             self.flush_text();
             let mut line = TextLine::new(at, opacity);
-            place(&mut line);
+            if !place(&mut line) {
+                return false;
+            }
             self.text = Some(line);
+        }
+        if matches!(&mode, ActualMode::Replace(_)) {
+            self.mark_actual_used();
         }
         // Its ink: a stroke the file draws as outlines of the glyphs is told by it.
         let mut ink = o.outline();
@@ -1860,7 +2009,20 @@ impl<'p> Builder<'p> {
             ink.apply_affine(m);
             line.ink.push(ink.bounding_box());
         }
+        self.note_rtl();
         true
+    }
+
+    /// A `/Lang` of a right-to-left language on an open span marks the line being read, when
+    /// every glyph placed on it so far is inside such a span. One Arabic word tagged in an
+    /// English line (as word processors write it) leaves the line to its first strong character.
+    fn note_rtl(&mut self) {
+        let inside = self.actual.iter().any(|f| f.rtl);
+        if let Some(line) = self.text.as_mut() {
+            let all = line.rtl_all.unwrap_or(true) && inside;
+            line.rtl_all = Some(all);
+            line.rtl = all;
+        }
     }
 }
 
@@ -2206,8 +2368,11 @@ impl<'a> Device<'a> for Builder<'_> {
         }
         let at = self.tag_at;
         self.tag_at += 1;
+        // Read before the match below, which may clear `aligned`.
+        let rtl = self.scan.tags.get(at).is_some_and(|(t, _, flag)| self.aligned && *t == tag_key(tag) && *flag == Some(true));
+        self.actual.push(ActualSpan { text: None, used: false, rtl });
         let group = match self.scan.tags.get(at) {
-            Some((t, g)) if self.aligned && *t == tag_key(tag) => *g,
+            Some((t, g, _)) if self.aligned && *t == tag_key(tag) => *g,
             _ => {
                 if self.route && self.aligned {
                     self.aligned = false;
@@ -2241,5 +2406,22 @@ impl<'a> Device<'a> for Builder<'_> {
             self.flush();
         }
         self.marked.pop();
+        self.actual.pop();
     }
+
+    fn actual_text(&mut self, text: &[u8]) {
+        if self.nested > 0 {
+            return;
+        }
+        if let Some(frame) = self.actual.last_mut() {
+            frame.text = Some(pdf_text_string(text));
+            frame.used = false;
+        }
+    }
+}
+
+/// A PDF text string (ISO 32000-1 §7.9.2.2, PDF 2.0 UTF-8): UTF-16BE with a FE FF BOM, UTF-8
+/// with an EF BB BF BOM, otherwise PDFDocEncoding (Annex D), which is not Latin-1.
+fn pdf_text_string(bytes: &[u8]) -> String {
+    crate::import_scan::text_string(bytes)
 }

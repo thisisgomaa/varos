@@ -657,3 +657,65 @@ fn perf_text_heavy_open() {
         println!("4000 lines: {n} text objects in {took:?} (as outlines: {:?})", start.elapsed());
     }
 }
+
+/// An `/ActualText` of several glyphs (a combining mark, an Indic or Thai cluster) must not
+/// insert a slot per extra glyph. The character after the cluster keeps the file's position.
+#[test]
+fn a_multi_glyph_actualtext_cluster_keeps_the_next_character_in_place() {
+    let x = 20.0 + (width('a') + width('b')) * 24.0 / 1000.0 + 2.0;
+    let content = format!(
+        "BT /F4 24 Tf 20 50 Td /Span << /ActualText (ab) >> BDC {} Tj {} Tj EMC 1 0 0 1 {x:.3} 50 Tm {} Tj ET",
+        gids("a"),
+        gids("b"),
+        gids("c")
+    );
+    lands(&content, "", &["abc"]);
+}
+
+/// Nested `/ActualText`: the outer span is the replacement (ISO 32000-1 §14.9.4).
+#[test]
+fn the_outer_actualtext_wins() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (OUTER) >> BDC /Span << /ActualText (INNER) >> BDC (A) Tj EMC EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["OUTER"]);
+}
+
+/// A control character inside `/ActualText` is part of the replacement. The span's glyph stays.
+#[test]
+fn a_control_inside_actualtext_does_not_drop_the_span() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (A\u{1}B) >> BDC (A) Tj EMC ET";
+    let got = plain(&open_as(&page(content, ""), TextAs::Text));
+    assert!(!got.is_empty(), "the span's glyph was dropped");
+    let text = got.join("");
+    assert!(text.contains('A') && text.contains('B'), "{got:?}");
+}
+
+/// An empty `/ActualText` is absent. The glyphs keep their own characters.
+#[test]
+fn an_empty_actualtext_keeps_the_glyphs_characters() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText () >> BDC (AB) Tj EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["AB"]);
+}
+
+/// A later glyph of an `/ActualText` span (pen mode) that does not sit on the line stays an outline.
+#[test]
+fn a_pen_glyph_the_line_will_not_take_keeps_its_outline() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (ab) >> BDC (A) Tj 1 0 0 1 400 50 Tm (B) Tj EMC ET";
+    let d = open_as(&page(content, ""), TextAs::Text);
+    assert_eq!(plain(&d), ["ab"]);
+    assert!(holds_outlines(&d), "the pen glyph vanished");
+}
+
+/// PDF 2.0: a text string with an EF BB BF BOM is UTF-8.
+#[test]
+fn actualtext_with_a_utf8_bom_is_utf8() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText <EFBBBF6869> >> BDC (A) Tj EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["hi"]);
+}
+
+/// PDFDocEncoding is not Latin-1: 0x80 is a bullet, 0x18 a breve, 0xA0 the euro.
+/// Several characters, so the glyph outline is not required to match one of them.
+#[test]
+fn actualtext_pdfdocencoding_is_not_latin1() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (\\200\\030\\240) >> BDC (A) Tj EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["\u{2022}\u{2D8}\u{20AC}"]);
+}

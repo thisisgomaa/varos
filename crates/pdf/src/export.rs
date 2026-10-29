@@ -1,4 +1,9 @@
 //! Document → PDF (krilla). Mirrors the tree walk of `vectorcraft-render`.
+//!
+//! Mixed-run right-to-left text is painted in visual order within each line: each run's piece,
+//! then that piece's stroke. SVG export paints the same line by run index. The two orders differ
+//! where glyphs of different runs overlap. A right-to-left line is marked `/Lang (ar)` so a reader
+//! restores logical order when that line's visual start is left-to-right text.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -15,7 +20,8 @@ use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{Fill, LinearGradient, RadialGradient, SpreadMethod, Stop, Stroke, StrokeDash};
 use krilla::surface::Surface;
-use krilla::text::{Glyph, GlyphId, KrillaGlyph};
+use krilla::tagging::{ContentTag, SpanTag};
+use krilla::text::{GlyphId, KrillaGlyph};
 use kurbo::{PathEl, Shape, Vec2};
 use vectorcraft_color::{BlendMode, Color, GradientKind, Paint};
 use vectorcraft_doc::{AppearanceItem, Document, LineCap, LineJoin, Node, NodeKind, StrokeAlign, StrokeLayer, SymbolBoxes, TextObject};
@@ -627,6 +633,9 @@ pub(crate) struct Exporter<'a> {
     /// Keys of the images left out because the writer couldn't decode them
     /// ([`leaving_out_undecodable`]).
     pub left_out: HashSet<String>,
+    /// Per layout glyph, ZWNJ/ZWJ marks folded onto that glyph for this text object, and whether
+    /// they precede the cluster. Empty outside [`Self::text`].
+    joiner_fold: Vec<Option<(String, bool)>>,
     /// Objects the symbol instances written held, together
     /// ([`vectorcraft_doc::MAX_SYMBOL_NODES`]).
     symbol_nodes: u64,
@@ -676,6 +685,7 @@ impl<'a> Exporter<'a> {
             inline_depth: 0,
             pattern_depth: 0,
             left_out: HashSet::new(),
+            joiner_fold: Vec::new(),
         }
     }
 
@@ -686,6 +696,9 @@ impl<'a> Exporter<'a> {
     }
 }
 
+/// One glyph of a PDF text line: id, pen x, advance, source bytes, `/ActualText`, pen y.
+type LineGlyph = (u32, f64, f64, std::ops::Range<usize>, Option<String>, f64);
+
 /// Glyphs written together as real text: the same font at the same size along one baseline.
 struct GlyphLine {
     face: u32,
@@ -693,9 +706,13 @@ struct GlyphLine {
     size: f64,
     /// The glyph space (krilla's, y down, at `size`) → text space, at the line's start.
     frame: Affine,
-    /// Glyph id, pen position and advance along the line (in glyph space), and the characters it
-    /// stands for (bytes of the plain text).
-    glyphs: Vec<(u32, f64, f64, std::ops::Range<usize>)>,
+    /// Layout line these glyphs belong to. A folded glyph continues this pen only here.
+    line: usize,
+    /// Index in the layout of the last glyph accepted onto this line.
+    last_gi: usize,
+    /// Glyph id, pen x, advance, source range, `/ActualText` (`None`: the range alone), and the
+    /// pen y in this line's glyph space (a mark raised off the baseline; 0 on the line).
+    glyphs: Vec<LineGlyph>,
 }
 
 /// Most pixels along a side of a freeform gradient's image (its colour field is smooth).
@@ -1641,6 +1658,7 @@ impl Exporter<'_> {
         // Ruby can't be real text in one run (it isn't characters of the base text): the type's
         // characters go out as outlines where ruby is present, ruby included.
         let plain = (!self.outline_text && t.ruby.is_empty()).then(|| t.plain_text());
+        self.joiner_fold = plain.as_deref().map(|text| joiner_fold(&layout.glyphs, text)).unwrap_or_default();
         // Varos: elongated words use the unioned outlines; retain searchable authored text.
         let elongated = layout.glyphs.iter().enumerate().any(|(index, g)| {
             layout.marker_of(index).is_none()
@@ -1648,90 +1666,113 @@ impl Exporter<'_> {
                 && vectorcraft_text::FontDb::global().face_by_id(g.font_id).is_some_and(|f| f.glyph_for('\u{0640}') == g.gid)
         });
         let bars = vectorcraft_text::decorations(&layout, vectorcraft_text::FontDb::global(), t);
-        for (i, run) in t.runs.iter().enumerate() {
-            let mut bp = BezPath::new();
-            for g in layout.glyphs.iter().filter(|g| g.run == i).chain(layout.ruby.iter().filter(|g| g.run == i)) {
-                bp.extend(g.outline.iter());
+        // One run on one line, in layout order (visual, left to right).
+        let pieces = visual_pieces(&layout.glyphs);
+        let segments = visual_segments(&layout.glyphs);
+        let mut runs_seen = HashSet::new();
+        let mut split = false;
+        for (r, _) in &segments {
+            if !runs_seen.insert(*r) {
+                split = true;
             }
-            // Underline and strikethrough bars are paths, with real text too (#847).
-            let mut run_bars = BezPath::new();
-            for (_, bar) in bars.iter().filter(|(r, _)| *r == i) {
-                run_bars.extend(bar.iter());
-            }
-            bp.extend(run_bars.iter());
-            let fill = &run.style.fill;
-            // Colour bitmap glyphs (emoji) real text doesn't write: all of them, or those it leaves.
-            let mut images: Option<Vec<usize>> = None;
-            self.overprinting(s, run.style.overprint_fill, fill, |ex, s| {
-                s.push_transform(&text_space);
-                // The outlines left to fill as paths: all of them, or those real text leaves.
-                let outlines = match plain.as_deref().filter(|_| !elongated && !fill.is_none() && !ex.area_paint(fill, true)) {
-                    Some(text) => {
-                        let (mut left, unwritten) = ex.glyph_text(s, &layout, i, text, fill, true, Some(false));
-                        images = Some(unwritten);
-                        left.extend(run_bars.iter());
-                        Cow::Owned(left)
+        }
+        // Mixed-run RTL, and a run split by another, is painted in visual order: each piece's
+        // real text, then that piece's stroke. One run, and any document with no RTL glyph, keeps
+        // the run-index path (those files stay byte-identical). Elongated words keep that path's
+        // unioned outlines. SVG export paints a line by run index; this paints it in visual order,
+        // which shows where glyphs of different runs overlap.
+        let visual = plain.is_some() && !elongated && layout.glyphs.iter().any(|g| g.rtl) && (runs_seen.len() > 1 || split);
+        if visual && let Some(text) = plain.as_deref() {
+            self.paint_visual(s, t, &layout, page, &text_space, text, &pieces, &bars);
+        } else {
+            for (i, _) in t.runs.iter().enumerate() {
+                let span = 0..layout.glyphs.len();
+                let Some(run) = t.runs.get(i) else { continue };
+                let fill = &run.style.fill;
+                let unpainted = fill.is_none() && !run.style.has_stroke();
+                let mut bp = BezPath::new();
+                for g in layout.glyphs.iter().filter(|g| g.run == i).chain(layout.ruby.iter().filter(|g| g.run == i)) {
+                    bp.extend(g.outline.iter());
+                }
+                // Underline and strikethrough bars are paths, with real text too (#847).
+                let mut run_bars = BezPath::new();
+                for (_, bar) in bars.iter().filter(|(r, _)| *r == i) {
+                    run_bars.extend(bar.iter());
+                }
+                bp.extend(run_bars.iter());
+                // Colour bitmap glyphs (emoji) real text doesn't write: all of them, or those it leaves.
+                let mut images: Option<Vec<usize>> = None;
+                self.overprinting(s, run.style.overprint_fill, fill, |ex, s| {
+                    s.push_transform(&text_space);
+                    // The outlines left to fill as paths: all of them, or those real text leaves.
+                    let outlines = match plain.as_deref().filter(|_| !elongated && !fill.is_none() && !ex.area_paint(fill, true)) {
+                        Some(text) => {
+                            let (mut left, unwritten) = ex.glyph_text(s, &layout, i, span.clone(), text, fill, true, Some(false), false);
+                            images = Some(unwritten);
+                            left.extend(run_bars.iter());
+                            Cow::Owned(left)
+                        }
+                        None => Cow::Borrowed(&bp),
+                    };
+                    let opaque = (1.0, BlendMode::Normal);
+                    if let Some(path) = to_path(s, &outlines)
+                        && !ex.area(s, &path, krilla::paint::FillRule::NonZero, fill, opaque, layout.bounds, outlines.bounding_box(), true)
+                        && let Some(paint) = ex.paint(s, fill, layout.bounds)
+                    {
+                        s.set_stroke(None);
+                        s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
+                        s.draw_path(&path);
                     }
-                    None => Cow::Borrowed(&bp),
-                };
-                let opaque = (1.0, BlendMode::Normal);
-                if let Some(path) = to_path(s, &outlines)
-                    && !ex.area(s, &path, krilla::paint::FillRule::NonZero, fill, opaque, layout.bounds, outlines.bounding_box(), true)
-                    && let Some(paint) = ex.paint(s, fill, layout.bounds)
-                {
-                    s.set_stroke(None);
-                    s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
-                    s.draw_path(&path);
+                    s.pop();
+                });
+                // They paint themselves, whatever the fill.
+                let images = images.unwrap_or_else(|| layout.glyphs.iter().enumerate().filter(|(_, g)| g.run == i).map(|(gi, _)| gi).collect());
+                s.push_transform(&text_space);
+                for g in images.iter().filter_map(|&gi| layout.glyphs.get(gi)) {
+                    self.glyph_image(s, g);
+                    // COLR glyphs: their layers, as art.
+                    if let Some(art) = g.placed_colour(Affine::IDENTITY) {
+                        self.node(s, &art, page, true);
+                    }
                 }
                 s.pop();
-            });
-            // They paint themselves, whatever the fill.
-            let images = images.unwrap_or_else(|| layout.glyphs.iter().enumerate().filter(|(_, g)| g.run == i).map(|(gi, _)| gi).collect());
-            s.push_transform(&text_space);
-            for g in images.iter().filter_map(|&gi| layout.glyphs.get(gi)) {
-                self.glyph_image(s, g);
-                // COLR glyphs: their layers, as art.
-                if let Some(art) = g.placed_colour(Affine::IDENTITY) {
-                    self.node(s, &art, page, true);
+                // Characters with neither fill nor stroke (a scanned page's recognized text), or whose
+                // fill is drawn as art (a dithered gradient's image, a pattern: outlines, not text),
+                // are still text: written invisible (rendering mode 3), so they can still be selected
+                // and searched. Elongated words are the same: their fill is the unioned outlines, and
+                // this invisible text is what a reader copies.
+                if let Some(text) = plain.as_deref().filter(|_| elongated || unpainted || self.area_paint(fill, true)) {
+                    self.invisible = true;
+                    crate::forms::form(s, Mark::Invisible, |s| {
+                        s.push_transform(&text_space);
+                        // The paint only lets the writer write the text; the glyphs it can't write
+                        // as text draw nothing, and colour bitmap glyphs are drawn already.
+                        self.glyph_text(s, &layout, i, span.clone(), text, &Paint::solid(Color::gray(0.0)), false, None, false);
+                        s.pop();
+                    });
+                } else if let Some(text) = plain.as_deref().filter(|_| layout.glyphs.iter().any(|g| g.run == i && g.bend.is_some())) {
+                    // Glyphs bent along a path were drawn as their outlines (text is set straight):
+                    // they are written again as invisible text, straight where they stand, so they can
+                    // still be selected, searched and copied.
+                    self.invisible = true;
+                    crate::forms::form(s, Mark::Invisible, |s| {
+                        s.push_transform(&text_space);
+                        self.glyph_text(s, &layout, i, span.clone(), text, &Paint::solid(Color::gray(0.0)), false, Some(true), false);
+                        s.pop();
+                    });
                 }
-            }
-            s.pop();
-            // Characters with neither fill nor stroke (a scanned page's recognized text), or whose
-            // fill is drawn as art (a dithered gradient's image, a pattern: outlines, not text),
-            // are still text: written invisible (rendering mode 3), so they can still be selected
-            // and searched.
-            let unpainted = fill.is_none() && !run.style.has_stroke();
-            if let Some(text) = plain.as_deref().filter(|_| elongated || unpainted || self.area_paint(fill, true)) {
-                self.invisible = true;
-                crate::forms::form(s, Mark::Invisible, |s| {
-                    s.push_transform(&text_space);
-                    // The paint only lets the writer write the text; the glyphs it can't write
-                    // as text draw nothing, and colour bitmap glyphs are drawn already.
-                    self.glyph_text(s, &layout, i, text, &Paint::solid(Color::gray(0.0)), false, None);
-                    s.pop();
-                });
-            } else if let Some(text) = plain.as_deref().filter(|_| layout.glyphs.iter().any(|g| g.run == i && g.bend.is_some())) {
-                // Glyphs bent along a path were drawn as their outlines (text is set straight):
-                // they are written again as invisible text, straight where they stand, so they can
-                // still be selected, searched and copied.
-                self.invisible = true;
-                crate::forms::form(s, Mark::Invisible, |s| {
-                    s.push_transform(&text_space);
-                    self.glyph_text(s, &layout, i, text, &Paint::solid(Color::gray(0.0)), false, Some(true));
-                    s.pop();
-                });
-            }
-            s.push_transform(&text_space);
-            let path = run.style.has_stroke().then(|| to_path(s, &bp)).flatten();
-            s.pop();
-            if let Some(path) = path {
-                // Character strokes are drawn in text space, with their cap, join and dashes.
-                let st = run.style.stroke_layer();
-                self.overprinting(s, st.overprint, &st.paint, |ex, s| {
-                    s.push_transform(&text_space);
-                    ex.stroke(s, &bp, &path, FillRule::NonZero, &st, page, layout.bounds);
-                    s.pop();
-                });
+                s.push_transform(&text_space);
+                let path = run.style.has_stroke().then(|| to_path(s, &bp)).flatten();
+                s.pop();
+                if let Some(path) = path {
+                    // Character strokes are drawn in text space, with their cap, join and dashes.
+                    let st = run.style.stroke_layer();
+                    self.overprinting(s, st.overprint, &st.paint, |ex, s| {
+                        s.push_transform(&text_space);
+                        ex.stroke(s, &bp, &path, FillRule::NonZero, &st, page, layout.bounds);
+                        s.pop();
+                    });
+                }
             }
         }
         s.set_fill(None);
@@ -1751,6 +1792,7 @@ impl Exporter<'_> {
         if let Some((bp, path)) = &all {
             self.text_items(s, above, bp, path, page, tb);
         }
+        self.joiner_fold.clear();
     }
 
     /// Some of a type object's own fills and strokes (`items`) on its glyph outlines `bp` (`path`;
@@ -1792,22 +1834,133 @@ impl Exporter<'_> {
     /// as outlines, not text (text is set straight); `Some(true)` writes only those, as text where
     /// they stand straight; `None` writes all of them as text.
     #[allow(clippy::too_many_arguments)]
+    /// Each visual piece (one run on one line) as real text, then that piece's stroke.
+    /// Underline and strikethrough bars of a run are one per piece, in the same order
+    /// [`vectorcraft_text::decorations`] emits them.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_visual(
+        &mut self,
+        s: &mut Surface,
+        t: &TextObject,
+        layout: &TextLayout,
+        page: Rect,
+        text_space: &Transform,
+        text: &str,
+        pieces: &[(usize, usize, std::ops::Range<usize>)],
+        bars: &[(usize, BezPath)],
+    ) {
+        let mut bar_at = vec![0usize; t.runs.len()];
+        for &(i, _, ref span) in pieces {
+            let Some(run) = t.runs.get(i) else { continue };
+            let span = span.clone();
+            let fill = &run.style.fill;
+            let unpainted = fill.is_none() && !run.style.has_stroke();
+            let mut bp = BezPath::new();
+            for g in layout.glyphs.get(span.clone()).into_iter().flatten().filter(|g| g.run == i) {
+                bp.extend(g.outline.iter());
+            }
+            let mut piece_bars = BezPath::new();
+            let marker = span.clone().all(|gi| layout.marker_of(gi).is_some());
+            if !marker {
+                let n = usize::from(run.style.underline) + usize::from(run.style.strikethrough);
+                let start = bar_at.get(i).copied().unwrap_or(0);
+                let mut seen = 0usize;
+                for (r, bar) in bars {
+                    if *r != i {
+                        continue;
+                    }
+                    if seen >= start && seen < start + n {
+                        piece_bars.extend(bar.iter());
+                    }
+                    seen += 1;
+                }
+                if let Some(slot) = bar_at.get_mut(i) {
+                    *slot = start.saturating_add(n);
+                }
+            }
+            bp.extend(piece_bars.iter());
+            let mut images: Option<Vec<usize>> = None;
+            self.overprinting(s, run.style.overprint_fill, fill, |ex, s| {
+                s.push_transform(text_space);
+                let outlines = if !fill.is_none() && !ex.area_paint(fill, true) {
+                    let (mut left, unwritten) = ex.glyph_text(s, layout, i, span.clone(), text, fill, true, Some(false), true);
+                    images = Some(unwritten);
+                    left.extend(piece_bars.iter());
+                    Cow::Owned(left)
+                } else {
+                    Cow::Borrowed(&bp)
+                };
+                let opaque = (1.0, BlendMode::Normal);
+                if let Some(path) = to_path(s, &outlines)
+                    && !ex.area(s, &path, krilla::paint::FillRule::NonZero, fill, opaque, layout.bounds, outlines.bounding_box(), true)
+                    && let Some(paint) = ex.paint(s, fill, layout.bounds)
+                {
+                    s.set_stroke(None);
+                    s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
+                    s.draw_path(&path);
+                }
+                s.pop();
+            });
+            let images = images.unwrap_or_else(|| span.clone().filter(|&gi| layout.glyphs.get(gi).is_some_and(|g| g.run == i)).collect());
+            s.push_transform(text_space);
+            for g in images.iter().filter_map(|&gi| layout.glyphs.get(gi)) {
+                self.glyph_image(s, g);
+                if let Some(art) = g.placed_colour(Affine::IDENTITY) {
+                    self.node(s, &art, page, true);
+                }
+            }
+            s.pop();
+            if unpainted || self.area_paint(fill, true) {
+                self.invisible = true;
+                crate::forms::form(s, Mark::Invisible, |s| {
+                    s.push_transform(text_space);
+                    self.glyph_text(s, layout, i, span.clone(), text, &Paint::solid(Color::gray(0.0)), false, None, true);
+                    s.pop();
+                });
+            } else if layout.glyphs.get(span.clone()).into_iter().flatten().any(|g| g.run == i && g.bend.is_some()) {
+                self.invisible = true;
+                crate::forms::form(s, Mark::Invisible, |s| {
+                    s.push_transform(text_space);
+                    self.glyph_text(s, layout, i, span.clone(), text, &Paint::solid(Color::gray(0.0)), false, Some(true), true);
+                    s.pop();
+                });
+            }
+            s.push_transform(text_space);
+            let path = run.style.has_stroke().then(|| to_path(s, &bp)).flatten();
+            s.pop();
+            if let Some(path) = path {
+                let st = run.style.stroke_layer();
+                self.overprinting(s, st.overprint, &st.paint, |ex, s| {
+                    s.push_transform(text_space);
+                    ex.stroke(s, &bp, &path, FillRule::NonZero, &st, page, layout.bounds);
+                    s.pop();
+                });
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn glyph_text(
         &mut self,
         s: &mut Surface,
         layout: &TextLayout,
         run: usize,
+        span: std::ops::Range<usize>,
         text: &str,
         fill: &Paint,
         images: bool,
         bent: Option<bool>,
+        mark_rtl: bool,
     ) -> (BezPath, Vec<usize>) {
         let (mut rest, mut unwritten) = (BezPath::new(), vec![]);
         let mut line: Option<GlyphLine> = None;
         // The characters the glyphs stand for: the plain text, then, when the run has glyphs that
         // stand for no character of it, the characters a line-break hyphen can stand for.
-        let mut written: Cow<str> =
-            if layout.glyphs.iter().any(|g| g.run == run && g.len == 0) { Cow::Owned(format!("{text}{BREAK_HYPHENS}")) } else { Cow::Borrowed(text) };
+        let mut written: Cow<str> = if span.clone().any(|gi| layout.glyphs.get(gi).is_some_and(|g| g.run == run && g.len == 0)) {
+            Cow::Owned(format!("{text}{BREAK_HYPHENS}"))
+        } else {
+            Cow::Borrowed(text)
+        };
         // PDF glyphs are emitted in visual order. Keep the codepoints *inside* an RTL
         // cluster in that same order, too: readers apply bidi to the whole extracted line.
         // A logical multi-letter ligature in an otherwise visual line would reverse twice.
@@ -1824,7 +1977,7 @@ impl Exporter<'_> {
                 written.to_mut().replace_range(range, &visual);
             }
         }
-        for (gi, g) in layout.glyphs.iter().enumerate().filter(|(_, g)| g.run == run) {
+        for (gi, g) in layout.glyphs.iter().enumerate().filter(|(gi, g)| span.contains(gi) && g.run == run) {
             let coloured = g.image.is_some() || g.colour.is_some();
             if coloured && !images {
                 continue;
@@ -1843,10 +1996,48 @@ impl Exporter<'_> {
             let range = hyphen.clone().map_or(g.byte..g.byte + g.len, |h| text.len() + h.start..text.len() + h.end);
             let ch = written.get(range.clone()).and_then(|t| t.chars().next());
             // Spaces are written too (text extraction needs them); control characters and soft
-            // hyphens draw nothing.
+            // hyphens draw nothing. A blank ZWNJ/ZWJ is not emitted: readers drop it and turn the
+            // advance into a word space. Its marks are an `/ActualText` on every glyph of the
+            // neighbouring cluster (`joiner_fold`), so ToUnicode stays the cluster itself.
             let blank = g.outline.elements().is_empty() && !coloured;
+            let joiner = ch.is_some_and(|c| matches!(c, '\u{200C}' | '\u{200D}'));
+            if blank && joiner {
+                continue;
+            }
             if blank && !(self.invisible && g.len > 0) && !ch.is_some_and(|c| c.is_whitespace() && !c.is_control()) {
                 continue;
+            }
+            let fold = self.joiner_fold.get(gi).and_then(|f| f.clone());
+            let actual = fold.and_then(|(marks, prepend)| {
+                let cluster = written.get(range.clone()).unwrap_or("");
+                if cluster.is_empty() || marks.is_empty() || cluster.contains(&marks) {
+                    None
+                } else if prepend {
+                    Some(format!("{marks}{cluster}"))
+                } else {
+                    Some(format!("{cluster}{marks}"))
+                }
+            });
+            // Further glyphs of this cluster (a base and its harakat, or a letter the font
+            // split) are not their own text entries: that second entry repeated the cluster.
+            // A mark with no advance is drawn from its outline; the letter that carries the
+            // advance keeps the `/ActualText`, so the pen still reaches the next letter.
+            if actual.is_some() {
+                // Same cluster, not the same replacement string: two neighbours can fold to the
+                // same text and both have to be a text layer.
+                let carried =
+                    line.as_ref().and_then(|l| l.glyphs.last()).is_some_and(|glyph| glyph.3.start == range.start && glyph.3.end == range.end);
+                let mark = g.advance.abs() < 1e-3
+                    && layout
+                        .glyphs
+                        .iter()
+                        .skip(gi + 1)
+                        .take_while(|h| h.run == run && h.line == g.line)
+                        .any(|h| h.byte == g.byte && h.len == g.len && h.advance > 1e-3);
+                if carried || mark {
+                    rest.extend(g.outline.iter());
+                    continue;
+                }
             }
             // The glyph at the font size of its vertical scale: `frame` maps that size's glyph
             // space (y down, krilla's) to text space.
@@ -1873,37 +2064,58 @@ impl Exporter<'_> {
             }
             let size = upem * sy;
             let frame = glyph_xf * Affine::scale(1.0 / sy);
-            // Its pen position along the frame's baseline, when it continues the line (a
-            // line-break hyphen never does).
-            let x = line.as_ref().filter(|l| hyphen.is_none() && l.face == g.font_id && (l.size - size).abs() < 1e-6).and_then(|l| {
-                let [a, b, c, d, e, f] = (l.frame.inverse() * frame).as_coeffs();
-                let same = (a - 1.0).abs() < 1e-6 && b.abs() < 1e-6 && c.abs() < 1e-6 && (d - 1.0).abs() < 1e-6 && f.abs() < 1e-4;
-                same.then_some(e)
-            });
-            let x = match x {
-                Some(x) => x,
-                None => {
-                    if let Some(l) = line.take() {
-                        self.draw_glyph_line(s, l, &written, fill, layout.bounds);
-                    }
-                    line = Some(GlyphLine { face: g.font_id, font, size, frame, glyphs: vec![] });
-                    0.0
+            // Its pen position in the line's glyph space, when it continues the line (a
+            // line-break hyphen never does). A mark sits a little off the baseline; that y
+            // stays on this line so the cluster's `/ActualText` is one span. A new line's
+            // baseline is further than that.
+            let placed =
+                line.as_ref().filter(|l| hyphen.is_none() && l.face == g.font_id && l.line == g.line && (l.size - size).abs() < 1e-6).and_then(|l| {
+                    let [a, b, c, d, e, f] = (l.frame.inverse() * frame).as_coeffs();
+                    let linear = (a - 1.0).abs() < 1e-6 && b.abs() < 1e-6 && c.abs() < 1e-6 && (d - 1.0).abs() < 1e-6 && f.is_finite();
+                    // A joiner's cluster stays one span, mark included. Everything else keeps the
+                    // baseline test this writer has always used, so a new line stays a new line.
+                    let near = if actual.is_some() { f.abs() < l.size * 0.6 } else { f.abs() < 1e-4 };
+                    // The text pen stays on the baseline. A raised mark is drawn from its outline
+                    // (the other glyphs of the cluster); a raised text pen splits the line.
+                    (linear && near).then_some((e, 0.0))
+                });
+            let (x, y) = if let Some(at) = placed {
+                at
+            } else if actual.is_some()
+                && hyphen.is_none()
+                && line.as_ref().is_some_and(|l| {
+                    l.face == g.font_id && l.line == g.line && (l.size - size).abs() < 1e-6 && same_piece(&layout.glyphs, l.last_gi, gi, run)
+                })
+            {
+                // The cluster's frame is not the line's (a mark's placement). Keep the text
+                // on this piece's pen so the word stays one line; the mark's outline is drawn apart.
+                let end = line.as_ref().and_then(|l| l.glyphs.last()).map(|glyph| glyph.1 + glyph.2).unwrap_or(0.0);
+                (end, 0.0)
+            } else {
+                if let Some(l) = line.take() {
+                    let rtl = mark_rtl && layout.lines.get(l.line).is_some_and(|li| li.rtl);
+                    self.draw_glyph_line(s, l, &written, fill, layout.bounds, rtl);
                 }
+                line = Some(GlyphLine { face: g.font_id, font, size, frame, line: g.line, last_gi: gi, glyphs: vec![] });
+                (0.0, 0.0)
             };
             // The glyph's advance in frame units (the last one's ends the line).
             let advance = glyph_advance * sy / sx;
             if let Some(l) = line.as_mut() {
-                l.glyphs.push((g.gid, x, advance, range));
+                l.last_gi = gi;
+                l.glyphs.push((g.gid, x, advance, range, actual, y));
             }
             // A line-break hyphen is written on its own.
             if hyphen.is_some()
                 && let Some(l) = line.take()
             {
-                self.draw_glyph_line(s, l, &written, fill, layout.bounds);
+                let rtl = mark_rtl && layout.lines.get(l.line).is_some_and(|li| li.rtl);
+                self.draw_glyph_line(s, l, &written, fill, layout.bounds, rtl);
             }
         }
         if let Some(l) = line {
-            self.draw_glyph_line(s, l, &written, fill, layout.bounds);
+            let rtl = mark_rtl && layout.lines.get(l.line).is_some_and(|li| li.rtl);
+            self.draw_glyph_line(s, l, &written, fill, layout.bounds, rtl);
         }
         (rest, unwritten)
     }
@@ -1932,28 +2144,87 @@ impl Exporter<'_> {
     /// Draw glyphs `line` (of `text`), filled with `fill` (whose space is text space, where
     /// `bounds` is). A line that would be written with a pen position, size or spacing (in
     /// thousandths of an em) beyond [`MAX_COORD`] is left out.
-    fn draw_glyph_line(&mut self, s: &mut Surface, line: GlyphLine, text: &str, fill: &Paint, bounds: Rect) {
+    fn draw_glyph_line(&mut self, s: &mut Surface, line: GlyphLine, text: &str, fill: &Paint, bounds: Rect, rtl: bool) {
         let size = line.size;
-        let glyphs: Vec<KrillaGlyph> = line
+        let pens =
+            line.glyphs.iter().fold(Rect::new(0.0, -size, 0.0, size), |r, (_, x, advance, _, _, y)| r.union_pt((*x, *y)).union_pt((x + advance, *y)));
+        let spacing: Vec<f64> = line
             .glyphs
             .iter()
             .enumerate()
-            .map(|(i, (gid, x, advance, range))| {
+            .map(|(i, (_, x, advance, _, _, _))| {
                 let next = line.glyphs.get(i + 1).map_or(x + advance, |n| n.1);
-                KrillaGlyph::new(GlyphId::new(*gid), ((next - x) / size) as f32, 0.0, 0.0, 0.0, range.clone(), None)
+                ((next - x) / size) * 1000.0
             })
             .collect();
-        let pens =
-            line.glyphs.iter().fold(Rect::new(0.0, -size, 0.0, size), |r, (_, x, advance, _)| r.union_pt((*x, 0.0)).union_pt((x + advance, 0.0)));
-        let spacing: Vec<f64> = glyphs.iter().map(|g| f64::from(g.x_advance(1.0)) * 1000.0).collect();
         if !(writable(s, line.frame, pens) && in_range(&spacing)) {
             return;
         }
+        let Some(paint) = self.paint_in(s, fill, bounds, line.frame.inverse()) else { return };
         s.push_transform(&xf(line.frame));
-        if let Some(paint) = self.paint_in(s, fill, bounds, line.frame.inverse()) {
-            s.set_stroke(None);
-            s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
-            s.draw_glyphs(krilla::geom::Point::from_xy(0.0, 0.0), &glyphs, line.font, text, size as f32, false);
+        s.set_stroke(None);
+        s.set_fill(Some(Fill { paint, opacity: NormalizedF32::ONE, rule: krilla::paint::FillRule::NonZero }));
+        // No joiner: one text run, as before. A joiner wraps each cluster in `/ActualText` and
+        // leaves the glyph's ToUnicode as the cluster without the joiner.
+        let font = line.font.clone();
+        let emit = |s: &mut Surface, slice: &[LineGlyph]| {
+            let origin_x = slice.first().map_or(0.0, |g| g.1);
+            let origin_y = slice.first().map_or(0.0, |g| g.5);
+            let glyphs: Vec<KrillaGlyph> = slice
+                .iter()
+                .enumerate()
+                .map(|(i, (gid, x, advance, range, _, y))| {
+                    let next = slice.get(i + 1).map_or(x + advance, |n| n.1);
+                    // `y` is in the line's glyph space (y down). The text matrix flips y, so the
+                    // offset that lands the glyph on `y` is `origin_y - y`.
+                    let y_off = ((origin_y - y) / size) as f32;
+                    KrillaGlyph::new(GlyphId::new(*gid), ((next - x) / size) as f32, 0.0, y_off, 0.0, range.clone(), None)
+                })
+                .collect();
+            if !glyphs.is_empty() {
+                s.draw_glyphs(krilla::geom::Point::from_xy(origin_x as f32, origin_y as f32), &glyphs, font.clone(), text, size as f32, false);
+            }
+        };
+        if line.glyphs.iter().all(|g| g.4.is_none() && g.5.abs() < 1e-9) {
+            let glyphs: Vec<KrillaGlyph> = line
+                .glyphs
+                .iter()
+                .enumerate()
+                .map(|(i, (gid, x, advance, range, _, _))| {
+                    let next = line.glyphs.get(i + 1).map_or(x + advance, |n| n.1);
+                    KrillaGlyph::new(GlyphId::new(*gid), ((next - x) / size) as f32, 0.0, 0.0, 0.0, range.clone(), None)
+                })
+                .collect();
+            // `/Lang (ar)` tells a reader the line is right to left when its visual start is not.
+            if rtl {
+                s.start_tagged(ContentTag::Span(SpanTag { lang: Some("ar"), ..SpanTag::empty() }));
+            }
+            s.draw_glyphs(krilla::geom::Point::from_xy(0.0, 0.0), &glyphs, font.clone(), text, size as f32, false);
+            if rtl {
+                s.end_tagged();
+            }
+        } else {
+            let mut start = 0;
+            while start < line.glyphs.len() {
+                let actual = line.glyphs.get(start).and_then(|g| g.4.clone());
+                let cluster = line.glyphs.get(start).map(|g| g.3.clone());
+                let mut end = start + 1;
+                // One span per cluster that carries a joiner. Glyphs with no joiner stay one
+                // `draw_glyphs` call, as a run with no ActualText always has.
+                while line.glyphs.get(end).is_some_and(|g| g.4 == actual && (actual.is_none() || cluster.as_ref() == Some(&g.3))) {
+                    end += 1;
+                }
+                let slice = line.glyphs.get(start..end).unwrap_or(&[]);
+                let mark = actual.is_some() || rtl;
+                if mark {
+                    s.start_tagged(ContentTag::Span(SpanTag { lang: rtl.then_some("ar"), actual_text: actual.as_deref(), ..SpanTag::empty() }));
+                }
+                emit(s, slice);
+                if mark {
+                    s.end_tagged();
+                }
+                start = end;
+            }
         }
         s.pop();
     }
@@ -2076,6 +2347,109 @@ impl Exporter<'_> {
         s.draw_image(img, size);
         s.pop();
     }
+}
+
+/// One run's glyphs on one line, in layout order (visual, left to right).
+fn visual_pieces(glyphs: &[vectorcraft_text::PositionedGlyph]) -> Vec<(usize, usize, std::ops::Range<usize>)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(g) = glyphs.get(i) {
+        let (run, line, start) = (g.run, g.line, i);
+        i += 1;
+        while glyphs.get(i).is_some_and(|next| next.run == run && next.line == line) {
+            i += 1;
+        }
+        out.push((run, line, start..i));
+    }
+    out
+}
+
+/// `gi` continues the piece that contains `last_gi`: the same run and line, with only that
+/// run's glyphs between them (a skipped joiner), not another run and not the next line.
+fn same_piece(glyphs: &[vectorcraft_text::PositionedGlyph], last_gi: usize, gi: usize, run: usize) -> bool {
+    let Some(g) = glyphs.get(gi) else { return false };
+    if gi <= last_gi {
+        return false;
+    }
+    glyphs.get(last_gi + 1..gi).is_some_and(|mid| mid.iter().all(|h| h.run == run && h.line == g.line))
+}
+
+/// ZWNJ/ZWJ marks to fold onto each glyph, and whether they precede the cluster.
+///
+/// A blank joiner is not a glyph of its own. Every glyph that shares the neighbour's cluster
+/// gets the same marks: the letter before the joiner when there is one (including a joiner that
+/// ends the run), otherwise the following cluster. Glyphs with no neighbour keep nothing.
+fn joiner_fold(glyphs: &[vectorcraft_text::PositionedGlyph], text: &str) -> Vec<Option<(String, bool)>> {
+    let mut out = vec![None; glyphs.len()];
+    let mut pending: Option<String> = None;
+    let mut last: Option<usize> = None;
+    for (i, g) in glyphs.iter().enumerate() {
+        let slice = text.get(g.byte..g.byte.saturating_add(g.len)).unwrap_or("");
+        let ch = slice.chars().next();
+        let blank = g.outline.elements().is_empty() && g.image.is_none() && g.colour.is_none();
+        let joiner = ch.is_some_and(|c| matches!(c, '\u{200C}' | '\u{200D}'));
+        if blank && joiner && !slice.is_empty() {
+            if let Some(prev) = last {
+                attach_joiner(&mut out, glyphs, prev, slice, false);
+            } else {
+                pending = Some(match pending.take() {
+                    Some(got) => format!("{got}{slice}"),
+                    None => slice.to_string(),
+                });
+            }
+            continue;
+        }
+        // A virtual tatweel covers no source character. It is not the neighbour a joiner folds onto.
+        if g.len == 0 {
+            continue;
+        }
+        if let Some(marks) = pending.take() {
+            attach_joiner(&mut out, glyphs, i, &marks, true);
+        }
+        last = Some(i);
+    }
+    out
+}
+
+/// Give `marks` to every glyph of the cluster `index` belongs to.
+fn attach_joiner(out: &mut [Option<(String, bool)>], glyphs: &[vectorcraft_text::PositionedGlyph], index: usize, marks: &str, prepend: bool) {
+    let Some(g) = glyphs.get(index) else { return };
+    if g.len == 0 || marks.is_empty() {
+        return;
+    }
+    let (g0, g1) = (g.byte, g.byte.saturating_add(g.len));
+    for (i, h) in glyphs.iter().enumerate() {
+        // The same cluster: the same source bytes, or a glyph whose bytes overlap them
+        // (a base and its harakat, or a letter the font split). A following glyph of that
+        // cluster is included here, including when the joiner is still pending.
+        let (h0, h1) = (h.byte, h.byte.saturating_add(h.len));
+        if h.len == 0 || g0 >= h1 || h0 >= g1 {
+            continue;
+        }
+        let Some(slot) = out.get_mut(i) else { continue };
+        *slot = Some(match slot.take() {
+            Some((prev, side)) if prev.contains(marks) => (prev, side),
+            Some((prev, _)) if prepend => (format!("{marks}{prev}"), true),
+            Some((prev, _)) => (format!("{prev}{marks}"), false),
+            None => (marks.to_string(), prepend),
+        });
+    }
+}
+
+/// Consecutive glyphs of one run, in layout order (visual, left to right on each line).
+fn visual_segments(glyphs: &[vectorcraft_text::PositionedGlyph]) -> Vec<(usize, std::ops::Range<usize>)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(g) = glyphs.get(i) {
+        let run = g.run;
+        let start = i;
+        i += 1;
+        while glyphs.get(i).is_some_and(|next| next.run == run) {
+            i += 1;
+        }
+        out.push((run, start..i));
+    }
+    out
 }
 
 /// Invisible text has no tatweel characters. Let the preceding authored glyph's
