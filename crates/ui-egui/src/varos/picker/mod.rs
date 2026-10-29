@@ -11,6 +11,14 @@
 //! a mixed selection is written only once something changes. A typed value or a clicked chip is
 //! one step. The panel follows the selection, never changes it, and asks for no repaint of its own:
 //! it redraws on input only. Alpha is the opacity of the targeted fill or stroke.
+//!
+//! Cancel reverts only the edits the picker itself made since its undo group opened, or since
+//! the last command from outside the picker. That outside command commits the open group (the
+//! popover stays up) and the next frame opens a new one, so Cancel does not revert it. A
+//! gradient-tab edit — a stop move, a selected stop, a saved swatch — is a picker edit and
+//! reverts with Cancel. Cancel does not close an undo group something else already had open
+//! (`edit.undoGroup.begin`, or any group already in the document): the picker only records a
+//! group when this popover is what opened it.
 
 mod cluster;
 mod drawer;
@@ -388,6 +396,9 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.scope_builder(
             egui::UiBuilder::new().max_rect(Rect::from_min_size(origin + vec2(PAD, HEADER_H + 4.0), vec2(W - PAD * 2.0, 420.0))),
             |ui| {
+                // Stop edits and `swatch.new` go through `app.run`. Hold the picker guard so
+                // they stay in the popover's group and Cancel can still revert them.
+                let _picker = PickerCmd::enter();
                 crate::panels::gradient::show_picker(app, ui);
             },
         );
@@ -668,6 +679,9 @@ fn on_origin(app: &mut VectorcraftApp, origin: &Origin, f: impl FnOnce(&mut Vect
 
 /// Finish every stored gesture, if any (the picker is going away).
 fn finish_pending(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    // `live_run` falls back to `app.run` when a gesture cannot begin. That runs on the way into
+    // Cancel, and must not commit the group a moment before Cancel reverts it.
+    let _picker = PickerCmd::enter();
     if app.ui.varos_picker_anchor.is_some() && app.ui.varos_picker.tab == Tab::Gradient {
         crate::panels::gradient::finish_picker_drag(app, ctx);
     }
@@ -831,9 +845,19 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(anchor) = app.ui.varos_picker_anchor else { return };
     let mut screen = ctx.content_rect();
     let shell = crate::varos::shell::enabled(app);
-    if shell && (!app.ui.toolbar || app.ui.screen_mode >= 3) {
-        // Tab / a screen mode hid the toolbar while the popover was open. Close it here so the
-        // undo group does not stay open.
+    let frame_nr = ctx.cumulative_frame_nr();
+    // This frame's wells, bottom-most first (the order they are drawn in).
+    let wells: Vec<(Rect, bool)> = ctx
+        .data(|d| d.get_temp::<Vec<(Rect, bool, u64)>>(egui::Id::unique("picker-wells")))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, _, f)| *f == frame_nr)
+        .map(|(r, stroke, _)| (r, stroke))
+        .collect();
+    // The tool strip is hidden, but a Properties or Control-bar chip that opened this popover
+    // is still drawn. Close only when the anchor well itself was not registered this frame.
+    let anchor_drawn = wells.iter().any(|(r, _)| r.expand(2.0).intersects(anchor.expand(2.0)));
+    if shell && (!app.ui.toolbar || app.ui.screen_mode >= 3) && !anchor_drawn {
         close(app);
         return;
     }
@@ -855,20 +879,15 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let scroll = content_tall > screen.height();
     let h = if scroll { screen.height() } else { content_h };
     let tall = if scroll { screen.height() } else { content_tall };
-    if shell && !app.ui.varos_picker_group {
-        app.ui.varos_picker_defaults = Some(app.session.paint.clone());
+    // `begin_undo_group` does nothing when a group is already open, and ending one would also
+    // clear an agent's `edit.undoGroup.begin`. Claim the group only when this call opens it.
+    if shell && !app.ui.varos_picker_group && app.session.undo_group_is_free() {
         app.session.begin_undo_group();
-        app.ui.varos_picker_group = true;
+        if app.session.active().is_some_and(|st| st.undo_group.is_some()) {
+            app.ui.varos_picker_defaults = Some(app.session.paint.clone());
+            app.ui.varos_picker_group = true;
+        }
     }
-    let frame_nr = ctx.cumulative_frame_nr();
-    // This frame's wells, bottom-most first (the order they are drawn in).
-    let wells: Vec<(Rect, bool)> = ctx
-        .data(|d| d.get_temp::<Vec<(Rect, bool, u64)>>(egui::Id::unique("picker-wells")))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, _, f)| *f == frame_nr)
-        .map(|(r, stroke, _)| (r, stroke))
-        .collect();
     // The well and its Fill/Stroke sibling (overlapping proxy squares, stacked or side-by-side
     // chips) stay uncovered, so the other well remains one click away.
     let pair = wells.iter().filter(|(r, _)| r.intersects(anchor.expand(WELL_GAP))).fold(anchor, |pair, (r, _)| pair.union(*r));
@@ -966,8 +985,9 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
 
 /// Called every frame before the shortcuts and the tools. A gesture whose picker was not drawn
 /// last frame (put away mid-drag) is finished, so no interaction stays open. While the popover is
-/// open its Escape is the picker's (true, and the caller routes it no further): it closes the
-/// popover (finishing any gesture, never undoing), or is left to a focused field or open dropdown.
+/// open its Escape is the picker's (true, and the caller routes it no further): it cancels the
+/// popover, reverting the picker's own edits since the group opened or since the last outside
+/// command, or is left to a focused field or open dropdown.
 pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     let now = ctx.cumulative_frame_nr();
     for sid in instances() {

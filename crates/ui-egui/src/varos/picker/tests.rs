@@ -1215,6 +1215,96 @@ fn gradient_stop_drag_in_popover_is_one_undo_step_even_when_escape_closes_it() {
     }
 }
 
+/// The gradient tab's stop edits go through `app.run`. They stay in the popover's group, so
+/// Cancel puts the stop back, including when Escape finishes the drag on the way out.
+#[test]
+fn a_gradient_tab_edit_reverts_on_cancel() {
+    for mid_drag in [false, true] {
+        let mut h = Harness::new(true);
+        h.app.run("paint.setFill", json!({"gradient": {}})).unwrap();
+        let before = undo_len(&h.app);
+        let anchor = h.well(false);
+        h.click(anchor.left_top() + vec2(3.0, 3.0));
+        let r = picker_rect(&h.ctx);
+        h.click(r.min + vec2(PAD + 3.0 * (TAB_W + TAB_GAP) + TAB_W / 2.0, HEADER_H / 2.0));
+        h.frame(vec![]);
+        let mut stops: Vec<Rect> = h.ctx.viewport(|vp| {
+            vp.prev_pass
+                .widgets
+                .layers()
+                .filter(|(layer, _)| layer.id == egui::Id::unique("varos-picker-popover"))
+                .flat_map(|(_, widgets)| widgets.iter())
+                .filter(|w| w.rect.size() == vec2(12.0, 16.0))
+                .map(|w| w.rect)
+                .collect()
+        });
+        stops.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        let from = stops.first().expect("first gradient stop").center();
+        let to = from + vec2(60.0, 0.0);
+        h.frame(vec![Event::PointerMoved(from), button(from, true)]);
+        h.frame(vec![Event::PointerMoved(to)]);
+        if mid_drag {
+            h.frame(vec![esc()]);
+        } else {
+            h.frame(vec![button(to, false)]);
+            let out = h.frame(vec![]);
+            let cancel = labelled(&out, "Cancel").expect("Cancel");
+            h.click(cancel);
+        }
+        assert!(h.app.ui.varos_picker_anchor.is_none(), "Cancel closes");
+        assert!(!group_open(&h.app), "Cancel ends the picker's group");
+        assert_eq!(undo_len(&h.app), before, "the stop edit is not its own committed step");
+        let Paint::Gradient(g) = crate::panels::current_paints(&h.app).0 else { panic!("the gradient from before the popover stays") };
+        assert_eq!(g.gradient.stops[0].offset, 0.0, "Cancel reverts the stop move");
+    }
+}
+
+#[test]
+fn the_picker_does_not_claim_an_undo_group_it_did_not_open() {
+    let mut h = Harness::new(true);
+    h.app.run("edit.undoGroup.begin", json!({"label": "agent"})).unwrap();
+    assert!(h.app.session.active().unwrap().undo_group.is_some());
+    let fill = h.well(false);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    assert!(!h.app.ui.varos_picker_group, "the popover leaves an already-open group alone");
+    assert!(h.app.session.active().unwrap().undo_group.is_some());
+    // A command from outside the picker must not seal (and end) the agent's group.
+    h.app.run("paint.setFill", json!({"color": "#abcabc"})).unwrap();
+    assert!(h.app.session.active().unwrap().undo_group.is_some(), "the agent's group stays open");
+    let out = h.frame(vec![]);
+    let cancel = labelled(&out, "Cancel").expect("Cancel");
+    h.click(cancel);
+    assert_eq!(fill_hex(&h.app), "#abcabc", "Cancel does not revert the agent's edit");
+    assert!(h.app.session.active().unwrap().undo_group.is_some(), "Cancel does not end the agent's group");
+    h.app.run("edit.undoGroup.end", json!({})).unwrap();
+    assert!(h.app.session.active().unwrap().undo_group.is_none());
+    assert_eq!(fill_hex(&h.app), "#abcabc");
+}
+
+#[test]
+fn a_properties_chip_keeps_the_popover_open_when_the_toolbar_is_hidden() {
+    let mut h = Harness::new(true);
+    h.app.ui.toolbar = false;
+    h.frame(vec![]);
+    // `cumulative_frame_nr` counts completed frames, so it is one past the number the wells
+    // were stamped with. The store only keeps the frame that just drew.
+    let chip = h
+        .ctx
+        .data(|d| d.get_temp::<Vec<(Rect, bool, u64)>>(egui::Id::unique("picker-wells")))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(r, stroke, _)| !stroke && r.left() > 80.0)
+        .map(|(r, _, _)| r)
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .expect("a fill chip outside the tool strip");
+    h.click(chip.center());
+    assert!(h.app.ui.varos_picker_anchor.is_some(), "the chip opened the popover");
+    h.frame(vec![]);
+    assert!(h.app.ui.varos_picker_anchor.is_some(), "a drawn chip keeps the popover when the tool strip is hidden");
+    assert!(h.app.ui.varos_picker_group, "the popover still owns its undo group");
+}
+
 #[test]
 fn nested_stop_hex_editor_preserves_the_gradient_and_parent_mode() {
     let mut app = app();

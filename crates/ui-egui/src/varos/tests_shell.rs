@@ -419,7 +419,7 @@ fn a_two_point_overshoot_does_not_collapse_the_column() {
     let barely = pos2(clamped + 2.0, from.y);
     h.frame(vec![egui::Event::PointerMoved(barely)]);
     h.frame(vec![egui::Event::PointerMoved(barely)]);
-    assert!(h.hits().iter().all(|(hit, _)| !matches!(hit, Hit::AzureHint)), "the hint starts at 16 pt past the minimum");
+    assert!(h.hits().iter().all(|(hit, _)| !matches!(hit, Hit::AzureHint)), "the hint starts at 32 pt past the minimum");
     assert!((h.rect(&Hit::Box(3)).width() - 300.0).abs() <= 1.0);
     h.release(barely);
     assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Box(3))), "2 pt past the minimum does not collapse");
@@ -433,10 +433,22 @@ fn a_two_point_overshoot_does_not_collapse_the_column() {
     let hint_at = pos2(clamped + 20.0, from.y);
     h.frame(vec![egui::Event::PointerMoved(hint_at)]);
     h.frame(vec![egui::Event::PointerMoved(hint_at)]);
-    assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::AzureHint)), "the hint shows from 16 pt");
+    assert!(h.hits().iter().all(|(hit, _)| !matches!(hit, Hit::AzureHint)), "20 pt past the minimum does not hint");
     h.release(hint_at);
     assert!(h.state().collapsed_columns.is_empty(), "20 pt past the minimum does not collapse");
     assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Box(3))));
+
+    let mut h = Harness::new();
+    h.shell(true);
+    let from = h.rect(&Hit::Divider(vec![])).center();
+    h.hold_drag(from, pos2(h.screen.x - 50.0, from.y));
+    let clamped = h.rect(&Hit::Box(3)).left();
+    let at = pos2(clamped + 40.0, from.y);
+    h.frame(vec![egui::Event::PointerMoved(at)]);
+    h.frame(vec![egui::Event::PointerMoved(at)]);
+    assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::AzureHint)), "the hint shows at 32 pt");
+    h.release(at);
+    assert!(!h.state().collapsed_columns.is_empty(), "32 pt past the minimum collapses");
 }
 
 #[test]
@@ -2959,7 +2971,7 @@ fn simple_overflow_menu_selects_hidden_tab_with_pointer() {
     h.run_steps(3);
     h.get_by_label("More tabs").hover();
     h.run_steps(4);
-    let _ = h.get_by_label_contains("more panels");
+    let _ = h.get_by_label_contains("more panel");
     h.get_by_label("More tabs").click();
     h.run_steps(2);
     h.get_by_label("Swatches").click();
@@ -3570,4 +3582,78 @@ fn dragging_the_tool_strip_edge_snaps_columns() {
     h.drag(edge, edge + vec2(-70.0, 0.0));
     assert_eq!(h.app.ui.varos_shell.tools_columns, 1);
     assert!((h.rect(&Hit::Tools).width() - 40.0).abs() < 1.0);
+}
+
+#[test]
+fn collapsing_a_box_keeps_dragged_in_tabs_in_one_icon_group() {
+    let mut h = Harness::new();
+    h.shell(true);
+    // A tab dragged from box 3 into box 2 must not jump back when box 2 collapses.
+    h.drag(h.tab("color").center(), h.tab("layers").center());
+    assert!(h.box_tabs(2).contains(&"color".into()));
+    assert!(!h.box_tabs(3).contains(&"color".into()));
+    assert!(h.app.ui.varos_shell.collapse_box_to_strip(2));
+    h.settle();
+    assert!(h.tree().find_tab("color").is_none());
+    assert!(!h.box_tabs(3).iter().any(|p| p == "color"), "it does not return to the box it left");
+    let group = h.state().strip.groups.iter().find(|g| g.panels.iter().any(|p| p == "color")).expect("color is an icon");
+    assert!(group.panels.iter().any(|p| p == "layers"), "it stays with the box that was collapsed: {group:?}");
+
+    // A reorder inside a box is one group, in the new order, not the moved tab on its own.
+    let mut h = Harness::new();
+    h.shell(true);
+    let from = h.tab("swatches").center();
+    let to = h.tab("properties").left_center() + vec2(3.0, 0.0);
+    h.drag(from, to);
+    assert_eq!(h.box_tabs(3), ["swatches", "properties", "color"]);
+    assert!(h.app.ui.varos_shell.collapse_box_to_strip(3));
+    h.settle();
+    let group = h.state().strip.groups.last().expect("the collapsed box");
+    assert_eq!(group.panels, ["swatches", "properties", "color"]);
+}
+
+#[test]
+fn dismissing_a_float_drops_tab_homes_before_its_id_is_reused() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let away = h.rect(&Hit::BoardBody).center() + vec2(-80.0, -40.0);
+    let id = h.float_tab("swatches", away);
+    h.drag(h.tab("color").center(), h.tab("swatches").center());
+    assert_eq!(h.state().float_of("color"), Some(id));
+    h.drag(h.tab("color").center(), h.tab("properties").center());
+    assert!(h.box_tabs(3).contains(&"color".into()));
+    assert!(
+        matches!(h.state().homes.get("color"), Some(shell::persist::PanelHome::Tabs { box_id, .. }) if *box_id == id),
+        "leaving the float records that float as the tab's home"
+    );
+    h.app.ui.varos_shell.close_float(id);
+    assert!(
+        !h.state().homes.get("color").is_some_and(|home| matches!(home, shell::persist::PanelHome::Tabs { box_id, .. } if *box_id == id)),
+        "a dismissed float's tab homes are dropped"
+    );
+    let id2 = h.float_tab("artboards", away + vec2(40.0, 80.0));
+    assert_eq!(id2, id, "the next float reuses the id");
+    assert_ne!(h.state().float_of("color"), Some(id2));
+    assert!(h.box_tabs(3).contains(&"color".into()));
+}
+
+#[test]
+fn a_tab_dropped_on_a_pill_icon_joins_that_group() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let body = h.rect(&Hit::BoardBody).center();
+    let pill = h.lone_icon("stroke", body + vec2(-160.0, -40.0));
+    let icon = h.rect(&Hit::FloatStripIcon { strip: pill, panel: "stroke".into() });
+    let grip = h.rect(&Hit::FloatStripGroup { strip: pill, index: 0 });
+    assert!(grip.height() <= crate::varos::shell::strip::GRIP + 0.5, "the group grip is a thin band: {grip:?}");
+    assert!(grip.width() > 20.0, "the grip spans the pill: {grip:?}");
+    assert!(grip.bottom() <= icon.top() + 1.0, "the grip sits above the icon");
+    assert!((icon.center().x - (grip.left() + grip.right()) / 2.0).abs() < 1.0, "the icon is centred in the pill");
+    h.hold_drag(h.tab("color").center(), icon.center());
+    let target = h.drop_target();
+    assert!(matches!(target, Some(Target::Strip { slot: Slot::Join { .. }, .. })), "dropping on the icon joins the group: {target:?}");
+    h.release(icon.center());
+    let groups = &h.state().float_strips.iter().find(|s| s.id == pill).expect("the pill").groups;
+    assert_eq!(groups.len(), 1);
+    assert!(groups[0].panels.contains(&"stroke".into()) && groups[0].panels.contains(&"color".into()), "{groups:?}");
 }

@@ -155,9 +155,7 @@ pub(crate) fn begin(app: &mut VectorcraftApp, ctx: &egui::Context, item: Item, s
         Item::Resize { .. } => Vec2::ZERO,
         Item::Group { group, .. } => vec2(floats::STRIP_W, floats::pill_height(group.panels.len())),
         Item::Strip(id) => {
-            let n =
-                app.ui.varos_shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.groups.iter().map(|g| g.panels.len()).sum()).unwrap_or(1usize);
-            vec2(floats::STRIP_W, floats::pill_height(n))
+            app.ui.varos_shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.size()).unwrap_or(vec2(floats::STRIP_W, floats::pill_height(1)))
         }
         Item::Icon(_) | Item::Tools => vec2(ICON, ICON),
     };
@@ -678,7 +676,9 @@ fn strip_target(shell: &VarosShell, hits: &[(Hit, Rect)], sref: StripRef, rail: 
     // Over grip dots: a new group before that group.
     for (i, _) in groups.iter().enumerate() {
         let Some(grip) = rect_of(&sref.group_hit(i)) else { continue };
-        if p.y >= grip.top() - 6.0 && p.y < grip.bottom() {
+        // The band is only the top of the group. A y-only test matched every icon under a
+        // full-height grip, so a drop on an icon never joined the group.
+        if p.x >= grip.left() && p.x < grip.right() && p.y >= grip.top() - 6.0 && p.y < grip.bottom() {
             let before = groups[i..].iter().find_map(free);
             return Some((Target::Strip { strip: sref, slot: Slot::NewGroup { before } }, Some((hline(grip.top(), x0, x1), false))));
         }

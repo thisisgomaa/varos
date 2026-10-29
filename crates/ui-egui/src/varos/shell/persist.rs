@@ -423,17 +423,27 @@ impl VarosShell {
         true
     }
 
+    /// Drop tab homes that name floating panel `id`. Float ids are reused, so a home left
+    /// behind would insert into whichever float is given that id next.
+    fn forget_float_tabs(&mut self, id: u32) {
+        self.homes.retain(|_, home| !matches!(home, PanelHome::Tabs { box_id, .. } if *box_id == id));
+    }
+
     /// Take `panel` out of whichever floating panel holds it (the float goes with its last tab).
     fn take_float_tab(&mut self, panel: &str) -> bool {
-        let Some(f) = self.floats.iter_mut().find(|f| f.panels.tabs.iter().any(|t| t == panel)) else { return false };
-        let b = &mut f.panels;
+        let Some(pos) = self.floats.iter().position(|f| f.panels.tabs.iter().any(|t| t == panel)) else { return false };
+        let id = self.floats[pos].panels.id;
+        let b = &mut self.floats[pos].panels;
         if let Some(i) = b.tabs.iter().position(|t| t == panel) {
             b.tabs.remove(i);
             if b.active > i || b.active >= b.tabs.len() {
                 b.active = b.active.saturating_sub(1);
             }
         }
-        self.floats.retain(|f| !f.panels.tabs.is_empty());
+        if self.floats[pos].panels.tabs.is_empty() {
+            self.floats.remove(pos);
+            self.forget_float_tabs(id);
+        }
         true
     }
 
@@ -645,6 +655,9 @@ impl VarosShell {
     pub(crate) fn close_float(&mut self, id: u32) {
         let Some(i) = self.floats.iter().position(|f| f.panels.id == id) else { return };
         let panels = self.floats.remove(i).panels.tabs;
+        // The id is reused by the next float. A tab home that still names it would restore
+        // into that new float.
+        self.forget_float_tabs(id);
         self.place_all(panels);
         self.settle();
     }
@@ -665,7 +678,10 @@ impl VarosShell {
         for panel in &tabs {
             self.tree.remove_tab(panel);
         }
-        let (restore, fresh): (Vec<String>, Vec<String>) = tabs.into_iter().partition(|p| self.homes.contains_key(p));
+        // A tab dragged in from another box, or reordered here, has a tab home. Restoring
+        // those sends them back. Only a strip or pill home is put back; the rest of the box,
+        // in its current order, becomes one icon group.
+        let (restore, fresh): (Vec<String>, Vec<String>) = tabs.into_iter().partition(|p| matches!(self.homes.get(p), Some(PanelHome::Strip { .. })));
         self.place_all(restore);
         if !fresh.is_empty() {
             self.strip.groups.push(Group {
@@ -832,7 +848,11 @@ impl VarosShell {
                 .clamp(egui::vec2(min_w, BOX_MIN.y), egui::vec2(4000.0, 4000.0));
             f.set_rect(egui::Rect::from_min_size(egui::pos2(ok(r.left(), 0.0), ok(r.top(), 0.0)), size));
         }
+        let gone: Vec<u32> = self.floats.iter().filter(|f| f.panels.tabs.is_empty()).map(|f| f.panels.id).collect();
         self.floats.retain(|f| !f.panels.tabs.is_empty());
+        for id in gone {
+            self.forget_float_tabs(id);
+        }
         for s in &mut self.float_strips {
             for g in &mut s.groups {
                 g.panels.retain(&mut keep);

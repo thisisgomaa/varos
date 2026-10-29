@@ -15,10 +15,10 @@ pub(crate) const SEAM: f32 = 1.0;
 /// The smallest an ordinary box may be made by a divider (height; width comes from [`panel_min_width`]).
 pub(crate) const BOX_MIN: Vec2 = vec2(180.0, 120.0);
 
-/// The pointer must pass the column's minimum by this much before the azure collapse hint shows.
-pub(crate) const COLLAPSE_HINT: f32 = 16.0;
-/// On release, the column collapses only once the pointer is this far past the minimum.
+/// How far past the column's minimum the pointer must be before the azure hint shows and,
+/// on release, the column collapses. One threshold for both.
 pub(crate) const COLLAPSE_RELEASE: f32 = 32.0;
+pub(crate) const COLLAPSE_HINT: f32 = COLLAPSE_RELEASE;
 
 /// The narrowest a panel's column may be drawn. Dividers stop here; dragging past it collapses
 /// the column into the strip.
@@ -521,8 +521,8 @@ impl Node {
 
     /// How far `center` wants a horizontal split's side past its minimum, and `true` when that side
     /// is `a`. None while both sides still fit, the axis is vertical, or the short side is the Board.
-    /// The layout itself stays clamped at the minimum; the hint starts at 16 pt and the release
-    /// collapses only at 32 pt ([`COLLAPSE_HINT`], [`COLLAPSE_RELEASE`]).
+    /// The layout itself stays clamped at the minimum. The hint and the collapse share one
+    /// threshold, 32 pt ([`COLLAPSE_RELEASE`]).
     pub fn side_overshoot(&self, path: &[u8], center: f32, span: Rect) -> Option<(bool, f32)> {
         let Node::Split { axis, a, b, .. } = self.split_at(path)? else { return None };
         if *axis != Axis::Horizontal {

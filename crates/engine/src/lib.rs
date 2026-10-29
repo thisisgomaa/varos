@@ -2439,6 +2439,13 @@ impl Session {
         }
     }
 
+    /// Whether [`Session::begin_undo_group`] would open a group on the active document.
+    /// False when one is already open, or an `edit.undoGroup.begin` is in force: ending a
+    /// group clears that too, so a caller must not claim a group it did not open.
+    pub fn undo_group_is_free(&self) -> bool {
+        self.explicit_undo_group.is_none() && self.active().is_none_or(|st| st.undo_group.is_none())
+    }
+
     /// Between `edit.undoGroup.begin` and `edit.undoGroup.end`, open an undo group with the begun
     /// group's name in each document that the top-level command just run opened or created (its
     /// [`DocState::uid`] is not in `open`). The group takes the edits after that command: the

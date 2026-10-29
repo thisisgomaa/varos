@@ -178,9 +178,13 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
         let response = ui.interact(more, ui.scope_id().with("tab-overflow"), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("More tabs")));
         crate::icons::paint(ui, "shell-chevrons-right", Rect::from_center_size(more.center(), vec2(16.0, 16.0)), t.text_dim);
-        let n = hidden.max(1);
-        let tip = crate::i18n::fmt(tl!("{n} more panels"), &[("n", &n.to_string())]);
-        let response = response.on_hover_text(tip);
+        // A lone truncated active pill still shows `»`, with no "1 more panels" tip.
+        let response = if hidden >= 1 {
+            let tip = crate::i18n::trn(crate::i18n::current(), hidden as u64, "{n} more panel", "{n} more panels");
+            response.on_hover_text(tip)
+        } else {
+            response
+        };
         egui::Popup::menu(&response).show(|ui| {
             for (i, (_, label)) in tabs.iter().enumerate() {
                 if before.get(i).is_some_and(|(pill, _)| pill.is_positive()) {

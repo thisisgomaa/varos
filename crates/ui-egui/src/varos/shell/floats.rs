@@ -27,9 +27,9 @@ pub(crate) const PILL_GRIP: f32 = 16.0;
 pub(crate) const PILL_ROW: f32 = 30.0;
 pub(crate) const PILL_PAD: f32 = 6.0;
 
-/// Height of a lone-icon pill of `n` icons: grip + n×30 + pad.
+/// Height of a one-group pill of `n` icons: the header, one grip band, the icon rows, the pad.
 pub(crate) fn pill_height(n: usize) -> f32 {
-    PILL_GRIP + n.max(1) as f32 * PILL_ROW + PILL_PAD
+    PILL_GRIP + super::strip::GRIP + n.max(1) as f32 * PILL_ROW + PILL_PAD
 }
 /// A floating panel's size when nothing remembers one.
 pub(crate) const DEFAULT_SIZE: Vec2 = vec2(260.0, 360.0);
@@ -86,7 +86,8 @@ pub struct FloatStrip {
 impl FloatStrip {
     pub(crate) fn size(&self) -> Vec2 {
         let icons: usize = self.groups.iter().map(|g| g.panels.len()).sum();
-        vec2(STRIP_W, pill_height(icons))
+        let bands = self.groups.len().max(1) as f32 * super::strip::GRIP;
+        vec2(STRIP_W, PILL_GRIP + bands + icons.max(1) as f32 * PILL_ROW + PILL_PAD)
     }
 
     pub(crate) fn rect(&self, region: Rect) -> Rect {
@@ -317,19 +318,28 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
         if button(ui, expand, area.with("expand"), ">>", "Expand panels", &t) {
             ask = Some(Ask::Expand);
         }
-        let mut n = 0usize;
+        let mut y = rect.top() + PILL_GRIP;
         for (gi, g) in s.groups.iter().enumerate() {
-            let gy = rect.top() + PILL_GRIP + n as f32 * PILL_ROW;
-            let grow = (g.panels.len().max(1) as f32) * PILL_ROW;
-            let group_grip = Rect::from_min_size(pos2(rect.left(), gy), vec2(12.0, grow));
-            tops.push(gy);
+            // A thin band across the top of the group. A full-height column covered the icons,
+            // so a drop on an icon was read as a new group before this one.
+            let group_grip = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), super::strip::GRIP));
+            tops.push(y);
             hits.push((sref.group_hit(gi), group_grip));
             let group_drag = ui.interact(group_grip, area.with(("group", gi)), Sense::drag());
+            if group_drag.hovered() {
+                ctx.set_cursor_icon(egui::CursorIcon::Grab);
+            }
             if group_drag.drag_started() {
                 drag::begin(app, &ctx, Item::Group { strip: sref, group: g.clone() }, group_grip);
             }
+            let c = group_grip.center();
+            for dx in [-4.0, 0.0, 4.0] {
+                painter.circle_filled(pos2(c.x + dx, c.y), 1.2, t.text_dim);
+            }
+            y += super::strip::GRIP;
             for panel in &g.panels {
-                let tile = Rect::from_min_size(pos2(rect.left() + 12.0, rect.top() + PILL_GRIP + n as f32 * PILL_ROW), vec2(26.0, 28.0));
+                let row = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), PILL_ROW));
+                let tile = Rect::from_center_size(row.center(), vec2(26.0, 28.0));
                 let r = ui.interact(tile, area.with(("icon", panel)), Sense::click_and_drag());
                 if r.drag_started() {
                     drag::begin(app, &ctx, Item::Icon(panel.clone()), tile);
@@ -341,7 +351,7 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
                     }
                 }
                 icons.push((panel.clone(), tile, r));
-                n += 1;
+                y += PILL_ROW;
             }
         }
         painter.rect_stroke(rect, CornerRadius::same(boxes::RADIUS), Stroke::new(1.0, t.border), StrokeKind::Inside);
