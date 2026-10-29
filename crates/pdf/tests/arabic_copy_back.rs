@@ -1001,3 +1001,60 @@ fn a_bold_word_with_a_zwnj_exports_and_copies_back() {
     let got = round_trip_in("persian-bold-zwnj", 720.0, 240.0, std::slice::from_ref(&t));
     assert_eq!(got, vec![sentence.to_string()]);
 }
+
+/// Advance of `text` in `family` at `size`, as Varos lays it out.
+fn advance_of(family: &str, size: f64, text: &str) -> f32 {
+    let st = CharStyle { font_family: family.into(), size, ..Default::default() };
+    let t = TextObject::point(Point::ZERO, text, st);
+    vectorcraft_text::layout(FontDb::global(), &t).glyphs.iter().map(|g| g.advance).sum::<f64>() as f32
+}
+
+/// A word processor tags one Arabic word inside an English line `/Span <</Lang (ar-SA)>>`.
+/// The line is not right to left: it reads back in its first strong direction, in logical order.
+/// The word has no lam-alef: krilla's own shaper maps that ligature to its logical characters.
+#[test]
+fn an_arabic_word_tagged_in_an_english_line_keeps_the_line_left_to_right() {
+    use krilla::geom::Point as KPoint;
+    use krilla::page::PageSettings;
+    use krilla::tagging::{ContentTag, SpanTag};
+    use krilla::text::{Font, TextDirection};
+    fonts();
+    const SANS: &[u8] = include_bytes!("../../../assets/fonts/SourceSans3-Regular.ttf");
+    let (size, y) = (24.0f32, 80.0f32);
+    let sans = Font::new(SANS.into(), 0).unwrap();
+    let noto = Font::new(NOTO.into(), 0).unwrap();
+    let mut pdf = krilla::Document::new();
+    let mut page = pdf.start_page_with(PageSettings::from_wh(500.0, 200.0).unwrap());
+    let mut s = page.surface();
+    let mut x = 20.0f32;
+    s.draw_text(KPoint::from_xy(x, y), sans.clone(), size, "The word ", false, TextDirection::Auto);
+    x += advance_of("Source Sans 3", f64::from(size), "The word ");
+    s.start_tagged(ContentTag::Span(SpanTag { lang: Some("ar-SA"), ..SpanTag::empty() }));
+    s.draw_text(KPoint::from_xy(x, y), noto, size, "مرحبا", false, TextDirection::RightToLeft);
+    s.end_tagged();
+    x += advance_of("Noto Sans Arabic", f64::from(size), "مرحبا");
+    s.draw_text(KPoint::from_xy(x, y), sans, size, " means hello", false, TextDirection::Auto);
+    s.finish();
+    page.finish();
+    let pdf = pdf.finish().unwrap();
+    publish("word-style-lang-span", &pdf);
+    check_reader("word-style-lang-span", &pdf, &["The word مرحبا means hello".to_string()]);
+}
+
+/// Three runs on one right-to-left line, each piece filled as text and then stroked as one
+/// outline. Every piece's stroke is held with the line: it stays one text object.
+#[test]
+fn a_line_of_three_stroked_pieces_stays_one_text_object() {
+    fonts();
+    let arabic = CharStyle { font_family: "Noto Sans Arabic".into(), size: 24.0, ..Default::default() };
+    let latin = CharStyle { font_family: "Source Sans 3".into(), size: 24.0, ..Default::default() };
+    let mut t = TextObject::point(Point::new(40.0, 80.0), "", arabic.clone());
+    t.runs = vec![TextRun::new("مرحبا ", arabic.clone()), TextRun::new("ABC ", latin), TextRun::new("سلام", arabic)];
+    let t = stroke_runs(t);
+    let layout = vectorcraft_text::layout(FontDb::global(), &t);
+    assert_eq!(layout.lines.len(), 1, "one line");
+    assert!(ink_pieces(&t) >= 3, "three ink pieces, got {}", ink_pieces(&t));
+    let pdf = export(&doc_sized(720.0, 240.0, std::slice::from_ref(&t)), &PdfOptions::default()).unwrap();
+    publish("three-stroked-pieces", &pdf);
+    check_reader("three-stroked-pieces", &pdf, &[t.plain_text()]);
+}

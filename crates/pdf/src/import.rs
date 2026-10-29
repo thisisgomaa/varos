@@ -661,13 +661,19 @@ fn matching_face(
     }
     // A contextual Arabic form is not the cmap glyph of its character. The outline is still
     // this face's (a presentation form or a ligature); rejecting the face would outline the line.
-    if best.is_none() && face_draws(face, text, o) {
+    if best.is_none() && text.chars().any(arabic_script) && face_draws(face, text, o) {
         return Some(face.clone());
     }
     best.map(|(_, f)| f)
 }
 
+/// An Arabic-script character: a letter, mark or digit, or a presentation form.
+fn arabic_script(c: char) -> bool {
+    matches!(c, '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{08A0}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+}
+
 /// Does `face` draw `o`'s outline as a form of `text`, not as some other character's glyph?
+/// Only asked for Arabic-script text: the box test alone is too loose to name a Latin face.
 fn face_draws(face: &vectorcraft_text::FontFace, text: &str, o: &craft_pdf::interpret::font::OutlineGlyph) -> bool {
     let embedded = o.outline();
     if embedded.elements().is_empty() {
@@ -1516,7 +1522,7 @@ impl<'p> Builder<'p> {
         let Some(line) = &self.text else { return false };
         // The glyphs not yet given a stroke: one, when each glyph is stroked as it is drawn, or
         // several, when a run's piece is filled and then stroked as one outline.
-        let pending = line.ink.get(line.held.len()..).filter(|g| !g.is_empty());
+        let pending = line.ink.get(line.stroked..).filter(|g| !g.is_empty());
         let Some(pending) = pending else { return false };
         if opacity < 0.999 || !line.last_fill().is_some_and(|f| *f == p) {
             return false;
@@ -1538,6 +1544,7 @@ impl<'p> Builder<'p> {
         let n = Node::path(self.id(), PathData::from_bezpath(&bp), Appearance { items: vec![AppearanceItem::Stroke(st)], ..Default::default() });
         if let Some(line) = &mut self.text {
             line.held.push(n);
+            line.stroked = line.ink.len();
         }
         true
     }
@@ -2006,12 +2013,15 @@ impl<'p> Builder<'p> {
         true
     }
 
-    /// A `/Lang` of a right-to-left language on an open span marks the line being read.
+    /// A `/Lang` of a right-to-left language on an open span marks the line being read, when
+    /// every glyph placed on it so far is inside such a span. One Arabic word tagged in an
+    /// English line (as word processors write it) leaves the line to its first strong character.
     fn note_rtl(&mut self) {
-        if self.actual.iter().any(|f| f.rtl)
-            && let Some(line) = self.text.as_mut()
-        {
-            line.rtl = true;
+        let inside = self.actual.iter().any(|f| f.rtl);
+        if let Some(line) = self.text.as_mut() {
+            let all = line.rtl_all.unwrap_or(true) && inside;
+            line.rtl_all = Some(all);
+            line.rtl = all;
         }
     }
 }

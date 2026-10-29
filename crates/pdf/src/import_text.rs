@@ -177,8 +177,11 @@ pub(crate) struct TextLine {
     upright: Option<Upright>,
     /// The glyphs make a column (vertical type), each below the last.
     column: bool,
-    /// An open span's `/Lang` named a right-to-left language: reorder this line that way.
+    /// Every glyph on the line was inside a span whose `/Lang` names a right-to-left language:
+    /// reorder this line that way.
     pub(crate) rtl: bool,
+    /// Whether every glyph placed so far was inside such a span (`None`: none placed yet).
+    pub(crate) rtl_all: Option<bool>,
     /// Each glyph's ink box as drawn (document space), in drawing order; glyphs without ink are
     /// left out.
     pub ink: Vec<Rect>,
@@ -192,9 +195,11 @@ pub(crate) struct TextLine {
     /// A space the file drew after a glyph that isn't one, until the next glyph comes: its byte
     /// offset, and the gap before it plus its advance (points).
     drawn_space: Option<(usize, f64)>,
-    /// The strokes of its glyphs' outlines drawn between them, one per glyph with ink so far
-    /// (written right after the line).
+    /// The strokes of its glyphs' outlines drawn between them (written right after the line):
+    /// one per glyph, or one per run's piece when a piece is filled and then stroked.
     pub held: Vec<Node>,
+    /// How many of [`ink`](Self::ink) the held strokes cover: the glyphs after it have none yet.
+    pub stroked: usize,
 }
 
 /// Where the file put a glyph: the glyph's index in the line, and its advance in the file's font
@@ -237,11 +242,13 @@ impl TextLine {
             upright: None,
             column: false,
             rtl: false,
+            rtl_all: None,
             ink: vec![],
             gaps: vec![],
             drawn_spaces: vec![],
             drawn_space: None,
             held: vec![],
+            stroked: 0,
         }
     }
 
