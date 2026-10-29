@@ -662,28 +662,34 @@ fn assert_piece_paint(name: &str, t: &TextObject, stroked: bool) {
     let strokes = ops.iter().filter(|o| *o == "S" || *o == "s").count();
     assert_eq!(fills, 0, "{name}: glyph fills are text operators, ops {ops:?}");
     if stroked {
-        assert!(strokes >= 1, "{name}: the run is stroked after its text, ops {ops:?}");
+        assert!(strokes >= pieces, "{name}: each piece is stroked after its text, ops {ops:?}");
     } else {
         assert_eq!(strokes, 0, "{name}: no character stroke, ops {ops:?}");
     }
 }
 
-/// Words of a wrapped paragraph. A line whose visual left edge is Latin is read back on its
-/// own, so the paragraph is not one string; every authored word is still there.
-fn assert_words(name: &str, t: &TextObject, words: &[&str]) {
+/// The re-imported text is the authored string, and every run still has its fill.
+fn assert_words(name: &str, t: &TextObject) {
     let pdf = export(&doc_sized(720.0, 520.0, std::slice::from_ref(t)), &PdfOptions::default()).unwrap();
     publish(name, &pdf);
     check_pdftotext(name, &pdf, &[t.plain_text()]);
     let back = import_with_report(&pdf, &ImportOptions::default()).unwrap();
-    let joined = texts(&back.document).join(" ");
-    for word in words {
-        assert!(joined.contains(word), "{name}: {joined:?} is missing {word}");
-    }
+    let got = texts(&back.document);
+    assert_eq!(got.join(""), t.plain_text(), "{name}: {got:?}");
+    let mut filled = false;
+    back.document.walk(|n| {
+        if let NodeKind::Text(obj) = &n.kind {
+            for run in &obj.runs {
+                assert!(!run.style.fill.is_none(), "{name}: re-imported text has no fill");
+                filled = true;
+            }
+        }
+    });
+    assert!(filled, "{name}: no text came back");
 }
 
 /// Multi-line RTL with two runs, and the interleaved wrap "مرحبا ABC" / "DEF سلام".
-/// The fill is real text in run-index order (not glyph outlines). A stroke, when there is
-/// one, follows that run's text. The authored words copy back from the invisible layer.
+/// The fill is real text in visual order. A stroke, when there is one, follows each piece.
 #[test]
 fn split_runs_stroke_after_each_piece_and_copy_back() {
     fonts();
@@ -698,10 +704,10 @@ fn split_runs_stroke_after_each_piece_and_copy_back() {
         2,
     );
     let two_text = two.plain_text();
-    assert_words("split-two-runs", &two, &["مرحبا", "بالعالم", "Hello", "world", "today"]);
+    assert_words("split-two-runs", &two);
     assert_piece_paint("split-two-runs", &two, false);
     let two_stroke = stroke_runs(two);
-    assert_words("split-two-runs-stroke", &two_stroke, &["مرحبا", "بالعالم", "Hello", "world", "today"]);
+    assert_words("split-two-runs-stroke", &two_stroke);
     assert_piece_paint("split-two-runs-stroke", &two_stroke, true);
     assert_eq!(two_stroke.plain_text(), two_text);
 
@@ -714,10 +720,10 @@ fn split_runs_stroke_after_each_piece_and_copy_back() {
         2,
     );
     assert_eq!(interleaved.plain_text(), "مرحبا ABC DEF سلام");
-    assert_words("interleaved", &interleaved, &["مرحبا", "ABC", "DEF", "سلام"]);
+    assert_words("interleaved", &interleaved);
     assert_piece_paint("interleaved", &interleaved, false);
     let interleaved_stroke = stroke_runs(interleaved);
-    assert_words("interleaved-stroke", &interleaved_stroke, &["مرحبا", "ABC", "DEF", "سلام"]);
+    assert_words("interleaved-stroke", &interleaved_stroke);
     assert_piece_paint("interleaved-stroke", &interleaved_stroke, true);
 }
 
@@ -979,4 +985,19 @@ fn an_underlined_split_run_draws_each_bar_once() {
     let closes = ops.iter().enumerate().filter(|(i, o)| **o == "h" && !matches!(ops.get(i + 1).map(String::as_str), Some("W" | "W*"))).count();
     let drawn = if rects > 0 { rects } else { closes };
     assert_eq!(drawn, bars.len(), "each bar once, not also on the line above; ops {ops:?}");
+}
+
+/// A bold word carrying a ZWNJ used to open a joiner span while an outer span was still open
+/// (`can't start marked content twice`). The sentence exports and copies back as authored.
+#[test]
+fn a_bold_word_with_a_zwnj_exports_and_copies_back() {
+    fonts();
+    let sentence = "این خانه\u{200C}ی زیبا است";
+    let regular = CharStyle { font_family: "Noto Sans Arabic".into(), size: 24.0, ..Default::default() };
+    let bold = CharStyle { font_family: "Noto Sans Arabic".into(), font_style: "Bold".into(), size: 24.0, ..Default::default() };
+    let mut t = TextObject::point(Point::new(40.0, 80.0), "", regular.clone());
+    t.runs = vec![TextRun::new("این ", regular.clone()), TextRun::new("خانه\u{200C}ی", bold), TextRun::new(" زیبا است", regular)];
+    assert_eq!(t.plain_text(), sentence);
+    let got = round_trip_in("persian-bold-zwnj", 720.0, 240.0, std::slice::from_ref(&t));
+    assert_eq!(got, vec![sentence.to_string()]);
 }

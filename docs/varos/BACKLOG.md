@@ -105,6 +105,12 @@ Gradient editor; solid modes convert gradients back to a solid. The mode row has
 or Gradient navigation text. Headless interaction tests and software captures pass. No parity
 score change. See `lanes/picker2-report.md`.
 
+## 2026-10-29 — PDF visual-order z-order
+- Mixed-run right-to-left PDF text is painted in visual order within a line (each run's piece, then
+  its stroke). SVG export paints that line by run index. The orders differ where glyphs of different
+  runs overlap. Those lines are marked `/Lang (ar)` so copy-back is the logical string when the
+  visual line starts with left-to-right text.
+
 ## 2026-10-28 — cloud batch notes
 - FIXED (#4): PDF copy-back of ligature words (Allah) and of stroked Force-kashida words; both tests un-ignored.
   Follow-ups from review: Auto-kashida fixture uses point text (no elongation) → add justified area text;

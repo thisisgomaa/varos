@@ -688,3 +688,34 @@ fn a_control_inside_actualtext_does_not_drop_the_span() {
     let text = got.join("");
     assert!(text.contains('A') && text.contains('B'), "{got:?}");
 }
+
+/// An empty `/ActualText` is absent. The glyphs keep their own characters.
+#[test]
+fn an_empty_actualtext_keeps_the_glyphs_characters() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText () >> BDC (AB) Tj EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["AB"]);
+}
+
+/// A later glyph of an `/ActualText` span (pen mode) that does not sit on the line stays an outline.
+#[test]
+fn a_pen_glyph_the_line_will_not_take_keeps_its_outline() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (ab) >> BDC (A) Tj 1 0 0 1 400 50 Tm (B) Tj EMC ET";
+    let d = open_as(&page(content, ""), TextAs::Text);
+    assert_eq!(plain(&d), ["ab"]);
+    assert!(holds_outlines(&d), "the pen glyph vanished");
+}
+
+/// PDF 2.0: a text string with an EF BB BF BOM is UTF-8.
+#[test]
+fn actualtext_with_a_utf8_bom_is_utf8() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText <EFBBBF6869> >> BDC (A) Tj EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["hi"]);
+}
+
+/// PDFDocEncoding is not Latin-1: 0x80 is a bullet, 0x18 a breve, 0xA0 the euro.
+/// Several characters, so the glyph outline is not required to match one of them.
+#[test]
+fn actualtext_pdfdocencoding_is_not_latin1() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (\\200\\030\\240) >> BDC (A) Tj EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["\u{2022}\u{2D8}\u{20AC}"]);
+}

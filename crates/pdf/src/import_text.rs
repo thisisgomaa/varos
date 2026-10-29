@@ -177,6 +177,8 @@ pub(crate) struct TextLine {
     upright: Option<Upright>,
     /// The glyphs make a column (vertical type), each below the last.
     column: bool,
+    /// An open span's `/Lang` named a right-to-left language: reorder this line that way.
+    pub(crate) rtl: bool,
     /// Each glyph's ink box as drawn (document space), in drawing order; glyphs without ink are
     /// left out.
     pub ink: Vec<Rect>,
@@ -234,6 +236,7 @@ impl TextLine {
             slots: vec![],
             upright: None,
             column: false,
+            rtl: false,
             ink: vec![],
             gaps: vec![],
             drawn_spaces: vec![],
@@ -351,6 +354,10 @@ impl TextLine {
             } else {
                 self.runs.push((look.clone(), shift, text.to_string()));
             }
+        } else if text.is_empty() {
+            // The line has no character yet. An empty run is discarded at the end, and this
+            // glyph's outline would go with it.
+            return false;
         } else {
             self.runs.push((look.clone(), 0.0, text.to_string()));
         }
@@ -426,7 +433,11 @@ impl TextLine {
         // Turned along a curve: type on a path through the glyphs.
         let path = if self.curved() { self.baseline_path() } else { None };
         facts.wraps = path.is_none() && self.upright.is_none() && self.runs.last().is_some_and(|(.., t)| t.ends_with(' '));
-        if let Some((.., last)) = self.runs.last_mut() {
+        // A right-to-left line keeps its trailing space: the lines are not one area-text object
+        // (the runs use different fonts), and trimming it would drop the space between them.
+        if !self.rtl
+            && let Some((.., last)) = self.runs.last_mut()
+        {
             last.truncate(last.trim_end().len());
         }
         self.runs.retain(|(.., t)| !t.is_empty());
@@ -512,7 +523,7 @@ impl TextLine {
         gaps.extend(self.drawn_spaces.iter().map(|&(b, width)| (b + spaces.iter().filter(|s| s.0 < b).count(), width)));
         gaps.sort_by_key(|&(b, _)| b);
         if self.upright.is_none() {
-            to_logical(&mut t);
+            to_logical(&mut t, self.rtl);
         }
         let angle = self.at.dir.atan2();
         // The glyphs' tops lean along the baseline (+x), up being -y in the type's own space.
@@ -1000,8 +1011,9 @@ impl Families {
 
 /// Hebrew or Arabic comes from a PDF in visual order (each glyph where it is drawn): put `t`'s text
 /// back in logical order, with the paragraph direction that shows it as drawn.
-fn to_logical(t: &mut TextObject) {
-    let Some((order, rtl)) = vectorcraft_text::logical_order(&t.plain_text()) else { return };
+fn to_logical(t: &mut TextObject, rtl_line: bool) {
+    let direction = rtl_line.then_some(ParaDirection::RightToLeft);
+    let Some((order, rtl)) = vectorcraft_text::logical_order_in(&t.plain_text(), direction) else { return };
     let chars: Vec<(char, usize)> = t.runs.iter().enumerate().flat_map(|(i, r)| r.text.chars().map(move |c| (c, i))).collect();
     let mut runs: Vec<(usize, String)> = Vec::with_capacity(t.runs.len());
     for &(c, i) in order.iter().filter_map(|&k| chars.get(k)) {
