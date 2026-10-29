@@ -105,6 +105,27 @@ Gradient editor; solid modes convert gradients back to a solid. The mode row has
 or Gradient navigation text. Headless interaction tests and software captures pass. No parity
 score change. See `lanes/picker2-report.md`.
 
+## 2026-10-29 — Arabic PDF lane 2 follow-ups
+- PDF writer: krilla tagging is on by default and Varos builds no tag tree, so a span (`/Lang (ar)` on
+  a mixed right-to-left line, `/ActualText` for a joiner) leaves MCIDs in the content and a page
+  `/StructParents` with no `StructTreeRoot`. Valid enough for PDF/A-2b and PDF/X-4, but a strict
+  preflight may warn. Write plain marked content, or a real tag tree.
+- PDF writer: krilla writes spans only on the page surface. Inside a form XObject (PDF layers,
+  overprint, invisible text for unpainted or pattern fills and bent glyphs) the `/Lang` and joiner
+  `/ActualText` tags are dropped silently: the paint is right, copy-back degrades.
+- PDF writer: `/Lang` is hard-coded `ar` for every right-to-left line, Persian and Hebrew included.
+  It works as a direction flag but names the wrong language.
+- PDF copy-back: a single-run right-to-left line whose visual start is Latin ("أنا أحب Rust") takes
+  the unchanged run-index path with no `/Lang`, so our reader reads it left to right (wrong logical
+  order). Unchanged from main.
+- PDF reader: `/ActualText` now applies to every PDF. A span across several lines (a word hyphenated
+  over a line break) places its string on the first line, and the later lines' glyphs in it come
+  in as outlines.
+- PDF reader: a run's piece stroked as one outline is held with its line, but `join_strokes` wants
+  one stroke path per glyph, so those strokes come in as paths beside the type, not as its stroke.
+- `crates/pdf/src/export.rs`: `glyph_text`'s doc comment moved onto `paint_visual` (with a
+  duplicated `#[allow]`); `glyph_text` has none, and its `span` and `mark_rtl` are undocumented.
+
 ## 2026-10-29 — PDF visual-order z-order
 - Mixed-run right-to-left PDF text is painted in visual order within a line (each run's piece, then
   its stroke). SVG export paints that line by run index. The orders differ where glyphs of different
