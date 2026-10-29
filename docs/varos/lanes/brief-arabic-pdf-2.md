@@ -27,11 +27,9 @@ Add fixtures + tests, each verified with the crate's own reader AND with `pdftot
    explain the root cause in your final report.
 
 HEAT RULE (hard, this Mac): another cargo lane is running. Write all fixtures/tests FIRST without cargo.
-Before your FIRST cargo command, wait until the file
-/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/go-arabic2-cargo
-exists (`test -f`; if absent `sleep 60`, up to 180 times). Then run ONE cargo command at a time, always with
-`-j 2`, `--offline`, tests with `-- --test-threads=2`, and
-`CARGO_TARGET_DIR="~/Documents/AI workspace/lanes/_target-shared"`.
+Before your FIRST cargo command, wait until the lane's go-file exists (`test -f`; if absent `sleep 60`,
+up to 180 times). Then run ONE cargo command at a time, always with `-j 2`, `--offline`, tests with
+`-- --test-threads=2`, and `CARGO_TARGET_DIR` set to the shared lane target directory.
 Gates: `cargo test -p vectorcraft-pdf -p vectorcraft-text-arabic --release` (0 failures),
 `cargo clippy -p vectorcraft-pdf -p vectorcraft-text-arabic --all-targets -- -D warnings`, `cargo fmt --check -p vectorcraft-pdf`,
 `git diff --check`.

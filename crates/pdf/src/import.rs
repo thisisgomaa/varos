@@ -1096,18 +1096,19 @@ impl<'p> Builder<'p> {
     }
 
     fn actual_mode(&self) -> ActualMode {
-        let Some(idx) = self.actual.iter().rposition(|f| f.text.as_ref().is_some_and(|s| !s.is_empty())) else {
+        // The outermost sequence that carries /ActualText wins, including an explicit empty
+        // string. A nested span does not replace the enclosing one (ISO 32000-1 §14.9.4).
+        // An empty replacement contributes no characters; the glyphs still advance the pen.
+        let Some(idx) = self.actual.iter().position(|f| f.text.is_some()) else {
             return ActualMode::Plain;
         };
-        if self.actual.get(idx).is_some_and(|f| f.used) {
-            ActualMode::Pen
-        } else {
-            ActualMode::Replace(self.actual.get(idx).and_then(|f| f.text.clone()).unwrap_or_default())
-        }
+        let frame = self.actual.get(idx);
+        let text = frame.and_then(|f| f.text.clone()).unwrap_or_default();
+        if text.is_empty() || frame.is_some_and(|f| f.used) { ActualMode::Pen } else { ActualMode::Replace(text) }
     }
 
     fn mark_actual_used(&mut self) {
-        let Some(idx) = self.actual.iter().rposition(|f| f.text.as_ref().is_some_and(|s| !s.is_empty())) else { return };
+        let Some(idx) = self.actual.iter().position(|f| f.text.as_ref().is_some_and(|s| !s.is_empty())) else { return };
         if let Some(frame) = self.actual.get_mut(idx) {
             frame.used = true;
         }
@@ -1808,7 +1809,12 @@ impl<'p> Builder<'p> {
         let Some(at) = Placement::of(m) else { return false };
         // A later glyph of an `/ActualText` span only moves the pen: the first glyph already
         // placed the string. An empty advance here must not become a word space.
-        if !matches!(&mode, ActualMode::Pen) && (text.is_empty() || text.chars().any(|c| c.is_control())) {
+        // A control inside /ActualText is part of the replacement. Dropping the glyph would
+        // drop the rest of the span with it. Plain text still skips controls (a soft hyphen).
+        if !matches!(&mode, ActualMode::Pen) && text.is_empty() {
+            return false;
+        }
+        if matches!(&mode, ActualMode::Plain) && text.chars().any(|c| c.is_control()) {
             return false;
         }
         let width = o.advance_width().filter(|w| w.is_finite());

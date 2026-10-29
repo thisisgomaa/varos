@@ -19,6 +19,16 @@ const KASHIDA: &str = "بسم الرحمن الرحيم";
 /// Families whose files are committed as test fixtures or bundled with the app. System fonts are
 /// not consulted: a Mac with Arial must not turn the Hebrew case into a pass.
 const FIXTURE_FAMILIES: &[&str] = &["Noto Sans Arabic", "IBM Plex Sans Arabic", "Source Sans 3", "Source Serif 4", "Inter", "JetBrains Mono"];
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let dig = Sha256::digest(bytes);
+    let mut out = String::with_capacity(dig.len() * 2);
+    for b in dig {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
 /// Latin-only export with the creation date pinned (2020-01-01 UTC). The writer has no switch
 /// around the Arabic visual-order mapping; that loop only rewrites RTL clusters, and this
 /// document has none. Regenerate by running the test (it prints the digest on failure):
@@ -427,7 +437,7 @@ fn latin_only_pdf_bytes_stay_frozen() {
     assert_eq!(pdf, again, "two Latin exports with a pinned date are the same bytes");
     publish("latin-frozen", &pdf);
     check_copy("latin-frozen", &pdf, &[LATIN_ONLY.to_string()]);
-    let hash = vectorcraft_pdf::sha256_hex(&pdf);
+    let hash = sha256_hex(&pdf);
     assert_eq!(
         hash, LATIN_ONLY_SHA256,
         "Latin PDF sha256 changed (the Arabic mapping has no switch; this locks the bytes without it).\n\
@@ -521,7 +531,7 @@ fn paint_ops(pdf: &[u8]) -> Vec<String> {
         let Some(end_rel) = pdf.get(start..).and_then(|rest| rest.windows(9).position(|w| w == b"endstream")) else { break };
         let end = start + end_rel;
         if let Some(stream) = pdf.get(start..end)
-            && stream.iter().all(|b| b.is_ascii())
+            && stream.windows(2).any(|w| w == b"BT")
         {
             scan_paint(stream, &mut ops);
         }
@@ -537,7 +547,7 @@ fn scan_paint(stream: &[u8], ops: &mut Vec<String>) {
     let flush = |token: &mut Vec<u8>, text: i32, ops: &mut Vec<String>| -> String {
         let s = String::from_utf8_lossy(token).into_owned();
         token.clear();
-        if text == 0 && matches!(s.as_str(), "f" | "f*" | "S" | "s" | "B" | "B*" | "b" | "b*") {
+        if text == 0 && matches!(s.as_str(), "f" | "f*" | "S" | "s" | "B" | "B*" | "b" | "b*" | "re" | "h" | "W" | "W*") {
             ops.push(s.clone());
         }
         s
@@ -589,6 +599,17 @@ fn scan_paint(stream: &[u8], ops: &mut Vec<String>) {
                     i += 1;
                 }
             }
+            // `BT/ReversedChars` has no space. A name starts a new token, so the operator before it is seen.
+            b'/' => {
+                let name = flush(&mut token, text, ops);
+                if name == "BT" {
+                    text += 1;
+                } else if name == "ET" {
+                    text -= 1;
+                }
+                token.push(b'/');
+                i += 1;
+            }
             b' ' | b'\n' | b'\r' | b'\t' | b'[' | b']' => {
                 let name = flush(&mut token, text, ops);
                 if name == "BT" {
@@ -634,25 +655,16 @@ fn assert_piece_paint(name: &str, t: &TextObject, stroked: bool) {
     let mut opts = PdfOptions::uncompressed();
     opts.created = Some(1_577_836_800);
     let pdf = export(&doc_sized(720.0, 520.0, std::slice::from_ref(t)), &opts).unwrap();
+    let raw = String::from_utf8_lossy(&pdf);
+    assert!(raw.contains("Tj") || raw.contains("TJ"), "{name}: glyphs are real text, not outlines");
     let ops = paint_ops(&pdf);
     let fills = ops.iter().filter(|o| *o == "f" || *o == "f*").count();
     let strokes = ops.iter().filter(|o| *o == "S" || *o == "s").count();
+    assert_eq!(fills, 0, "{name}: glyph fills are text operators, ops {ops:?}");
     if stroked {
-        assert!(strokes >= pieces, "{name}: each piece is stroked on its own, ops {ops:?}, pieces {pieces}");
-        assert_eq!(fills, strokes, "{name}: fill then that piece's stroke, ops {ops:?}");
-        let mut want_fill = true;
-        for op in &ops {
-            if op == "f" || op == "f*" {
-                assert!(want_fill, "{name}: a fill landed on an earlier stroke, ops {ops:?}");
-                want_fill = false;
-            } else if op == "S" || op == "s" {
-                assert!(!want_fill, "{name}: a stroke landed before its fill, ops {ops:?}");
-                want_fill = true;
-            }
-        }
+        assert!(strokes >= 1, "{name}: the run is stroked after its text, ops {ops:?}");
     } else {
         assert_eq!(strokes, 0, "{name}: no character stroke, ops {ops:?}");
-        assert!(fills >= pieces, "{name}: each piece is filled, ops {ops:?}, pieces {pieces}");
     }
 }
 
@@ -670,8 +682,8 @@ fn assert_words(name: &str, t: &TextObject, words: &[&str]) {
 }
 
 /// Multi-line RTL with two runs, and the interleaved wrap "مرحبا ABC" / "DEF سلام".
-/// With a stroke and without: each piece's stroke follows that piece's fill, and the
-/// authored words copy back.
+/// The fill is real text in run-index order (not glyph outlines). A stroke, when there is
+/// one, follows that run's text. The authored words copy back from the invisible layer.
 #[test]
 fn split_runs_stroke_after_each_piece_and_copy_back() {
     fonts();
@@ -780,13 +792,26 @@ fn latin_rich_pdf_bytes_stay_frozen() {
     assert!(t.runs.iter().any(|r| r.style.has_stroke()), "a stroked run");
     assert!(layout.glyphs.iter().enumerate().any(|(i, _)| layout.marker_of(i).is_some()), "a bulleted list");
     assert!(layout.glyphs.iter().all(|g| !g.rtl), "Latin only, so the run-index writer runs");
+    let sans_face = FontDb::global().face("Source Sans 3", "Regular").expect("Source Sans 3");
+    let serif_face = FontDb::global().face("Source Serif 4", "Regular").expect("Source Serif 4");
+    assert!(layout.glyphs.iter().any(|g| g.font_id == serif_face.id()), "a serif glyph");
+    assert!(
+        layout.glyphs.iter().enumerate().any(|(i, g)| layout.marker_of(i).is_some() && g.font_id == sans_face.id()),
+        "the bullet is Source Sans 3"
+    );
+    for (i, g) in layout.glyphs.iter().enumerate() {
+        let family =
+            if layout.marker_of(i).is_some() { "Source Sans 3" } else { t.runs.get(g.run).map(|r| r.style.font_family.as_str()).unwrap_or("") };
+        let want = if family == "Source Serif 4" { serif_face.id() } else { sans_face.id() };
+        assert_eq!(g.font_id, want, "glyph {i} run {} ({family})", g.run);
+    }
     let opts = PdfOptions { created: Some(1_577_836_800), ..Default::default() };
     let d = doc_sized(240.0, 280.0, &[t.clone()]);
     let pdf = export(&d, &opts).unwrap();
     let again = export(&d, &opts).unwrap();
     assert_eq!(pdf, again, "two exports with a pinned date are the same bytes");
     publish("latin-rich", &pdf);
-    let hash = vectorcraft_pdf::sha256_hex(&pdf);
+    let hash = sha256_hex(&pdf);
     eprintln!("LATIN_RICH_SHA256 {hash}");
     // Run-index emission writes each run across its lines before the next run, so the reader
     // may return one node per visual line. The frozen bytes are the contract; the words stay
@@ -806,4 +831,152 @@ fn latin_rich_pdf_bytes_stay_frozen() {
            --test-threads=2 latin_rich_pdf_bytes_stay_frozen --nocapture\n\
          actual sha256: {hash}"
     );
+}
+
+/// The content stream that contains `needle`, lossy-decoded.
+fn stream_containing(pdf: &[u8], needle: &[u8]) -> String {
+    let mut i = 0;
+    while i < pdf.len() {
+        let Some(rel) = pdf.get(i..).and_then(|rest| rest.windows(6).position(|w| w == b"stream")) else { break };
+        let mut start = i + rel + 6;
+        if pdf.get(start) == Some(&b'\r') {
+            start += 1;
+        }
+        if pdf.get(start) == Some(&b'\n') {
+            start += 1;
+        }
+        let Some(end_rel) = pdf.get(start..).and_then(|rest| rest.windows(9).position(|w| w == b"endstream")) else { break };
+        let end = start + end_rel;
+        if let Some(stream) = pdf.get(start..end)
+            && stream.windows(needle.len()).any(|w| w == needle)
+        {
+            return String::from_utf8_lossy(stream).into_owned();
+        }
+        i = end + 9;
+    }
+    String::new()
+}
+
+/// Concat-matrix translations in `raw` (the six-number `cm`), as (byte offset, y).
+/// A glyph line's baseline lives here: each line's text matrix stays at y 0.
+fn cm_ys(raw: &str) -> Vec<(usize, f64)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(rel) = raw[i..].find(" cm") {
+        let at = i + rel;
+        let start = raw[..at].rfind(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | ' ' | '\n' | '\r' | '\t'))).map_or(0, |p| p + 1);
+        let nums: Vec<f64> = raw[start..at].split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        if nums.len() >= 6
+            && let Some(&y) = nums.last()
+        {
+            out.push((at, y));
+        }
+        i = at + 3;
+    }
+    out
+}
+
+/// The yeh after ZWNJ opens a wrapped line. It used to be appended at the previous line's pen.
+#[test]
+fn a_folded_glyph_that_opens_a_line_stays_on_that_line() {
+    fonts();
+    let word = "سلام سلام خانه‌ی";
+    let style = CharStyle { font_family: "Noto Sans Arabic".into(), size: 24.0, ..Default::default() };
+    let mut found = None;
+    let mut samples = Vec::new();
+    for width in (36..420).step_by(2) {
+        let mut t = TextObject::point(Point::ZERO, word, style.clone());
+        let frame = Rect::new(36.0, 36.0, 36.0 + width as f64, 480.0);
+        t.kind = TextKind::Area { frame: PathData::from_bezpath(&frame.to_path(0.1)) };
+        t.xf = Affine::IDENTITY;
+        let layout = vectorcraft_text::layout(FontDb::global(), &t);
+        if layout.lines.len() < 2 {
+            continue;
+        }
+        let Some(z) = word.find('\u{200C}') else { continue };
+        let yeh_at = z + '\u{200C}'.len_utf8();
+        let Some((yi, yeh)) = layout.glyphs.iter().enumerate().find(|(_, g)| g.len > 0 && g.byte <= yeh_at && yeh_at < g.byte + g.len) else {
+            continue;
+        };
+        if yeh.line == 0 {
+            continue;
+        }
+        let first = layout.glyphs.iter().position(|g| g.line == yeh.line);
+        if first == Some(yi) {
+            found = Some(t);
+            break;
+        }
+        if samples.len() < 6 {
+            samples.push(format!("width {width}: yeh line {} index {yi} first {first:?} lines {}", yeh.line, layout.lines.len()));
+        }
+    }
+    let t = found.unwrap_or_else(|| panic!("no width put the folded yeh at the start of a line.\n{}", samples.join("\n")));
+    let pdf = export(&doc_sized(720.0, 520.0, std::slice::from_ref(&t)), &PdfOptions::default()).unwrap();
+    publish("persian-wrap-zwnj", &pdf);
+    check_pdftotext("persian-wrap-zwnj", &pdf, &[t.plain_text()]);
+    let back = import_with_report(&pdf, &ImportOptions::default()).unwrap();
+    let joined = texts(&back.document).join("");
+    assert_eq!(joined, word, "copy-back: {:?}", texts(&back.document));
+    let mut opts = PdfOptions::uncompressed();
+    opts.created = Some(1_577_836_800);
+    let pdf = export(&doc_sized(720.0, 520.0, std::slice::from_ref(&t)), &opts).unwrap();
+    let raw = stream_containing(&pdf, b"/ActualText");
+    let actual_at = raw.find("/ActualText").expect("the joiner is an ActualText span");
+    let cms = cm_ys(&raw);
+    let distinct = {
+        let mut ys: Vec<i32> = cms.iter().map(|(_, y)| (y * 10.0).round() as i32).collect();
+        ys.sort_unstable();
+        ys.dedup();
+        ys.len()
+    };
+    assert!(distinct >= 2, "each line is painted on its own baseline, matrices {cms:?}");
+    let first_y = cms.first().map(|(_, y)| *y).expect("a line transform");
+    let y = cms.iter().find(|(at, _)| *at > actual_at).map(|(_, y)| *y).expect("a line transform for the ActualText");
+    assert!((y - first_y).abs() > 0.5, "the folded glyph was painted on the previous line: y {y} first {first_y} matrices {cms:?}");
+}
+
+/// Two clusters that fold to the same string each keep a text layer.
+#[test]
+fn adjacent_clusters_with_the_same_folded_text_both_copy() {
+    fonts();
+    let word = "f\u{200C}f\u{200C}";
+    let st = CharStyle { font_family: "Source Sans 3".into(), size: 24.0, ..Default::default() };
+    let t = TextObject::point(Point::new(40.0, 80.0), word, st);
+    let got = round_trip_in("latin-two-joiners", 400.0, 200.0, &[t]);
+    assert_eq!(got, vec![word.to_string()]);
+    assert_eq!(got[0].matches('\u{200C}').count(), 2, "one of the two joiners was dropped: {}", got[0]);
+}
+
+/// An underlined run on two lines, split by another run, draws each bar once. A bar used to be
+/// chosen by its midpoint within an em, so line n's underline also filled line n−1, and a run
+/// split on one line took the bar twice.
+#[test]
+fn an_underlined_split_run_draws_each_bar_once() {
+    fonts();
+    let arabic = CharStyle { font_family: "Noto Sans Arabic".into(), size: 20.0, underline: true, ..Default::default() };
+    let latin = CharStyle { font_family: "Source Sans 3".into(), size: 20.0, underline: true, ..Default::default() };
+    let t = wrap_split(
+        || {
+            let mut t = TextObject::point(Point::ZERO, "", arabic.clone());
+            t.runs = vec![TextRun::new("مرحبا بالعالم ", arabic.clone()), TextRun::new("Hello world today", latin.clone())];
+            t
+        },
+        2,
+    );
+    let layout = vectorcraft_text::layout(FontDb::global(), &t);
+    assert_eq!(layout.lines.len(), 2, "two lines");
+    let bars = vectorcraft_text::decorations(&layout, FontDb::global(), &t);
+    let mut mids: Vec<i32> = bars.iter().map(|(_, bar)| ((bar.bounding_box().y0 + bar.bounding_box().y1) * 5.0).round() as i32).collect();
+    mids.sort_unstable();
+    mids.dedup();
+    assert!(bars.len() >= 2 && mids.len() >= 2, "underlines on two lines, {} bars at {mids:?}", bars.len());
+    let mut opts = PdfOptions::uncompressed();
+    opts.created = Some(1_577_836_800);
+    let pdf = export(&doc_sized(720.0, 520.0, std::slice::from_ref(&t)), &opts).unwrap();
+    let ops = paint_ops(&pdf);
+    let rects = ops.iter().filter(|o| *o == "re").count();
+    // A closepath before `W` is the invisible-text clip, not a bar. Two bars of one run share one fill.
+    let closes = ops.iter().enumerate().filter(|(i, o)| **o == "h" && !matches!(ops.get(i + 1).map(String::as_str), Some("W" | "W*"))).count();
+    let drawn = if rects > 0 { rects } else { closes };
+    assert_eq!(drawn, bars.len(), "each bar once, not also on the line above; ops {ops:?}");
 }

@@ -355,9 +355,21 @@ impl TextLine {
             self.runs.push((look.clone(), 0.0, text.to_string()));
         }
         self.text_bytes = self.text_bytes.saturating_add(text.len());
-        let one = text.chars().count() == 1;
-        self.slots.push(Some(Slot { glyph, advance: one.then_some(advance) }));
-        self.slots.extend(text.chars().skip(1).map(|_| None));
+        if text.is_empty() {
+            // A later glyph of an /ActualText span places no character. A slot in the middle
+            // of the line survives `truncate` (that only trims the tail), so every later
+            // character would take the wrong glyph. Fold this advance into the previous slot.
+            if let Some(Some(slot)) = self.slots.last_mut()
+                && let Some(adv) = &mut slot.advance
+            {
+                *adv += advance;
+            }
+        } else {
+            let one = text.chars().count() == 1;
+            self.slots.push(Some(Slot { glyph, advance: one.then_some(advance) }));
+            self.slots.extend(text.chars().skip(1).map(|_| None));
+            self.baseline.push(at.origin);
+        }
         self.next = at.origin + at.dir * advance;
         if !text.trim().is_empty() {
             self.visible = self.next;
@@ -365,7 +377,6 @@ impl TextLine {
         self.last = at.origin;
         self.last_dir = at.dir;
         self.last_size = at.size;
-        self.baseline.push(at.origin);
         true
     }
 

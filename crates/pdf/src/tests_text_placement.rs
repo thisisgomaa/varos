@@ -657,3 +657,34 @@ fn perf_text_heavy_open() {
         println!("4000 lines: {n} text objects in {took:?} (as outlines: {:?})", start.elapsed());
     }
 }
+
+/// An `/ActualText` of several glyphs (a combining mark, an Indic or Thai cluster) must not
+/// insert a slot per extra glyph. The character after the cluster keeps the file's position.
+#[test]
+fn a_multi_glyph_actualtext_cluster_keeps_the_next_character_in_place() {
+    let x = 20.0 + (width('a') + width('b')) * 24.0 / 1000.0 + 2.0;
+    let content = format!(
+        "BT /F4 24 Tf 20 50 Td /Span << /ActualText (ab) >> BDC {} Tj {} Tj EMC 1 0 0 1 {x:.3} 50 Tm {} Tj ET",
+        gids("a"),
+        gids("b"),
+        gids("c")
+    );
+    lands(&content, "", &["abc"]);
+}
+
+/// Nested `/ActualText`: the outer span is the replacement (ISO 32000-1 §14.9.4).
+#[test]
+fn the_outer_actualtext_wins() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (OUTER) >> BDC /Span << /ActualText (INNER) >> BDC (A) Tj EMC EMC ET";
+    assert_eq!(plain(&open_as(&page(content, ""), TextAs::Text)), ["OUTER"]);
+}
+
+/// A control character inside `/ActualText` is part of the replacement. The span's glyph stays.
+#[test]
+fn a_control_inside_actualtext_does_not_drop_the_span() {
+    let content = "BT /F1 24 Tf 20 50 Td /Span << /ActualText (A\u{1}B) >> BDC (A) Tj EMC ET";
+    let got = plain(&open_as(&page(content, ""), TextAs::Text));
+    assert!(!got.is_empty(), "the span's glyph was dropped");
+    let text = got.join("");
+    assert!(text.contains('A') && text.contains('B'), "{got:?}");
+}
