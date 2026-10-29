@@ -191,3 +191,15 @@ never over any strip (floating ones included); VarosShell v6 (+fixture v5). Home
 (window drag + caption buttons on custom title bars). Pages (#5) sits above Layers|Artboards in the Design layout
 and the status bar reads "Page N of M · Artboard i / n" (shell ON). Captures: `mockups/shell-simple-capture.png`,
 `shell-simple-cols-capture.png`. Deferred: colour round (lane-colours), stage 6 removal after the owner's OK.
+
+## Shell fixes round 1 (2026-10-29) — from the owner's v16 hand test
+Landed (lane-shell-fixes-1, Cursor/Grok 4.7, Opus reviews): the new shell is the DEFAULT (VarosShell v7: a
+one-time migration turns `enabled` on unless `enabled_chosen`); icons return to their origin strip/group/pill on
+all three paths (drop on strip, `<<`, Collapse to icon) and the float-drop preview matches; boxes/floats/flyouts
+clip to their rects with minimum widths (Color 240, Properties/Character/Paragraph 300, Layers 200, default
+180); dragging a column below its minimum (32 pt dead zone) collapses it into the strip; the strip edge
+restores it; picker popover 240 wide, never cut, closes only with OK / Cancel / Escape (undo group owned by the
+picker only, sealed by foreign commands, Gradient tab included); `<<` at the top of the strip; narrow tab rows
+show whole pills + `»`; lone pills = 16 pt grip row + 28×28 tiles, per-group grips, Close ≠ Collapse; wells
+cluster drawn like the picker's, centred; tool strip columns 1/2/3 by dragging its edge (snap hints) or the
+`⋯` menu; drag ghosts depict the whole group. Captures: `mockups/shell-fixes-1-*.png`.
