@@ -170,16 +170,15 @@ fn quick_actions_body(app: &mut VectorcraftApp, ui: &mut Ui, n_sel: usize, first
     actions.push((tl!("Simplify"), "object.path.simplify"));
     actions.push((tl!("Arrange: Bring to Front"), "object.arrange.bringToFront"));
     actions.push((tl!("Lock"), "object.lock"));
-    let w = (ui.available_width() - 6.0) / 2.0;
-    for pair in actions.chunks(2) {
-        ui.horizontal(|ui| {
-            for (label, id) in pair {
-                if widgets::flat_button(ui, label, w).clicked() {
-                    crate::menus::invoke(app, id, json!({}));
-                }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let w = ((ui.available_width() - 6.0) / 2.0).max(1.0);
+        for (label, id) in &actions {
+            if widgets::flat_button(ui, label, w).clicked() {
+                crate::menus::invoke(app, id, json!({}));
             }
-        });
-    }
+        }
+    });
     global_edit_row(app, ui);
 }
 
@@ -475,9 +474,10 @@ fn artboard_body(app: &mut VectorcraftApp, ui: &mut Ui) {
 /// Edit Artboards' Quick Actions: Rearrange All and Exit (back to the Selection tool).
 fn artboard_quick_actions(app: &mut VectorcraftApp, ui: &mut Ui) {
     let n = app.session.active().map_or(0, |d| d.doc.artboards.len());
-    let w = (ui.available_width() - 6.0) / 2.0;
     crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let w = ((ui.available_width() - 6.0) / 2.0).max(1.0);
         rearrange_button(app, ui, n, w);
         if widgets::flat_button(ui, tl!("Exit"), w).clicked() {
             app.select_tool("selection");
@@ -746,8 +746,9 @@ fn preferences_body(app: &mut VectorcraftApp, ui: &mut Ui) {
 /// The document's Quick Actions: Document Setup and Preferences.
 fn document_quick_actions(app: &mut VectorcraftApp, ui: &mut Ui) {
     crate::varos::clipping::button(app, ui); // Varos: stateful clipping action.
-    let w = (ui.available_width() - 6.0) / 2.0;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let w = ((ui.available_width() - 6.0) / 2.0).max(1.0);
         if widgets::flat_button(ui, tl!("Document Setup"), w).clicked() {
             app.run("file.documentSetup", json!({})).ok();
         }

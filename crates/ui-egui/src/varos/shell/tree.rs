@@ -15,13 +15,18 @@ pub(crate) const SEAM: f32 = 1.0;
 /// The smallest an ordinary box may be made by a divider (height; width comes from [`panel_min_width`]).
 pub(crate) const BOX_MIN: Vec2 = vec2(180.0, 120.0);
 
+/// The pointer must pass the column's minimum by this much before the azure collapse hint shows.
+pub(crate) const COLLAPSE_HINT: f32 = 16.0;
+/// On release, the column collapses only once the pointer is this far past the minimum.
+pub(crate) const COLLAPSE_RELEASE: f32 = 32.0;
+
 /// The narrowest a panel's column may be drawn. Dividers stop here; dragging past it collapses
 /// the column into the strip.
 pub(crate) fn panel_min_width(id: &str) -> f32 {
     let kind = id.split_once('@').map(|(kind, _)| kind).unwrap_or(id);
     match kind {
         "color" => 240.0,
-        "properties" | "character" | "paragraph" => 260.0,
+        "properties" | "character" | "paragraph" => 300.0,
         "layers" => 200.0,
         _ => 180.0,
     }
@@ -514,10 +519,11 @@ impl Node {
         }
     }
 
-    /// A horizontal split whose pointer wants one side narrower than its minimum, and that side
-    /// holds no Board: `true` when that side is `a`. None while both sides still fit, the axis is
-    /// vertical, or the short side is the Board.
-    pub fn side_below_min(&self, path: &[u8], center: f32, span: Rect) -> Option<bool> {
+    /// How far `center` wants a horizontal split's side past its minimum, and `true` when that side
+    /// is `a`. None while both sides still fit, the axis is vertical, or the short side is the Board.
+    /// The layout itself stays clamped at the minimum; the hint starts at 16 pt and the release
+    /// collapses only at 32 pt ([`COLLAPSE_HINT`], [`COLLAPSE_RELEASE`]).
+    pub fn side_overshoot(&self, path: &[u8], center: f32, span: Rect) -> Option<(bool, f32)> {
         let Node::Split { axis, a, b, .. } = self.split_at(path)? else { return None };
         if *axis != Axis::Horizontal {
             return None;
@@ -527,10 +533,12 @@ impl Node {
         let a_len = center - start - SEAM / 2.0;
         let a_min = axis.of(a.min_size());
         let b_min = axis.of(b.min_size());
-        if a_len < a_min - 1.0 && !a.contains_board() {
-            Some(true)
-        } else if room - a_len < b_min - 1.0 && !b.contains_board() {
-            Some(false)
+        let past_a = a_min - a_len;
+        let past_b = b_min - (room - a_len);
+        if past_a > 0.0 && !a.contains_board() {
+            Some((true, past_a))
+        } else if past_b > 0.0 && !b.contains_board() {
+            Some((false, past_b))
         } else {
             None
         }
@@ -774,7 +782,7 @@ mod tests {
         let board = layout.rect_of(1).unwrap();
         let right = layout.rect_of(3).unwrap();
         assert!((left.width() - 232.0).abs() <= 1.0);
-        assert!((right.width() - 260.0).abs() <= 1.0, "Properties' column stops at 260: {right:?}");
+        assert!((right.width() - 300.0).abs() <= 1.0, "Properties' column stops at 300: {right:?}");
         assert_eq!(left.left(), 0.0);
         assert_eq!(right.right(), 1360.0);
         assert_eq!(board.left() - left.right(), 1.0);
@@ -846,8 +854,8 @@ mod tests {
             t.layout(rect)
         };
         let right = layout.rect_of(3).unwrap();
-        // Properties is in that column: 260, not a generic box.
-        assert!((right.width() - 260.0).abs() < 1.0, "{right:?}");
+        // Properties is in that column: 300, not a generic box.
+        assert!((right.width() - 300.0).abs() < 1.0, "{right:?}");
         // Far left: the Board keeps 240.
         let r = tree.ratio_for(&[], -5000.0, rect);
         let mut t = tree.clone();
@@ -861,7 +869,7 @@ mod tests {
         // A stored ratio out of bounds is laid out within them anyway (a window made smaller).
         let mut t = tree.clone();
         t.set_ratio(&[], 0.98);
-        assert!(t.layout(rect).rect_of(3).unwrap().width() >= 260.0 - 0.5);
+        assert!(t.layout(rect).rect_of(3).unwrap().width() >= 300.0 - 0.5);
         // A window too small for both: no negative sizes.
         let tiny = Rect::from_min_size(egui::Pos2::ZERO, vec2(200.0, 100.0));
         assert!(t.layout(tiny).boxes.iter().all(|(_, r)| r.width() >= 0.0 && r.height() >= 0.0));
@@ -917,8 +925,8 @@ mod tests {
     #[test]
     fn the_minimum_size_adds_up_the_seams() {
         let tree = historical_layout();
-        // The right column's width is Properties' 260 (the wider of the two stacked boxes).
-        assert_eq!(tree.min_size(), vec2(BOARD_MIN.x + SEAM + 260.0, (BOX_MIN.y * 2.0 + SEAM).max(BOARD_MIN.y)));
+        // The right column's width is Properties' 300 (the wider of the two stacked boxes).
+        assert_eq!(tree.min_size(), vec2(BOARD_MIN.x + SEAM + 300.0, (BOX_MIN.y * 2.0 + SEAM).max(BOARD_MIN.y)));
     }
 
     #[test]

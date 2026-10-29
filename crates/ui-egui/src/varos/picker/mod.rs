@@ -24,6 +24,43 @@ pub use drawer::DrawerTab;
 pub use harmony::Rule;
 pub use sliders::Mode;
 
+thread_local! {
+    /// Commands issued while this is non-zero belong to the picker, so they stay inside its undo group.
+    static PICKER_CMDS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Marks the commands run by `f` as the picker's own.
+struct PickerCmd;
+
+impl PickerCmd {
+    fn enter() -> Self {
+        PICKER_CMDS.with(|d| d.set(d.get().saturating_add(1)));
+        Self
+    }
+}
+
+impl Drop for PickerCmd {
+    fn drop(&mut self) {
+        PICKER_CMDS.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+fn picker_cmd() -> bool {
+    PICKER_CMDS.with(|d| d.get() > 0)
+}
+
+/// A command that did not come from the picker closes the popover's undo group (the edits stay),
+/// so that command is its own step and Cancel does not revert it.
+pub(crate) fn seal_foreign(app: &mut VectorcraftApp) {
+    if app.ui.varos_picker_group && !picker_cmd() {
+        app.ui.varos_picker_group = false;
+        app.ui.varos_picker_defaults = None;
+        app.session.end_undo_group(false);
+    }
+}
+
+use std::cell::Cell;
+
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -330,13 +367,11 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let mut acts = Vec::new();
     let tall = height(&prefs);
     let avail = ui.available_width().max(1.0);
-    // Never wider than the panel. Below 240 the wheel scales down, and never below 160.
-    let scale = (avail / W).clamp(160.0 / W, 1.0);
-    let draw_w = W * scale;
-    let outer_w = if avail + 0.5 >= W { avail } else { draw_w };
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("varos-picker-scale"), scale));
-    let (outer, _) = ui.allocate_exact_size(vec2(outer_w, tall * scale), Sense::hover());
-    let origin = pos2(outer.left() + ((outer.width() - draw_w) / 2.0).max(0.0).round(), outer.top());
+    // Always 240. A narrower host clips; scaling only the wheel used to spill the other rows,
+    // and scaling at all changed the classic Color panel. The shell uses the same size.
+    let outer_w = if avail + 0.5 >= W { avail } else { W };
+    let (outer, _) = ui.allocate_exact_size(vec2(outer_w, tall), Sense::hover());
+    let origin = pos2(outer.left() + ((outer.width() - W) / 2.0).max(0.0).round(), outer.top());
     header(
         ui,
         origin,
@@ -507,14 +542,22 @@ pub(crate) fn control_corners<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) ->
 /// Apply the frame's actions, then the gesture: a change previews (beginning the live interaction
 /// on the first one), the release commits what was previewed as one undo step.
 fn settle(app: &mut VectorcraftApp, ctx: &egui::Context, st: &mut State, v: &View, acts: Vec<Action>) {
+    let _picker = PickerCmd::enter();
     for act in acts {
         match act {
             Action::Set(c) => set_color(app, st, v, c, true),
             Action::SetWithAlpha(c, a) => {
-                app.session.begin_undo_group();
+                // The popover already has a group, and ending one here would close it, so Cancel
+                // would stop reverting. The docked panel has no group: colour and alpha are one step.
+                let open = app.ui.varos_picker_group;
+                if !open {
+                    app.session.begin_undo_group();
+                }
                 set_color(app, st, v, c, true);
                 set_alpha(app, st, v, a);
-                app.session.end_undo_group(false);
+                if !open {
+                    app.session.end_undo_group(false);
+                }
             }
             Action::AlphaSet(a) => set_alpha(app, st, v, a),
             Action::Commit => {
@@ -723,6 +766,7 @@ fn apply_alpha(app: &mut VectorcraftApp, fill: bool, a: f32, phase: Live) {
 
 /// Open a transient picker at a well, independently of the docked Color panel.
 pub(crate) fn open_for(app: &mut VectorcraftApp, stroke: bool, anchor: Rect) {
+    let _picker = PickerCmd::enter();
     if let Err(e) = app.run("paint.toggleActive", json!({"fill": !stroke})) {
         app.status(e);
     }
@@ -736,8 +780,29 @@ pub(crate) fn open_for(app: &mut VectorcraftApp, stroke: bool, anchor: Rect) {
     };
 }
 
+/// Close the popover and the undo group it opened. The edits stay (one step). Every close path
+/// comes through here, so a leftover group cannot swallow later edits.
 pub(crate) fn close(app: &mut VectorcraftApp) {
+    end_picker_group(app, false);
     app.ui.varos_picker_anchor = None;
+}
+
+/// Close the popover and undo the group it opened.
+pub(crate) fn cancel(app: &mut VectorcraftApp) {
+    end_picker_group(app, true);
+    app.ui.varos_picker_anchor = None;
+}
+
+fn end_picker_group(app: &mut VectorcraftApp, revert: bool) {
+    if let Some(paint) = app.ui.varos_picker_defaults.take()
+        && revert
+    {
+        // The default fill and stroke live on the session, not in the document undo step.
+        app.session.paint = paint;
+    }
+    if std::mem::take(&mut app.ui.varos_picker_group) {
+        app.session.end_undo_group(revert);
+    }
 }
 
 /// Wells remain switchable through the modal backdrop; their geometry is refreshed every frame.
@@ -766,6 +831,12 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(anchor) = app.ui.varos_picker_anchor else { return };
     let mut screen = ctx.content_rect();
     let shell = crate::varos::shell::enabled(app);
+    if shell && (!app.ui.toolbar || app.ui.screen_mode >= 3) {
+        // Tab / a screen mode hid the toolbar while the popover was open. Close it here so the
+        // undo group does not stay open.
+        close(app);
+        return;
+    }
     let mut exclusions = Vec::new();
     if shell {
         for (hit, r) in crate::varos::shell::hit_rects(ctx) {
@@ -784,12 +855,10 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let scroll = content_tall > screen.height();
     let h = if scroll { screen.height() } else { content_h };
     let tall = if scroll { screen.height() } else { content_tall };
-    if shell {
-        let key = egui::Id::unique("varos-picker-undo-group");
-        if ctx.data(|d| d.get_temp::<bool>(key)).is_none() {
-            app.session.begin_undo_group();
-            ctx.data_mut(|d| d.insert_temp(key, true));
-        }
+    if shell && !app.ui.varos_picker_group {
+        app.ui.varos_picker_defaults = Some(app.session.paint.clone());
+        app.session.begin_undo_group();
+        app.ui.varos_picker_group = true;
     }
     let frame_nr = ctx.cumulative_frame_nr();
     // This frame's wells, bottom-most first (the order they are drawn in).
@@ -866,8 +935,11 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let modal = egui::Modal::new(id).area(area).backdrop_color(Color32::TRANSPARENT).frame(frame).show(ctx, |ui| body(app, ui, &mut decision));
     if let Some(ok) = decision {
         finish_pending(app, ctx);
-        end_picker_group(app, ctx, !ok);
-        close(app);
+        if ok {
+            close(app)
+        } else {
+            cancel(app)
+        }
         return;
     }
     let click = ctx.input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()).flatten());
@@ -887,18 +959,8 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
         } else if !shell {
             // The classic dock still dismisses on an outside click. The shell closes only with
             // OK, Cancel or Escape.
-            end_picker_group(app, ctx, true);
-            close(app);
+            cancel(app);
         }
-    }
-}
-
-/// Close the undo group the shell's popover opened, if it did. `cancel` restores the colour from
-/// when the popover opened.
-fn end_picker_group(app: &mut VectorcraftApp, ctx: &egui::Context, cancel: bool) {
-    let key = egui::Id::unique("varos-picker-undo-group");
-    if ctx.data_mut(|d| d.remove_temp::<bool>(key)).is_some() {
-        app.session.end_undo_group(cancel);
     }
 }
 
@@ -923,8 +985,7 @@ pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     }
     if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         finish_pending(app, ctx);
-        end_picker_group(app, ctx, true);
-        close(app);
+        cancel(app);
     }
     true
 }

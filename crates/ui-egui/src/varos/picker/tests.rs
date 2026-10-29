@@ -909,7 +909,6 @@ fn shell_popover_from_the_bottom_well_shows_ok_and_cancel_and_ignores_outside_cl
         h.frame(vec![]);
     }
     let fill = h.well(false);
-    let before = fill_hex(&h.app);
     h.click(fill.left_top() + vec2(3.0, 3.0));
     let out = h.frame(vec![]);
     let r = picker_rect(&h.ctx);
@@ -940,7 +939,7 @@ fn shell_popover_from_the_bottom_well_shows_ok_and_cancel_and_ignores_outside_cl
     h.frame(vec![]);
     h.click(cancel);
     assert!(h.app.ui.varos_picker_anchor.is_none(), "Cancel closes");
-    assert_eq!(fill_hex(&h.app), before, "Cancel restores the colour from when it opened");
+    assert_eq!(fill_hex(&h.app), "#112233", "a command from outside the picker is not part of Cancel");
     h.click(fill.left_top() + vec2(3.0, 3.0));
     h.app.run("paint.setFill", json!({"color": "#abcdef"})).unwrap();
     let out = h.frame(vec![]);
@@ -948,6 +947,116 @@ fn shell_popover_from_the_bottom_well_shows_ok_and_cancel_and_ignores_outside_cl
     h.click(ok);
     assert!(h.app.ui.varos_picker_anchor.is_none());
     assert_eq!(fill_hex(&h.app), "#abcdef");
+}
+
+fn group_open(app: &VectorcraftApp) -> bool {
+    app.ui.varos_picker_group || app.session.active().is_some_and(|d| d.undo_group.is_some())
+}
+
+/// `paint.setFill` as the picker would issue it, so it stays inside the open popover group.
+fn picker_fill(app: &mut VectorcraftApp, color: &str) {
+    let _hold = PickerCmd::enter();
+    app.run("paint.setFill", json!({"color": color})).unwrap();
+}
+
+#[test]
+fn every_popover_close_ends_the_undo_group_and_cancel_reverts_only_picker_edits() {
+    let mut h = Harness::new(true);
+    let fill = h.well(false);
+    let original = fill_hex(&h.app);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    assert!(group_open(&h.app), "opening the popover begins a group");
+    picker_fill(&mut h.app, "#111111");
+    picker_fill(&mut h.app, "#222222");
+    // Eyedropper, Edit Gradient and the stop eyedropper all call `close`.
+    close(&mut h.app);
+    h.frame(vec![]);
+    assert!(h.app.ui.varos_picker_anchor.is_none());
+    assert!(!group_open(&h.app), "close leaves no open group");
+    assert_eq!(fill_hex(&h.app), "#222222");
+    h.app.run("paint.setFill", json!({"color": "#778899"})).unwrap();
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(fill_hex(&h.app), "#222222", "the edit after an eyedropper close is its own step");
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(fill_hex(&h.app), original, "the picker edits were one step");
+
+    // A screen mode that hides the toolbar closes the popover and the group.
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    assert!(group_open(&h.app));
+    h.app.ui.screen_mode = 3;
+    h.frame(vec![]);
+    assert!(h.app.ui.varos_picker_anchor.is_none());
+    assert!(!group_open(&h.app), "hiding the toolbar ends the group");
+    h.app.ui.screen_mode = 0;
+    h.frame(vec![]);
+    h.app.ui.toolbar = false;
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    assert!(h.app.ui.varos_picker_anchor.is_none() && !group_open(&h.app), "a hidden toolbar does not leave a group open");
+    h.app.ui.toolbar = true;
+    h.frame(vec![]);
+    let fill = h.well(false);
+
+    // A hex-with-alpha edit stays in the group, so Cancel reverts the colour and the alpha.
+    let fallback = fill_hex(&h.app);
+    let alpha_before = read_alpha(&h.app, true);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    let out = h.frame(vec![]);
+    let mut texts = Vec::new();
+    fn walk(s: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+        match s {
+            egui::Shape::Text(t) => out.push((t.galley.text().to_string(), t.pos + t.galley.rect.center().to_vec2())),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            _ => {}
+        }
+    }
+    for c in &out.shapes {
+        walk(&c.shape, &mut texts);
+    }
+    let shown = fallback.trim_start_matches('#').to_ascii_uppercase();
+    let field = texts.iter().find(|(t, _)| t.eq_ignore_ascii_case(&shown)).map(|(_, p)| *p).unwrap_or_else(|| panic!("hex field: {texts:?}"));
+    let key = |k, modifiers| Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers };
+    h.click(field);
+    h.frame(vec![key(egui::Key::A, Modifiers::COMMAND), Event::Text("11223380".into())]);
+    h.frame(vec![key(egui::Key::Enter, Modifiers::NONE)]);
+    h.frame(vec![]);
+    assert_eq!(fill_hex(&h.app), "#112233");
+    assert_ne!(read_alpha(&h.app, true), alpha_before, "eight digits set the alpha");
+    let out = h.frame(vec![]);
+    let cancel = labelled(&out, "Cancel").expect("Cancel");
+    h.click(cancel);
+    assert!(!group_open(&h.app), "Cancel ends the group");
+    assert_eq!(fill_hex(&h.app), fallback, "Cancel reverts the hex colour");
+    assert_eq!(read_alpha(&h.app, true), alpha_before, "and the alpha");
+
+    // Nothing selected: Cancel restores the default fill colour.
+    h.app.run("select.none", json!({})).unwrap();
+    let fallback = fill_hex(&h.app);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    picker_fill(&mut h.app, "#abcabc");
+    assert_eq!(fill_hex(&h.app), "#abcabc");
+    let out = h.frame(vec![]);
+    let cancel = labelled(&out, "Cancel").expect("Cancel");
+    h.click(cancel);
+    assert_eq!(fill_hex(&h.app), fallback, "Cancel with no selection restores the default fill");
+    assert!(!group_open(&h.app));
+
+    // An outside command splits the group: Cancel reverts only the picker edits after it.
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    picker_fill(&mut h.app, "#333333");
+    h.app.run("paint.setFill", json!({"color": "#444444"})).unwrap();
+    h.frame(vec![]);
+    picker_fill(&mut h.app, "#555555");
+    let out = h.frame(vec![]);
+    let cancel = labelled(&out, "Cancel").expect("Cancel");
+    h.click(cancel);
+    assert_eq!(fill_hex(&h.app), "#444444", "Cancel reverts the picker edit and leaves the outside command");
+    assert!(!group_open(&h.app));
 }
 
 #[test]

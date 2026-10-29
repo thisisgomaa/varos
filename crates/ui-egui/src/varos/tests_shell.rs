@@ -394,19 +394,49 @@ fn dividers_stop_at_the_boxes_minimum_sizes() {
     let from = h.rect(&Hit::Divider(vec![])).center();
     drag(&mut h, from, pos2(-200.0, from.y));
     assert!((h.board().width() - tree::BOARD_MIN.x).abs() <= 1.0, "{:?}", h.board());
-    // Dragging the right column to 50 pt clamps live at Properties' 260, then collapses it on release.
+    // Dragging the right column to 50 pt clamps live at Properties' 300, then collapses it on release.
     let mut h = Harness::new();
     h.shell(true);
     let from = h.rect(&Hit::Divider(vec![])).center();
     let to = pos2(h.screen.x - 50.0, from.y);
     h.hold_drag(from, to);
     let col = h.rect(&Hit::Box(3));
-    assert!((col.width() - 260.0).abs() <= 1.0, "the column stays at its minimum while the pointer is past it: {col:?}");
+    assert!((col.width() - 300.0).abs() <= 1.0, "the column stays at its minimum while the pointer is past it: {col:?}");
     assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::AzureHint)), "an azure hint while past the minimum");
     h.release(to);
     assert!(h.hits().iter().all(|(hit, _)| !matches!(hit, Hit::Box(3))), "the column collapsed");
     assert!(h.state().strip.group("properties").is_some() && h.state().strip.group("color").is_some());
     assert!(!h.state().collapsed_columns.is_empty());
+}
+
+#[test]
+fn a_two_point_overshoot_does_not_collapse_the_column() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let from = h.rect(&Hit::Divider(vec![])).center();
+    h.hold_drag(from, pos2(h.screen.x - 50.0, from.y));
+    let clamped = h.rect(&Hit::Box(3)).left();
+    let barely = pos2(clamped + 2.0, from.y);
+    h.frame(vec![egui::Event::PointerMoved(barely)]);
+    h.frame(vec![egui::Event::PointerMoved(barely)]);
+    assert!(h.hits().iter().all(|(hit, _)| !matches!(hit, Hit::AzureHint)), "the hint starts at 16 pt past the minimum");
+    assert!((h.rect(&Hit::Box(3)).width() - 300.0).abs() <= 1.0);
+    h.release(barely);
+    assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Box(3))), "2 pt past the minimum does not collapse");
+    assert!(h.state().collapsed_columns.is_empty());
+
+    let mut h = Harness::new();
+    h.shell(true);
+    let from = h.rect(&Hit::Divider(vec![])).center();
+    h.hold_drag(from, pos2(h.screen.x - 50.0, from.y));
+    let clamped = h.rect(&Hit::Box(3)).left();
+    let hint_at = pos2(clamped + 20.0, from.y);
+    h.frame(vec![egui::Event::PointerMoved(hint_at)]);
+    h.frame(vec![egui::Event::PointerMoved(hint_at)]);
+    assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::AzureHint)), "the hint shows from 16 pt");
+    h.release(hint_at);
+    assert!(h.state().collapsed_columns.is_empty(), "20 pt past the minimum does not collapse");
+    assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::Box(3))));
 }
 
 #[test]
@@ -2380,12 +2410,12 @@ fn shell5_tools_belong_to_board_float_and_dock_without_changing_legacy_preferenc
 fn shell5_v4_migrates_and_v6_tools_roundtrip() {
     let s = shell::persist::VarosShell { tools_pos: Some([120.0, 190.0]), ..Default::default() };
     let v = serde_json::to_value(&s).unwrap();
-    assert_eq!(v["version"], 6);
+    assert_eq!(v["version"], 7);
     assert_eq!(shell::persist::from_value(&v).tools_pos, s.tools_pos);
     let old: serde_json::Value = serde_json::from_str(include_str!("shell/fixtures/v4.json")).unwrap();
     assert!(old["varos_shell"].get("tools_pos").is_none());
     let back: crate::state::UiState = serde_json::from_value(old).unwrap();
-    assert_eq!(back.varos_shell.version, 6);
+    assert_eq!(back.varos_shell.version, 7);
     assert_eq!(back.varos_shell.tools_pos, None);
     assert_eq!(back.varos_shell.workspace, "Review v4");
     assert_eq!(back.varos_shell.workspaces[0].name, "Review v4");
@@ -2801,7 +2831,7 @@ fn shell5_review_bottom_controls_and_fill_stroke_visibility() {
     let with = h.rect(&Hit::Tools).height();
     h.app.ui.toolbar_show.fill_stroke = false;
     h.settle();
-    assert_eq!(h.rect(&Hit::Tools).height(), with - 34.0);
+    assert_eq!(h.rect(&Hit::Tools).height(), with - 42.0, "hiding the wells drops the 8 pt gap and the 34 pt cluster");
     h.ctx.enable_accesskit();
     let out = h.frame_full(vec![]);
     let nodes = out.platform_output.accesskit_update.unwrap().nodes;
@@ -2858,7 +2888,7 @@ fn simple_tools_columns_shift_canvas_and_survive_workspace_roundtrip() {
     let back: crate::state::UiState = serde_json::from_value(serde_json::to_value(&h.app.ui).unwrap()).unwrap();
     assert_eq!(back.varos_shell.tools_columns, 3);
     let old: crate::state::UiState = serde_json::from_str(include_str!("shell/fixtures/v5.json")).unwrap();
-    assert_eq!(old.varos_shell.version, 6);
+    assert_eq!(old.varos_shell.version, 7);
     assert_eq!(old.varos_shell.tools_columns, 1);
     assert_eq!(old.varos_shell.tools_pos, Some([80.0, 120.0]));
 }
@@ -2908,6 +2938,12 @@ fn simple_overflow_menu_selects_hidden_tab_with_pointer() {
     ];
     let mut h = egui_kittest::Harness::builder().with_context_setup(crate::theme::install_fonts).with_size(vec2(160.0, 100.0)).build_ui_state(
         move |ui, active: &mut usize| {
+            for theme in [egui::Theme::Dark, egui::Theme::Light] {
+                ui.ctx().style_mut_of(theme, |s| {
+                    s.interaction.tooltip_delay = 0.0;
+                    s.interaction.show_tooltips_only_when_still = false;
+                });
+            }
             let row = Rect::from_min_size(ui.cursor().min, vec2(160.0, 36.0));
             let t = crate::theme::Tokens::get(ui.ctx());
             let out = boxes::tab_row(ui, &tabs, *active, row, &t);
@@ -2921,11 +2957,33 @@ fn simple_overflow_menu_selects_hidden_tab_with_pointer() {
         0usize,
     );
     h.run_steps(3);
+    h.get_by_label("More tabs").hover();
+    h.run_steps(4);
+    let _ = h.get_by_label_contains("more panels");
     h.get_by_label("More tabs").click();
     h.run_steps(2);
     h.get_by_label("Swatches").click();
     h.run_steps(2);
     assert_eq!(*h.state(), 3);
+}
+
+#[test]
+fn an_active_pill_that_does_not_fit_is_ellipsized_beside_the_overflow() {
+    use egui_kittest::kittest::Queryable;
+    let tabs = vec![("colorGuide".into(), "Color Guide".into())];
+    let mut h = egui_kittest::Harness::builder().with_context_setup(crate::theme::install_fonts).with_size(vec2(70.0, 80.0)).build_ui_state(
+        move |ui, _active: &mut usize| {
+            let row = Rect::from_min_size(ui.cursor().min, vec2(70.0, 36.0));
+            let t = crate::theme::Tokens::get(ui.ctx());
+            let out = boxes::tab_row(ui, &tabs, 0, row, &t);
+            assert!(out.tabs[0].is_positive(), "the active pill is shown, truncated");
+            assert!(out.tabs[0].width() < 50.0, "narrower than the full label: {:?}", out.tabs[0]);
+        },
+        0usize,
+    );
+    h.run_steps(3);
+    let _ = h.get_by_label_contains("…");
+    let _ = h.get_by_label("More tabs");
 }
 
 #[test]
@@ -2961,12 +3019,13 @@ fn capture_shell_picker_ok() {
     h.app.run("paint.setFill", json!({"color": "#d65042"})).unwrap();
     h.shell(true);
     h.settle();
+    let tools = h.rect(&Hit::Tools);
     let fill = h
         .ctx
         .data(|d| d.get_temp::<Vec<(Rect, bool, u64)>>(egui::Id::unique("picker-wells")))
         .unwrap()
         .into_iter()
-        .filter(|(_, stroke, _)| !*stroke)
+        .filter(|(r, stroke, _)| !*stroke && tools.intersects(*r))
         .max_by(|a, b| a.0.top().total_cmp(&b.0.top()))
         .unwrap()
         .0;
@@ -3301,17 +3360,90 @@ fn dropping_a_tab_or_a_float_on_the_strip_docks_it_as_an_icon() {
     h.release(onto);
     assert!(h.state().strip.group("color").is_some());
     assert!(h.tree().find_tab("color").is_none());
-    // A tab dragged out becomes a floating panel; dropping that panel on the strip docks it.
+    // A tab dragged out becomes a floating panel. Dropping it on the strip puts it back in the
+    // tab row it left, and the preview line is that slot.
+    let box_id = h.tree().find_tab("swatches").unwrap();
+    let tabs_before = h.box_tabs(box_id);
     let from = h.tab("swatches").center();
     let away = h.rect(&Hit::BoardBody).center();
     h.drag(from, away);
     let id = h.state().float_of("swatches").expect("dragged out as a panel");
     let title = h.rect(&Hit::FloatTitle(id)).center();
     h.hold_drag(title, onto);
-    assert!(h.hits().iter().any(|(hit, _)| matches!(hit, Hit::DropLine { .. })));
+    let (hit, line) = h.drop_line();
+    let row = h.rect(&Hit::TabRow(box_id));
+    assert!(matches!(hit, Hit::DropLine { target: Target::Tabs { box_id: id, .. }, .. } if id == box_id), "the preview matches the restore: {hit:?}");
+    assert!(row.expand(12.0).intersects(line), "the line sits on the original tab row: {line:?} {row:?}");
     h.release(onto);
     assert!(h.state().float_of("swatches").is_none());
-    assert!(h.state().strip.group("swatches").is_some());
+    assert_eq!(h.box_tabs(box_id), tabs_before, "<< of a tab dragged out restores that tab");
+}
+
+#[test]
+fn icons_return_to_the_slot_they_left_on_close_collapse_and_from_a_pill() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let group = h.state().strip.group("stroke").expect("stroke starts in the strip");
+    let before = h.state().strip.groups[group].panels.clone();
+    let body = h.rect(&Hit::BoardBody).center();
+    // close / << : a strip icon floated via a pill returns to that group, not a new one at the end.
+    let pill = h.lone_icon("stroke", body + vec2(-160.0, -40.0));
+    h.click(h.rect(&Hit::FloatStripExpand(pill)).center());
+    let fid = h.state().float_of("stroke").unwrap();
+    h.click(h.rect(&Hit::FloatToIcon(fid)).center());
+    assert_eq!(h.state().strip.groups[group].panels, before, "<< restores the original group");
+    assert!(h.state().float_strips.is_empty());
+
+    // Collapse to icon, after the strip icon was docked into a box, restores the same slot.
+    let icon = h.rect(&Hit::StripIcon("stroke".into())).center();
+    h.drag(icon, h.tab("properties").center());
+    let box_id = h.tree().find_tab("stroke").unwrap();
+    assert!(h.app.ui.varos_shell.collapse_box_to_strip(box_id));
+    h.settle();
+    assert_eq!(h.state().strip.group("stroke"), Some(group), "Collapse to icon does not append a new group");
+    assert_eq!(h.state().strip.groups[group].panels, before);
+
+    // A panel dragged out of a pill returns to that pill, not the Board strip.
+    let pill = h.lone_icon("stroke", body + vec2(-160.0, -40.0));
+    let layers_box = h.tree().find_tab("layers").unwrap();
+    let layers_tabs = h.box_tabs(layers_box);
+    let fid = h.float_tab("layers", body + vec2(30.0, 20.0));
+    let icon = h.rect(&Hit::FloatStripIcon { strip: pill, panel: "stroke".into() }).center();
+    h.drag(icon, h.tab("layers").center());
+    assert_eq!(h.state().float_of("stroke"), Some(fid));
+    h.click(h.rect(&Hit::FloatClose(fid)).center());
+    assert!(h.state().float_strip_of("stroke").is_some(), "pill-origin panels do not go to the Board strip");
+    assert!(h.state().strip.group("stroke").is_none());
+    assert_eq!(h.box_tabs(layers_box), layers_tabs, "the tab dragged out of the box is back");
+
+    // Close removes the pill's panels. Collapse to icon puts them back on the strip.
+    let back = h.state().float_strip_of("stroke").unwrap();
+    h.app.ui.varos_shell.dismiss_float_strip(back);
+    h.settle();
+    assert!(h.state().float_strip_of("stroke").is_none() && h.state().strip.group("stroke").is_none() && h.tree().find_tab("stroke").is_none());
+    let pill = h.lone_icon("gradient", body + vec2(-120.0, 60.0));
+    let grip = h.rect(&Hit::FloatStripTitle(pill)).left_center() + vec2(6.0, 0.0);
+    let secondary =
+        |pressed| egui::Event::PointerButton { pos: grip, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() };
+    h.frame(vec![egui::Event::PointerMoved(grip), secondary(true)]);
+    h.frame(vec![secondary(false)]);
+    let out = h.frame_full(vec![]);
+    let mut labels = Vec::new();
+    fn walk(s: &egui::Shape, labels: &mut Vec<String>) {
+        match s {
+            egui::Shape::Text(t) => labels.push(t.galley.text().to_string()),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, labels)),
+            _ => {}
+        }
+    }
+    for c in &out.shapes {
+        walk(&c.shape, &mut labels);
+    }
+    assert!(labels.iter().any(|t| t.contains("Collapse to icon")) && labels.iter().any(|t| t == "Close"), "{labels:?}");
+    h.app.ui.varos_shell.collapse_float_strip(pill);
+    h.settle();
+    assert!(h.state().strip.group("gradient").is_some(), "Collapse to icon docks it back");
+    assert!(h.state().float_strips.is_empty());
 }
 
 #[test]
@@ -3420,7 +3552,12 @@ fn dragging_the_tool_strip_edge_snaps_columns() {
     h.shell(true);
     assert_eq!(h.app.ui.varos_shell.tools_columns, 1);
     let edge = h.rect(&Hit::ToolsEdge).center();
-    h.drag(edge, edge + vec2(30.0, 0.0));
+    let tools = h.rect(&Hit::Tools);
+    h.hold_drag(edge, edge + vec2(30.0, 0.0));
+    let hint = h.hits().into_iter().find(|(hit, _)| matches!(hit, Hit::AzureHint)).map(|(_, r)| r).expect("a snap hint");
+    assert!(hint.height() < tools.height() * 0.5, "the snap hint is a short mark, not the full strip: {hint:?}");
+    assert!((hint.height() - tools.height() / 3.0).abs() < 2.0, "{hint:?} vs {}", tools.height());
+    h.release(edge + vec2(30.0, 0.0));
     assert_eq!(h.app.ui.varos_shell.tools_columns, 2);
     assert!((h.rect(&Hit::Tools).width() - 68.0).abs() < 1.0);
     let mut h = Harness::new();

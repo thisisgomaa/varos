@@ -74,7 +74,7 @@ pub(crate) fn interact(app: &mut VectorcraftApp, ui: &mut egui::Ui, layout: &Lay
                     tree.set_ratio(&d.path, ratio);
                     changed = true;
                 }
-                let past = tree.side_below_min(&d.path, center, d.span).is_some();
+                let past = tree.side_overshoot(&d.path, center, d.span).is_some_and(|(_, past)| past >= super::tree::COLLAPSE_HINT);
                 ctx.data_mut(|m| {
                     m.insert_temp(center_id(&d.path), center);
                     if past {
@@ -92,7 +92,10 @@ pub(crate) fn interact(app: &mut VectorcraftApp, ui: &mut egui::Ui, layout: &Lay
                     m.remove_temp::<bool>(past_id(&d.path));
                 });
                 if let Some(center) = center {
-                    collapse = tree.side_below_min(&d.path, center, d.span);
+                    collapse = tree
+                        .side_overshoot(&d.path, center, d.span)
+                        .filter(|(_, past)| *past >= super::tree::COLLAPSE_RELEASE)
+                        .map(|(take_a, _)| take_a);
                 }
             }
         }

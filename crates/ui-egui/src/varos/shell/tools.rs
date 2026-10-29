@@ -83,9 +83,13 @@ fn contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, hits: &mut 
     // The drawer's outside-click exclusion includes its opener and all bottom controls.
     ui.ctx().data_mut(|d| d.insert_temp(crate::edit_toolbar::toolbar_id(), rect));
     let wells = Rect::from_min_max(pos2(rect.left(), body.bottom()), rect.max);
-    let mut child = ui.new_child(egui::UiBuilder::new().id_salt("shell-tool-wells").max_rect(wells).layout(egui::Layout::top_down(egui::Align::Min)));
+    let mut child =
+        ui.new_child(egui::UiBuilder::new().id_salt("shell-tool-wells").max_rect(wells).layout(egui::Layout::top_down(egui::Align::Center)));
     child.spacing_mut().item_spacing = vec2(0.0, 0.0);
     child.set_clip_rect(wells.intersect(ui.clip_rect()));
+    if app.ui.toolbar_show.fill_stroke {
+        child.add_space(8.0);
+    }
     let columns = usize::from(app.ui.varos_shell.tools_columns.clamp(1, 3));
     crate::toolbar::bottom_controls(app, &mut child, &t, columns);
 }
@@ -111,8 +115,10 @@ pub(crate) fn finish_edge(app: &mut VectorcraftApp, ui: &mut egui::Ui, hits: &mu
         let base = WIDTH + 28.0 * f32::from(cols.clamp(1, 3) - 1);
         let snap = nearest_columns(base + (p.x - origin));
         let snap_x = rect.left() + WIDTH + 28.0 * f32::from(snap - 1);
-        ui.painter().vline(snap_x, rect.y_range(), egui::Stroke::new(3.0, crate::varos::theme::ACCENT));
-        hits.push((Hit::AzureHint, Rect::from_center_size(pos2(snap_x, rect.center().y), vec2(2.0, rect.height()))));
+        let hint_h = rect.height() / 3.0;
+        let hint = Rect::from_center_size(pos2(snap_x, rect.center().y), vec2(2.0, hint_h));
+        ui.painter().vline(snap_x, hint.y_range(), egui::Stroke::new(3.0, crate::varos::theme::ACCENT));
+        hits.push((Hit::AzureHint, hint));
         ui.ctx().data_mut(|d| d.insert_temp(edge_id.with("snap"), snap));
     }
     if edge_response.drag_stopped() {
@@ -143,7 +149,7 @@ fn controls_height(app: &VectorcraftApp) -> f32 {
     let show = app.ui.toolbar_show;
     let columns = app.ui.varos_shell.tools_columns.clamp(1, 3);
     let width = WIDTH + 28.0 * f32::from(columns - 1);
-    let wells = if show.fill_stroke { (if columns <= 1 { 28.0 } else { 40.0 }) + 6.0 } else { 0.0 };
+    let wells = if show.fill_stroke { 8.0 + (if columns <= 1 { 28.0 } else { 40.0 }) + 6.0 } else { 0.0 };
     let chips = if show.coloring { if width >= 3.0 * 28.0 + 8.0 { 28.0 + 6.0 } else { 3.0 * 28.0 + 2.0 * 4.0 + 6.0 } } else { 0.0 };
     30.0 + wells + chips + if show.draw_mode { 30.0 } else { 0.0 }
 }

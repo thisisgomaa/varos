@@ -58,6 +58,32 @@ fn options_key(panel: &str) -> Option<&'static str> {
     }
 }
 
+fn ellipsize(painter: &egui::Painter, text: &str, font: egui::FontId, color: egui::Color32, max_w: f32) -> std::sync::Arc<egui::Galley> {
+    let full = painter.layout_no_wrap(text.to_string(), font.clone(), color);
+    if full.size().x <= max_w + 0.5 {
+        return full;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut best = painter.layout_no_wrap("…".to_string(), font.clone(), color);
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let mut s: String = chars.iter().take(mid).collect();
+        s.push('…');
+        let galley = painter.layout_no_wrap(s, font.clone(), color);
+        if galley.size().x <= max_w + 0.5 {
+            best = galley;
+            lo = mid;
+        } else if mid == 0 {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    best
+}
+
 fn option_width(panel: &str) -> f32 {
     if options_key(panel).is_some() { 18.0 } else { 0.0 }
 }
@@ -65,7 +91,7 @@ fn option_width(panel: &str) -> f32 {
 /// The pills of `tabs` (labels) in `row` with tab `active` in front (semibold, so wider), and
 /// each label's galley; narrower than their labels when they don't all fit.
 fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> Vec<(Rect, std::sync::Arc<egui::Galley>)> {
-    let galleys: Vec<_> = tabs
+    let mut galleys: Vec<_> = tabs
         .iter()
         .enumerate()
         .map(|(i, (_, label))| {
@@ -73,15 +99,16 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
             painter.layout_no_wrap(label.clone(), font, t.text)
         })
         .collect();
-    let widths: Vec<f32> = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + option_width(id)).collect();
+    let mut widths: Vec<f32> = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + option_width(id)).collect();
     let natural = widths.iter().sum::<f32>() + PILL_GAP * widths.len().saturating_sub(1) as f32;
     let overflow = natural > row.width();
     // One 28-point overflow control, then as many whole pills as fit. A pill is never narrowed,
-    // so a label is never cut mid-word.
+    // so a label is never cut mid-word — unless the active pill itself does not fit beside `»`,
+    // in which case that one pill is ellipsized and the rest stay in the menu.
     let room = if overflow { (row.width() - 28.0).max(0.0) } else { row.width() };
     let mut visible = vec![false; widths.len()];
     let mut used = 0.0;
-    let consider = |i: usize, used: &mut f32, visible: &mut [bool]| {
+    let consider = |i: usize, widths: &[f32], used: &mut f32, visible: &mut [bool]| {
         let need = widths[i] + if *used > 0.0 { PILL_GAP } else { 0.0 };
         if *used + need <= room + 0.5 {
             *used += need;
@@ -89,11 +116,18 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
         }
     };
     if active < widths.len() {
-        consider(active, &mut used, &mut visible);
+        consider(active, &widths, &mut used, &mut visible);
+    }
+    if overflow && active < widths.len() && !visible[active] && room > 8.0 {
+        let text_w = (room - 2.0 * PILL_PAD - option_width(&tabs[active].0)).max(4.0);
+        let font = crate::theme::semibold(LABEL);
+        galleys[active] = ellipsize(painter, &tabs[active].1, font, t.text, text_w);
+        widths[active] = (galleys[active].size().x + 2.0 * PILL_PAD + option_width(&tabs[active].0)).min(room);
+        visible[active] = true;
     }
     for i in 0..widths.len() {
         if i != active {
-            consider(i, &mut used, &mut visible);
+            consider(i, &widths, &mut used, &mut visible);
         }
     }
     let mut x = row.left();
@@ -137,14 +171,21 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
         .collect();
     let mut clicked = responses.iter().position(|r| r.clicked()).filter(|i| *i != active);
     let hidden = before.iter().filter(|(r, _)| !r.is_positive()).count();
-    if hidden > 0 {
+    let truncated = before.iter().any(|(_, galley)| galley.text().contains('…'));
+    // `»` also stays when the only overflow is the active pill, which is drawn truncated.
+    if hidden > 0 || truncated {
         let more = Rect::from_min_size(pos2(row.right() - 28.0, row.center().y - 14.0), vec2(28.0, 28.0));
         let response = ui.interact(more, ui.scope_id().with("tab-overflow"), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("More tabs")));
         crate::icons::paint(ui, "shell-chevrons-right", Rect::from_center_size(more.center(), vec2(16.0, 16.0)), t.text_dim);
-        let response = response.on_hover_text(hidden.to_string());
+        let n = hidden.max(1);
+        let tip = crate::i18n::fmt(tl!("{n} more panels"), &[("n", &n.to_string())]);
+        let response = response.on_hover_text(tip);
         egui::Popup::menu(&response).show(|ui| {
             for (i, (_, label)) in tabs.iter().enumerate() {
+                if before.get(i).is_some_and(|(pill, _)| pill.is_positive()) {
+                    continue;
+                }
                 if ui.selectable_label(i == active, label).clicked() {
                     clicked = Some(i);
                     ui.close();

@@ -21,8 +21,9 @@ use crate::theme::Tokens;
 
 /// The title strip's height (floating panels).
 pub(crate) const TITLE: f32 = 18.0;
-/// A lone-icon pill: a 6-point grip, then 28-point tiles with 2-point gaps, then 6 points.
-pub(crate) const PILL_GRIP: f32 = 6.0;
+/// A lone-icon pill: a 16-point grip row (`>>` lives there, clear of the tiles), then 28-point
+/// tiles with 2-point gaps, then 6 points.
+pub(crate) const PILL_GRIP: f32 = 16.0;
 pub(crate) const PILL_ROW: f32 = 30.0;
 pub(crate) const PILL_PAD: f32 = 6.0;
 
@@ -133,10 +134,12 @@ pub(crate) fn strip_layer(id: u32) -> LayerId {
 
 /// What a floating panel or strip asks for after it is drawn.
 enum Ask {
-    /// `×`: its panels go back to the Board's strip.
+    /// `×` or a pill's Collapse to icon: panels go back where they left.
     Close,
-    /// A floating panel's `<<`: it becomes a lone icon.
+    /// A floating panel's `<<`: the same restore as `×`.
     ToIcon,
+    /// A pill's Close: the panels leave the layout.
+    Dismiss,
     /// A floating strip's `>>`: each group becomes a floating panel.
     Expand,
     /// The ≡ menu's Close Panel, or a tab double-clicked.
@@ -267,7 +270,7 @@ fn float(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, f: &Float, h
             ctx.request_repaint();
         }
         // A floating panel is never maximized (it lies above the boxes).
-        Some(Ask::Box(boxes::Ask::Maximize(_)) | Ask::Expand) | None => {}
+        Some(Ask::Box(boxes::Ask::Maximize(_)) | Ask::Expand | Ask::Dismiss) | None => {}
     }
 }
 
@@ -282,7 +285,7 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
     let rect = super::motion::settle(&ctx, &key, s.rect(region), region);
     ctx.memory_mut(|m| m.areas_mut().set_state(layer, egui::AreaState { pivot_pos: Some(rect.min), size: Some(rect.size()), ..Default::default() }));
     let grip = Rect::from_min_size(rect.min, vec2(rect.width(), PILL_GRIP));
-    let expand = Rect::from_min_size(pos2(rect.right() - 18.0, rect.top()), BUTTON);
+    let expand = Rect::from_min_size(pos2(rect.right() - BUTTON.x, rect.top()), BUTTON);
     let grab_rect = Rect::from_min_max(grip.min, pos2(expand.left().max(grip.left()), grip.bottom()));
     let mut ask = None;
     let mut tops = Vec::new();
@@ -292,7 +295,8 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
         ui.set_clip_rect(rect.intersect(region));
         let painter = ui.painter().clone();
         painter.rect_filled(rect, CornerRadius::same(boxes::RADIUS), t.panel);
-        // The 6-point grip drags the whole pill. `>>` sits at its right end; there is no `×`.
+        // The 16-point grip row drags the whole pill. `>>` has that row to itself, so it does not
+        // cover the first tile. Each group's own grip, below, drags that group.
         let grab = ui.interact(grab_rect, area.with("title"), Sense::click_and_drag());
         if grab.hovered() {
             ctx.set_cursor_icon(egui::CursorIcon::Grab);
@@ -301,12 +305,12 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
             drag::begin(app, &ctx, Item::Strip(id), rect);
         }
         grab.context_menu(|ui| {
-            if ui.button("Collapse to icon").clicked() {
+            if ui.button(tl!("Collapse to icon")).clicked() {
                 ask = Some(Ask::Close);
                 ui.close();
             }
-            if ui.button("Close").clicked() {
-                ask = Some(Ask::Close);
+            if ui.button(tl!("Close")).clicked() {
+                ask = Some(Ask::Dismiss);
                 ui.close();
             }
         });
@@ -314,14 +318,19 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
             ask = Some(Ask::Expand);
         }
         let mut n = 0usize;
-        for g in &s.groups {
-            tops.push(rect.top() + PILL_GRIP + n as f32 * PILL_ROW);
-            hits.push((sref.group_hit(tops.len() - 1), grip));
+        for (gi, g) in s.groups.iter().enumerate() {
+            let gy = rect.top() + PILL_GRIP + n as f32 * PILL_ROW;
+            let grow = (g.panels.len().max(1) as f32) * PILL_ROW;
+            let group_grip = Rect::from_min_size(pos2(rect.left(), gy), vec2(12.0, grow));
+            tops.push(gy);
+            hits.push((sref.group_hit(gi), group_grip));
+            let group_drag = ui.interact(group_grip, area.with(("group", gi)), Sense::drag());
+            if group_drag.drag_started() {
+                drag::begin(app, &ctx, Item::Group { strip: sref, group: g.clone() }, group_grip);
+            }
             for panel in &g.panels {
-                let tile = Rect::from_min_size(pos2(rect.left() + 6.0, rect.top() + PILL_GRIP + n as f32 * PILL_ROW), vec2(28.0, 28.0));
-                let hit_rect =
-                    if tile.intersects(expand) { Rect::from_min_max(tile.min, pos2(expand.left().max(tile.left()), tile.bottom())) } else { tile };
-                let r = ui.interact(hit_rect, area.with(("icon", panel)), Sense::click_and_drag());
+                let tile = Rect::from_min_size(pos2(rect.left() + 12.0, rect.top() + PILL_GRIP + n as f32 * PILL_ROW), vec2(26.0, 28.0));
+                let r = ui.interact(tile, area.with(("icon", panel)), Sense::click_and_drag());
                 if r.drag_started() {
                     drag::begin(app, &ctx, Item::Icon(panel.clone()), tile);
                 } else if super::strip::clicked_once(&ctx, r.id, r.clicked()) {
@@ -356,7 +365,11 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
     let shell = &mut app.ui.varos_shell;
     match ask {
         Some(Ask::Close) => {
-            shell.close_float_strip(id);
+            shell.collapse_float_strip(id);
+            ctx.request_repaint();
+        }
+        Some(Ask::Dismiss) => {
+            shell.dismiss_float_strip(id);
             ctx.request_repaint();
         }
         Some(Ask::Expand) => {

@@ -1058,6 +1058,9 @@ impl VectorcraftApp {
 
     /// [`Self::run`] it, inside what asks for file dialogs.
     fn run_now(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A command the picker did not issue must not join the popover's undo group (an agent
+        // edit through this same entry point included). The group's edits stay one step.
+        crate::varos::picker::seal_foreign(self);
         crate::state::sync_zoom_stops_display_print_size(self.session.prefs.display_print_size);
         self.run_count = self.run_count.wrapping_add(1);
         // In debug builds the app's own calls are held to the params descriptions too (#1442): a

@@ -53,6 +53,8 @@ pub(crate) fn set_enabled(app: &mut VectorcraftApp, on: bool) {
         app.ui.varos_shell.drag = None;
     }
     app.ui.varos_shell.enabled = on;
+    // An explicit choice, on or off, so a later load does not treat `false` as the old default.
+    app.ui.varos_shell.enabled_chosen = true;
 }
 
 /// A control of the shell as drawn last frame: what drags aim at, and what tests and agents read.

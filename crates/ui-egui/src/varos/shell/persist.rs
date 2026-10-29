@@ -1,8 +1,9 @@
-//! The shell's saved state: `varos_shell` in `ui.json` (version 5: the boxes, the Board's strip,
+//! The shell's saved state: `varos_shell` in `ui.json` (version 7: the boxes, the Board's strip,
 //! floating panels and floating strips, the Properties editors' section views, the maximized box
 //! and the workspaces), apart from craft-ui's `docking` layout, which it never touches. Versions
-//! 1, 2 and 3 load through the migrations [`migrate_1_to_2`], [`migrate_2_to_3`] and
-//! [`migrate_3_to_4`], each a pure function of the saved JSON.
+//! 1 through 6 load through the migrations, each a pure function of the saved JSON. Version 7
+//! turns the shell on once for a saved file that still has the old default `enabled: false` and
+//! never recorded an explicit choice.
 //!
 //! Every panel has at most one owner: a box of the tree, the Board's strip, a floating panel or a
 //! floating strip ([`VarosShell::invariants`]). A panel id is a panel the app knows or a second
@@ -20,7 +21,7 @@ use super::workspace::Arrangement;
 use crate::panels::properties::PropertiesView;
 
 /// The saved layout's version.
-pub(crate) const VERSION: u32 = 6;
+pub(crate) const VERSION: u32 = 7;
 /// Floating panels' box ids start here (the tree's start at 1), so the two never meet.
 const FLOAT_IDS: u32 = 1 << 20;
 /// The Properties panel: the one editor that has more than one instance.
@@ -31,6 +32,10 @@ pub(crate) const PROPERTIES: &str = "properties";
 pub struct VarosShell {
     /// The window's central region is the Varos shell (off: craft-ui's dock, as upstream).
     pub enabled: bool,
+    /// The user has set the switch. Absent on a version-6 file, so a saved `enabled: false` that
+    /// was only the old default turns on once ([`migrate_6_to_7`]). An explicit off writes this.
+    #[serde(default)]
+    pub enabled_chosen: bool,
     /// The layout's version ([`VERSION`]).
     pub version: u32,
     /// The boxes.
@@ -74,6 +79,58 @@ pub struct VarosShell {
     /// newest last. Expanding the strip past ~120 pt restores the last one.
     #[serde(default)]
     pub collapsed_columns: Vec<CollapsedColumn>,
+    /// Where a panel was when it last left a strip, a pill or a box. Not saved: a launch has no
+    /// drag to undo. Restored by closing a float, collapsing to an icon, or returning a pill.
+    #[serde(skip)]
+    pub(crate) homes: BTreeMap<String, PanelHome>,
+}
+
+/// The place a panel left, so closing a float, collapsing to an icon or returning a pill puts it
+/// back there instead of at the end of the Board strip.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum PanelHome {
+    /// A strip (the Board's, or a floating pill) and the index in that group.
+    Strip {
+        strip: StripRef,
+        index: usize,
+        /// The group's other panels, so the group can be found after indexes shift.
+        peers: Vec<String>,
+        /// A panel of the previous group, if any.
+        after_group: Option<String>,
+        /// A panel of the next group, if any.
+        before_group: Option<String>,
+        /// A floating pill's top-left, so a removed pill can be rebuilt.
+        pos: Option<[f32; 2]>,
+    },
+    /// A tab of a docked or floating box.
+    Tabs { box_id: u32, index: usize },
+}
+
+impl PanelHome {
+    fn index(&self) -> usize {
+        match self {
+            PanelHome::Strip { index, .. } | PanelHome::Tabs { index, .. } => *index,
+        }
+    }
+}
+
+/// Where a strip panel goes back: the arguments of [`VarosShell::place_in_strip`] as one value.
+struct StripSlot<'a> {
+    strip: StripRef,
+    index: usize,
+    peers: &'a [String],
+    after_group: Option<&'a str>,
+    before_group: Option<&'a str>,
+    pos: Option<[f32; 2]>,
+}
+
+fn strip_home(groups: &[Group], strip: StripRef, group: usize, panel: &str, pos: Option<[f32; 2]>) -> Option<PanelHome> {
+    let g = groups.get(group)?;
+    let index = g.panels.iter().position(|p| p == panel).unwrap_or(0);
+    let peers = g.panels.iter().filter(|p| p.as_str() != panel).cloned().collect();
+    let after_group = group.checked_sub(1).and_then(|i| groups.get(i)).and_then(|g| g.panels.first().cloned());
+    let before_group = groups.get(group + 1).and_then(|g| g.panels.first().cloned());
+    Some(PanelHome::Strip { strip, index, peers, after_group, before_group, pos })
 }
 
 /// A dock column that was collapsed into the strip, so dragging the strip back open can rebuild it.
@@ -97,6 +154,7 @@ impl Default for VarosShell {
     fn default() -> Self {
         Self {
             enabled: true,
+            enabled_chosen: false,
             version: VERSION,
             strip: super::strip::Strip::default_for(&Node::default_layout()),
             tree: Node::default_layout(),
@@ -112,6 +170,7 @@ impl Default for VarosShell {
             open: None,
             drag: None,
             collapsed_columns: Vec::new(),
+            homes: BTreeMap::new(),
         }
     }
 }
@@ -184,6 +243,21 @@ pub(crate) fn migrate_4_to_5(mut v: Value) -> Value {
     v
 }
 
+/// Version 6 → 7: a saved `enabled: false` with no explicit choice was the old default (the key
+/// was always written). Turn the shell on once. A file that already records `enabled_chosen`
+/// keeps the choice, so a later explicit off stays off.
+pub(crate) fn migrate_6_to_7(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        let chosen = o.get("enabled_chosen").and_then(Value::as_bool).unwrap_or(false);
+        let enabled = o.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        if !enabled && !chosen {
+            o.insert("enabled".into(), json!(true));
+        }
+        o.insert("version".into(), json!(7));
+    }
+    v
+}
+
 /// Version 5 → 6 preserves every owner and adds the per-workspace tools grid.
 pub(crate) fn migrate_5_to_6(mut v: Value) -> Value {
     if let Some(o) = v.as_object_mut() {
@@ -206,8 +280,6 @@ pub(crate) fn migrate_5_to_6(mut v: Value) -> Value {
 /// version migrated step by step; a layout of an unknown version, or one that doesn't read, is the
 /// default; unknown panel ids are dropped; a tree with no Board is the default layout.
 pub(crate) fn from_value(v: &Value) -> VarosShell {
-    // Absent means on: fresh configs and older ui.json files that never wrote the key.
-    let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(true);
     let version = v.get("version").and_then(Value::as_u64);
     let mut v = v.clone();
     if version == Some(1) {
@@ -225,7 +297,14 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
     if matches!(version, Some(1..=5)) {
         v = migrate_5_to_6(v);
     }
-    let readable = matches!(version, Some(1..=6));
+    if matches!(version, Some(1..=6)) {
+        v = migrate_6_to_7(v);
+    }
+    // Absent means on: fresh configs and older ui.json files that never wrote the key. Read after
+    // the migration so a version-6 `enabled: false` without a choice has already been turned on.
+    let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+    let enabled_chosen = v.get("enabled_chosen").and_then(Value::as_bool).unwrap_or(false);
+    let readable = matches!(version, Some(1..=7));
     let tree =
         readable.then(|| v.get("tree").and_then(|t| Node::deserialize(t).ok())).flatten().map_or_else(Node::default_layout, |t| t.sanitized(&known));
     let strip = v.get("strip").and_then(|s| super::strip::Strip::deserialize(s).ok()).unwrap_or_else(|| super::strip::Strip::default_for(&tree));
@@ -247,6 +326,7 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
     let (workspaces, workspace_changes) = (arrangements("workspaces"), arrangements("workspace_changes"));
     let mut shell = VarosShell {
         enabled,
+        enabled_chosen,
         version: VERSION,
         tree,
         tools_columns: v.get("tools_columns").and_then(Value::as_u64).unwrap_or(1).clamp(1, 3) as u8,
@@ -266,6 +346,7 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
         open: None,
         drag: None,
         collapsed_columns: v.get("collapsed_columns").and_then(|c| Vec::<CollapsedColumn>::deserialize(c).ok()).unwrap_or_default(),
+        homes: BTreeMap::new(),
     };
     // Stage-2 state keeps its own strip arrangement rules (see `Strip::sanitize_owned`).
     shell.sanitize(matches!(version, Some(1 | 2)) || !readable);
@@ -357,8 +438,10 @@ impl VarosShell {
     }
 
     /// Take `panel` from its owner, whoever it is: a box (its box goes with its last tab), the
-    /// Board's strip, a floating panel or a floating strip (each goes when left empty).
+    /// Board's strip, a floating panel or a floating strip (each goes when left empty). The place
+    /// it leaves is remembered, so a later close puts it back there.
     pub fn take(&mut self, panel: &str) {
+        self.remember_home(panel);
         self.tree.remove_tab(panel);
         self.strip.remove(panel);
         self.take_float_tab(panel);
@@ -369,6 +452,105 @@ impl VarosShell {
             s.groups.retain(|g| !g.panels.is_empty());
         }
         self.float_strips.retain(|s| !s.groups.is_empty());
+    }
+
+    /// Record where `panel` sits, overwriting an older record. Called before it is removed.
+    fn remember_home(&mut self, panel: &str) {
+        let Some(home) = self.locate(panel) else { return };
+        self.homes.insert(panel.to_string(), home);
+    }
+
+    fn locate(&self, panel: &str) -> Option<PanelHome> {
+        if let Some(group) = self.strip.group(panel) {
+            return strip_home(&self.strip.groups, StripRef::Board, group, panel, None);
+        }
+        if let Some(id) = self.float_strip_of(panel) {
+            let s = self.float_strips.iter().find(|s| s.id == id)?;
+            let group = s.groups.iter().position(|g| g.panels.iter().any(|p| p == panel))?;
+            return strip_home(&s.groups, StripRef::Float(id), group, panel, Some(s.pos));
+        }
+        if let Some(id) = self.tree.find_tab(panel) {
+            let index = self.tree.find_box(id)?.tabs.iter().position(|t| t == panel)?;
+            return Some(PanelHome::Tabs { box_id: id, index });
+        }
+        if let Some(id) = self.float_of(panel) {
+            let f = self.floats.iter().find(|f| f.panels.id == id)?;
+            let index = f.panels.tabs.iter().position(|t| t == panel)?;
+            return Some(PanelHome::Tabs { box_id: id, index });
+        }
+        None
+    }
+
+    /// Put `panels` back where each one left, lowest index first so a shared group rebuilds in order.
+    fn place_all(&mut self, mut panels: Vec<String>) {
+        panels.sort_by_key(|p| self.homes.get(p).map(PanelHome::index).unwrap_or(usize::MAX));
+        for panel in panels {
+            self.place_back(&panel);
+        }
+    }
+
+    /// Put `panel` back at its recorded origin. With none, it joins the Board strip.
+    fn place_back(&mut self, panel: &str) {
+        let Some(home) = self.homes.remove(panel) else {
+            self.strip.append(panel);
+            return;
+        };
+        match home {
+            PanelHome::Tabs { box_id, index } => {
+                let before = self.tab_at(box_id, index).filter(|name| name != panel);
+                let lives = self.tree.find_box(box_id).is_some() || self.floats.iter().any(|f| f.panels.id == box_id);
+                if !lives || !self.insert_tabs(box_id, before.as_deref(), &[panel.to_string()]) {
+                    self.strip.append(panel);
+                }
+            }
+            PanelHome::Strip { strip, index, peers, after_group, before_group, pos } => {
+                let slot = StripSlot { strip, index, peers: &peers, after_group: after_group.as_deref(), before_group: before_group.as_deref(), pos };
+                if !self.place_in_strip(slot, panel) {
+                    self.strip.append(panel);
+                }
+            }
+        }
+    }
+
+    fn tab_at(&self, box_id: u32, index: usize) -> Option<String> {
+        let tabs = if let Some(b) = self.tree.find_box(box_id) { &b.tabs } else { &self.floats.iter().find(|f| f.panels.id == box_id)?.panels.tabs };
+        tabs.get(index).cloned()
+    }
+
+    fn place_in_strip(&mut self, slot: StripSlot<'_>, panel: &str) -> bool {
+        let StripSlot { strip, index, peers, after_group, before_group, pos } = slot;
+        if self.strip_groups(strip).is_none() {
+            let StripRef::Float(id) = strip else { return false };
+            let pos = pos.unwrap_or([80.0, 80.0]);
+            self.float_strips.push(super::floats::FloatStrip {
+                id,
+                pos,
+                groups: vec![Group {
+                    temporary: !super::strip::Strip::is_default(panel),
+                    panels: vec![panel.to_string()],
+                    width: 240.0,
+                    height: 360.0,
+                }],
+            });
+            return true;
+        }
+        if let Some(groups) = self.strip_groups_mut(strip)
+            && let Some(g) = groups.iter_mut().find(|g| g.panels.iter().any(|p| peers.iter().any(|q| q == p)))
+        {
+            let at = index.min(g.panels.len());
+            g.panels.insert(at, panel.to_string());
+            return true;
+        }
+        let Some(groups) = self.strip_groups_mut(strip) else { return false };
+        let at = before_group
+            .and_then(|b| groups.iter().position(|g| g.panels.iter().any(|p| p == b)))
+            .or_else(|| after_group.and_then(|a| groups.iter().position(|g| g.panels.iter().any(|p| p == a)).map(|i| i + 1)))
+            .unwrap_or(groups.len());
+        groups.insert(
+            at.min(groups.len()),
+            Group { temporary: !super::strip::Strip::is_default(panel), panels: vec![panel.to_string()], width: 240.0, height: 360.0 },
+        );
+        true
     }
 
     /// The floating panel holding `panel`.
@@ -458,17 +640,18 @@ impl VarosShell {
         true
     }
 
-    /// Floating panel `id`'s `×`: its panels go back to the Board's strip.
+    /// Floating panel `id`'s `×` and `<<`, and a drop of the float on the strip: each panel goes
+    /// back where it left (a strip group, a pill, or the tab it was dragged out of).
     pub(crate) fn close_float(&mut self, id: u32) {
         let Some(i) = self.floats.iter().position(|f| f.panels.id == id) else { return };
-        for p in self.floats.remove(i).panels.tabs {
-            self.strip.append(&p);
-        }
+        let panels = self.floats.remove(i).panels.tabs;
+        self.place_all(panels);
+        self.settle();
     }
 
-    /// A panel menu's Collapse to icon, and a floating panel's `<<`: every tab of box `id` goes
-    /// back to the Board's strip as one icon group. A docked box disappears (its sibling takes
-    /// the room).
+    /// A panel menu's Collapse to icon, and a floating panel's `<<`. Panels that left a strip or
+    /// a pill go back there. The rest of a docked box become one icon group. A docked box
+    /// disappears (its sibling takes the room).
     pub(crate) fn collapse_box_to_strip(&mut self, id: u32) -> bool {
         if self.floats.iter().any(|f| f.panels.id == id) {
             self.close_float(id);
@@ -482,12 +665,16 @@ impl VarosShell {
         for panel in &tabs {
             self.tree.remove_tab(panel);
         }
-        self.strip.groups.push(Group {
-            temporary: tabs.iter().all(|p| !super::strip::Strip::is_default(p)),
-            panels: tabs,
-            width: 260.0,
-            height: 360.0,
-        });
+        let (restore, fresh): (Vec<String>, Vec<String>) = tabs.into_iter().partition(|p| self.homes.contains_key(p));
+        self.place_all(restore);
+        if !fresh.is_empty() {
+            self.strip.groups.push(Group {
+                temporary: fresh.iter().all(|p| !super::strip::Strip::is_default(p)),
+                panels: fresh,
+                width: 260.0,
+                height: 360.0,
+            });
+        }
         self.settle();
         true
     }
@@ -549,12 +736,33 @@ impl VarosShell {
         self.close_float(id);
     }
 
-    /// Floating strip `id`'s `×`: its panels go back to the Board's strip.
-    pub(crate) fn close_float_strip(&mut self, id: u32) {
+    /// A pill's Collapse to icon: each panel goes back where it left. A home that names this pill
+    /// is dropped first, so closing the pill does not rebuild it.
+    pub(crate) fn collapse_float_strip(&mut self, id: u32) {
         let Some(i) = self.float_strips.iter().position(|s| s.id == id) else { return };
-        for p in self.float_strips.remove(i).groups.into_iter().flat_map(|g| g.panels) {
-            self.strip.append(&p);
+        let panels: Vec<String> = self.float_strips[i].groups.iter().flat_map(|g| g.panels.clone()).collect();
+        self.float_strips.remove(i);
+        for panel in &panels {
+            if matches!(self.homes.get(panel), Some(PanelHome::Strip { strip: StripRef::Float(fid), .. }) if *fid == id) {
+                self.homes.remove(panel);
+            }
         }
+        self.place_all(panels);
+        self.settle();
+    }
+
+    /// A pill's Close: the panels leave the layout. They are not docked to the Board strip.
+    pub(crate) fn dismiss_float_strip(&mut self, id: u32) {
+        let Some(i) = self.float_strips.iter().position(|s| s.id == id) else { return };
+        let panels: Vec<String> = self.float_strips[i].groups.iter().flat_map(|g| g.panels.clone()).collect();
+        self.float_strips.remove(i);
+        for panel in &panels {
+            self.homes.remove(panel);
+            if self.open.as_deref() == Some(panel) {
+                self.open = None;
+            }
+        }
+        self.settle();
     }
 
     /// Floating strip `id`'s `>>`: each of its groups becomes a floating panel (the group's
@@ -761,11 +969,16 @@ mod tests {
     }
 
     #[test]
-    fn the_shell_is_on_when_the_key_is_absent_and_off_only_when_written_false() {
+    fn the_shell_is_on_when_the_key_is_absent_and_a_chosen_off_stays_off() {
         let missing: crate::state::UiState = serde_json::from_value(json!({"varos_shell": {"version": 6}})).unwrap();
         assert!(missing.varos_shell.enabled, "an older ui.json without the key loads on");
-        let off: crate::state::UiState = serde_json::from_value(json!({"varos_shell": {"enabled": false, "version": 6}})).unwrap();
-        assert!(!off.varos_shell.enabled, "an explicit false stays off");
+        let forgotten: crate::state::UiState = serde_json::from_value(json!({"varos_shell": {"enabled": false, "version": 6}})).unwrap();
+        assert!(forgotten.varos_shell.enabled, "version 6 wrote false as the default; the migration turns it on");
+        assert!(!forgotten.varos_shell.enabled_chosen);
+        let chosen: crate::state::UiState =
+            serde_json::from_value(json!({"varos_shell": {"enabled": false, "enabled_chosen": true, "version": 7}})).unwrap();
+        assert!(!chosen.varos_shell.enabled, "an explicit off stays off");
+        assert!(chosen.varos_shell.enabled_chosen);
     }
 
     #[test]
@@ -783,6 +996,24 @@ mod tests {
     const V1: &str = include_str!("fixtures/v1.json");
     const V2: &str = include_str!("fixtures/v2.json");
     const V3: &str = include_str!("fixtures/v3.json");
+    const V6: &str = include_str!("fixtures/v6.json");
+
+    #[test]
+    fn version_6_false_without_a_choice_turns_on_and_a_chosen_off_stays_off() {
+        let raw = fixture(V6);
+        assert_eq!((raw["version"].clone(), raw["enabled"].clone()), (json!(6), json!(false)));
+        assert!(raw.get("enabled_chosen").is_none(), "the fixture has no choice marker");
+        let on = from_value(&raw);
+        on.invariants().unwrap_or_else(|e| panic!("{e}"));
+        assert!(on.enabled, "the old default off becomes on");
+        assert!(!on.enabled_chosen);
+        assert_eq!(on.version, VERSION);
+        let mut marked = raw.clone();
+        marked.as_object_mut().unwrap().insert("enabled_chosen".into(), json!(true));
+        let off = from_value(&marked);
+        assert!(!off.enabled, "an explicit off on a version-6 file stays off");
+        assert!(off.enabled_chosen);
+    }
 
     fn fixture(raw: &str) -> Value {
         serde_json::from_str(raw).unwrap()

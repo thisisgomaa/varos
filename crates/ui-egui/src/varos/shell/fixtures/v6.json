@@ -1,0 +1,22 @@
+{
+  "enabled": false,
+  "version": 6,
+  "tools_columns": 1,
+  "tree": {
+    "split": {
+      "axis": "horizontal",
+      "ratio": 0.65,
+      "reset": 0.72,
+      "a": { "leaf": { "id": 1, "tabs": ["board"], "active": 0 } },
+      "b": {
+        "split": {
+          "axis": "vertical",
+          "ratio": 0.4,
+          "reset": 0.5,
+          "a": { "leaf": { "id": 2, "tabs": ["layers", "artboards"], "active": 1 } },
+          "b": { "leaf": { "id": 3, "tabs": ["properties", "color", "swatches", "stroke"], "active": 3 } }
+        }
+      }
+    }
+  }
+}
