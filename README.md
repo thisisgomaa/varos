@@ -4,6 +4,9 @@ Varos is an Arabic-first fork of [VectorCraft](https://github.com/storytold/vect
 ArtCraft team (storytold), licensed MIT OR Apache-2.0. **Not published yet.** Everything below the
 line is upstream VectorCraft's own README, unchanged.
 
+**The name:** Varos = **V**ector · **A**rabic · **R**TL · **O**pen **S**ource: a vector editor,
+Arabic first, built for right-to-left scripts, and open source (owner, recorded 2026-11-02).
+
 What is ours (everything else is upstream):
 
 - **Name and identity:** the product shows as Varos, with the original Varos app icon; Discord and
