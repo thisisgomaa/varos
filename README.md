@@ -3,6 +3,8 @@
 
 **An Arabic-first, free and open-source vector editor — built in public. It opens instantly, and its working files are already PDFs.**
 
+**The name:** Varos = **V**ector · **A**rabic · **R**TL · **O**pen **S**ource: a vector editor, Arabic first, built for right-to-left scripts, and open source (owner, recorded 2026-11-02).
+
 Built in Rust, drawn directly on the GPU (wgpu + egui, no Electron, no web view). Mac-first; Windows is currently compile-checked only. Built in public by a designer and AI pair-programming sessions — every decision documented, automated checks accompany each stage, with interaction testing in batches.
 
 > ⚠️ **Early days, on purpose.** Varos is a working drawing tool under heavy construction — not yet a daily design tool (text is coming, see the roadmap below). We publish early because we build in the open.
