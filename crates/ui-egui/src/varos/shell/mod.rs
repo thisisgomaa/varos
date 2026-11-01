@@ -87,6 +87,7 @@ pub(crate) enum Hit {
     },
     /// A box's ≡ button.
     Menu(u32),
+    BoxToIcon(u32),
     /// The divider of the split at this path.
     Divider(tree::Path),
     /// A floating panel, whole (its tab row, tabs and ≡ are [`Hit::TabRow`], [`Hit::Tab`] and

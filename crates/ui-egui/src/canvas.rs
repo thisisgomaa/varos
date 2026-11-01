@@ -334,7 +334,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let resp = ui.interact(rect, egui::Id::unique("canvas"), Sense::click_and_drag());
     // A press on the canvas while the context menu is open only closes it (a drag too, which egui
     // alone would leave open); the tool doesn't get it.
-    if app.ui.varos_picker_anchor.is_some() || app.ui.dialog.as_ref().is_some_and(crate::dialogs::revolve_gizmo::active) {
+    if (app.ui.varos_picker_anchor.is_some() && !crate::varos::shell::enabled(app))
+        || app.ui.dialog.as_ref().is_some_and(crate::dialogs::revolve_gizmo::active)
+    {
         // The well-opened colour picker owns the pointer: a click outside it only closes it.
         // The artboard's 3D gizmo owns these gestures while its options are open.
         // Do not let a ring drag also move or deselect the editable source path.
@@ -975,6 +977,10 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
 
 /// Dispatch canvas pointer, keyboard and drop events through the active document view.
 fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: egui::Rect) {
+    // Tool gestures bypass app.run; keep them outside a nonmodal palette's undo group too.
+    if resp.is_pointer_button_down_on() || resp.dragged() || resp.clicked() {
+        crate::varos::picker::seal_foreign(app);
+    }
     let line = ui.ctx().options(|o| o.input_options.line_scroll_speed);
     let wheel_zooms = app.session.prefs.zoom_with_mouse_wheel;
     let turn_id = egui::Id::unique("canvas-wheel-turn");

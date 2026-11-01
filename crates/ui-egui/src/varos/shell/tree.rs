@@ -89,12 +89,22 @@ impl PanelBox {
         self.tabs.get(self.active).or(self.tabs.first()).map(String::as_str)
     }
 
+    fn is_control_bar(&self) -> bool {
+        !self.tabs.is_empty() && self.tabs.iter().all(|p| super::persist::instance_kind(p) == "control")
+    }
+
     fn min_size(&self) -> Vec2 {
         if self.is_board() {
             BOARD_MIN
         } else {
             let width = self.tabs.iter().map(|id| panel_min_width(id)).fold(180.0, f32::max);
-            if self.collapsed { vec2(width, ROW) } else { vec2(width, BOX_MIN.y) }
+            if self.collapsed {
+                vec2(width, ROW)
+            } else if self.is_control_bar() {
+                vec2(width, ROW + 64.0)
+            } else {
+                vec2(width, BOX_MIN.y)
+            }
         }
     }
 
@@ -301,11 +311,17 @@ impl Node {
         true
     }
 
-    /// Split box `id` along `axis`: `panel` (moved out of whichever box holds it, or new) becomes a
-    /// box of its own beside it, after it (right or below) or before it (left or above), with
-    /// `ratio` of the room. → the new box's id. Nothing happens (`None`) for the Board's tab, a box
-    /// that doesn't exist, or a box's only tab split off itself.
-    #[allow(dead_code)] // Varos: stage 3's drop on a box edge.
+    /// Place a compact Control group above the complete docked workspace.
+    pub fn dock_top(&mut self, panels: &[String]) {
+        let id = self.next_id();
+        for panel in panels {
+            self.take_tab(panel);
+        }
+        let fresh = Node::Leaf(PanelBox { id, tabs: panels.to_vec(), active: 0, collapsed: false });
+        *self = split(Axis::Vertical, 0.12, fresh, self.clone());
+    }
+
+    /// Split a box, giving the new panel `ratio` of its available extent.
     pub fn split_box(&mut self, id: u32, axis: Axis, panel: &str, after: bool, ratio: f32) -> Option<u32> {
         let target = self.find_box(id)?;
         if panel == BOARD || (target.tabs.len() == 1 && target.tabs[0] == panel) {
@@ -663,6 +679,13 @@ impl Node {
                     (Axis::Vertical, Some(h), Some(_)) => (h.min(room), true, shrink),
                     (Axis::Horizontal, Some(ha), Some(hb)) => ((room * r).round(), shrink && ha >= hb - 0.5, shrink && hb >= ha - 0.5),
                     _ => ((room * r).round(), false, false),
+                };
+                let a_len = if *axis == Axis::Vertical && matches!(a.as_ref(), Node::Leaf(b) if b.is_control_bar() && !b.collapsed) {
+                    (ROW + 64.0).min(room)
+                } else if *axis == Axis::Vertical && matches!(b.as_ref(), Node::Leaf(b) if b.is_control_bar() && !b.collapsed) {
+                    (room - ROW - 64.0).max(0.0)
+                } else {
+                    a_len
                 };
                 let (ra, seam, rb) = match axis {
                     Axis::Horizontal => {

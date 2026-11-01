@@ -47,6 +47,8 @@ pub enum DragMode {
 pub enum Item {
     /// The Board tools strip, using the same ghost, preview and transactional drop.
     Tools,
+    /// The entire docked icon rail, moved from its header or empty background.
+    BoardStrip,
     /// A panel's tab (in a box, a floating panel or a flyout).
     Tab(String),
     /// A panel's icon in a strip.
@@ -110,6 +112,10 @@ pub enum Target {
     Strip { strip: StripRef, slot: Slot },
     /// The Board's strip, after its groups (a floating strip docks).
     Dock,
+    /// Dock the icon rail at the left edge of the workspace.
+    DockLeft,
+    /// A Control-only group above the complete workspace.
+    ControlTop,
     /// A new floating panel.
     Float,
     /// A new lone floating icon (a floating strip).
@@ -157,6 +163,7 @@ pub(crate) fn begin(app: &mut VectorcraftApp, ctx: &egui::Context, item: Item, s
         Item::Strip(id) => {
             app.ui.varos_shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.size()).unwrap_or(vec2(floats::STRIP_W, floats::pill_height(1)))
         }
+        Item::BoardStrip => vec2(floats::STRIP_W, 100.0),
         Item::Icon(_) | Item::Tools => vec2(ICON, ICON),
     };
     // A resize holds the float's lower-right corner (`source` is the float): from the pointer.
@@ -259,7 +266,7 @@ pub(crate) fn before(app: &mut VectorcraftApp, ctx: &egui::Context, region: Rect
                 let over_strip = super::hit_rects(ctx).iter().any(|(h, r)| *h == Hit::Strip && r.contains(p));
                 if over_strip {
                     app.ui.varos_shell.drag = None;
-                    app.ui.varos_shell.close_float(id);
+                    app.ui.varos_shell.dock_float(id);
                     ctx.request_repaint();
                     return;
                 }
@@ -308,21 +315,15 @@ pub(crate) fn after(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, h
         _ => CursorIcon::Grabbing,
     });
     if d.item.in_place() {
-        if let Item::Float { id, .. } = d.item
+        if let Item::Float { .. } = d.item
             && let Some(p) = ctx.input(|i| i.pointer.latest_pos())
             && hits.iter().any(|(h, r)| *h == Hit::Strip && r.contains(p))
         {
             let accent = crate::varos::theme::ACCENT;
-            let panel = app.ui.varos_shell.floats.iter().find(|f| f.panels.id == id).and_then(|f| f.panels.tabs.first().cloned());
-            let (line, vertical, target) =
-                panel.as_deref().and_then(|panel| restore_preview(&app.ui.varos_shell, hits, panel)).unwrap_or_else(|| {
-                    let rail = hits.iter().find(|(h, _)| *h == Hit::Strip).map(|(_, r)| *r).unwrap_or(region);
-                    (
-                        hline(rail.bottom() - 6.0, rail.left() + 4.0, rail.right() - 4.0),
-                        false,
-                        Target::Strip { strip: StripRef::Board, slot: Slot::NewGroup { before: None } },
-                    )
-                });
+            let rail = hits.iter().find(|(h, _)| *h == Hit::Strip).map(|(_, r)| *r).unwrap_or(region);
+            let line = hline(rail.bottom() - 6.0, rail.left() + 4.0, rail.right() - 4.0);
+            let vertical = false;
+            let target = Target::Strip { strip: StripRef::Board, slot: Slot::NewGroup { before: None } };
             ctx.layer_painter(preview_layer()).rect_filled(line, CornerRadius::same(1), accent);
             hits.push((Hit::DropLine { vertical, target }, line));
         }
@@ -374,7 +375,7 @@ fn paint_ghost(app: &VectorcraftApp, ui: &mut egui::Ui, layer: LayerId, d: &Drag
     painter.rect_filled(ghost, CornerRadius::same(3), fade(t.button));
     let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(ghost));
     paint_ui.set_clip_rect(ghost);
-    let stacked = matches!(d.item, Item::Group { .. } | Item::Strip(_));
+    let stacked = matches!(d.item, Item::Group { .. } | Item::Strip(_) | Item::BoardStrip);
     if stacked {
         painter.rect_filled(Rect::from_min_size(ghost.min, vec2(ghost.width(), floats::PILL_GRIP)), CornerRadius::same(2), fade(t.hover));
     }
@@ -412,6 +413,7 @@ fn source_rect(shell: &VarosShell, item: &Item, hits: &[(Hit, Rect)]) -> Option<
             group_of(*strip, index)
         }
         Item::Tools => find(&|h| *h == Hit::Tools),
+        Item::BoardStrip => find(&|h| *h == Hit::Strip),
         Item::Strip(id) => find(&|h| *h == Hit::FloatStrip(*id)),
         Item::Float { .. } | Item::Resize { .. } => None,
     }
@@ -422,6 +424,7 @@ pub(crate) fn item_panels(shell: &VarosShell, item: &Item) -> Vec<String> {
     match item {
         Item::Tab(p) | Item::Icon(p) => vec![p.clone()],
         Item::Group { group, .. } => group.panels.clone(),
+        Item::BoardStrip => shell.strip.groups.iter().flat_map(|g| g.panels.clone()).collect(),
         Item::Strip(id) => {
             shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.groups.iter().flat_map(|g| g.panels.clone()).collect()).unwrap_or_default()
         }
@@ -443,75 +446,13 @@ fn item_groups(shell: &VarosShell, item: &Item) -> Vec<Group> {
             }]
         }
         Item::Group { group, .. } => vec![group.clone()],
+        Item::BoardStrip => shell.strip.groups.clone(),
         Item::Strip(id) => shell.float_strips.iter().find(|s| s.id == *id).map(|s| s.groups.clone()).unwrap_or_default(),
         Item::Tools | Item::Float { .. } | Item::Resize { .. } => Vec::new(),
     }
 }
 
 /// A line `LINE` thick: vertical through `x` from `y0` to `y1`, or horizontal.
-/// The azure line for dropping a float: the same slot [`VarosShell::close_float`] restores.
-fn restore_preview(shell: &VarosShell, hits: &[(Hit, Rect)], panel: &str) -> Option<(Rect, bool, Target)> {
-    use super::persist::PanelHome;
-    let home = shell.homes.get(panel)?;
-    match home {
-        PanelHome::Tabs { box_id, index } => {
-            let row = hits.iter().find(|(h, _)| matches!(h, Hit::TabRow(id) if *id == *box_id)).map(|(_, r)| *r)?;
-            let before = tab_name(shell, *box_id, *index);
-            let x = before.as_ref().and_then(|name| {
-                hits.iter().find(|(h, _)| matches!(h, Hit::Tab { box_id: id, panel } if *id == *box_id && panel == name)).map(|(_, r)| r.left())
-            });
-            let x = x.unwrap_or(row.right());
-            Some((vline(x, row.center().y - 10.0, row.center().y + 10.0), true, Target::Tabs { box_id: *box_id, before }))
-        }
-        PanelHome::Strip { strip, index, peers, before_group, .. } => {
-            let mut icons: Vec<(String, Rect)> = peers.iter().filter_map(|p| icon_rect(hits, *strip, p).map(|r| (p.clone(), r))).collect();
-            icons.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
-            if !icons.is_empty() {
-                let y = icons.get(*index).map(|(_, r)| r.top()).unwrap_or_else(|| icons.last().map(|(_, r)| r.bottom()).unwrap_or(0.0));
-                let span = icons.first().map(|(_, r)| *r).unwrap_or(Rect::NOTHING);
-                let group_of = icons.first().map(|(p, _)| p.clone()).unwrap_or_default();
-                let before = icons.get(*index).map(|(p, _)| p.clone());
-                return Some((hline(y, span.left(), span.right()), false, Target::Strip { strip: *strip, slot: Slot::Join { group_of, before } }));
-            }
-            if let Some(marker) = before_group.as_ref()
-                && let Some(grip) = icon_rect(hits, *strip, marker)
-            {
-                return Some((
-                    hline(grip.top(), grip.left(), grip.right()),
-                    false,
-                    Target::Strip { strip: *strip, slot: Slot::NewGroup { before: Some(marker.clone()) } },
-                ));
-            }
-            let rail = match strip {
-                StripRef::Board => hits.iter().find(|(h, _)| *h == Hit::Strip).map(|(_, r)| *r),
-                StripRef::Float(id) => hits.iter().find(|(h, _)| matches!(h, Hit::FloatStrip(fid) if fid == id)).map(|(_, r)| *r),
-            }?;
-            Some((
-                hline(rail.bottom() - 4.0, rail.left() + 4.0, rail.right() - 4.0),
-                false,
-                Target::Strip { strip: *strip, slot: Slot::NewGroup { before: None } },
-            ))
-        }
-    }
-}
-
-fn tab_name(shell: &VarosShell, box_id: u32, index: usize) -> Option<String> {
-    if let Some(b) = shell.tree.find_box(box_id) {
-        return b.tabs.get(index).cloned();
-    }
-    shell.floats.iter().find(|f| f.panels.id == box_id).and_then(|f| f.panels.tabs.get(index).cloned())
-}
-
-fn icon_rect(hits: &[(Hit, Rect)], strip: StripRef, panel: &str) -> Option<Rect> {
-    hits.iter()
-        .find(|(h, _)| match (strip, h) {
-            (StripRef::Board, Hit::StripIcon(p)) => p == panel,
-            (StripRef::Float(id), Hit::FloatStripIcon { strip: sid, panel: p }) => *sid == id && p == panel,
-            _ => false,
-        })
-        .map(|(_, r)| *r)
-}
-
 fn vline(x: f32, y0: f32, y1: f32) -> Rect {
     Rect::from_min_max(pos2(x - LINE / 2.0, y0), pos2(x + LINE / 2.0, y1))
 }
@@ -534,6 +475,22 @@ pub(crate) fn target_at(shell: &VarosShell, ctx: &egui::Context, region: Rect, h
             return Some((Target::Dock, Some((vline(region.left(), region.top(), region.bottom()), true))));
         }
         return Some((Target::Move, None));
+    }
+    let dragged_panels = item_panels(shell, &d.item);
+    if !dragged_panels.is_empty() && dragged_panels.iter().all(|p| super::persist::instance_kind(p) == "control") && p.y < region.top() + 6.0 {
+        return Some((Target::ControlTop, Some((hline(region.top(), region.left(), region.right()), false))));
+    }
+    if matches!(d.item, Item::BoardStrip | Item::Strip(_)) {
+        let over_rail = hits.iter().any(|(h, r)| *h == Hit::Strip && r.contains(p));
+        if p.x <= region.left() + EDGE_BAND && (!over_rail || d.item == Item::BoardStrip) {
+            return Some((Target::DockLeft, Some((vline(region.left(), region.top(), region.bottom()), true))));
+        }
+        if p.x >= region.right() - EDGE_BAND && (!over_rail || d.item == Item::BoardStrip) {
+            return Some((Target::Dock, Some((vline(region.right(), region.top(), region.bottom()), true))));
+        }
+        if d.item == Item::BoardStrip {
+            return Some((Target::LoneIcon, None));
+        }
     }
     let moving_strip = match d.item {
         Item::Strip(id) => Some(id),
@@ -790,10 +747,17 @@ pub(crate) fn apply(shell: &mut VarosShell, item: &Item, t: &Target, at: Pos2, p
         shell.take(panel);
     }
     match t {
+        Target::ControlTop => {
+            if panels.iter().any(|p| super::persist::instance_kind(p) != "control") {
+                return false;
+            }
+            shell.tree.dock_top(&panels);
+            true
+        }
         Target::Tabs { box_id, before } => shell.insert_tabs(*box_id, before.as_deref(), &panels),
         Target::Edge { box_id, side } => {
             let (axis, after) = side.split();
-            let Some(new) = shell.tree.split_box(*box_id, axis, &panels[0], after, 0.5) else { return false };
+            let Some(new) = shell.tree.split_box(*box_id, axis, &panels[0], after, 0.22) else { return false };
             for (k, panel) in panels.iter().enumerate().skip(1) {
                 shell.tree.insert_tab(new, k, panel);
             }
@@ -837,7 +801,8 @@ pub(crate) fn apply(shell: &mut VarosShell, item: &Item, t: &Target, at: Pos2, p
                 }
             }
         }
-        Target::Dock => {
+        Target::Dock | Target::DockLeft => {
+            shell.strip.edge = if *t == Target::DockLeft { strip::Edge::Left } else { strip::Edge::Right };
             shell.strip.groups.extend(groups);
             true
         }

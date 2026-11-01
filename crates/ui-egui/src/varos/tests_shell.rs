@@ -1271,7 +1271,7 @@ fn a_tab_dragged_onto_a_box_edge_splits_the_box_there() {
     assert!(![2, 3].contains(&id), "a box of its own");
     let (upper, new) = (h.rect(&Hit::Box(2)), h.rect(&Hit::Box(id)));
     assert!(new.top() > upper.bottom() && (new.left() - upper.left()).abs() < 0.5, "{new:?} below {upper:?}");
-    assert!((new.height() - upper.height()).abs() <= 1.0, "half each: {new:?} {upper:?}");
+    assert!(new.height() < upper.height() && new.height() >= tree::BOX_MIN.y, "compact with usable minimum: {new:?} {upper:?}");
     h.state().invariants().unwrap();
     h.assert_min_sizes();
 }
@@ -1534,12 +1534,12 @@ fn an_icon_dropped_on_the_board_is_a_lone_icon_with_a_flyout_a_full_panel_and_ba
     let fid = h.state().floats[0].panels.id;
     h.rect(&Hit::Float(fid));
     h.state().invariants().unwrap();
-    // <<: back to the Board's strip, not another lone icon.
+    // <<: an icon at the floating panel's position.
     let back = h.rect(&Hit::FloatToIcon(fid)).center();
     h.click(back);
     assert!(h.state().floats.is_empty());
-    assert!(h.state().float_strips.is_empty());
-    assert!(h.state().strip.group("stroke").is_some());
+    assert!(h.state().float_strip_of("stroke").is_some());
+    assert!(h.state().strip.group("stroke").is_none());
     h.state().invariants().unwrap();
 }
 
@@ -2732,33 +2732,23 @@ fn shell5_review_real_drop_never_moves_an_existing_box() {
 }
 
 #[test]
-fn shell5_review_character_paragraph_options_in_all_hosts() {
-    for (panel, key) in [("character", "ch-hide-options"), ("paragraph", "pa-hide-options")] {
-        for host in 0..3 {
-            let mut h = Harness::new();
-            h.shell(true);
-            if host == 0 {
-                h.app.ui.varos_shell.add_tab(3, panel);
-                h.app.ui.varos_shell.set_active(3, 3);
-            } else if host == 1 {
-                h.app.ui.varos_shell.take(panel);
-                h.app.ui.varos_shell.floats.push(floats::Float {
-                    panels: tree::PanelBox { id: 999, tabs: vec![panel.into()], active: 0, collapsed: false },
-                    rect: [250.0, 200.0, 300.0, 400.0],
-                    owner_area: 1,
-                });
-            } else {
-                h.app.run("window.panel", json!({"panel":panel})).unwrap();
-            }
-            h.settle();
-            let pill = if host == 2 { h.rect(&Hit::FlyoutTab(panel.into())) } else { h.tab(panel) };
-            let at = pos2(pill.right() - 9.0, pill.center().y);
-            h.click(at);
-            assert!(crate::panels::pstate::<bool>(&h.ctx, key), "{panel} host {host}");
-            h.click(at);
-            assert!(!crate::panels::pstate::<bool>(&h.ctx, key));
-        }
+fn character_and_paragraph_tabs_select_and_group_collapse_is_separate() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.varos_shell.add_tab(3, "character");
+    h.app.ui.varos_shell.add_tab(3, "paragraph");
+    h.settle();
+    for panel in ["character", "paragraph"] {
+        h.app.run("window.panel", json!({"panel":panel})).unwrap();
+        h.settle();
+        let pill = h.tab(panel);
+        h.click(pos2(pill.right() - 9.0, pill.center().y));
+        assert!(!crate::panels::pstate::<bool>(&h.ctx, if panel == "character" { "ch-hide-options" } else { "pa-hide-options" }));
     }
+    h.click(h.rect(&Hit::BoxToIcon(3)).center());
+    assert!(h.state().strip.group("character").is_some());
+    assert!(h.state().strip.group("paragraph").is_some());
+    assert!(h.tree().find_tab("character").is_none());
 }
 
 #[test]
@@ -3196,13 +3186,14 @@ fn simple_columns_menu_uses_pointer_and_no_fixed_control_row() {
 }
 
 #[test]
-fn simple_only_top_strip_grip_drags_and_legacy_icons_keep_their_sources() {
+fn all_strip_group_grips_drag_and_legacy_icons_keep_their_sources() {
     let mut h = Harness::new();
     h.shell(true);
     let before = h.state().strip.clone();
     let to = h.rect(&Hit::BoardBody).center();
     h.hold_drag(h.rect(&Hit::StripGroup(1)).center(), to);
-    assert!(h.state().drag.is_none(), "a separator is not a grip");
+    assert!(matches!(h.state().drag.as_ref().map(|d| &d.item), Some(shell::drag::Item::Group { .. })));
+    h.frame(vec![escape_key()]);
     h.release(to);
     assert_eq!(h.state().strip, before);
     h.hold_drag(h.rect(&Hit::StripGroup(0)).center(), to);
@@ -3454,7 +3445,6 @@ fn dropping_a_tab_or_a_float_on_the_strip_docks_it_as_an_icon() {
     // A tab dragged out becomes a floating panel. Dropping it on the strip puts it back in the
     // tab row it left, and the preview line is that slot.
     let box_id = h.tree().find_tab("swatches").unwrap();
-    let tabs_before = h.box_tabs(box_id);
     let from = h.tab("swatches").center();
     let away = h.rect(&Hit::BoardBody).center();
     h.drag(from, away);
@@ -3462,12 +3452,12 @@ fn dropping_a_tab_or_a_float_on_the_strip_docks_it_as_an_icon() {
     let title = h.rect(&Hit::FloatTitle(id)).center();
     h.hold_drag(title, onto);
     let (hit, line) = h.drop_line();
-    let row = h.rect(&Hit::TabRow(box_id));
-    assert!(matches!(hit, Hit::DropLine { target: Target::Tabs { box_id: id, .. }, .. } if id == box_id), "the preview matches the restore: {hit:?}");
-    assert!(row.expand(12.0).intersects(line), "the line sits on the original tab row: {line:?} {row:?}");
+    assert!(matches!(hit, Hit::DropLine { target: Target::Strip { .. }, .. }));
+    assert!(rail.intersects(line));
     h.release(onto);
     assert!(h.state().float_of("swatches").is_none());
-    assert_eq!(h.box_tabs(box_id), tabs_before, "<< of a tab dragged out restores that tab");
+    assert!(!h.box_tabs(box_id).contains(&"swatches".to_owned()));
+    assert!(h.state().strip.group("swatches").is_some(), "drop docks at the destination, not the old tab row");
 }
 
 #[test]
@@ -3481,8 +3471,8 @@ fn icons_return_to_the_slot_they_left_on_close_collapse_and_from_a_pill() {
     let pill = h.lone_icon("stroke", body + vec2(-160.0, -40.0));
     h.click(h.rect(&Hit::FloatStripExpand(pill)).center());
     let fid = h.state().float_of("stroke").unwrap();
-    h.click(h.rect(&Hit::FloatToIcon(fid)).center());
-    assert_eq!(h.state().strip.groups[group].panels, before, "<< restores the original group");
+    h.click(h.rect(&Hit::FloatClose(fid)).center());
+    assert_eq!(h.state().strip.groups[group].panels, before, "Close restores the original group");
     assert!(h.state().float_strips.is_empty());
 
     // Collapse to icon, after the strip icon was docked into a box, restores the same slot.
@@ -3735,4 +3725,102 @@ fn a_tab_dropped_on_a_pill_icon_joins_that_group() {
     let groups = &h.state().float_strips.iter().find(|s| s.id == pill).expect("the pill").groups;
     assert_eq!(groups.len(), 1);
     assert!(groups[0].panels.contains(&"stroke".into()) && groups[0].panels.contains(&"color".into()), "{groups:?}");
+}
+
+#[test]
+fn floating_collapse_stays_in_place_and_preserves_size_after_moving_icon() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let id = h.float_tab("swatches", h.rect(&Hit::BoardBody).center());
+    let before = h.state().floats.iter().find(|f| f.panels.id == id).unwrap().rect;
+    h.click(h.rect(&Hit::FloatToIcon(id)).center());
+    assert!(h.state().float_of("swatches").is_none());
+    let sid = h.state().float_strip_of("swatches").unwrap();
+    let strip = h.state().float_strips.iter().find(|s| s.id == sid).unwrap();
+    assert_eq!(strip.pos, [before[0], before[1]]);
+    let grip = h.rect(&Hit::FloatStripTitle(sid)).left_center() + vec2(6.0, 0.0);
+    h.drag(grip, grip + vec2(100.0, 40.0));
+    let pos = h.state().float_strips.iter().find(|s| s.id == sid).unwrap().pos;
+    h.click(h.rect(&Hit::FloatStripExpand(sid)).center());
+    let f = h.state().floats.iter().find(|f| f.panels.tabs.contains(&"swatches".into())).unwrap();
+    assert_eq!(f.rect, [pos[0], pos[1], before[2], before[3]]);
+    assert!(h.state().invariants().is_ok());
+}
+
+#[test]
+fn entire_icon_rail_detaches_docks_left_and_survives_save() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let groups = h.state().strip.groups.clone();
+    let from = h.rect(&Hit::StripToggle).center();
+    let to = h.rect(&Hit::BoardBody).center();
+    h.drag(from, to);
+    assert!(h.state().strip.groups.is_empty());
+    let s = h.state().float_strips.first().unwrap();
+    assert_eq!(s.groups, groups);
+    let id = s.id;
+    let grip = h.rect(&Hit::FloatStripTitle(id)).left_center() + vec2(6.0, 0.0);
+    let left = pos2(2.0, grip.y);
+    h.drag(grip, left);
+    assert!(h.state().float_strips.is_empty());
+    assert_eq!(h.state().strip.edge, shell::strip::Edge::Left);
+    assert_eq!(h.state().strip.groups, groups);
+    assert!(h.rect(&Hit::Strip).left() < 2.0);
+    let saved = serde_json::to_value(h.state()).unwrap();
+    let restored = shell::persist::from_value(&saved);
+    assert_eq!(restored.strip, h.state().strip);
+    assert!(restored.invariants().is_ok());
+}
+
+#[test]
+fn control_top_drop_is_a_short_bar_and_never_half_the_canvas() {
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.run("window.panel", json!({"panel":"control"})).unwrap();
+    h.settle();
+    let from = h.rect(&Hit::FlyoutTab("control".into())).center();
+    let top = h.rect(&Hit::Board).top() + 2.0;
+    h.drag(from, pos2(600.0, top));
+    let id = h.tree().find_tab("control").unwrap();
+    let bar = h.rect(&Hit::Box(id));
+    assert!(bar.height() <= tree::ROW + 65.0, "{bar:?}");
+    assert!(bar.width() > 1000.0, "Control spans the docked layout: {bar:?}");
+    assert!(h.rect(&Hit::BoardBody).height() > 600.0);
+}
+
+#[test]
+fn floating_panel_moves_from_empty_tab_row_and_edge_drop_is_compact() {
+    let mut h = Harness::new();
+    h.shell(true);
+    let id = h.float_tab("swatches", h.rect(&Hit::BoardBody).center());
+    let before = h.rect(&Hit::Float(id));
+    let row = h.rect(&Hit::TabRow(id));
+    let at = row.right_center() - vec2(4.0, 0.0);
+    h.drag(at, at + vec2(80.0, 30.0));
+    let after = h.rect(&Hit::Float(id));
+    assert!((after.left() - before.left() - 80.0).abs() < 1.0);
+    let from = h.tab("swatches").center();
+    let board = h.rect(&Hit::Board);
+    h.drag(from, pos2(board.right() - 3.0, board.center().y));
+    let id = h.tree().find_tab("swatches").unwrap();
+    assert!(h.rect(&Hit::Box(id)).width() < board.width() * 0.4);
+    h.click(h.rect(&Hit::BoxToIcon(id)).center());
+    assert!(h.state().strip.group("swatches").is_some());
+}
+
+#[test]
+#[ignore = "software inspection; set VAROS_PANEL_BEHAVIOR_CAPTURE"]
+fn capture_panel_behavior_followup() {
+    let Some(path) = std::env::var_os("VAROS_PANEL_BEHAVIOR_CAPTURE").map(std::path::PathBuf::from) else { return };
+    let mut h = Harness::new();
+    h.shell(true);
+    h.app.ui.varos_shell.take("control");
+    h.app.ui.varos_shell.tree.dock_top(&["control".into()]);
+    h.settle();
+    let id = h.float_tab("swatches", pos2(460.0, 280.0));
+    h.app.ui.varos_shell.float_to_icon(id);
+    h.app.ui.varos_picker_anchor = Some(Rect::from_min_size(pos2(80.0, 190.0), vec2(20.0, 20.0)));
+    h.settle();
+    let pixels = capture(&mut h.app, 1440, 900);
+    image::save_buffer(path, &pixels, 1440, 900, image::ColorType::Rgba8).unwrap();
 }

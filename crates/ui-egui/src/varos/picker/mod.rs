@@ -838,9 +838,8 @@ fn tallest(prefs: &Prefs) -> f32 {
     [Tab::Wheel, Tab::Sliders, Tab::Harmony, Tab::Gradient].into_iter().map(|tab| height(&Prefs { tab, ..prefs.clone() })).fold(0.0, f32::max)
 }
 
-/// Render after the shell, before dialogs. The transparent backdrop owns outside clicks. Its
-/// release closes the picker after the canvas has been gated for the entire gesture. While an
-/// application dialog is open the picker stays visible but takes no input.
+/// Render after the shell, before dialogs. The shell palette permits canvas interaction;
+/// the classic picker keeps its modal backdrop. Application dialogs make either one inert.
 pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(anchor) = app.ui.varos_picker_anchor else { return };
     let mut screen = ctx.content_rect();
@@ -866,13 +865,16 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
         for (hit, r) in crate::varos::shell::hit_rects(ctx) {
             match hit {
                 crate::varos::shell::Hit::Tools if app.ui.varos_shell.tools_pos.is_none() => screen.min.x = screen.left().max(r.right() + 6.0),
-                crate::varos::shell::Hit::Strip => screen.max.x = screen.right().min(r.left() - 6.0),
+                crate::varos::shell::Hit::Strip if app.ui.varos_shell.strip.edge == crate::varos::shell::strip::Edge::Right => {
+                    screen.max.x = screen.right().min(r.left() - 6.0)
+                }
+                crate::varos::shell::Hit::Strip => screen.min.x = screen.left().max(r.right() + 6.0),
                 crate::varos::shell::Hit::Tools | crate::varos::shell::Hit::FloatStrip(_) => exclusions.push(r.expand(6.0)),
                 _ => {}
             }
         }
     }
-    let buttons = if shell { 36.0 } else { 0.0 };
+    let buttons = if shell { 18.0 } else { 0.0 };
     let content_h = height(&app.ui.varos_picker) + buttons;
     let content_tall = tallest(&app.ui.varos_picker) + buttons;
     // Full size whenever the window can hold it. Scroll only when the content is taller than the screen.
@@ -881,7 +883,7 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let tall = if scroll { screen.height() } else { content_tall };
     // `begin_undo_group` does nothing when a group is already open, and ending one would also
     // clear an agent's `edit.undoGroup.begin`. Claim the group only when this call opens it.
-    if shell && !app.ui.varos_picker_group && app.session.undo_group_is_free() {
+    if shell && !app.ui.varos_picker_group && !app.session.in_interaction() && app.session.undo_group_is_free() {
         app.session.begin_undo_group();
         if app.session.active().is_some_and(|st| st.undo_group.is_some()) {
             app.ui.varos_picker_defaults = Some(app.session.paint.clone());
@@ -922,26 +924,52 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
             .unwrap_or(preferred.min)
     };
     let id = popover_id();
-    let area = egui::Area::new(id).kind(egui::UiKind::Modal).order(egui::Order::Foreground).fixed_pos(position).movable(false).fade_in(false);
+    let position = if shell {
+        let remembered = ctx.data(|d| d.get_temp::<Pos2>(id.with("position"))).unwrap_or(position);
+        crate::varos::shell::floats::clamp_into(Rect::from_min_size(remembered, preferred.size()), screen).min
+    } else {
+        position
+    };
+    let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(position).movable(false).fade_in(false);
     let t = Tokens::get(ctx);
     let frame =
         if shell { egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(10) } else { egui::Frame::NONE.fill(t.panel) };
     let mut decision: Option<bool> = None;
     let body = |app: &mut VectorcraftApp, ui: &mut Ui, decision: &mut Option<bool>| {
         ui.set_width(W);
+        if shell {
+            let (header, _) = ui.allocate_exact_size(vec2(W, 18.0), Sense::hover());
+            let close_rect = Rect::from_min_size(pos2(header.right() - 18.0, header.top()), vec2(18.0, 18.0));
+            let grip = Rect::from_min_max(header.min, pos2(close_rect.left(), header.bottom()));
+            let drag = ui.interact(grip, id.with("move"), Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+            if drag.drag_started() {
+                ui.ctx().data_mut(|d| d.insert_temp(id.with("drag-origin"), position));
+            }
+            if drag.dragged() {
+                let origin = ui.ctx().data(|d| d.get_temp::<Pos2>(id.with("drag-origin"))).unwrap_or(position);
+                let moved = crate::varos::shell::floats::clamp_into(
+                    Rect::from_min_size(origin + drag.total_drag_delta().unwrap_or_default(), preferred.size()),
+                    screen,
+                )
+                .min;
+                ui.ctx().data_mut(|d| d.insert_temp(id.with("position"), moved));
+            }
+            ui.painter().text(
+                grip.left_center() + vec2(8.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                tl!("Color"),
+                egui::FontId::proportional(11.0),
+                t.text_dim,
+            );
+            crate::icons::paint(ui, "x", close_rect.shrink(2.0), t.text_dim);
+            let close = ui.interact(close_rect, id.with("close"), Sense::click());
+            close.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close Color"));
+            if close.on_hover_text("Close Color").clicked() {
+                *decision = Some(true);
+            }
+        }
         let scroll_h = if scroll { (screen.height() - buttons).max(32.0) } else { content_h };
         egui::ScrollArea::vertical().max_height(scroll_h).show(ui, |ui| show(app, ui));
-        if shell {
-            ui.horizontal(|ui| {
-                ui.add_space(8.0);
-                if ui.button(tl!("OK")).clicked() {
-                    *decision = Some(true);
-                }
-                if ui.button(tl!("Cancel")).clicked() {
-                    *decision = Some(false);
-                }
-            });
-        }
     };
     if app.ui.dialog.is_some() {
         // Under an application dialog (its own backdrop takes the clicks): shown, inert.
@@ -951,7 +979,15 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
         });
         return;
     }
-    let modal = egui::Modal::new(id).area(area).backdrop_color(Color32::TRANSPARENT).frame(frame).show(ctx, |ui| body(app, ui, &mut decision));
+    // Shell Color is a palette: only its own rectangle owns input. A transparent modal
+    // backdrop would make every canvas click disappear even when it stays visible.
+    let (response_rect, popup_open) = if shell {
+        let shown = area.show(ctx, |ui| frame.show(ui, |ui| body(app, ui, &mut decision)));
+        (shown.response.rect, egui::Popup::is_any_open(ctx))
+    } else {
+        let shown = egui::Modal::new(id).area(area).backdrop_color(Color32::TRANSPARENT).frame(frame).show(ctx, |ui| body(app, ui, &mut decision));
+        (shown.response.rect, shown.any_popup_open)
+    };
     if let Some(ok) = decision {
         finish_pending(app, ctx);
         if ok {
@@ -962,9 +998,9 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
         return;
     }
     let click = ctx.input(|i| i.pointer.any_click().then(|| i.pointer.interact_pos()).flatten());
-    if !modal.any_popup_open
+    if !popup_open
         && !egui::Popup::is_any_open(ctx)
-        && let Some(p) = click.filter(|p| !modal.response.rect.contains(*p))
+        && let Some(p) = click.filter(|p| !response_rect.contains(*p))
     {
         // The topmost well under the click (the one drawn last) is the one seen there.
         let well = wells.iter().rev().find(|(r, _)| r.contains(p)).copied();
@@ -977,7 +1013,7 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
             open_for(app, stroke, r);
         } else if !shell {
             // The classic dock still dismisses on an outside click. The shell closes only with
-            // OK, Cancel or Escape.
+            // its Close control or Escape.
             cancel(app);
         }
     }

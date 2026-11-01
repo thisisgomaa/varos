@@ -137,7 +137,7 @@ pub(crate) fn strip_layer(id: u32) -> LayerId {
 enum Ask {
     /// `×` or a pill's Collapse to icon: panels go back where they left.
     Close,
-    /// A floating panel's `<<`: the same restore as `×`.
+    /// A floating panel's `<<`: collapse in place, retaining the expanded size.
     ToIcon,
     /// A pill's Close: the panels leave the layout.
     Dismiss,
@@ -318,42 +318,13 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
         if button(ui, expand, area.with("expand"), ">>", "Expand panels", &t) {
             ask = Some(Ask::Expand);
         }
-        let mut y = rect.top() + PILL_GRIP;
-        for (gi, g) in s.groups.iter().enumerate() {
-            // A thin band across the top of the group. A full-height column covered the icons,
-            // so a drop on an icon was read as a new group before this one.
-            let group_grip = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), super::strip::GRIP));
-            tops.push(y);
-            hits.push((sref.group_hit(gi), group_grip));
-            let group_drag = ui.interact(group_grip, area.with(("group", gi)), Sense::drag());
-            if group_drag.hovered() {
-                ctx.set_cursor_icon(egui::CursorIcon::Grab);
-            }
-            if group_drag.drag_started() {
-                drag::begin(app, &ctx, Item::Group { strip: sref, group: g.clone() }, group_grip);
-            }
-            let c = group_grip.center();
-            for dx in [-4.0, 0.0, 4.0] {
-                painter.circle_filled(pos2(c.x + dx, c.y), 1.2, t.text_dim);
-            }
-            y += super::strip::GRIP;
-            for panel in &g.panels {
-                let row = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), PILL_ROW));
-                let tile = Rect::from_center_size(row.center(), vec2(26.0, 28.0));
-                let r = ui.interact(tile, area.with(("icon", panel)), Sense::click_and_drag());
-                if r.drag_started() {
-                    drag::begin(app, &ctx, Item::Icon(panel.clone()), tile);
-                } else if super::strip::clicked_once(&ctx, r.id, r.clicked()) {
-                    if app.ui.varos_shell.open.as_deref() == Some(panel) {
-                        super::strip::close(app);
-                    } else {
-                        super::strip::open(app, panel);
-                    }
-                }
-                icons.push((panel.clone(), tile, r));
-                y += PILL_ROW;
-            }
-        }
+        let contents = Rect::from_min_max(pos2(rect.left(), grip.bottom()), rect.max - vec2(0.0, PILL_PAD));
+        let mut child = ui.new_child(egui::UiBuilder::new().id_salt(("float-icons", id)).max_rect(contents));
+        child.set_clip_rect(contents.intersect(region));
+        child.spacing_mut().item_spacing.y = 0.0;
+        egui::ScrollArea::vertical().id_salt(("float-strip-scroll", id)).auto_shrink([false, false]).show(&mut child, |ui| {
+            strip::column(app, ui, sref, &s.groups, rect.width(), rect, hits, &mut tops, &mut icons);
+        });
         painter.rect_stroke(rect, CornerRadius::same(boxes::RADIUS), Stroke::new(1.0, t.border), StrokeKind::Inside);
     });
     hits.push((Hit::FloatStrip(id), rect));
@@ -363,14 +334,15 @@ fn float_strip(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, s: &Fl
     for (hit, rail) in hits.iter() {
         match hit {
             Hit::Tools if app.ui.varos_shell.tools_pos.is_none() => bounds.min.x = bounds.left().max(rail.right()),
-            Hit::Strip => bounds.max.x = bounds.right().min(rail.left()),
+            Hit::Strip if app.ui.varos_shell.strip.edge == strip::Edge::Right => bounds.max.x = bounds.right().min(rail.left()),
+            Hit::Strip => bounds.min.x = bounds.left().max(rail.right()),
             _ => {}
         }
     }
     strip::flyout(app, ui, bounds, rect, &tops, sref, hits);
     // Painted after its flyout's input: the open panel's icon is lit on the click frame.
     let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
-    paint_ui.set_clip_rect(rect.intersect(region));
+    paint_ui.set_clip_rect(Rect::from_min_max(pos2(rect.left(), grip.bottom()), rect.max).intersect(region));
     strip::paint_icons(app, &paint_ui, icons, Mode::Icons, sref, hits);
     let shell = &mut app.ui.varos_shell;
     match ask {

@@ -50,14 +50,6 @@ pub(crate) fn tab_id(panel: &str) -> egui::Id {
     egui::Id::unique("varos-shell-tab").with(panel)
 }
 
-fn options_key(panel: &str) -> Option<&'static str> {
-    match panel {
-        "character" => Some("ch-hide-options"),
-        "paragraph" => Some("pa-hide-options"),
-        _ => None,
-    }
-}
-
 fn ellipsize(painter: &egui::Painter, text: &str, font: egui::FontId, color: egui::Color32, max_w: f32) -> std::sync::Arc<egui::Galley> {
     let full = painter.layout_no_wrap(text.to_string(), font.clone(), color);
     if full.size().x <= max_w + 0.5 {
@@ -84,10 +76,6 @@ fn ellipsize(painter: &egui::Painter, text: &str, font: egui::FontId, color: egu
     best
 }
 
-fn option_width(panel: &str) -> f32 {
-    if options_key(panel).is_some() { 18.0 } else { 0.0 }
-}
-
 /// The pills of `tabs` (labels) in `row` with tab `active` in front (semibold, so wider), and
 /// each label's galley; narrower than their labels when they don't all fit.
 fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> Vec<(Rect, std::sync::Arc<egui::Galley>)> {
@@ -99,7 +87,7 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
             painter.layout_no_wrap(label.clone(), font, t.text)
         })
         .collect();
-    let mut widths: Vec<f32> = galleys.iter().zip(tabs).map(|(g, (id, _))| g.size().x + 2.0 * PILL_PAD + option_width(id)).collect();
+    let mut widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 2.0 * PILL_PAD).collect();
     let natural = widths.iter().sum::<f32>() + PILL_GAP * widths.len().saturating_sub(1) as f32;
     let overflow = natural > row.width();
     // One 28-point overflow control, then as many whole pills as fit. A pill is never narrowed,
@@ -119,10 +107,10 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
         consider(active, &widths, &mut used, &mut visible);
     }
     if overflow && active < widths.len() && !visible[active] && room > 8.0 {
-        let text_w = (room - 2.0 * PILL_PAD - option_width(&tabs[active].0)).max(4.0);
+        let text_w = (room - 2.0 * PILL_PAD).max(4.0);
         let font = crate::theme::semibold(LABEL);
         galleys[active] = ellipsize(painter, &tabs[active].1, font, t.text, text_w);
-        widths[active] = (galleys[active].size().x + 2.0 * PILL_PAD + option_width(&tabs[active].0)).min(room);
+        widths[active] = (galleys[active].size().x + 2.0 * PILL_PAD).min(room);
         visible[active] = true;
     }
     for i in 0..widths.len() {
@@ -158,15 +146,7 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
         .iter()
         .zip(&before)
         .map(|((panel, _), (pill, _))| {
-            ui.interact(
-                if pill.is_positive() {
-                    Rect::from_min_max(pill.min, pill.max - vec2(option_width(panel), 0.0))
-                } else {
-                    Rect::from_min_size(row.min, Vec2::ZERO)
-                },
-                tab_id(panel),
-                Sense::click_and_drag(),
-            )
+            ui.interact(if pill.is_positive() { *pill } else { Rect::from_min_size(row.min, Vec2::ZERO) }, tab_id(panel), Sense::click_and_drag())
         })
         .collect();
     let mut clicked = responses.iter().position(|r| r.clicked()).filter(|i| *i != active);
@@ -218,17 +198,7 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
             t.text_dim
         };
         let at = pos2(pill.left() + PILL_PAD.min(pill.width() / 2.0), pill.center().y - galley.size().y / 2.0);
-        let panel = &tabs[i].0;
-        let clip = Rect::from_min_max(pill.min, pill.max - vec2(option_width(panel), 0.0)).shrink2(vec2(4.0, 0.0)).intersect(painter.clip_rect());
-        if let Some(key) = options_key(panel) {
-            let rect = Rect::from_center_size(pos2(pill.right() - 9.0, pill.center().y), vec2(16.0, 16.0));
-            let response = ui.interact(rect, tab_id(panel).with("options"), Sense::click());
-            let hidden: bool = crate::panels::pstate(ui.ctx(), key);
-            crate::icons::paint(ui, "shell-chevrons-right", rect, text);
-            if response.on_hover_text(if hidden { tl!("Show Options") } else { tl!("Hide Options") }).clicked() {
-                crate::panels::set_pstate(ui.ctx(), key, !hidden);
-            }
-        }
+        let clip = pill.shrink2(vec2(4.0, 0.0)).intersect(painter.clip_rect());
         painter.with_clip_rect(clip).galley(at, galley.clone(), text);
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, front, galley.text()));
     }
@@ -307,10 +277,12 @@ pub(crate) fn show(
     }
     let head = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.top() + if floating { FLOAT_HEADER } else { HEADER }).min(rect.bottom())));
     let menu = Rect::from_min_size(pos2(head.right() - PAD - MENU.x, head.center().y - MENU.y / 2.0), MENU);
-    let row = Rect::from_min_max(pos2(head.left() + PAD, head.top()), pos2((menu.left() - PAD).max(head.left() + PAD), head.bottom()));
+    let collapse = Rect::from_min_size(pos2(menu.left() - MENU.x - PAD, menu.top()), MENU);
+    let row_right = if floating { menu.left() } else { collapse.left() };
+    let row = Rect::from_min_max(pos2(head.left() + PAD, head.top()), pos2((row_right - PAD).max(head.left() + PAD), head.bottom()));
     hits.push((Hit::TabRow(b.id), row));
     // The row's empty space (under the pills, which take their own input) maximizes the box.
-    let row_response = ui.interact(row, egui::Id::unique("varos-shell-row").with(b.id), Sense::click());
+    let row_response = ui.interact(row, egui::Id::unique("varos-shell-row").with(b.id), Sense::click_and_drag());
     let tabs: Vec<(String, String)> = b.tabs.iter().map(|p| (p.clone(), label(app, p))).collect();
     let active = b.active.min(tabs.len().saturating_sub(1));
     let out = tab_row(ui, &tabs, active, row, &t);
@@ -334,6 +306,24 @@ pub(crate) fn show(
     };
     let front = tabs.get(active).map(|(p, _)| p.clone());
     let mut ask = out.double_clicked.map(|_| Ask::Collapse(b.id));
+    if row_response.drag_started() {
+        if floating {
+            if let Some(f) = app.ui.varos_shell.floats.iter().find(|f| f.panels.id == b.id) {
+                drag::begin(app, ui.ctx(), Item::Float { id: b.id, from: f.rect }, f.rect());
+            }
+        } else if let Some(front) = &front {
+            drag::begin(app, ui.ctx(), Item::Tab(front.clone()), row);
+        }
+    }
+    if !floating {
+        hits.push((Hit::BoxToIcon(b.id), collapse));
+        let response = ui.interact(collapse, egui::Id::unique("shell-box-to-icon").with(b.id), Sense::click());
+        crate::icons::paint(ui, "shell-chevrons-right", Rect::from_center_size(collapse.center(), vec2(16.0, 16.0)), t.text_dim);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Collapse to icon"));
+        if response.on_hover_text("Collapse to icon").clicked() {
+            ask = Some(Ask::ToIcon(b.id));
+        }
+    }
     if !floating
         && row_response.double_clicked()
         && out.tabs.iter().all(|pill| !row_response.interact_pointer_pos().is_some_and(|p| pill.contains(p)))
@@ -501,7 +491,9 @@ fn panel_contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: 
         return;
     }
     if super::persist::instance_kind(id) == "control" {
-        crate::chrome::control_panel(app, ui);
+        egui::ScrollArea::vertical().id_salt(("control-scroll", id)).auto_shrink([false, false]).show(ui, |ui| {
+            crate::chrome::control_panel(app, ui);
+        });
         return;
     }
     if !super::persist::is_properties(id) {

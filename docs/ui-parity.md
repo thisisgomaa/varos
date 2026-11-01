@@ -1,5 +1,15 @@
 # UI and interaction parity
 
+## Varos VSTAB.2 interaction follow-up
+
+Updated: 2026-11-01. Owner-reported rail movement, floating collapse/docking, Control-bar sizing
+and Color-palette input fixes passed all 12 code gates and 2600 UI tests. Native acceptance is blocked by
+Computer Use approval. Scores and hour estimates are unchanged. Evidence and outstanding checks:
+[panel behavior record](varos/PANEL_BEHAVIOR_2026-11-01.md).
+
+Revision: 2026-11-01 — VSTAB.2 code gates passed; native acceptance pending; no parity-score increase.
+
+
 ## Varos VSTAB.1 stability follow-up
 
 Updated: 2026-11-01. Targeted upstream fixes preserve first-frame appearance preferences,

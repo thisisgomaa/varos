@@ -41,6 +41,7 @@ pub(crate) const ICON_ROW: f32 = 30.0;
 pub enum Edge {
     #[default]
     Right,
+    Left,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -227,11 +228,12 @@ pub(crate) fn finish_edge(app: &mut VectorcraftApp, ui: &mut egui::Ui, hits: &mu
         return;
     }
     if let Some(p) = edge_response.interact_pointer_pos() {
-        let outward = rail.left() - p.x;
+        let outward = if app.ui.varos_shell.strip.edge == Edge::Left { p.x - rail.right() } else { rail.left() - p.x };
         ui.ctx().data_mut(|d| d.insert_temp(edge_id.with("out"), outward));
         if edge_response.dragged() && outward >= 120.0 {
-            let hint = Rect::from_center_size(pos2(rail.left() - 120.0, rail.center().y), vec2(2.0, rail.height()));
-            ui.painter().vline(rail.left() - 120.0, rail.y_range(), egui::Stroke::new(3.0, crate::varos::theme::ACCENT));
+            let x = if app.ui.varos_shell.strip.edge == Edge::Left { rail.right() + 120.0 } else { rail.left() - 120.0 };
+            let hint = Rect::from_center_size(pos2(x, rail.center().y), vec2(2.0, rail.height()));
+            ui.painter().vline(x, rail.y_range(), egui::Stroke::new(3.0, crate::varos::theme::ACCENT));
             hits.push((Hit::AzureHint, hint));
         }
     }
@@ -272,13 +274,31 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
         app.ui.varos_shell.strip.mode = if app.ui.varos_shell.strip.mode == Mode::Icons { Mode::Labels } else { Mode::Icons };
     }
     let width = width_for(app).min(board.width());
-    let rail = Rect::from_min_max(pos2(board.right() - width, board.top()), board.max);
+    let left = app.ui.varos_shell.strip.edge == Edge::Left;
+    let rail = if left {
+        Rect::from_min_max(board.min, pos2(board.left() + width, board.bottom()))
+    } else {
+        Rect::from_min_max(pos2(board.right() - width, board.top()), board.max)
+    };
+    if app.ui.varos_shell.strip.groups.is_empty() {
+        // Keep an invisible edge target so panels can be docked back after the rail is detached.
+        let x = if left { board.left() } else { board.right() - 8.0 };
+        hits.push((Hit::Strip, Rect::from_min_size(pos2(x, board.top()), vec2(8.0, board.height()))));
+        return board;
+    }
+    let rail_response = ui.interact(rail, ui.scope_id().with("strip-drag"), Sense::drag());
+    if rail_response.drag_started() {
+        drag::begin(app, ui.ctx(), Item::BoardStrip, rail);
+    }
     hits.push((Hit::Strip, rail));
     // `<<` / `>>` at the top, a 16-point glyph in a 28-point tile. The Board's ≡ is the only
     // control at the bottom.
     let toggle = Rect::from_center_size(pos2(rail.center().x, rail.top() + 14.0), vec2(28.0, 28.0));
     let menu_row = Rect::from_center_size(pos2(rail.center().x, rail.bottom() - 14.0), vec2(28.0, 28.0));
-    let toggle_response = ui.interact(toggle, toggle_id, Sense::click());
+    let toggle_response = ui.interact(toggle, toggle_id, Sense::click_and_drag());
+    if toggle_response.drag_started() {
+        drag::begin(app, ui.ctx(), Item::BoardStrip, rail);
+    }
     toggle_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Toggle panel labels"));
     hits.push((Hit::StripToggle, toggle));
     ui.painter().rect_filled(rail, 0.0, t.panel);
@@ -304,7 +324,8 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
         t.text_dim,
     );
     if !app.ui.varos_shell.collapsed_columns.is_empty() {
-        let edge = Rect::from_min_max(pos2(rail.left() - 4.0, rail.top()), pos2(rail.left() + 4.0, rail.bottom()));
+        let x = if left { rail.right() } else { rail.left() };
+        let edge = Rect::from_min_max(pos2(x - 4.0, rail.top()), pos2(x + 4.0, rail.bottom()));
         hits.push((Hit::StripEdge, edge));
         // The column beside the strip is drawn later and would take this band. `finish_edge`
         // grabs it last.
@@ -334,7 +355,11 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     paint_ui.set_clip_rect(icons_rect.intersect(ui.clip_rect()));
     let mode = app.ui.varos_shell.strip.mode;
     paint_icons(app, &paint_ui, icons, mode, StripRef::Board, hits);
-    Rect::from_min_max(board.min, pos2(rail.left().max(board.left()), board.bottom()))
+    if left {
+        Rect::from_min_max(pos2(rail.right(), board.top()), board.max)
+    } else {
+        Rect::from_min_max(board.min, pos2(rail.left().max(board.left()), board.bottom()))
+    }
 }
 
 /// A strip's groups, laid out down `ui` `width` wide: each group's grip dots (dragged: the whole
@@ -358,21 +383,21 @@ pub(crate) fn column(
     for (index, g) in groups.iter().enumerate() {
         let (grip, _) = ui.allocate_exact_size(vec2(width, GRIP), Sense::hover());
         tops.push(grip.top());
-        // Geometry for drop slots and source outlines; only the first is draggable.
+        // Every group has its own grip and drop slot.
         hits.push((sref.group_hit(index), grip));
         if g.panels.is_empty() {
             continue;
         }
-        if index == 0 {
-            let response = ui.interact(grip, egui::Id::unique("varos-shell-grip").with(sref), Sense::drag());
+        {
+            let response = ui.interact(grip, egui::Id::unique("varos-shell-grip").with((sref, index)), Sense::drag());
             if response.drag_started() {
                 drag::begin(app, &ctx, Item::Group { strip: sref, group: g.clone() }, grip);
             }
             if ctx.input(|i| i.pointer.hover_pos().is_some_and(|p| grip.expand(15.0).contains(p))) {
                 ui.painter().rect_filled(Rect::from_center_size(grip.center(), vec2(30.0, 3.0)), 1.5, t.text_dim);
+            } else if index > 0 {
+                ui.painter().hline((grip.center().x - 10.0)..=(grip.center().x + 10.0), grip.center().y, egui::Stroke::new(1.0, t.border));
             }
-        } else {
-            ui.painter().hline((grip.center().x - 10.0)..=(grip.center().x + 10.0), grip.center().y, egui::Stroke::new(1.0, t.border));
         }
         for panel in &g.panels {
             let (row, _) = ui.allocate_exact_size(vec2(width, ICON_ROW), Sense::hover());
@@ -457,7 +482,8 @@ pub(crate) fn flyout(
     let Some(group) = app.ui.varos_shell.strip_groups(sref).and_then(|gs| gs.get(index)).cloned() else { return };
     let right_room = (bounds.right() - rail.right()).max(1.0);
     let left_room = (rail.left() - bounds.left()).max(1.0);
-    let on_right = sref != StripRef::Board && (right_room >= group.width.min(bounds.width()) || right_room > left_room);
+    let on_right = (sref == StripRef::Board && app.ui.varos_shell.strip.edge == Edge::Left)
+        || (sref != StripRef::Board && (right_room >= group.width.min(bounds.width()) || right_room > left_room));
     let room = (if on_right { right_room } else { left_room } - 6.0).max(1.0);
     let mut width = group.width.min(room);
     let height = group.height.min(bounds.height());
@@ -469,6 +495,7 @@ pub(crate) fn flyout(
     let mut rect = place(width);
     let ctx = ui.ctx().clone();
     if app.session.prefs.auto_collapse_icon_panels
+        && app.ui.varos_picker_anchor.is_none()
         && !egui::Popup::is_any_open(&ctx)
         && ctx.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| !rect.contains(p) && !rail.contains(p)))
     {
@@ -533,6 +560,11 @@ pub(crate) fn flyout(
         ui.painter().rect_filled(rect, boxes::RADIUS, t.panel);
         let menu = collapse.translate(vec2(23.0, 0.0));
         let row = Rect::from_min_max(head.min + vec2(6.0, 0.0), pos2(collapse.left(), head.bottom()));
+        let row_drag = ui.interact(row, area_id.with("row-drag"), Sense::drag());
+        if row_drag.drag_started() {
+            drag::begin(app, &ctx, Item::Tab(panel.clone()), row);
+            return;
+        }
         let tabs: Vec<_> = group.panels.iter().map(|p| (p.clone(), boxes::label(app, p))).collect();
         let active = group.panels.iter().position(|p| p == &panel).unwrap_or(0);
         let out = boxes::tab_row(ui, &tabs, active, row, &t);

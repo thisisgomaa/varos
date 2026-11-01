@@ -880,7 +880,9 @@ fn toolbar_popover_anchor_dismiss_escape_and_target_switch_in_both_shells() {
         } else {
             assert!(h.app.ui.varos_picker_anchor.is_none());
         }
-        assert_eq!(h.app.session.active().unwrap().selection.objects, selection.objects);
+        if !shell {
+            assert_eq!(h.app.session.active().unwrap().selection.objects, selection.objects);
+        }
         h.click(fill.left_top() + vec2(3.0, 3.0));
         h.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
         assert!(h.app.ui.varos_picker_anchor.is_none());
@@ -903,7 +905,7 @@ fn labelled(out: &egui::FullOutput, label: &str) -> Option<Pos2> {
 }
 
 #[test]
-fn shell_popover_from_the_bottom_well_shows_ok_and_cancel_and_ignores_outside_clicks() {
+fn shell_palette_moves_and_closes_without_blocking_the_canvas() {
     let mut h = Harness::new(true);
     h.screen = vec2(1440.0, 900.0);
     for _ in 0..4 {
@@ -912,42 +914,35 @@ fn shell_popover_from_the_bottom_well_shows_ok_and_cancel_and_ignores_outside_cl
     let fill = h.well(false);
     h.click(fill.left_top() + vec2(3.0, 3.0));
     let out = h.frame(vec![]);
-    let r = picker_rect(&h.ctx);
-    let pop = egui::AreaState::load(&h.ctx, egui::Id::unique("varos-picker-popover")).unwrap().rect();
-    assert!((r.width() - W).abs() < 1.0, "{r:?}");
-    assert!(pop.top() >= -1.0 && pop.bottom() <= 901.0, "the whole popover is on screen: {pop:?}");
-    assert!(pop.height() + 1.0 >= r.height() + 30.0, "OK/Cancel sit under the wheel and fields: {pop:?} {r:?}");
-    assert!(pop.contains_rect(r));
-    let ok = labelled(&out, "OK").expect("OK");
-    let cancel = labelled(&out, "Cancel").expect("Cancel");
-    assert!(pop.contains(ok) && pop.contains(cancel), "buttons inside the popover: {ok:?} {cancel:?} {pop:?}");
-    let hex_visible = {
-        fn has(s: &egui::Shape, pop: egui::Rect) -> bool {
-            match s {
-                egui::Shape::Text(t) => {
-                    t.galley.text().to_ascii_lowercase().contains("3366cc") && pop.contains(t.pos + t.galley.rect.center().to_vec2())
-                }
-                egui::Shape::Vec(v) => v.iter().any(|s| has(s, pop)),
-                _ => false,
-            }
-        }
-        out.shapes.iter().any(|c| has(&c.shape, pop))
-    };
-    assert!(hex_visible, "the hex field is visible");
-    h.click(h.app.canvas_rect.unwrap().center());
-    assert!(h.app.ui.varos_picker_anchor.is_some(), "outside click leaves it open");
-    h.app.run("paint.setFill", json!({"color": "#112233"})).unwrap();
+    let id = popover_id();
+    let pop = egui::AreaState::load(&h.ctx, id).unwrap().rect();
+    assert!(pop.top() >= 0.0 && pop.bottom() <= 901.0, "{pop:?}");
+    assert!(labelled(&out, "OK").is_none() && labelled(&out, "Cancel").is_none());
+    let grip = h.ctx.read_response(id.with("move")).unwrap().rect.center();
+    let to = grip + vec2(130.0, -60.0);
+    h.frame(vec![Event::PointerMoved(grip), button(grip, true)]);
+    for k in 1..=8 {
+        h.frame(vec![Event::PointerMoved(grip + (to - grip) * (k as f32 / 8.0))]);
+    }
+    h.frame(vec![button(to, false)]);
     h.frame(vec![]);
-    h.click(cancel);
-    assert!(h.app.ui.varos_picker_anchor.is_none(), "Cancel closes");
-    assert_eq!(fill_hex(&h.app), "#112233", "a command from outside the picker is not part of Cancel");
-    h.click(fill.left_top() + vec2(3.0, 3.0));
-    h.app.run("paint.setFill", json!({"color": "#abcdef"})).unwrap();
-    let out = h.frame(vec![]);
-    let ok = labelled(&out, "OK").expect("OK");
-    h.click(ok);
+    let moved = egui::AreaState::load(&h.ctx, id).unwrap().rect();
+    assert!((moved.left() - pop.left() - 130.0).abs() < 2.0, "{pop:?} -> {moved:?}");
+    assert!((moved.top() - pop.top() + 60.0).abs() < 2.0, "{pop:?} -> {moved:?}");
+    let canvas = h.app.canvas_rect.unwrap();
+    let outside = canvas.right_bottom() - vec2(20.0, 20.0);
+    assert!(!moved.contains(outside));
+    assert!(!h.app.session.active().unwrap().selection.objects.is_empty());
+    h.click(outside);
+    assert!(h.app.ui.varos_picker_anchor.is_some());
+    assert!(h.app.session.active().unwrap().selection.objects.is_empty(), "canvas selection works while palette stays open");
+    picker_fill(&mut h.app, "#abcdef");
+    h.frame(vec![]);
+    let close = h.ctx.read_response(id.with("close")).unwrap().rect.center();
+    h.click(close);
     assert!(h.app.ui.varos_picker_anchor.is_none());
     assert_eq!(fill_hex(&h.app), "#abcdef");
+    assert!(!group_open(&h.app));
 }
 
 fn group_open(app: &VectorcraftApp) -> bool {
@@ -1026,9 +1021,8 @@ fn every_popover_close_ends_the_undo_group_and_cancel_reverts_only_picker_edits(
     h.frame(vec![]);
     assert_eq!(fill_hex(&h.app), "#112233");
     assert_ne!(read_alpha(&h.app, true), alpha_before, "eight digits set the alpha");
-    let out = h.frame(vec![]);
-    let cancel = labelled(&out, "Cancel").expect("Cancel");
-    h.click(cancel);
+    h.frame(vec![]);
+    h.frame(vec![esc()]);
     assert!(!group_open(&h.app), "Cancel ends the group");
     assert_eq!(fill_hex(&h.app), fallback, "Cancel reverts the hex colour");
     assert_eq!(read_alpha(&h.app, true), alpha_before, "and the alpha");
@@ -1040,9 +1034,8 @@ fn every_popover_close_ends_the_undo_group_and_cancel_reverts_only_picker_edits(
     h.frame(vec![]);
     picker_fill(&mut h.app, "#abcabc");
     assert_eq!(fill_hex(&h.app), "#abcabc");
-    let out = h.frame(vec![]);
-    let cancel = labelled(&out, "Cancel").expect("Cancel");
-    h.click(cancel);
+    h.frame(vec![]);
+    h.frame(vec![esc()]);
     assert_eq!(fill_hex(&h.app), fallback, "Cancel with no selection restores the default fill");
     assert!(!group_open(&h.app));
 
@@ -1053,9 +1046,8 @@ fn every_popover_close_ends_the_undo_group_and_cancel_reverts_only_picker_edits(
     h.app.run("paint.setFill", json!({"color": "#444444"})).unwrap();
     h.frame(vec![]);
     picker_fill(&mut h.app, "#555555");
-    let out = h.frame(vec![]);
-    let cancel = labelled(&out, "Cancel").expect("Cancel");
-    h.click(cancel);
+    h.frame(vec![]);
+    h.frame(vec![esc()]);
     assert_eq!(fill_hex(&h.app), "#444444", "Cancel reverts the picker edit and leaves the outside command");
     assert!(!group_open(&h.app));
 }
@@ -1248,9 +1240,8 @@ fn a_gradient_tab_edit_reverts_on_cancel() {
             h.frame(vec![esc()]);
         } else {
             h.frame(vec![button(to, false)]);
-            let out = h.frame(vec![]);
-            let cancel = labelled(&out, "Cancel").expect("Cancel");
-            h.click(cancel);
+            h.frame(vec![]);
+            h.frame(vec![esc()]);
         }
         assert!(h.app.ui.varos_picker_anchor.is_none(), "Cancel closes");
         assert!(!group_open(&h.app), "Cancel ends the picker's group");
@@ -1273,9 +1264,8 @@ fn the_picker_does_not_claim_an_undo_group_it_did_not_open() {
     // A command from outside the picker must not seal (and end) the agent's group.
     h.app.run("paint.setFill", json!({"color": "#abcabc"})).unwrap();
     assert!(h.app.session.active().unwrap().undo_group.is_some(), "the agent's group stays open");
-    let out = h.frame(vec![]);
-    let cancel = labelled(&out, "Cancel").expect("Cancel");
-    h.click(cancel);
+    h.frame(vec![]);
+    h.frame(vec![esc()]);
     assert_eq!(fill_hex(&h.app), "#abcabc", "Cancel does not revert the agent's edit");
     assert!(h.app.session.active().unwrap().undo_group.is_some(), "Cancel does not end the agent's group");
     h.app.run("edit.undoGroup.end", json!({})).unwrap();
@@ -1499,4 +1489,35 @@ fn switching_modes_keeps_the_popovers_header_where_it_opened() {
         assert!(h.app.ui.varos_picker_anchor.is_none());
         h.frame(vec![]);
     }
+}
+
+#[test]
+fn canvas_move_with_palette_open_is_not_undone_by_palette_escape() {
+    let mut h = Harness::new(true);
+    let fill = h.well(false);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    picker_fill(&mut h.app, "#112233");
+    h.frame(vec![]);
+    let selected = h.app.session.active().unwrap().selection.objects.clone();
+    let before = h.app.session.doc().unwrap().doc.bounds_of(&selected, false).unwrap();
+    let xf = crate::canvas::Xf::new(h.app.canvas_rect.unwrap(), h.app.view().unwrap());
+    let from = xf.to_screen(before.center());
+    let to = from + vec2(70.0, 20.0);
+    let pop = egui::AreaState::load(&h.ctx, popover_id()).unwrap().rect();
+    assert!(!pop.contains(from) && !pop.contains(to));
+    h.frame(vec![Event::PointerMoved(from), button(from, true)]);
+    for k in 1..=8 {
+        h.frame(vec![Event::PointerMoved(from + (to - from) * (k as f32 / 8.0))]);
+    }
+    h.frame(vec![button(to, false)]);
+    h.frame(vec![]);
+    let after = h.app.session.doc().unwrap().doc.bounds_of(&selected, false).unwrap();
+    assert_ne!(before, after, "the canvas really moved the selected object");
+    picker_fill(&mut h.app, "#abcdef");
+    h.frame(vec![esc()]);
+    assert_eq!(h.app.session.doc().unwrap().doc.bounds_of(&selected, false).unwrap(), after);
+    assert_eq!(fill_hex(&h.app), "#112233", "only the last palette edit is cancelled");
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(h.app.session.doc().unwrap().doc.bounds_of(&selected, false).unwrap(), before);
+    assert_eq!(fill_hex(&h.app), "#112233", "canvas move is its own undo step");
 }

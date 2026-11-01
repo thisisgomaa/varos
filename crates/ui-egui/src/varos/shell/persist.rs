@@ -650,7 +650,7 @@ impl VarosShell {
         true
     }
 
-    /// Floating panel `id`'s `×` and `<<`, and a drop of the float on the strip: each panel goes
+    /// Floating panel `id`'s `×`: each panel goes
     /// back where it left (a strip group, a pill, or the tab it was dragged out of).
     pub(crate) fn close_float(&mut self, id: u32) {
         let Some(i) = self.floats.iter().position(|f| f.panels.id == id) else { return };
@@ -662,12 +662,12 @@ impl VarosShell {
         self.settle();
     }
 
-    /// A panel menu's Collapse to icon, and a floating panel's `<<`. Panels that left a strip or
-    /// a pill go back there. The rest of a docked box become one icon group. A docked box
+    /// A panel menu's Collapse to icon: floats collapse in place. Docked panels that left a strip
+    /// or pill go back there; remaining docked tabs become one icon group. A docked box
     /// disappears (its sibling takes the room).
     pub(crate) fn collapse_box_to_strip(&mut self, id: u32) -> bool {
         if self.floats.iter().any(|f| f.panels.id == id) {
-            self.close_float(id);
+            self.float_to_icon(id);
             return true;
         }
         let Some(b) = self.tree.find_box(id).cloned() else { return false };
@@ -747,9 +747,27 @@ impl VarosShell {
         restored
     }
 
-    /// Floating panel `id`'s `<<`: its panels go back to the Board's strip (the same as `×`).
+    /// Collapse a floating group in place, preserving its expanded dimensions.
     pub(crate) fn float_to_icon(&mut self, id: u32) {
-        self.close_float(id);
+        let Some(i) = self.floats.iter().position(|f| f.panels.id == id) else { return };
+        let f = self.floats.remove(i);
+        self.forget_float_tabs(id);
+        let strip_id = self.fresh_strip_id();
+        self.float_strips.push(FloatStrip {
+            id: strip_id,
+            pos: [f.rect[0], f.rect[1]],
+            groups: vec![Group { temporary: false, panels: f.panels.tabs, width: f.rect[2], height: f.rect[3] }],
+        });
+        self.settle();
+    }
+
+    /// Dock a floating group at the rail, independently of its previous tab location.
+    pub(crate) fn dock_float(&mut self, id: u32) {
+        let Some(i) = self.floats.iter().position(|f| f.panels.id == id) else { return };
+        let f = self.floats.remove(i);
+        self.forget_float_tabs(id);
+        self.strip.groups.push(Group { panels: f.panels.tabs, temporary: false, width: f.rect[2], height: f.rect[3] });
+        self.settle();
     }
 
     /// A pill's Collapse to icon: each panel goes back where it left. A home that names this pill
