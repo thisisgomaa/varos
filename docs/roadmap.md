@@ -1,5 +1,16 @@
 # Roadmap: milestones and what's next
 
+## Varos VSTAB.1 stability follow-up
+
+Updated: 2026-11-01. Targeted upstream fixes preserve first-frame appearance preferences,
+pixel-aligned pointer mapping, floating-field key ownership and strict hex input. Shell divider,
+tool-column and collapsed-column edge gestures now cancel instead of committing on Escape or
+pointer/focus loss. Three failing headless reproductions now pass; all 12 code gates pass.
+Native macOS acceptance remains blocked by Computer Use access. Scores and hour estimates are
+unchanged; see [the verification record](varos/STABILITY_2026-11-01.md).
+
+Revision: 2026-11-01 — Varos stability evidence added; no feature or parity-score increase.
+
 ## Varos pages milestone
 
 Updated: 2026-10-28. M4 native-file work adds project → pages → artboards, project-wide save/recovery/package, active-page exports and all-pages PDF. The generic Pages panel and MCP/CLI additions are documented in [PAGES.md](varos/PAGES.md). The protected chrome status-bar hook remains for the shell owner; upstream milestone scores unchanged.
@@ -111,6 +122,7 @@ Checked 2026-10-10 from the code, tests and open issues; no workflow fails, so V
 | — | Interaction fidelity pass (every tool's modifiers, Properties panel per context, isolation, nuance; width-point creation and adjoining adjustment regression-tested; dialog layout reviewed) | ⬜ (new ruler-guide Alt orientation implemented; existing-guide Escape cancellation regression-tested; broader pass remains) | 60–90 |
 | — | Hardening at scale (big-file corpus, fuzzing, cross-platform + browser QA) | 🟡 PngSuite integrity and bounded fetching verified (#1729); real-world corpus/manual QA remain | 50–80 |
 | M14 follow-up | Color Picker layout (#2008) | ✅ Compact controls, centered header, stacked actions, aligned fields and screen sampling; narrow windows scroll vertically | Included above |
+| M14 follow-up | Varos VSTAB.1 panel and picker stability | Headless regressions pass; all 12 gates pass, native acceptance pending. [Evidence](varos/STABILITY_2026-11-01.md) | Estimates unchanged |
 | | **Total to full parity** (one agent; from [target-app-parity.md](target-app-parity.md)) | | **~360–590** |
 
 Milestone estimates predate the 2026-10-10 re-measure for M1–M14; the area table in

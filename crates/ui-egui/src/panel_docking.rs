@@ -1204,6 +1204,12 @@ struct PanelContent<'a> {
     app: &'a mut VectorcraftApp,
 }
 
+/// Upstream #4803: a field releasing keyboard focus on Enter/Escape still owns that key.
+/// Do not forward it to the main window's shortcuts after the panel has drawn.
+fn keep_field_ending_keys(ui: &egui::Ui) {
+    ui.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: egui::Key::Enter | egui::Key::Escape, pressed: true, .. })));
+}
+
 impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
     fn body(&mut self, ui: &mut egui::Ui, id: &String) {
         if id == CANVAS {
@@ -1213,9 +1219,11 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
         if crate::varos::panel_stack::skips_body(self.app, ui) {
             return; // Varos: a flyout that is a card instead draws no body
         }
-        if ui.ctx().viewport_id() != egui::ViewportId::ROOT {
+        let floating = ui.ctx().viewport_id() != egui::ViewportId::ROOT;
+        if floating {
             crate::canvas::release_art_in_window(self.app, ui.ctx());
         }
+        let field_had_keyboard = floating && ui.memory(|m| m.focused().is_some());
         let t = crate::theme::Tokens::get(ui.ctx());
         let back = ui.max_rect();
         if back.is_positive() {
@@ -1231,6 +1239,9 @@ impl craft_ui::docking::DockContent<String> for PanelContent<'_> {
                 let width = ui.available_width();
                 crate::dock::panel_body(self.app, ui, id, width, height)
             });
+        }
+        if field_had_keyboard {
+            keep_field_ending_keys(ui);
         }
     }
 

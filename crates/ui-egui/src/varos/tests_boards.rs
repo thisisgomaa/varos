@@ -394,7 +394,8 @@ fn a_window_capture_never_captures_another_board() {
     // A context with a window size, as after a drawn frame.
     let ctx = egui::Context::default();
     ctx.begin_pass(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0))), ..Default::default() });
-    let _ = ctx.end_pass();
+    let mut output = ctx.end_pass();
+    output.textures_delta.clear(); // Only the viewport size is needed; no renderer is attached.
     app.drain_control(&ctx);
     assert!(reply.try_recv().is_err(), "it waits for a frame");
     app.session.set_active(index_of(&app, b));

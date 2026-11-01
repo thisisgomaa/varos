@@ -119,10 +119,11 @@ mod tests {
         app.run("file.new", json!({"width":200,"height":200})).unwrap();
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(340., 1400.))), ..Default::default() },
             |ui| crate::panels::properties::show(&mut app, ui),
         );
+        output.textures_delta.clear(); // This headless test inspects shapes, not GPU uploads.
         assert_eq!(output.shapes.iter().map(|s| count(&s.shape)).sum::<usize>(), 1);
         assert!(!action(&app).enabled);
     }

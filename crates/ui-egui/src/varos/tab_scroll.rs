@@ -49,9 +49,10 @@ mod tests {
         let widths = vec![180.; 40];
         let mut result = 0;
         let mut frame = |active, room, step| {
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            let mut output = ctx.run_ui(Default::default(), |ui| {
                 result = super::first(ui, &widths, active, active.map(|i| i as u64), room, step);
             });
+            output.textures_delta.clear(); // No renderer in this state-only test.
             result
         };
         assert_eq!(frame(Some(39), 400., 0), 38);
@@ -78,10 +79,11 @@ mod strip_tests {
         crate::theme::install_fonts(&ctx);
         for i in (0..20).rev() {
             assert!(app.session.set_active(i));
-            let output = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480., 100.))), ..Default::default() },
                 |ui| crate::chrome::doc_tabs(&mut app, ui),
             );
+            output.textures_delta.clear(); // Shapes are inspected without uploading an atlas.
             let title = format!("overflow-document-{i:02}.svg");
             assert!(output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text().contains(title.as_str()) && s.clip_rect.intersects(t.visual_bounding_rect()))), "active {title} was unreachable");
         }

@@ -219,6 +219,13 @@ pub(crate) fn finish_edge(app: &mut VectorcraftApp, ui: &mut egui::Ui, hits: &mu
     if edge_response.hovered() || edge_response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
+    if edge_response.drag_started() {
+        super::resize::begin(ui.ctx(), edge_id, None);
+    }
+    if !super::resize::active(ui.ctx(), edge_id) {
+        ui.ctx().data_mut(|d| d.remove_temp::<f32>(edge_id.with("out")));
+        return;
+    }
     if let Some(p) = edge_response.interact_pointer_pos() {
         let outward = rail.left() - p.x;
         ui.ctx().data_mut(|d| d.insert_temp(edge_id.with("out"), outward));
@@ -229,9 +236,10 @@ pub(crate) fn finish_edge(app: &mut VectorcraftApp, ui: &mut egui::Ui, hits: &mu
         }
     }
     if edge_response.drag_stopped() {
+        let commit = super::resize::finish(ui.ctx(), edge_id);
         let outward = ui.ctx().data(|d| d.get_temp::<f32>(edge_id.with("out"))).unwrap_or(0.0);
         ui.ctx().data_mut(|d| d.remove_temp::<f32>(edge_id.with("out")));
-        if outward >= 120.0 {
+        if commit && outward >= 120.0 {
             app.ui.varos_shell.restore_collapsed();
             ui.ctx().request_repaint();
         }

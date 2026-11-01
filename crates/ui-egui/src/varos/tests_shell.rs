@@ -374,6 +374,85 @@ fn a_divider_drag_resizes_in_the_same_frame_and_a_double_click_resets() {
     assert_eq!(h.board(), board0);
 }
 
+/// Cancelling a resize must not silently save its preview or collapse a column on release.
+#[test]
+fn cancelled_divider_resizes_restore_the_layout_and_do_not_collapse() {
+    for cancel in 0..3 {
+        let mut h = Harness::new();
+        h.shell(true);
+        let before = h.state().clone();
+        let from = h.rect(&Hit::Divider(vec![])).center();
+        let to = pos2(h.screen.x - 40.0, from.y);
+        h.hold_drag(from, to);
+        assert_ne!(h.tree(), &before.tree, "the divider previews the resize");
+        match cancel {
+            0 => h.frame(vec![escape_key(), button(to, false)]),
+            1 => h.frame(vec![egui::Event::PointerGone]),
+            _ => {
+                h.focused = false;
+                h.frame(vec![]);
+                h.focused = true;
+            }
+        }
+        h.release(to);
+        assert_eq!(*h.state(), before, "cancel case {cancel}: original layout restored");
+        h.state().invariants().unwrap();
+    }
+}
+
+#[test]
+fn cancelled_tool_column_resizes_keep_the_original_columns() {
+    for cancel in 0..3 {
+        let mut h = Harness::new();
+        h.shell(true);
+        let from = h.rect(&Hit::ToolsEdge).center();
+        let to = from + vec2(60.0, 0.0);
+        h.hold_drag(from, to);
+        match cancel {
+            0 => h.frame(vec![escape_key(), button(to, false)]),
+            1 => h.frame(vec![egui::Event::PointerGone]),
+            _ => {
+                h.focused = false;
+                h.frame(vec![]);
+                h.focused = true;
+            }
+        }
+        h.release(to);
+        assert_eq!(h.state().tools_columns, 1, "cancel case {cancel}");
+        assert!(!h.hits().iter().any(|(hit, _)| matches!(hit, Hit::AzureHint)));
+        // The next deliberate resize must still work.
+        let from = h.rect(&Hit::ToolsEdge).center();
+        h.drag(from, from + vec2(30.0, 0.0));
+        assert_eq!(h.state().tools_columns, 2);
+    }
+}
+
+#[test]
+fn cancelled_strip_edge_drags_do_not_restore_a_collapsed_column() {
+    for cancel in 0..3 {
+        let mut h = Harness::new();
+        h.shell(true);
+        let from = h.rect(&Hit::Divider(vec![])).center();
+        h.drag(from, pos2(h.screen.x - 40.0, from.y));
+        assert!(!h.state().collapsed_columns.is_empty());
+        let before = h.state().clone();
+        let from = h.rect(&Hit::StripEdge).center();
+        let to = from - vec2(150.0, 0.0);
+        h.hold_drag(from, to);
+        match cancel {
+            0 => h.frame(vec![escape_key(), button(to, false)]),
+            1 => h.frame(vec![egui::Event::PointerGone]),
+            _ => {
+                h.focused = false;
+                h.frame(vec![]);
+                h.focused = true;
+            }
+        }
+        h.release(to);
+        assert_eq!(*h.state(), before, "cancel case {cancel}: collapsed column stays closed");
+    }
+}
+
 #[test]
 fn dividers_stop_at_the_boxes_minimum_sizes() {
     let mut h = Harness::new();

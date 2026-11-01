@@ -63,6 +63,15 @@ pub(crate) fn interact(app: &mut VectorcraftApp, ui: &mut egui::Ui, layout: &Lay
                 let origin = ctx.input(|i| i.pointer.press_origin()).or(response.interact_pointer_pos()).unwrap_or(d.rect.center());
                 let grab = along(origin) - along(d.rect.center());
                 ctx.data_mut(|m| m.insert_temp(grab_id(&d.path), grab));
+                super::resize::begin(&ctx, id(&d.path), tree.ratio(&d.path).map(|r| (d.path.clone(), r)));
+            }
+            if !super::resize::active(&ctx, id(&d.path)) {
+                ctx.data_mut(|m| {
+                    m.remove_temp::<f32>(grab_id(&d.path));
+                    m.remove_temp::<f32>(center_id(&d.path));
+                    m.remove_temp::<bool>(past_id(&d.path));
+                });
+                continue;
             }
             if response.dragged()
                 && let Some(p) = response.interact_pointer_pos()
@@ -85,13 +94,14 @@ pub(crate) fn interact(app: &mut VectorcraftApp, ui: &mut egui::Ui, layout: &Lay
                 });
             }
             if response.drag_stopped() {
+                let commit = super::resize::finish(&ctx, id(&d.path));
                 let center = ctx.data(|m| m.get_temp::<f32>(center_id(&d.path)));
                 ctx.data_mut(|m| {
                     m.remove_temp::<f32>(grab_id(&d.path));
                     m.remove_temp::<f32>(center_id(&d.path));
                     m.remove_temp::<bool>(past_id(&d.path));
                 });
-                if let Some(center) = center {
+                if let Some(center) = center.filter(|_| commit) {
                     collapse = tree
                         .side_overshoot(&d.path, center, d.span)
                         .filter(|(_, past)| *past >= super::tree::COLLAPSE_RELEASE)

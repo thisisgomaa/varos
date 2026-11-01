@@ -214,7 +214,7 @@ fn hex_reads_three_six_and_eight_digits_and_writes_six() {
     assert_eq!(fields::parse_hex("#ff8000"), fields::parse_hex("FF8000"));
     assert_eq!(fields::parse_hex(" fff "), Some(([1.0, 1.0, 1.0], None)));
     assert_eq!(fields::parse_hex("00000080"), Some(([0.0, 0.0, 0.0], Some(128.0 / 255.0))));
-    for bad in ["", "zz", "12345", "1234567", "#gg0000", "ff80٠٠", "+12345"] {
+    for bad in ["", "zz", "12345", "1234567", "#gg0000", "ff80٠٠", "+12345", "##ff8000", "###fff", "##00000080"] {
         assert_eq!(fields::parse_hex(bad), None, "{bad:?}");
     }
     for c in [[0.2, 0.4, 0.6], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]] {
@@ -416,9 +416,10 @@ fn escape_closes_the_popover_anywhere_and_never_undoes() {
     open_for(&mut app, false, Rect::from_min_size(pos2(10.0, 10.0), vec2(22.0, 22.0)));
     let undo = undo_len(&app);
     let esc = Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
-    let _ = ctx.run_ui(egui::RawInput { events: vec![Event::PointerMoved(pos2(1000.0, 1000.0)), esc], ..Default::default() }, |ui| {
+    let mut output = ctx.run_ui(egui::RawInput { events: vec![Event::PointerMoved(pos2(1000.0, 1000.0)), esc], ..Default::default() }, |ui| {
         assert!(escape(&mut app, ui.ctx()));
     });
+    output.textures_delta.clear(); // This input-only test has no renderer.
     assert!(app.ui.varos_picker_anchor.is_none());
     assert_eq!(undo_len(&app), undo);
 }

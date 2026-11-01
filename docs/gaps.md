@@ -1,5 +1,16 @@
 # Gaps
 
+## Varos VSTAB.1 stability follow-up
+
+Updated: 2026-11-01. Targeted upstream fixes preserve first-frame appearance preferences,
+pixel-aligned pointer mapping, floating-field key ownership and strict hex input. Shell divider,
+tool-column and collapsed-column edge gestures now cancel instead of committing on Escape or
+pointer/focus loss. Three failing headless reproductions now pass; all 12 code gates pass.
+Native macOS acceptance remains blocked by Computer Use access. Scores and hour estimates are
+unchanged; see [the verification record](varos/STABILITY_2026-11-01.md).
+
+Revision: 2026-11-01 — Varos stability evidence added; no feature or parity-score increase.
+
 ## Varos project pages update
 
 Updated: 2026-10-28. The single-canvas native-file limitation is addressed by the v5 project envelope and Pages panel. Remaining integration: the protected shell chrome must call `varos::pages::status(app)` for the persistent page/artboard readout. See [PAGES.md](varos/PAGES.md). Upstream parity estimates unchanged.

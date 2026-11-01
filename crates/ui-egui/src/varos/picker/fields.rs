@@ -25,7 +25,9 @@ pub(crate) fn hex_digits(c: [f32; 3]) -> String {
 /// A typed hex colour: `RGB`, `RRGGBB` or `RRGGBBAA`, with or without `#`, any case. The alpha
 /// comes back only for eight digits.
 pub(crate) fn parse_hex(s: &str) -> Option<([f32; 3], Option<f32>)> {
-    let s = s.trim().trim_start_matches('#');
+    // Match the classic panel's validation (upstream 18709b0b6): only one optional hash.
+    let s = s.trim();
+    let s = s.strip_prefix('#').unwrap_or(s);
     if !s.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }

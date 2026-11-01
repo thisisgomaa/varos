@@ -195,7 +195,8 @@ pub fn hex_digits(c: &Color) -> String {
 
 /// Parse a hex field (`E67828`, `#e67828`, `fff`).
 pub fn parse_hex(s: &str) -> Option<Color> {
-    let s = s.trim().trim_start_matches('#');
+    let s = s.trim();
+    let s = s.strip_prefix('#').unwrap_or(s);
     if !(s.len() == 3 || s.len() == 6) || !s.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
@@ -1364,5 +1365,7 @@ mod tests {
         assert_eq!(parse_hex("#fff").unwrap().to_hex(), "#ffffff");
         assert!(parse_hex("zz").is_none());
         assert!(parse_hex("12345").is_none());
+        assert!(parse_hex("##e67828").is_none());
+        assert!(parse_hex("###fff").is_none());
     }
 }

@@ -1,7 +1,7 @@
 # Varos fork: backlog
 
 Ordered. Owner feedback comes first. Each item has one acceptance line; an item is closed only when
-its acceptance is met and recorded in `STATE.md`. Updated 2026-10-19, `main` = `3e81fe83`.
+its acceptance is met and recorded in `STATE.md`. Updated 2026-11-01; older dated entries below retain their original context.
 
 Tags: **[done, owner to look]** = built, gates green, waiting for the owner's eye in the real window.
 
@@ -64,6 +64,16 @@ Tags: **[done, owner to look]** = built, gates green, waiting for the owner's ey
 13. **Native-speaker review of translations.** The new Arabic Essentials, kashida and font-menu
     labels were machine-written into 23 catalogs. *Acceptance:* a native reader signs off each
     language, or the rows fall back to English on purpose.
+
+## VSTAB.1 — owner stability request (2026-11-01)
+
+Three reproduced shell gesture cancellation defects are repaired in the working branch; four
+upstream stability fixes are backported without importing the newer design. Automated checks,
+installed build identity and native mouse acceptance are tracked separately in
+[STABILITY_2026-11-01.md](STABILITY_2026-11-01.md). This item remains open until the tested build is
+installed and real-window panel, drag, collapse/restore and picker checks pass.
+
+Revision: 2026-11-01 — stability task added; no owner acceptance inferred from headless tests.
 
 ## AI panel (owner request 2026-10-26)
 See `docs/varos/AI_PANEL_PLAN.md` — A0 mockup → A1 Ask via Codex → A2 Claude Code → A3 Images with the user's own key → A4 edit/variations → A5 API agent loop → A6 History. Selling point: own model, own key, own files, no subscription.

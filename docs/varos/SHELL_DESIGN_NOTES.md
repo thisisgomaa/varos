@@ -4,7 +4,7 @@ Owner's intent in one line: **Blender's window (independent boxes you split and 
 + Illustrator's panel system (icon strips, flyouts, floating groups, light and calm) + Illustrator's
 9 menus.** This file collects his rules, one per observed gesture, in the order he gave them. It is
 the design of record for the shell together with the sketch
-`mockups/shell-sketch-2026-10-27.png`; it supersedes the rail-on-every-divider idea of the HTML
+`plan/local-reference/shell-sketch-2026-10-27.png` (local only; repository-relative); it supersedes the rail-on-every-divider idea of the HTML
 handoff.
 
 ## Structure (agreed 2026-10-27 morning)
@@ -92,3 +92,9 @@ handoff.
   insertion line between tabs.
 - Illustrator's menus in the recording (File, Edit): plain lists, bold-free, with shortcuts right
   aligned, separators by task; nothing else (no icons, no descriptions).
+
+## Reference provenance — 2026-11-01
+
+The owner-supplied sketch was preserved locally under gitignored `plan/local-reference/`.
+Its redistribution provenance was not established, so it is not a distributed asset and was
+not inspected or used to derive behavior in VSTAB.1. The existing Varos design is unchanged.

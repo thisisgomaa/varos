@@ -176,3 +176,9 @@ The capture uses the already-attributed Lucide icons and bundled UI font.
 Home simple navigation: additional Lucide v0.468.0 icons (ISC), and verbatim copies
 of the existing Lucide search/settings glyphs; see ASSETS.md and
 crates/ui-egui/assets/varos/icons/LICENSE.
+
+Varos picker glyphs and software UI captures (attribution catch-up 2026-11-01):
+original Varos contributor work under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE;
+picker glyph licence texts also in crates/ui-egui/assets/varos/icons/).
+The already-attributed Lucide icons and UI fonts retain their original licences.
+Per-file source commits and capture provenance are listed in ASSETS.md.

@@ -1249,6 +1249,9 @@ mod tests {
     fn unreadable_saved_docking_keeps_preferences_and_every_workspace() {
         use serde_json::json;
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        // This regression exercises legacy craft-ui docking data. Varos starts with its own
+        // shell now, whose float command deliberately does not populate docking_hidden.
+        app.ui.varos_shell.enabled = false;
         app.run("window.panel.float", json!({"panel":"layers"})).unwrap();
         app.ui.toolbar = false;
         app.ui.engine_prefs = json!({"interfaceLanguage":"fr", "uiBrightness":"light"});

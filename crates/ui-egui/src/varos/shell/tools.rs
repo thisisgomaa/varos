@@ -101,11 +101,20 @@ pub(crate) fn finish_edge(app: &mut VectorcraftApp, ui: &mut egui::Ui, hits: &mu
     let edge_id = egui::Id::unique("shell-tools-edge");
     let edge_response = ui.interact(edge, edge_id, Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     if edge_response.drag_started() {
+        super::resize::begin(ui.ctx(), edge_id, None);
         let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(edge.center());
         ui.ctx().data_mut(|d| {
             d.insert_temp(edge_id.with("x"), origin.x);
             d.insert_temp(edge_id.with("cols"), app.ui.varos_shell.tools_columns);
         });
+    }
+    if !super::resize::active(ui.ctx(), edge_id) {
+        ui.ctx().data_mut(|d| {
+            d.remove_temp::<f32>(edge_id.with("x"));
+            d.remove_temp::<u8>(edge_id.with("cols"));
+            d.remove_temp::<u8>(edge_id.with("snap"));
+        });
+        return;
     }
     if edge_response.dragged()
         && let Some(p) = edge_response.interact_pointer_pos()
@@ -122,13 +131,16 @@ pub(crate) fn finish_edge(app: &mut VectorcraftApp, ui: &mut egui::Ui, hits: &mu
         ui.ctx().data_mut(|d| d.insert_temp(edge_id.with("snap"), snap));
     }
     if edge_response.drag_stopped() {
+        let commit = super::resize::finish(ui.ctx(), edge_id);
         let snap = ui.ctx().data(|d| d.get_temp::<u8>(edge_id.with("snap"))).unwrap_or(app.ui.varos_shell.tools_columns);
         ui.ctx().data_mut(|d| {
             d.remove_temp::<f32>(edge_id.with("x"));
             d.remove_temp::<u8>(edge_id.with("cols"));
             d.remove_temp::<u8>(edge_id.with("snap"));
         });
-        app.ui.varos_shell.tools_columns = snap.clamp(1, 3);
+        if commit {
+            app.ui.varos_shell.tools_columns = snap.clamp(1, 3);
+        }
         ui.ctx().request_repaint();
     }
 }

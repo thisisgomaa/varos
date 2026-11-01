@@ -22,6 +22,7 @@ pub(crate) mod drag;
 pub(crate) mod floats;
 pub(crate) mod motion;
 pub(crate) mod persist;
+mod resize;
 pub(crate) mod strip;
 pub(crate) mod tokens;
 pub(crate) mod tools;

@@ -180,6 +180,7 @@ fn duplicates(item: &Item) -> bool {
 /// Escape cancels a drag before anything else sees it (called first by `shortcuts::handle`): a
 /// drag of the shell's, or a Properties editor's section being moved.
 pub(crate) fn escape(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    super::resize::before(app, ctx);
     crate::panels::properties::escape_section_drag(ctx);
     if app.ui.varos_shell.drag.is_some() && ctx.input_mut(|i| i.key_pressed(Key::Escape) && i.consume_key(i.modifiers, Key::Escape)) {
         cancel(app, ctx);

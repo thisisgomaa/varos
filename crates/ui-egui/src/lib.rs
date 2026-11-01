@@ -1969,9 +1969,8 @@ impl VectorcraftApp {
         ime::install_hooks(ctx);
         self.adopt_context(ctx);
         if !self.styled {
-            // Varos: keep the restored appearance, at every brightness.
-            self.ui.brightness = theme::Brightness::parse(&self.session.prefs.ui_brightness).unwrap_or(theme::Brightness::Dark);
-            theme::apply(ctx, self.ui.brightness);
+            // Varos: upstream #4837; retain all saved appearance preferences on the first frame.
+            prefs_dialog::reapply(self, ctx);
             egui_extras::install_image_loaders(ctx);
             self.styled = true;
         }

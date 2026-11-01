@@ -1,5 +1,16 @@
 # Parity with Adobe Illustrator
 
+## Varos VSTAB.1 stability follow-up
+
+Updated: 2026-11-01. Targeted upstream fixes preserve first-frame appearance preferences,
+pixel-aligned pointer mapping, floating-field key ownership and strict hex input. Shell divider,
+tool-column and collapsed-column edge gestures now cancel instead of committing on Escape or
+pointer/focus loss. Three failing headless reproductions now pass; all 12 code gates pass.
+Native macOS acceptance remains blocked by Computer Use access. Scores and hour estimates are
+unchanged; see [the verification record](varos/STABILITY_2026-11-01.md).
+
+Revision: 2026-11-01 — Varos stability evidence added; no feature or parity-score increase.
+
 ## Varos project pages
 
 Updated: 2026-10-28. A native project holds independent page canvases. Page commands, per-page history/view, project save/recovery/package and the Pages panel are covered by the page suites. See [PAGES.md](varos/PAGES.md). This Varos-specific addition does not change upstream parity scores or estimates.
@@ -151,7 +162,7 @@ dominate; 3D, graphs and automation are specialist). They sum to 105. Feature de
 | Export for Screens, Asset Export, slices, Save for Web | 3 | 85% | anti-aliasing ghost borders (#983); TIFF choices and settings are implemented | 2–4 | estimated |
 | Print, colour management, separations, flattener | 3 | 80% | print preview fidelity | 2–4 | estimated |
 | Automation (Actions, Variables, scripting, batch) | 3 | 60% | a scripting surface (Illustrator: JavaScript/ExtendScript), Batch, image and graph variables, dataset import/export | 8–14 | estimated; MCP `add_text` exposes existing vertical type; score and hours unchanged |
-| UI chrome (panels, Properties, workspaces, preferences) | 6 | 80% | Properties per context, ~15 Preferences options stored but unused (#394; Corner Radius acts since 2026-10-24), SVG Interactivity, context menus beyond the canvas, accessibility | 13–20 | estimated; floating panels in OS windows of their own on the desktop (#4135), score and hours unchanged; macOS save Format menu implemented (#866), score and hours unchanged; Eyedropper cursor and precise setting checked (#1269), OS visual QA unverified; numeric-field focus and normal text drags regression-tested (#1326, in part); movements below the click threshold still select all; artboard navigation synchronizes the tool selection before destructive actions; status messages and readouts use stable responsive allocations sized for localized labels and ordinary coordinates (sample widths cached by language/unit/DPI; regression and contributor original-file evidence below; scores/hours unchanged) |
+| UI chrome (panels, Properties, workspaces, preferences) | 6 | 80% | Properties per context, ~15 Preferences options stored but unused (#394; Corner Radius acts since 2026-10-24), SVG Interactivity, context menus beyond the canvas, accessibility | 13–20 | estimated; floating panels in OS windows of their own on the desktop (#4135), score and hours unchanged; macOS save Format menu implemented (#866), score and hours unchanged; Eyedropper cursor and precise setting checked (#1269), OS visual QA unverified; numeric-field focus and normal text drags regression-tested (#1326, in part); movements below the click threshold still select all; artboard navigation synchronizes the tool selection before destructive actions; status messages and readouts use stable responsive allocations sized for localized labels and ordinary coordinates (sample widths cached by language/unit/DPI; regression and contributor original-file evidence below; scores/hours unchanged); Varos VSTAB.1 resize cancellation and upstream stability backports: [verification record](varos/STABILITY_2026-11-01.md), native acceptance pending, score/hours unchanged |
 | Libraries, Links, Package | 2 | 82% | shared libraries, linked graphics, gradients and patterns as library items (no cloud by design) | 2–3 | estimated |
 | Generative AI (Text to Vector, Generative Recolor, Shape Fill, Concept to Vector, Prompt to Edit, Rewrite Text) | 2 | 0% | a pluggable provider and the panels; needs an owner decision on models | 30–60 | measured (absent) |
 | **Feature depth** | **105** | **~75%** | | **~250–420** | |
