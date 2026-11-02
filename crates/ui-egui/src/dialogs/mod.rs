@@ -190,6 +190,8 @@ pub(crate) struct DialogSpec {
     pub ok_label: Option<fn(&VectorcraftApp) -> &'static str>,
     /// Can OK (or Enter) apply the dialog as it is? None: always. The body says why not.
     pub ok_enabled: Option<fn(&VectorcraftApp, &Dialog) -> bool>,
+    /// Varos: the workspace (canvas, panels, tab reordering, shortcuts) stays usable while it is open.
+    pub modeless: bool,
 }
 
 impl DialogSpec {
@@ -217,6 +219,7 @@ impl DialogSpec {
         passes: |_, _| false,
         ok_label: None,
         ok_enabled: None,
+        modeless: false,
     };
 
     /// A dialog that draws its own window and confirms through its module.
@@ -273,7 +276,7 @@ registry! {
     Variables: [variables::KIND] => variables::SPEC,
     Effect: ["effect"] => effect::SPEC,
     SaveChanges: [crate::unsaved::KIND] => save_changes::SPEC,
-    Preferences: ["preferences"] => DialogSpec::window(crate::prefs_dialog::show, |app, _| crate::prefs_dialog::confirm(app)),
+    Preferences: ["preferences"] => DialogSpec { modeless: true, ..DialogSpec::window(crate::prefs_dialog::show, |app, _| crate::prefs_dialog::confirm(app)) },
     Shortcuts: ["shortcuts"] => DialogSpec::window(crate::shortcut_editor::show, |app, _| crate::shortcut_editor::confirm(app)),
     Workspaces: ["newWorkspace", "manageWorkspaces"] => DialogSpec::window(crate::workspaces::show, |app, _| crate::workspaces::confirm(app)),
     FindFont: ["findFont"] => DialogSpec::window(crate::find_font::show, |app, _| crate::find_font::confirm(app)),
@@ -708,7 +711,7 @@ mod tests_shortcut_import;
 #[cfg(test)]
 mod tests_warp;
 
-/// Editing preferences does not reserve the rest of the workspace.
+/// Whether the open dialog reserves the rest of the workspace ([`DialogSpec::modeless`]).
 pub(crate) fn blocks_workspace(app: &VectorcraftApp) -> bool {
-    app.ui.dialog.as_ref().is_some_and(|dialog| dialog.kind != "preferences")
+    app.ui.dialog.as_ref().is_some_and(|dialog| !spec(&dialog.kind).modeless)
 }
