@@ -458,7 +458,7 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context, req: &ControlReques
                 }
                 for (f, value) in fields {
                     // An agent's edit counts as the user's: Preferences' Apply sends it even at its opening value.
-                    crate::prefs_dialog::set_field(d, &mut app.ui.prefs_draft, f, value);
+                    crate::varos::preferences::set_field(d, &mut app.ui.prefs_draft, f, value); // Varos
                 }
                 ok(serde_json::to_value(&*d).unwrap_or_default())
             }

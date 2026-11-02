@@ -1,16 +1,18 @@
 //! Edit → Preferences (⌘K): Illustrator-style category list + fields, rendered from the engine's
 //! preference table ([`PREF_SPECS`]). The dialog edits a working copy in `Dialog::fields`
-//! (one field per preference key, so agents can `ui.dialog.set` any of them). Apply keeps the
-//! working copy open; OK applies it and closes, both through `prefs.set`. Also: persistence of engine prefs inside `UiState` and the per-frame
+//! (one field per preference key, so agents can `ui.dialog.set` any of them) and OK applies it
+//! through `prefs.set`. Also: persistence of engine prefs inside `UiState` and the per-frame
 //! application of the UI-side preferences (brightness, canvas colour, UI scaling, render threads).
+//! Varos: Preferences is a modeless window with Apply, and OK applies only what the user edited
+//! (`varos::preferences`, reached through the marked hooks below).
 
 use serde_json::{Map, Value, json};
-use std::collections::BTreeSet;
 use vectorcraft_engine::Prefs;
 use vectorcraft_engine::cmd::prefscmds::{GPU_PREFERENCES, PREF_CATEGORIES, PREF_GROUPS, PREF_SPECS, PrefKind};
 
 use crate::state::Dialog;
 use crate::theme::{self, Accent, Brightness, Scheme, Tokens};
+use crate::varos::preferences::Edit; // Varos: the widgets edit through Apply's draft
 use crate::{VectorcraftApp, widgets};
 
 /// UI-only fields shown in the dialog (backed by `UiState`, not engine prefs).
@@ -20,186 +22,34 @@ pub const UI_FIELDS: &[(&str, &str, &str)] = &[
     ("__taskBar", "General", "Enable Contextual Task Bar"),
 ];
 
-/// The Preferences transaction kept beside the dialog. The setting values themselves stay in
-/// `Dialog::fields`, the boundary agents read and `ui.dialog.set` writes; this holds what Apply
-/// needs to know about them.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct PreferencesDraft {
-    /// The setting values at opening, or at the last Apply.
-    baseline: Map<String, Value>,
-    /// The fields the user edited since then, whatever their value now.
-    touched: BTreeSet<String>,
-    /// The document whose units the draft edits.
-    document_uid: Option<u64>,
-}
-
-impl PreferencesDraft {
-    fn new(app: &VectorcraftApp, baseline: Map<String, Value>) -> Self {
-        Self { baseline, touched: BTreeSet::new(), document_uid: app.session.active().map(|doc| doc.uid) }
-    }
-
-    /// Record a user edit: Apply sends `key` even when it is back at the value Preferences opened
-    /// with (a live change made meanwhile is overridden).
-    fn touch(&mut self, key: &str) {
-        if key != CATEGORY {
-            self.touched.insert(key.to_string());
-        }
-    }
-}
-
-/// Navigation, not a setting: never applied, never compared.
-const CATEGORY: &str = "__category";
-
-/// Set one field of the open dialog. For Preferences it also counts as the user's edit, so UI
-/// edits, Reset and agents' `ui.dialog.set` all record their edits through [`PreferencesDraft::touch`].
-pub(crate) fn set_field(d: &mut Dialog, draft: &mut Option<PreferencesDraft>, key: String, value: Value) {
-    if d.kind == "preferences"
-        && let Some(draft) = draft
-    {
-        draft.touch(&key);
-    }
-    d.fields.insert(key, value);
-}
-
-/// The open Preferences dialog as its widgets edit it. Reads go to the dialog; every edit goes
-/// through [`set_field`], so a widget's change is recorded as the user's edit the moment it
-/// happens (a widget reporting the value the field already holds is no edit).
-struct Edit<'a> {
-    dialog: &'a mut Dialog,
-    draft: &'a mut Option<PreferencesDraft>,
-}
-
-impl Edit<'_> {
-    fn set(&mut self, key: &str, value: Value) {
-        if self.dialog.fields.get(key) != Some(&value) {
-            set_field(self.dialog, self.draft, key.to_string(), value);
-        }
-    }
-}
-
-impl std::ops::Deref for Edit<'_> {
-    type Target = Dialog;
-    fn deref(&self) -> &Dialog {
-        self.dialog
-    }
-}
-
-/// A draft outlives no Preferences dialog (called after a dialog closes, and each frame).
-pub(crate) fn settle(app: &mut VectorcraftApp) {
-    if !app.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences") {
-        app.ui.prefs_draft = None;
-    }
-}
-
-fn current_fields(app: &VectorcraftApp) -> Map<String, Value> {
+/// The dialog's setting fields. Varos: also what Apply refreshes from (`varos::preferences`).
+pub(crate) fn current_fields(app: &VectorcraftApp) -> Map<String, Value> {
+    // One field per preference key or group (the flattener presets have commands of their own).
     let mut fields: Map<String, Value> = app.session.prefs.to_json().as_object().cloned().unwrap_or_default();
     fields.retain(|k, _| vectorcraft_engine::cmd::prefscmds::spec(k).is_some() || PREF_GROUPS.contains(&k.as_str()));
+    // Units ▸ General shows (and OK sets) the open document's units.
     if let Some(st) = app.session.active() {
         fields.insert("unitsGeneral".into(), json!(st.doc.units.key()));
     }
     fields.insert("__smartGuides".into(), json!(app.ui.view.smart_guides));
     fields.insert("__snapToGrid".into(), json!(app.ui.view.snap_to_grid));
     fields.insert("__taskBar".into(), json!(app.ui.task_bar));
-    fields.insert(crate::varos::panel_stack::PREF_KEY.into(), json!(app.ui.varos_panel_stack.enabled));
-    fields.insert(crate::varos::shell::PREF_KEY.into(), json!(app.ui.varos_shell.enabled));
+    fields.insert(crate::varos::panel_stack::PREF_KEY.into(), json!(app.ui.varos_panel_stack.enabled)); // Varos
+    fields.insert(crate::varos::shell::PREF_KEY.into(), json!(app.ui.varos_shell.enabled)); // Varos
     fields
 }
 
 pub fn open(app: &mut VectorcraftApp, category: Option<&str>) {
     let mut fields = current_fields(app);
-    app.ui.prefs_draft = Some(PreferencesDraft::new(app, fields.clone()));
     let cat = category.and_then(|c| PREF_CATEGORIES.iter().find(|x| x.eq_ignore_ascii_case(c))).copied().unwrap_or(PREF_CATEGORIES[0]);
-    fields.insert(CATEGORY.into(), json!(cat));
+    fields.insert("__category".into(), json!(cat));
     app.ui.dialog = Some(Dialog { kind: "preferences".into(), fields });
+    crate::varos::preferences::begin(app); // Varos: Apply's draft
 }
 
-/// Apply validates the edited settings before changing engine or UI state. A field the user
-/// edited is applied even when it is back at its opening value; untouched draft fields never
-/// overwrite settings changed in the modeless editor while Preferences was open. Cancel only
-/// discards edits made after the last Apply. Units of a document that is no longer active are
-/// skipped (with a status message); every other edit still applies.
-pub fn apply(app: &mut VectorcraftApp) -> Result<Value, String> {
-    let Some(mut d) = app.ui.dialog.clone() else { return Err("no dialog open".into()) };
-    if d.kind != "preferences" {
-        return Err("the open dialog is not Preferences".into());
-    }
-    // A dialog constructed without `open` has no draft and keeps the full-apply contract.
-    let draft = app.ui.prefs_draft.as_ref();
-    let mut changed: Map<String, Value> = d
-        .fields
-        .iter()
-        .filter(|(key, _)| key.as_str() != CATEGORY)
-        .filter(|(key, value)| draft.is_none_or(|draft| draft.touched.contains(*key) || draft.baseline.get(*key) != Some(*value)))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    let mut skipped_units = false;
-    if changed.contains_key("unitsGeneral")
-        && let Some(draft) = draft
-        && draft.document_uid != app.session.active().map(|doc| doc.uid)
-    {
-        changed.remove("unitsGeneral");
-        skipped_units = true;
-    }
-    // UI-only fields are validated before prefs.set so a bad draft cannot partially apply.
-    for key in ["__smartGuides", "__snapToGrid", "__taskBar", crate::varos::panel_stack::PREF_KEY, crate::varos::shell::PREF_KEY] {
-        if changed.get(key).is_some_and(|value| !value.is_boolean()) {
-            return Err(format!("{key}: expected a boolean"));
-        }
-    }
-    let values: Map<String, Value> =
-        changed.iter().filter(|(key, _)| !key.starts_with("__")).map(|(key, value)| (key.clone(), value.clone())).collect();
-    let touch_ws = values.contains_key("touchWorkspace");
-    if !values.is_empty() {
-        app.run("prefs.set", json!({ "values": values }))?;
-    }
-    if touch_ws {
-        crate::workspaces::sync_touch_workspace(app, app.touch_screen);
-    }
-    if let Some(on) = changed.get("__smartGuides").and_then(Value::as_bool) {
-        app.ui.view.smart_guides = on;
-    }
-    if let Some(on) = changed.get("__snapToGrid").and_then(Value::as_bool) {
-        app.ui.view.snap_to_grid = on;
-    }
-    if let Some(on) = changed.get("__taskBar").and_then(Value::as_bool) {
-        app.ui.task_bar = on;
-    }
-    if let Some(on) = changed.get(crate::varos::panel_stack::PREF_KEY).and_then(Value::as_bool) {
-        crate::varos::panel_stack::set_enabled(app, on);
-    }
-    if let Some(on) = changed.get(crate::varos::shell::PREF_KEY).and_then(Value::as_bool) {
-        crate::varos::shell::set_enabled(app, on);
-    }
-    // Refresh untouched values from the live editor and establish the next Apply baseline.
-    // Keep edited representations intact (for example an entered integer vs an engine float).
-    let mut next = current_fields(app);
-    for (key, value) in &changed {
-        if next.contains_key(key) {
-            next.insert(key.clone(), value.clone());
-        }
-    }
-    for (key, value) in &next {
-        d.fields.insert(key.clone(), value.clone());
-    }
-    // A fresh edit record against the new baseline; the draft now edits the active document's units.
-    app.ui.prefs_draft = Some(PreferencesDraft::new(app, next));
-    app.ui.dialog = Some(d);
-    app.ui.engine_prefs = app.session.prefs.to_json();
-    app.prefs_changed = true;
-    if skipped_units {
-        let message = tl!("The active document changed, so its units were not changed. The other settings were applied.");
-        app.status(message);
-        return Ok(json!({ "skipped": ["unitsGeneral"], "message": message }));
-    }
-    Ok(Value::Null)
-}
-
-/// OK applies the same validated draft as Apply, then closes Preferences.
+/// OK: validate and apply the edited preferences, then close (nothing changes on error).
 pub fn confirm(app: &mut VectorcraftApp) -> Result<Value, String> {
-    let result = apply(app)?;
-    app.ui.dialog = None;
-    app.ui.prefs_draft = None;
-    Ok(result)
+    crate::varos::preferences::confirm(app) // Varos: OK applies Apply's draft
 }
 
 /// Copy the engine prefs into `UiState` so the host persists them with the UI state.
@@ -326,115 +176,11 @@ pub(crate) fn reapply(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
-    // The dialog is edited in place (taken for the frame, put back below), never copied.
-    let Some(mut dialog) = app.ui.dialog.take() else { return };
-    let mut d = Edit { dialog: &mut dialog, draft: &mut app.ui.prefs_draft };
-    let t = Tokens::get(ctx);
-    let (mut ok, mut apply_now, mut cancel, mut reset) = (false, false, false, false);
-    let mut open = true;
-    let screen = ctx.content_rect();
-    let body_height = (screen.height() - 160.0).clamp(80.0, 430.0);
-    let cat = d.str(CATEGORY);
-    let cat = PREF_CATEGORIES.iter().find(|c| **c == cat).copied().unwrap_or(PREF_CATEGORIES[0]);
-    egui::Window::new(tl!("Preferences"))
-        .id(egui::Id::unique("dialog-preferences"))
-        .order(egui::Order::Foreground)
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .movable(true)
-        .default_pos(screen.center() - egui::vec2(400.0, (body_height + 110.0) * 0.5))
-        .constrain_to(screen)
-        .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(20)))
-        .show(ctx, |ui| {
-            ui.set_width(760.0);
-            ui.horizontal_top(|ui| {
-                // Category list.
-                egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(4)).inner_margin(egui::Margin::same(6)).show(
-                    ui,
-                    |ui| {
-                        ui.set_width(196.0);
-                        egui::ScrollArea::vertical().id_salt("prefs-categories").max_height(body_height).auto_shrink([false, false]).show(ui, |ui| {
-                            // ScrollArea inherits the surrounding horizontal layout; categories
-                            // need their own vertical column rather than one very wide row.
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for c in PREF_CATEGORIES {
-                                    let sel = *c == cat;
-                                    let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
-                                    let b = egui::Button::selectable(sel, text).min_size(egui::vec2(184.0, 24.0));
-                                    if ui.add(b).clicked() {
-                                        d.set(CATEGORY, json!(c));
-                                    }
-                                }
-                            });
-                        });
-                    },
-                );
-                ui.add_space(14.0);
-                // Fields.
-                ui.vertical(|ui| {
-                    ui.set_width(530.0);
-                    ui.label(egui::RichText::new(tl!(cat)).font(theme::semibold(14.0)).color(t.text_strong));
-                    ui.add_space(8.0);
-                    egui::ScrollArea::vertical().id_salt(("prefs", cat)).max_height((body_height - 30.0).max(50.0)).auto_shrink([false, false]).show(
-                        ui,
-                        |ui| {
-                            category_fields(ui, &mut d, cat);
-                        },
-                    );
-                });
-            });
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                if widgets::secondary_button(ui, tl!("Reset Preferences"))
-                    .on_hover_text(tl!("Restore every preference to its default (applied on Apply or OK)"))
-                    .clicked()
-                {
-                    reset = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::primary_button(ui, tl!("OK")).clicked() {
-                        ok = true;
-                    }
-                    ui.add_space(8.0);
-                    if widgets::secondary_button(ui, tl!("Apply")).clicked() {
-                        apply_now = true;
-                    }
-                    ui.add_space(8.0);
-                    if widgets::secondary_button(ui, tl!("Cancel")).clicked() {
-                        cancel = true;
-                    }
-                    ui.add_space(16.0);
-                    let i = PREF_CATEGORIES.iter().position(|c| *c == cat).unwrap_or(0);
-                    if ui.add_enabled(i + 1 < PREF_CATEGORIES.len(), egui::Button::new(tl!("Next"))).clicked() {
-                        d.set(CATEGORY, json!(PREF_CATEGORIES[i + 1]));
-                    }
-                    if ui.add_enabled(i > 0, egui::Button::new(tl!("Previous"))).clicked() {
-                        d.set(CATEGORY, json!(PREF_CATEGORIES[i - 1]));
-                    }
-                });
-            });
-        });
-    if reset {
-        // Reset is the user's edit of every preference, even one already at its default.
-        for (k, v) in Prefs::default().to_json().as_object().cloned().unwrap_or_default() {
-            set_field(d.dialog, d.draft, k, v);
-        }
-    }
-    app.ui.dialog = Some(dialog);
-    if cancel || !open {
-        crate::dialogs::cancel(app);
-    } else if ok {
-        if let Err(e) = confirm(app) {
-            app.status(e);
-        }
-    } else if apply_now && let Err(e) = apply(app) {
-        app.status(e);
-    }
+    crate::varos::preferences::show(app, ctx); // Varos: the modeless window with Apply
 }
 
-fn category_fields(ui: &mut egui::Ui, d: &mut Edit, cat: &str) {
+// Varos: the modeless window draws these (`varos::preferences`).
+pub(crate) fn category_fields(ui: &mut egui::Ui, d: &mut Edit, cat: &str) {
     let t = Tokens::get(ui.ctx());
     let mut section = "";
     let mut first = true;
@@ -641,49 +387,6 @@ mod tests {
         assert!(a.run("view.snapping", json!({})).is_err());
     }
 
-    /// A widget's edit is recorded through the draft setter the moment it happens: a click on a
-    /// checkbox marks it touched (so Apply sends it even back at its opening value); a widget
-    /// reporting the value the field already holds, and category navigation, are no edits.
-    #[test]
-    fn preference_widgets_record_their_edits_through_the_draft_setter() {
-        let mut a = VectorcraftApp::new(Session::new(), Default::default());
-        open(&mut a, None);
-        let mut dialog = a.ui.dialog.take().unwrap();
-        let opening = dialog.bool("showToolTips");
-        let touched = |draft: &Option<PreferencesDraft>| draft.as_ref().unwrap().touched.iter().cloned().collect::<Vec<_>>();
-        let mut d = Edit { dialog: &mut dialog, draft: &mut a.ui.prefs_draft };
-        d.set("showToolTips", json!(opening));
-        d.set(CATEGORY, json!("Units"));
-        assert!(touched(d.draft).is_empty(), "no value changed, and navigation is not a setting");
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        let frame = |d: &mut Edit, events: Vec<egui::Event>| {
-            let raw = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 200.0))),
-                events,
-                ..Default::default()
-            };
-            let mut out = ctx.run_ui(raw, |ui| bool_row(ui, d, "showToolTips", "Show Tool Tips"));
-            out.textures_delta.clear();
-            out.shapes.iter().find_map(|shape| match &shape.shape {
-                egui::Shape::Rect(r) if r.stroke.width > 0.0 && r.rect.width() <= 24.0 && r.rect.height() <= 24.0 => Some(r.rect.center()),
-                _ => None,
-            })
-        };
-        let at = frame(&mut d, vec![]).unwrap();
-        let press = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
-        for _ in 0..2 {
-            frame(&mut d, vec![egui::Event::PointerMoved(at), press(true)]);
-            frame(&mut d, vec![press(false)]);
-        }
-        assert_eq!(d.bool("showToolTips"), opening, "clicked twice: back at the opening value");
-        assert_eq!(touched(d.draft), ["showToolTips"], "still the user's edit");
-        a.ui.dialog = Some(dialog);
-        a.session.prefs.show_tool_tips = !opening;
-        apply(&mut a).unwrap();
-        assert_eq!(a.session.prefs.show_tool_tips, opening, "Apply sends the touched field over a change made meanwhile");
-    }
-
     /// A resting checkbox must have a visible outline in both states and every brightness.
     #[test]
     fn preference_checkboxes_draw_outlines_without_hover() {
@@ -750,177 +453,6 @@ mod tests {
 
     fn app() -> VectorcraftApp {
         VectorcraftApp::new(Session::new(), Services::default())
-    }
-
-    #[test]
-    fn apply_keeps_the_draft_and_category_then_cancel_preserves_applied_values() {
-        let mut a = app();
-        open(&mut a, Some("Smart Guides"));
-        let d = a.ui.dialog.as_mut().unwrap();
-        d.fields.insert("keyboardIncrement".into(), json!(4));
-        d.fields.insert("__smartGuides".into(), json!(false));
-        let draft = d.fields.clone();
-        apply(&mut a).unwrap();
-        let after = &a.ui.dialog.as_ref().unwrap().fields;
-        for (key, value) in &draft {
-            assert_eq!(after.get(key), Some(value), "draft field {key}");
-        }
-        assert_eq!(a.session.prefs.keyboard_increment, 4.0);
-        assert!(!a.ui.view.smart_guides);
-        assert_eq!(a.ui.engine_prefs["keyboardIncrement"], json!(4.0));
-        assert!(a.prefs_changed);
-        let d = a.ui.dialog.as_mut().unwrap();
-        d.fields.insert("keyboardIncrement".into(), json!(9));
-        d.fields.insert("__smartGuides".into(), json!(true));
-        crate::dialogs::cancel(&mut a);
-        assert!(a.ui.dialog.is_none());
-        assert_eq!(a.session.prefs.keyboard_increment, 4.0);
-        assert!(!a.ui.view.smart_guides);
-        assert_eq!(a.ui.engine_prefs["keyboardIncrement"], json!(4.0));
-    }
-
-    #[test]
-    fn modeless_apply_merges_only_edited_fields_with_live_editor_preferences() {
-        let mut a = app();
-        open(&mut a, Some("General"));
-        a.ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(4));
-        let smart = !a.ui.view.smart_guides;
-        let grid = !a.ui.view.snap_to_grid;
-        a.run("prefs.set", json!({"key": "gridlineEvery", "value": 73})).unwrap();
-        a.ui.view.smart_guides = smart;
-        a.ui.view.snap_to_grid = grid;
-        apply(&mut a).unwrap();
-        assert_eq!(a.session.prefs.keyboard_increment, 4.0);
-        assert_eq!(a.session.prefs.gridline_every, 73.0);
-        assert_eq!(a.ui.view.smart_guides, smart);
-        assert_eq!(a.ui.view.snap_to_grid, grid);
-        let d = a.ui.dialog.as_ref().unwrap();
-        assert_eq!(d.fields["gridlineEvery"], json!(73.0));
-        assert_eq!(d.fields["__smartGuides"], json!(smart));
-        assert_eq!(d.fields["__snapToGrid"], json!(grid));
-        // The next Apply also leaves an externally changed, untouched field alone.
-        a.run("prefs.set", json!({"key": "keyboardIncrement", "value": 7})).unwrap();
-        apply(&mut a).unwrap();
-        assert_eq!(a.session.prefs.keyboard_increment, 7.0);
-        assert_eq!(a.ui.dialog.as_ref().unwrap().fields["keyboardIncrement"], json!(7.0));
-    }
-
-    #[test]
-    fn modeless_units_edit_for_a_document_no_longer_active_is_skipped_and_the_rest_applies() {
-        let mut a = app();
-        a.run("file.new", json!({"width": 200, "height": 200})).unwrap();
-        open(&mut a, Some("Units"));
-        let original_units = a.ui.dialog.as_ref().unwrap().fields["unitsGeneral"].clone();
-        let changed_units = if original_units == "millimeters" { "points" } else { "millimeters" };
-        a.ui.dialog.as_mut().unwrap().fields.insert("unitsGeneral".into(), json!(changed_units));
-        a.ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(4));
-        a.run("file.new", json!({"width": 300, "height": 200})).unwrap();
-        let units: Vec<_> = a.session.documents().iter().map(|doc| doc.doc.units).collect();
-        let active = a.session.active_index();
-        let result = apply(&mut a).unwrap();
-        assert_eq!(result["skipped"], json!(["unitsGeneral"]), "the units edit is reported as skipped");
-        assert!(a.ui.status.contains("active document changed"), "{}", a.ui.status);
-        assert_eq!(a.session.prefs.keyboard_increment, 4.0, "unrelated edits apply");
-        assert_eq!(a.session.active_index(), active);
-        assert_eq!(a.session.documents().iter().map(|doc| doc.doc.units).collect::<Vec<_>>(), units, "no document's units change");
-        let d = a.ui.dialog.as_ref().unwrap();
-        assert_eq!(d.str("__category"), "Units");
-        assert_eq!(a.ui.prefs_draft.as_ref().unwrap().document_uid, a.session.active().map(|doc| doc.uid), "the draft now edits the active document");
-        assert_eq!(d.fields["unitsGeneral"], json!(a.session.active().unwrap().doc.units.key()), "the units field shows the active document's");
-        // A units edit made now applies to the active document.
-        a.ui.dialog.as_mut().unwrap().fields.insert("unitsGeneral".into(), json!(changed_units));
-        assert!(apply(&mut a).unwrap().is_null());
-        assert_eq!(a.session.active().unwrap().doc.units.key(), changed_units);
-    }
-
-    /// A field set back to the value Preferences opened with still applies when the user touched
-    /// it, over a change made elsewhere meanwhile; an untouched field still keeps that change.
-    #[test]
-    fn a_touched_field_back_at_its_opening_value_overrides_a_live_change() {
-        let mut a = app();
-        open(&mut a, Some("General"));
-        let opening = a.session.prefs.keyboard_increment;
-        a.run("prefs.set", json!({"key": "keyboardIncrement", "value": opening + 6.0})).unwrap();
-        a.run("prefs.set", json!({"key": "gridlineEvery", "value": 73})).unwrap();
-        let d = a.ui.dialog.as_mut().unwrap();
-        d.fields.insert("keyboardIncrement".into(), json!(opening + 4.0));
-        d.fields.insert("keyboardIncrement".into(), json!(opening));
-        set_field(d, &mut a.ui.prefs_draft, "keyboardIncrement".into(), json!(opening));
-        apply(&mut a).unwrap();
-        assert_eq!(a.session.prefs.keyboard_increment, opening, "the touched field wins");
-        assert_eq!(a.session.prefs.gridline_every, 73.0, "the untouched field keeps the live change");
-        assert!(a.ui.prefs_draft.as_ref().unwrap().touched.is_empty(), "Apply starts a fresh edit record");
-    }
-
-    /// Agents see only setting values and the category; the transaction stays typed beside them.
-    #[test]
-    fn the_dialog_fields_carry_no_transaction_metadata_and_agent_edits_count_as_touched() {
-        let mut a = app();
-        open(&mut a, Some("General"));
-        let d = a.ui.dialog.as_mut().unwrap();
-        let opening = d.fields["keyboardIncrement"].clone();
-        set_field(d, &mut a.ui.prefs_draft, "keyboardIncrement".into(), opening);
-        let fields = &a.ui.dialog.as_ref().unwrap().fields;
-        for meta in ["__baseline", "__touched", "__documentUid"] {
-            assert!(!fields.contains_key(meta), "{meta} stays out of the agent-visible fields");
-        }
-        assert!(a.ui.prefs_draft.as_ref().unwrap().touched.contains("keyboardIncrement"));
-        crate::dialogs::cancel(&mut a);
-        assert!(a.ui.prefs_draft.is_none(), "no draft outlives its dialog");
-    }
-
-    #[test]
-    fn invalid_apply_leaves_engine_ui_and_saved_preferences_unchanged() {
-        let mut a = app();
-        open(&mut a, Some("User Interface"));
-        let before = a.session.prefs.clone();
-        let saved = a.ui.engine_prefs.clone();
-        let smart = a.ui.view.smart_guides;
-        let changed = a.prefs_changed;
-        let d = a.ui.dialog.as_mut().unwrap();
-        d.fields.insert("keyboardIncrement".into(), json!(4));
-        d.fields.insert("anchorSize".into(), json!(42));
-        d.fields.insert("__smartGuides".into(), json!(!smart));
-        let draft = d.fields.clone();
-        assert!(apply(&mut a).is_err());
-        assert_eq!(a.session.prefs, before);
-        assert_eq!(a.ui.engine_prefs, saved);
-        assert_eq!(a.ui.view.smart_guides, smart);
-        assert_eq!(a.prefs_changed, changed);
-        assert_eq!(a.ui.dialog.as_ref().unwrap().fields, draft);
-    }
-
-    #[test]
-    fn preferences_apply_button_stays_open_and_outside_clicks_are_modeless() {
-        use egui_kittest::{Harness, kittest::Queryable};
-        let mut a = app();
-        open(&mut a, Some("General"));
-        a.ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(6));
-        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 900.0)).with_context_setup(crate::theme::install_fonts).build_ui_state(
-            |ui, a: &mut VectorcraftApp| {
-                if ui.button("Outside Preferences").clicked() {
-                    a.status("outside click reached editor");
-                }
-                if a.ui.dialog.is_some() {
-                    show(a, ui.ctx());
-                }
-            },
-            a,
-        );
-        h.run_steps(3);
-        h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply").click();
-        h.run_steps(3);
-        assert_eq!(h.state().session.prefs.keyboard_increment, 6.0);
-        assert_eq!(h.state().ui.dialog.as_ref().unwrap().str("__category"), "General");
-        h.get_by_role_and_label(egui::accesskit::Role::Button, "Outside Preferences").click();
-        h.run_steps(3);
-        assert_eq!(h.state().ui.status, "outside click reached editor");
-        assert!(h.state().ui.dialog.is_some());
-        h.state_mut().ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(8));
-        h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel").click();
-        h.run_steps(3);
-        assert!(h.state().ui.dialog.is_none());
-        assert_eq!(h.state().session.prefs.keyboard_increment, 6.0);
     }
 
     #[test]

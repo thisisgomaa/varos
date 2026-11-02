@@ -1330,13 +1330,18 @@ pub(crate) fn section_dragging(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<SectionDrag>(drag_id())).is_some()
 }
 
+/// Forget the section move in progress (in any editor), changing nothing.
+pub(crate) fn forget_section_drag(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove_temp::<SectionDrag>(drag_id()));
+}
+
 /// Escape while a section is moved: the move is cancelled (nothing changes) and nothing else sees
 /// the key. True when it was.
 pub(crate) fn escape_section_drag(ctx: &egui::Context) -> bool {
     if !section_dragging(ctx) || !ctx.input_mut(|i| i.key_pressed(egui::Key::Escape) && i.consume_key(i.modifiers, egui::Key::Escape)) {
         return false;
     }
-    ctx.data_mut(|d| d.remove_temp::<SectionDrag>(drag_id()));
+    forget_section_drag(ctx);
     ctx.stop_dragging();
     ctx.request_repaint();
     true
@@ -1414,12 +1419,14 @@ pub(crate) fn show_editor(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str,
 /// The sections of editor `instance` for what it shows, and the move of one of them by its grip.
 fn draw_sections(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str, view: &mut PropertiesView) {
     let ctx = ui.ctx().clone();
-    let movable = crate::varos::panel_system::content::properties_sections_movable(app); // Varos: the presenter's policy
     let mut list: Vec<Option<Section>> = section_list(app).into_iter().map(Some).collect();
     let ids: Vec<SectionId> = list.iter().flatten().map(|s| s.id).collect();
     let mut hits = SectionHits::default();
     let mut started = None;
-    for id in if movable { view.ordered(&ids) } else { ids.clone() } {
+    // Varos: the presenter decides the order and whether the sections move (panel_system/content.rs).
+    let arrangement = crate::varos::panel_system::content::properties_sections(app, &ctx, view, &ids);
+    let movable = arrangement.movable;
+    for id in arrangement.order {
         let Some(Section { title, body, .. }) = list.iter_mut().find(|s| s.as_ref().is_some_and(|s| s.id == id)).and_then(Option::take) else {
             continue;
         };
@@ -1437,9 +1444,6 @@ fn draw_sections(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str, view: &m
             started = Some((id, title, out.hit.header));
         }
         hits.sections.push(out.hit);
-    }
-    if !movable {
-        ctx.data_mut(|d| d.remove_temp::<SectionDrag>(drag_id())); // Varos: fixed sections have no drag
     }
     if let Some((id, title, header)) = started
         && !section_dragging(&ctx)

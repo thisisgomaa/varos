@@ -82,7 +82,7 @@ mod tests {
         let layout = h.layout().clone();
         crate::prefs_dialog::open(&mut h.app, None);
         h.app.ui.dialog.as_mut().unwrap().fields.insert(crate::varos::shell::PREF_KEY.into(), json!(false));
-        crate::prefs_dialog::apply(&mut h.app).unwrap();
+        crate::varos::preferences::apply(&mut h.app).unwrap();
         h.app.ui.dialog = None;
         assert!(!super::super::enabled(&h.app));
         h.app.ui.varos_panel_review.as_mut().unwrap().hits.clear();
@@ -94,7 +94,7 @@ mod tests {
         assert!(crate::panel_docking::showing(&h.app.ui, "color"));
         crate::prefs_dialog::open(&mut h.app, None);
         h.app.ui.dialog.as_mut().unwrap().fields.insert(crate::varos::shell::PREF_KEY.into(), json!(true));
-        crate::prefs_dialog::apply(&mut h.app).unwrap();
+        crate::varos::preferences::apply(&mut h.app).unwrap();
         h.app.ui.dialog = None;
         assert!(super::super::enabled(&h.app));
         h.settle();

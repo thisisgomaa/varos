@@ -1,6 +1,9 @@
-//! The Tools contents as a panel-workspace host presents them: the real tool body, scrolled by
-//! the host, which owns all moving, resizing and hiding; its compact Fill/Stroke pair and paint
-//! chips; and the tool flyout placed beside it.
+//! The Tools contents as the Varos presenters show them. Upstream's tool body
+//! (`toolbar::body_with_layout`, `toolbar::bottom_controls`) asks here, through marked hooks and
+//! the explicit [`Hosting`] it is given, what it draws itself: upstream's header and bottom
+//! controls only in its own docks, how the strip scrolls, the Fill/Stroke wells, the paint chips
+//! and the Edit Toolbar menu of the box shell and of a panel-workspace host. A panel-workspace
+//! host also owns all moving, resizing and hiding, and places the tool flyout beside it.
 use super::{Hosting, metrics};
 use crate::theme::Tokens;
 use crate::{VectorcraftApp, icons, widgets};
@@ -84,6 +87,83 @@ pub(crate) fn flyout_at(app: &VectorcraftApp, ctx: &egui::Context, id: egui::Id,
     Some(flyout_position(host, placement.anchor.unwrap_or(anchor), size, region))
 }
 
+/// Whether the tool body draws upstream's own header (title bar and grip) and bottom controls:
+/// only in upstream's docks and bars. The box shell (`shell`) and a panel-workspace host draw
+/// their own.
+pub(crate) fn own_chrome(shell: bool, hosting: Hosting) -> bool {
+    !shell && hosting == Hosting::Own
+}
+
+/// Scroll the tool strip `contents` as its presenter does: a panel-workspace host scrolls the
+/// whole body itself, so the strip draws unscrolled; the box shell's narrow strip hides its
+/// scroll bar, keeping the right-edge flyout triangles clear (wheel and trackpad scrolling still
+/// reach every tool in a short window); upstream's docks use its strip scroll.
+pub(crate) fn scroll<R>(ui: &mut Ui, shell: bool, hosting: Hosting, contents: impl FnOnce(&mut Ui) -> R) -> R {
+    if hosting == Hosting::Workspace {
+        contents(ui)
+    } else if shell {
+        egui::ScrollArea::vertical()
+            .id_salt("toolbar")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .auto_shrink([false, true])
+            .show(ui, contents)
+            .inner
+    } else {
+        widgets::strip_scroll(ui, "toolbar", contents)
+    }
+}
+
+/// The box shell's Edit Toolbar menu on the strip's `edit` button: the strip's column count (a
+/// panel-workspace host derives its columns from its width instead) and Edit Toolbar. False
+/// leaves the button to upstream (a click opens the All Tools drawer).
+pub(crate) fn edit_menu(app: &mut VectorcraftApp, edit: &egui::Response, hosting: Hosting) -> bool {
+    if !crate::varos::shell::enabled(app) {
+        return false;
+    }
+    egui::Popup::menu(edit).show(|ui| {
+        if hosting != Hosting::Workspace {
+            for (n, label) in [(1, tl!("1 column")), (2, tl!("2 columns")), (3, tl!("3 columns"))] {
+                if ui.selectable_label(app.ui.varos_shell.tools_columns == n, label).clicked() {
+                    app.ui.varos_shell.tools_columns = n;
+                    ui.close();
+                }
+            }
+        }
+        if ui.button(tl!("Edit Toolbar")).clicked() {
+            app.run("window.editToolbar", json!({})).ok();
+            crate::edit_toolbar::opened_from_popup(ui.ctx());
+            ui.close();
+        }
+    });
+    true
+}
+
+/// The Fill/Stroke wells of the box shell and of a panel-workspace host; false leaves upstream's
+/// proxy to the tool body.
+pub(crate) fn wells(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens, cols: usize, hosting: Hosting) -> bool {
+    if hosting == Hosting::Workspace {
+        hosted_wells(app, ui, t);
+    } else if crate::varos::shell::enabled(app) {
+        shell_wells(app, ui, t, cols);
+    } else {
+        return false;
+    }
+    true
+}
+
+/// The Color, Gradient and None chips of the box shell and of a panel-workspace host; false
+/// leaves upstream's chips to the tool body.
+pub(crate) fn chips(app: &mut VectorcraftApp, ui: &mut Ui, hosting: Hosting) -> bool {
+    if hosting == Hosting::Workspace {
+        hosted_chips(app, ui);
+    } else if crate::varos::shell::enabled(app) {
+        shell_chips(app, ui);
+    } else {
+        return false;
+    }
+    true
+}
+
 /// The tool body's hook for each tool button: while hosted, the button of the slot whose flyout
 /// is open becomes the flyout's anchor.
 pub(crate) fn note_slot(ctx: &egui::Context, hosting: Hosting, slot: &[&str], button: Rect) {
@@ -100,7 +180,7 @@ pub(crate) fn note_slot(ctx: &egui::Context, hosting: Hosting, slot: &[&str], bu
 /// The hosted Fill/Stroke pair: two overlapping squares sized to the host's width (Fill at the
 /// upper left, Stroke at the lower right), the swap arrow and the default-colours squares. The
 /// focused well owns the overlap; each outer corner still selects its own paint.
-pub(crate) fn wells(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens) {
+fn hosted_wells(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens) {
     let size = (ui.available_width() - 2.0 * metrics::TOOL_PAINT_INSET).clamp(1.0, metrics::TOOL_PAINT_PROXY);
     let (rect, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     let side = size * 2.0 / 3.0;
@@ -171,7 +251,7 @@ pub(crate) fn wells(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens) {
 
 /// The hosted Color, Gradient and None chips: three small adjacent squares in one row at either
 /// Tools width.
-pub(crate) fn chips(app: &mut VectorcraftApp, ui: &mut Ui) {
+fn hosted_chips(app: &mut VectorcraftApp, ui: &mut Ui) {
     let gap = metrics::TOOL_PAINT_GAP;
     let chip = ((ui.available_width() - 2.0 * gap) / 3.0).floor().clamp(1.0, metrics::TOOL_PAINT_HIT);
     let mut clicked = None;
@@ -192,6 +272,114 @@ pub(crate) fn chips(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         }
     });
+    if let Some(cmd) = clicked {
+        app.run(cmd, json!({})).ok();
+    }
+    ui.add_space(6.0);
+}
+
+/// The shell's fill/stroke wells: the picker's overlapping circles, scaled into the strip
+/// (28 pt in one column, 40 pt in two or three), with the swap arrow and the default-colours squares.
+fn shell_wells(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens, cols: usize) {
+    let size = if cols <= 1 { 28.0 } else { 40.0 };
+    let (rect, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    // The picker's pair: fill at the top-left, stroke at the bottom-right, each 62% of the
+    // cluster, so they overlap and each well's own outer corner stays on that well.
+    let side = size * 0.62;
+    let fill_rect = egui::Rect::from_min_size(rect.min, vec2(side, side));
+    let stroke_rect = egui::Rect::from_min_size(rect.max - vec2(side, side), vec2(side, side));
+    let fill_c = fill_rect.center();
+    let stroke_c = stroke_rect.center();
+    let fill_r = side * 0.5;
+    let stroke_r = side * 0.5;
+    let swap = egui::Rect::from_min_size(pos2(rect.right() - size * 0.40, rect.top()), vec2(size * 0.40, size * 0.34));
+    let defaults = egui::Rect::from_min_size(pos2(rect.left(), rect.bottom() - size * 0.30), vec2(size * 0.46, size * 0.30));
+    let open = app.ui.varos_picker_anchor.is_some();
+    let outline = |active: bool| Stroke::new(1.0, if open && active { t.accent } else { t.button_border });
+    let (fill_paint, stroke_paint) = crate::panels::current_paints(app);
+    let painter = ui.painter().clone();
+    let draw_circle = |center: egui::Pos2, radius: f32, paint: &Paint, active: bool| {
+        painter.circle_filled(center, radius, t.input);
+        if let Some(color) = paint.color() {
+            painter.circle_filled(center, radius - 1.0, crate::panels::c32(&color));
+        }
+        painter.circle_stroke(center, radius, outline(active));
+    };
+    // The focused circle is painted in front, as in the picker.
+    if app.session.fill_active {
+        draw_circle(stroke_c, stroke_r, &stroke_paint, false);
+        draw_circle(fill_c, fill_r, &fill_paint, true);
+    } else {
+        draw_circle(fill_c, fill_r, &fill_paint, false);
+        draw_circle(stroke_c, stroke_r, &stroke_paint, true);
+    }
+    let square = size * 0.16;
+    for (i, color) in [Color32::WHITE, Color32::BLACK].into_iter().enumerate() {
+        let r = egui::Rect::from_min_size(defaults.min + vec2(i as f32 * square, size * 0.06), vec2(square, square));
+        painter.rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, t.button_border), egui::StrokeKind::Inside);
+        painter.rect_filled(r.shrink(1.0), CornerRadius::ZERO, color);
+    }
+    icons::paint(ui, "dc-swap", swap.shrink(size * 0.06), t.text);
+    for stroke in [app.session.fill_active, !app.session.fill_active] {
+        crate::varos::picker::register_well(ui.ctx(), if stroke { stroke_rect } else { fill_rect }, stroke);
+    }
+    if resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        if swap.contains(p) {
+            app.run("paint.swap", json!({})).ok();
+        } else if defaults.contains(p) {
+            app.run("paint.default", json!({})).ok();
+        } else {
+            // The square in front owns the overlap; a well's outer corner stays its own.
+            let front_fill = app.session.fill_active;
+            let in_fill = fill_rect.contains(p);
+            let in_stroke = stroke_rect.contains(p);
+            let on_fill = in_fill && (front_fill || !in_stroke);
+            let on_stroke = in_stroke && (!front_fill || !in_fill);
+            if on_fill || on_stroke {
+                let stroke = on_stroke;
+                if stroke == app.session.fill_active {
+                    app.run("paint.toggleActive", json!({})).ok();
+                }
+                crate::varos::picker::open_for(app, stroke, if stroke { stroke_rect } else { fill_rect });
+            }
+        }
+    }
+    ui.add_space(6.0);
+}
+
+/// Color, Gradient and None at the strip's tile size: one row when three fit, else a column.
+fn shell_chips(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let chip = 28.0;
+    let gap = 4.0;
+    let items = [("Color (,)", "paint.lastColor"), ("Gradient (.)", "paint.lastGradient"), ("None (/)", "paint.none")];
+    let mut clicked = None;
+    {
+        let place = |ui: &mut Ui, clicked: &mut Option<&str>| {
+            ui.spacing_mut().item_spacing = vec2(gap, gap);
+            for (tip, cmd) in items {
+                let (r, resp) = ui.allocate_exact_size(vec2(chip, chip), Sense::click());
+                match cmd {
+                    "paint.lastColor" => widgets::paint_chip(ui, r, &Paint::solid(app.session.last_solid)),
+                    "paint.lastGradient" => widgets::gradient_chip(ui, r, &app.session.last_gradient),
+                    _ => widgets::paint_chip(ui, r, &Paint::None),
+                }
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!(tip)));
+                if resp.on_hover_text(tl!(tip)).clicked() {
+                    *clicked = Some(cmd);
+                }
+            }
+        };
+        if ui.available_width() >= 3.0 * chip + 2.0 * gap {
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 3.0 * chip - 2.0 * gap) / 2.0);
+                place(ui, &mut clicked);
+            });
+        } else {
+            ui.vertical_centered(|ui| place(ui, &mut clicked));
+        }
+    }
     if let Some(cmd) = clicked {
         app.run(cmd, json!({})).ok();
     }
@@ -227,7 +415,7 @@ mod tests {
                 let mut out = ctx.run_ui(Default::default(), |ui| {
                     ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
                         ui.set_width(width);
-                        chips(&mut app, ui);
+                        assert!(chips(&mut app, ui, Hosting::Workspace));
                     });
                 });
                 out.textures_delta.clear();

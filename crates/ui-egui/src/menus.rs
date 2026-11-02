@@ -1361,7 +1361,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         }
         "file.newWithoutDialog" => crate::dialogs::new_document_without_dialog(app),
         "app.home" => crate::varos::home::command(app, p),
-        "preferences.apply" => crate::prefs_dialog::apply(app), // Varos: modeless Preferences
+        "preferences.apply" => crate::varos::preferences::apply(app), // Varos: modeless Preferences
         "document.reorder" => crate::varos::tab_reorder::reorder(app, p), // Varos
         "file.open" => match s("path") {
             Some(path) => io::open_path(app, &path),

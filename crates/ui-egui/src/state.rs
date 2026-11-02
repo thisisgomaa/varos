@@ -401,7 +401,7 @@ pub struct UiState {
     pub dialog: Option<Dialog>,
     /// The open Preferences dialog's transaction (baseline, edited fields, edited document).
     #[serde(skip)]
-    pub prefs_draft: Option<crate::prefs_dialog::PreferencesDraft>,
+    pub prefs_draft: Option<crate::varos::preferences::PreferencesDraft>,
     /// Messages to show in a dialog once the open one is closed (`dialogs::confirm::tell`), in
     /// the order they came.
     #[serde(skip)]

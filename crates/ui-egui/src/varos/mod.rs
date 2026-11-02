@@ -1,6 +1,7 @@
 //! Fork-specific presentation and integrations: Varos appearance, icons, names, cursors, diagnostics. Preserve upstream lookup keys and persisted identifiers.
 // Varos: agents on the same document (identity, history tags, activity, presence).
 pub(crate) mod agents;
+pub(crate) mod align_look;
 // Varos: agent requests act on the board they name (stable id), never on the tab in front.
 pub(crate) mod boards;
 // Varos: the font menu's Arabic filter, samples and markers.
@@ -30,6 +31,7 @@ pub(crate) mod clipping;
 pub(crate) mod color_panel;
 pub(crate) mod panel_stack;
 pub(crate) mod panel_system;
+pub(crate) mod preferences;
 // Varos: the new shell (stage 1): boxes, Board, dividers, tabs, behind Preferences › Varos shell (new).
 pub(crate) mod shell;
 pub(crate) mod tab_reorder;

@@ -72,12 +72,12 @@ fn has_anchors(app: &VectorcraftApp) -> bool {
 }
 
 pub const ALIGN: [(&str, &str, &str, &str); 6] = [
-    ("align-start-vertical", "Horizontal Align Left", "horizontal", "left"),
-    ("align-center-vertical", "Horizontal Align Center", "horizontal", "center"),
-    ("align-end-vertical", "Horizontal Align Right", "horizontal", "right"),
-    ("align-start-horizontal", "Vertical Align Top", "vertical", "top"),
-    ("align-center-horizontal", "Vertical Align Center", "vertical", "center"),
-    ("align-end-horizontal", "Vertical Align Bottom", "vertical", "bottom"),
+    ("dc-al-left", "Horizontal Align Left", "horizontal", "left"),
+    ("dc-al-hcenter", "Horizontal Align Center", "horizontal", "center"),
+    ("dc-al-right", "Horizontal Align Right", "horizontal", "right"),
+    ("dc-al-top", "Vertical Align Top", "vertical", "top"),
+    ("dc-al-vcenter", "Vertical Align Center", "vertical", "center"),
+    ("dc-al-bottom", "Vertical Align Bottom", "vertical", "bottom"),
 ];
 
 pub const DISTRIBUTE: [(&str, &str, &str, &str); 6] = [
@@ -232,15 +232,19 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let key = spacing_sent(app).is_some();
     // Two or more objects and ruler guides (#1597), or anchor points, which may all be on one path.
     let distributes = n + selected_guides(app) >= 2 || has_anchors(app);
+    let crate::varos::align_look::AlignLook { button: size, spacing: between, center_gap } = crate::varos::align_look::LOOK; // Varos: the rows' look
     widgets::subheader(ui, tl!("Align Objects:"));
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.spacing_mut().item_spacing.x = between;
         for (i, (icon, tip, axis, v)) in ALIGN.iter().enumerate() {
-            if i == 3 && widgets::icon_button_enabled(ui, "dc-al-center", tl!("Horizontal & Vertical Align Center"), false, can_align, 26.0).clicked()
-            {
-                run_button(app, Button::AlignCenters).ok();
+            if i == 3 {
+                ui.add_space(center_gap);
+                if widgets::icon_button_enabled(ui, "dc-al-center", tl!("Horizontal & Vertical Align Center"), false, can_align, size).clicked() {
+                    run_button(app, Button::AlignCenters).ok();
+                }
+                ui.add_space(center_gap);
             }
-            if widgets::icon_button_enabled(ui, icon, tl!(tip), false, can_align, 26.0).clicked() {
+            if widgets::icon_button_enabled(ui, icon, tl!(tip), false, can_align, size).clicked() {
                 run_button(app, Button::Align(axis, v)).ok();
             }
         }
@@ -248,12 +252,12 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     widgets::divider(ui);
     widgets::subheader(ui, tl!("Distribute Objects:"));
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.spacing_mut().item_spacing.x = between;
         for (i, (icon, tip, axis, v)) in DISTRIBUTE.iter().enumerate() {
             if i == 3 {
                 ui.add_space(6.0);
             }
-            if widgets::icon_button_enabled(ui, icon, tl!(tip), false, distributes, 26.0).clicked() {
+            if widgets::icon_button_enabled(ui, icon, tl!(tip), false, distributes, size).clicked() {
                 run_button(app, Button::Distribute(axis, v)).ok();
             }
         }
@@ -345,6 +349,9 @@ mod tests {
     use super::*;
     use crate::toolbar::tests::widget_rects;
     use crate::widgets::accessibility_tests::{role_and_state, tree};
+
+    /// Varos: the Align and Distribute buttons' side (`varos::align_look`).
+    const BUTTON: f32 = crate::varos::align_look::LOOK.button;
 
     #[test]
     fn single_object_aligns_to_artboard() {
@@ -458,7 +465,7 @@ mod tests {
         let mut small = widget_rects(ctx, egui::vec2(28.0, 28.0));
         small.sort_by(|a, b| a.left().total_cmp(&b.left()));
         let [.., selection, key, artboard] = small[..] else { panic!("no Align To buttons in {small:?}") };
-        let objects = widget_rects(ctx, egui::vec2(26.0, 26.0));
+        let objects = widget_rects(ctx, egui::Vec2::splat(BUTTON));
         let left = objects.iter().copied().filter(|r| r.top() == objects[0].top()).min_by(|a, b| a.left().total_cmp(&b.left())).unwrap();
         ([selection, key, artboard], left)
     }
@@ -768,7 +775,7 @@ mod tests {
         frame_events(ctx, app, vec![], show);
         // The lower row of 32-point buttons is Distribute Objects': Vertical Distribute Top, Center
         // and Bottom, then Horizontal Distribute Left, Center and Right.
-        let objects = widget_rects(ctx, egui::vec2(26.0, 26.0));
+        let objects = widget_rects(ctx, egui::Vec2::splat(BUTTON));
         let bottom = objects.last().unwrap().top();
         let mut row: Vec<egui::Rect> = objects.into_iter().filter(|r| r.top() == bottom).collect();
         row.sort_by(|a, b| a.left().total_cmp(&b.left()));
@@ -895,7 +902,7 @@ mod tests {
         app.ui.align_to = AlignTo::Artboard;
         let ctx = egui::Context::default();
         frame_events(&ctx, &mut app, vec![], show);
-        let row = widget_rects(&ctx, egui::vec2(26.0, 26.0));
+        let row = widget_rects(&ctx, egui::Vec2::splat(BUTTON));
         let top = row.iter().map(|r| r.top()).fold(f32::MAX, f32::min);
         let mut row: Vec<egui::Rect> = row.into_iter().filter(|r| r.top() == top).collect();
         row.sort_by(|a, b| a.left().total_cmp(&b.left()));
@@ -919,7 +926,7 @@ mod tests {
         app.run("guide.select", json!({"indexes": [0, 1, 2]})).unwrap();
         let ctx = egui::Context::default();
         frame_events(&ctx, &mut app, vec![], show);
-        let row = widget_rects(&ctx, egui::vec2(26.0, 26.0));
+        let row = widget_rects(&ctx, egui::Vec2::splat(BUTTON));
         let bottom = row.iter().map(|r| r.top()).fold(f32::MIN, f32::max);
         let mut row: Vec<egui::Rect> = row.into_iter().filter(|r| r.top() == bottom).collect();
         row.sort_by(|a, b| a.left().total_cmp(&b.left()));
@@ -1022,7 +1029,7 @@ mod tests {
         frame_events(&ctx, &mut app, vec![], show);
         // The 32-point buttons are the Align row and, below it, the Distribute row, whose fifth
         // button is Horizontal Distribute Center.
-        let all = widget_rects(&ctx, egui::vec2(26.0, 26.0));
+        let all = widget_rects(&ctx, egui::Vec2::splat(BUTTON));
         let top = all.iter().map(|r| r.top()).fold(f32::MIN, f32::max);
         let mut row: Vec<_> = all.into_iter().filter(|r| r.top() == top).collect();
         row.sort_by(|a, b| a.left().total_cmp(&b.left()));

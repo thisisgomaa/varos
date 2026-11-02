@@ -16,11 +16,29 @@ pub(crate) fn fitted_height(ctx: &egui::Context, panel: &str) -> Option<f32> {
     }
 }
 
-/// Whether the Properties sections follow the user's saved custom order and show their move grips.
-/// The panel workspace shows each context's canonical order without grips (the custom order stays
-/// saved for the legacy shell); section bodies and collapse state are shared by both.
-pub(crate) fn properties_sections_movable(app: &VectorcraftApp) -> bool {
-    !super::enabled(app)
+/// How a Properties editor arranges its sections this frame: their order, and whether they move
+/// by their grips.
+pub(crate) struct PropertiesSections {
+    pub(crate) order: Vec<crate::panels::properties::SectionId>,
+    pub(crate) movable: bool,
+}
+
+/// The presenter's Properties capability. Sections follow the user's saved custom order and show
+/// their move grips, except in the panel workspace: it shows each context's canonical order
+/// (`present`, as the editor lists them) without grips, and forgets any section move in progress
+/// (the custom order stays saved for the legacy shell); section bodies and collapse state are
+/// shared by both.
+pub(crate) fn properties_sections(
+    app: &VectorcraftApp,
+    ctx: &egui::Context,
+    view: &crate::panels::properties::PropertiesView,
+    present: &[crate::panels::properties::SectionId],
+) -> PropertiesSections {
+    let movable = !super::enabled(app);
+    if !movable {
+        crate::panels::properties::forget_section_drag(ctx);
+    }
+    PropertiesSections { order: if movable { view.ordered(present) } else { present.to_vec() }, movable }
 }
 
 /// Draw special panel content inside the host's body rectangle. `false` uses the ordinary panel
