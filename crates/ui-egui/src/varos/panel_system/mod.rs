@@ -763,7 +763,7 @@ fn render_host(
                 let toggle = Rect::from_min_size(pos2(column.rect.right() - 19.0, title.top()), vec2(20.0, paint::TITLE));
                 let tools = model::column_has_tools(&host.root, column.key);
                 let narrow_tools = view.layout.tools_width().is_some_and(|w| w <= metrics::TOOLS_MIN_WIDTH + 0.01);
-                let action = commands::column_toggle(&view.layout, column.key, None);
+                let action = commands::column_toggle(view.layout, column.key, None);
                 let response = ui.interact(toggle, id.with(("column-mode", column.key)), Sense::click());
                 paint::control(
                     ui,
