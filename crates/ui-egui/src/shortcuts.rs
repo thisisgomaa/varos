@@ -546,7 +546,23 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         crate::ime::controls_without_editor(app, ctx);
         return;
     }
-    if app.ui.dialog.is_some() || app.ui.palette_open {
+    // Preferences is modeless: Escape in one of its fields leaves the field and keeps the draft.
+    if !crate::dialogs::blocks_workspace(app)
+        && !app.ui.palette_open
+        && app.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences")
+        && ctx.egui_wants_keyboard_input()
+    {
+        crate::ime::controls_without_editor(app, ctx);
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
+        }
+        return;
+    }
+    if crate::dialogs::blocks_workspace(app) || app.ui.palette_open {
         crate::ime::controls_without_editor(app, ctx);
         if app.ui.dialog.as_ref().is_some_and(crate::dialogs::revolve_gizmo::active) && crate::dialogs::revolve_gizmo::dragging(ctx) {
             // Escape first restores this rotation gesture. The settings stay open.

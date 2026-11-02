@@ -1124,11 +1124,12 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     forward_keys(app, &ctx, output.forwarded_events, output.forwarded_modifiers);
 }
 
-/// Whether a modal is open: a dialog, About, the command palette, a native file dialog, or a
+/// Whether a modal is open: a dialog (not the modeless Preferences), About, the command palette, a native file dialog, or a
 /// window behind the modal backdrop last frame (export progress, plug-in runs). Floating panels
 /// in OS windows of their own take no input meanwhile, as the main window behind it takes none.
 pub(crate) fn modal_open(app: &VectorcraftApp, ctx: &egui::Context) -> bool {
-    app.ui.dialog.is_some()
+    // Preferences is modeless: floating panels keep working beside it, like the main window.
+    crate::dialogs::blocks_workspace(app)
         || app.ui.about
         || app.ui.palette_open
         || app.file_dialog_open()

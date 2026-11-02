@@ -82,14 +82,14 @@ fn close_to(a: Vec2, b: Vec2) -> bool {
 type Open = fn(&mut VectorcraftApp);
 
 /// Every kind of modal window: the shared frame (Offset Path), and the ones drawing their own
-/// window (New Document without a heading, Preferences, Keyboard Shortcuts).
+/// window (New Document without a heading and Keyboard Shortcuts).
+/// Preferences has a native modeless title bar, covered separately below.
 #[test]
 fn dialogs_move_by_their_heading_stay_on_screen_and_where_they_were_moved() {
     let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
-    let opens: [(&str, Open, egui::Id); 4] = [
+    let opens: [(&str, Open, egui::Id); 3] = [
         ("Offset Path", |app| crate::menus::invoke(app, "object.path.offsetPath", json!({})), egui::Id::unique(("dialog", "offsetPath"))),
         ("New Document", open_new_document, egui::Id::unique(("dialog", "newDocument"))),
-        ("Preferences", |app| crate::prefs_dialog::open(app, None), egui::Id::unique("dialog-preferences")),
         ("Keyboard Shortcuts", crate::shortcut_editor::open, egui::Id::unique("dialog-shortcuts")),
     ];
     for (name, open, id) in opens {
@@ -116,6 +116,33 @@ fn dialogs_move_by_their_heading_stay_on_screen_and_where_they_were_moved() {
         settle(&ctx, &mut app);
         assert!(close_to(rect_of(&ctx, id).min - edge.min, Vec2::ZERO), "{name}: reopened at {:?}, left at {edge:?}", rect_of(&ctx, id));
     }
+}
+
+/// The modeless Preferences window uses egui's title bar rather than modal::drag_band.
+#[test]
+fn preferences_native_title_bar_moves_on_screen_and_remembers_position() {
+    let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
+    let (ctx, mut app) = (ctx(), app_with_selection());
+    let id = egui::Id::unique("dialog-preferences");
+    crate::prefs_dialog::open(&mut app, None);
+    settle(&ctx, &mut app);
+    let start = rect_of(&ctx, id);
+    assert!(start.width() < 900.0, "category list must be one vertical column: {start:?}");
+    assert!(screen.contains_rect(start.shrink(0.5)), "Preferences starts fully on screen: {start:?}");
+    drag(&ctx, &mut app, start.center_top() + vec2(0.0, 10.0), vec2(-90.0, 50.0));
+    let moved = rect_of(&ctx, id);
+    let delta = moved.min - start.min;
+    assert!(delta.x < -80.0 && delta.y > 40.0, "native title bar moved the window: {start:?} → {moved:?}");
+    assert!(screen.contains_rect(moved.shrink(0.5)));
+    drag(&ctx, &mut app, moved.center_top() + vec2(0.0, 10.0), vec2(5000.0, 5000.0));
+    let edge = rect_of(&ctx, id);
+    assert!(screen.contains_rect(edge.shrink(0.5)), "Preferences stays on screen: {edge:?}");
+    assert!(edge.right() > moved.right() && edge.bottom() > moved.bottom());
+    app.ui.dialog = None;
+    frame(&ctx, &mut app, vec![]);
+    crate::prefs_dialog::open(&mut app, None);
+    settle(&ctx, &mut app);
+    assert!(close_to(rect_of(&ctx, id).min - edge.min, Vec2::ZERO), "Preferences remembers its position");
 }
 
 /// Open the dialog of a plug-in of `kind` (`effect` or `filter`) with `count` number settings over a

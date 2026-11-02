@@ -1,7 +1,7 @@
 //! Edit → Preferences (⌘K): Illustrator-style category list + fields, rendered from the engine's
 //! preference table ([`PREF_SPECS`]). The dialog edits a working copy in `Dialog::fields`
-//! (one field per preference key, so agents can `ui.dialog.set` any of them) and OK applies it
-//! through `prefs.set`. Also: persistence of engine prefs inside `UiState` and the per-frame
+//! (one field per preference key, so agents can `ui.dialog.set` any of them). Apply keeps the
+//! working copy open; OK applies it and closes, both through `prefs.set`. Also: persistence of engine prefs inside `UiState` and the per-frame
 //! application of the UI-side preferences (brightness, canvas colour, UI scaling, render threads).
 
 use serde_json::{Map, Value, json};
@@ -19,48 +19,147 @@ pub const UI_FIELDS: &[(&str, &str, &str)] = &[
     ("__taskBar", "General", "Enable Contextual Task Bar"),
 ];
 
-pub fn open(app: &mut VectorcraftApp, category: Option<&str>) {
-    // One field per preference key or group (the flattener presets have commands of their own).
+const BASELINE: &str = "__baseline";
+const DOCUMENT_UID: &str = "__documentUid";
+/// The fields the user edited since the last Apply (or since opening), whatever their value now.
+const TOUCHED: &str = "__touched";
+
+/// Transaction metadata kept in the draft beside the setting values.
+fn is_meta(key: &str) -> bool {
+    matches!(key, BASELINE | DOCUMENT_UID | TOUCHED | "__category")
+}
+
+/// Record that the user edited `keys` in Preferences draft `d`: Apply sends them even when they
+/// are back at the value Preferences opened with (a live change made meanwhile is overridden).
+pub(crate) fn mark_touched<'a>(d: &mut Dialog, keys: impl IntoIterator<Item = &'a str>) {
+    if d.kind != "preferences" {
+        return;
+    }
+    let mut touched: Vec<Value> = d.fields.get(TOUCHED).and_then(Value::as_array).cloned().unwrap_or_default();
+    for key in keys.into_iter().filter(|key| !is_meta(key)) {
+        if !touched.iter().any(|v| v.as_str() == Some(key)) {
+            touched.push(json!(key));
+        }
+    }
+    d.fields.insert(TOUCHED.into(), Value::Array(touched));
+}
+
+fn touched(d: &Dialog, key: &str) -> bool {
+    d.fields.get(TOUCHED).and_then(Value::as_array).is_some_and(|keys| keys.iter().any(|v| v.as_str() == Some(key)))
+}
+
+fn current_fields(app: &VectorcraftApp) -> Map<String, Value> {
     let mut fields: Map<String, Value> = app.session.prefs.to_json().as_object().cloned().unwrap_or_default();
     fields.retain(|k, _| vectorcraft_engine::cmd::prefscmds::spec(k).is_some() || PREF_GROUPS.contains(&k.as_str()));
-    // Units ▸ General shows (and OK sets) the open document's units.
     if let Some(st) = app.session.active() {
         fields.insert("unitsGeneral".into(), json!(st.doc.units.key()));
     }
-    let cat = category.and_then(|c| PREF_CATEGORIES.iter().find(|x| x.eq_ignore_ascii_case(c))).copied().unwrap_or(PREF_CATEGORIES[0]);
-    fields.insert("__category".into(), json!(cat));
     fields.insert("__smartGuides".into(), json!(app.ui.view.smart_guides));
     fields.insert("__snapToGrid".into(), json!(app.ui.view.snap_to_grid));
     fields.insert("__taskBar".into(), json!(app.ui.task_bar));
-    fields.insert(crate::varos::panel_stack::PREF_KEY.into(), json!(app.ui.varos_panel_stack.enabled)); // Varos
-    fields.insert(crate::varos::shell::PREF_KEY.into(), json!(app.ui.varos_shell.enabled)); // Varos
+    fields.insert(crate::varos::panel_stack::PREF_KEY.into(), json!(app.ui.varos_panel_stack.enabled));
+    fields.insert(crate::varos::shell::PREF_KEY.into(), json!(app.ui.varos_shell.enabled));
+    fields
+}
+
+pub fn open(app: &mut VectorcraftApp, category: Option<&str>) {
+    // Store only setting values in the baseline, not navigation or transaction metadata.
+    let mut fields = current_fields(app);
+    fields.insert(BASELINE.into(), Value::Object(fields.clone()));
+    fields.insert(DOCUMENT_UID.into(), json!(app.session.active().map(|doc| doc.uid)));
+    let cat = category.and_then(|c| PREF_CATEGORIES.iter().find(|x| x.eq_ignore_ascii_case(c))).copied().unwrap_or(PREF_CATEGORIES[0]);
+    fields.insert("__category".into(), json!(cat));
     app.ui.dialog = Some(Dialog { kind: "preferences".into(), fields });
 }
 
-/// OK: validate and apply every preference in the dialog (nothing changes on error).
-pub fn confirm(app: &mut VectorcraftApp) -> Result<Value, String> {
-    let Some(d) = app.ui.dialog.clone() else { return Err("no dialog open".into()) };
-    let values: Map<String, Value> = d.fields.iter().filter(|(k, _)| !k.starts_with("__")).map(|(k, v)| (k.clone(), v.clone())).collect();
-    let touch_ws = values.get("touchWorkspace").and_then(Value::as_bool);
-    app.run("prefs.set", json!({ "values": values }))?;
-    if touch_ws.is_some() {
+/// Apply validates the edited settings before changing engine or UI state. A field the user
+/// edited is applied even when it is back at its opening value; untouched draft fields never
+/// overwrite settings changed in the modeless editor while Preferences was open. Cancel only
+/// discards edits made after the last Apply. Units of a document that is no longer active are
+/// skipped (with a status message); every other edit still applies.
+pub fn apply(app: &mut VectorcraftApp) -> Result<Value, String> {
+    let Some(mut d) = app.ui.dialog.clone() else { return Err("no dialog open".into()) };
+    if d.kind != "preferences" {
+        return Err("the open dialog is not Preferences".into());
+    }
+    let baseline = d.fields.get(BASELINE).and_then(Value::as_object);
+    // Manually constructed/older dialogs lack a baseline and retain their full-apply contract.
+    let mut changed: Map<String, Value> = d
+        .fields
+        .iter()
+        .filter(|(key, _)| !is_meta(key))
+        .filter(|(key, value)| touched(&d, key) || baseline.is_none_or(|before| before.get(*key) != Some(*value)))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let mut skipped_units = false;
+    if changed.contains_key("unitsGeneral")
+        && let Some(document) = d.fields.get(DOCUMENT_UID)
+        && document.as_u64() != app.session.active().map(|doc| doc.uid)
+    {
+        changed.remove("unitsGeneral");
+        skipped_units = true;
+    }
+    // UI-only fields are validated before prefs.set so a bad draft cannot partially apply.
+    for key in ["__smartGuides", "__snapToGrid", "__taskBar", crate::varos::panel_stack::PREF_KEY, crate::varos::shell::PREF_KEY] {
+        if changed.get(key).is_some_and(|value| !value.is_boolean()) {
+            return Err(format!("{key}: expected a boolean"));
+        }
+    }
+    let values: Map<String, Value> =
+        changed.iter().filter(|(key, _)| !key.starts_with("__")).map(|(key, value)| (key.clone(), value.clone())).collect();
+    let touch_ws = values.contains_key("touchWorkspace");
+    if !values.is_empty() {
+        app.run("prefs.set", json!({ "values": values }))?;
+    }
+    if touch_ws {
         crate::workspaces::sync_touch_workspace(app, app.touch_screen);
     }
-    app.ui.view.smart_guides = d.fields.get("__smartGuides").and_then(Value::as_bool).unwrap_or(app.ui.view.smart_guides);
-    app.ui.view.snap_to_grid = d.fields.get("__snapToGrid").and_then(Value::as_bool).unwrap_or(app.ui.view.snap_to_grid);
-    app.ui.task_bar = d.fields.get("__taskBar").and_then(Value::as_bool).unwrap_or(app.ui.task_bar);
-    // Varos: Panel cards on or off.
-    if let Some(on) = d.fields.get(crate::varos::panel_stack::PREF_KEY).and_then(Value::as_bool) {
+    if let Some(on) = changed.get("__smartGuides").and_then(Value::as_bool) {
+        app.ui.view.smart_guides = on;
+    }
+    if let Some(on) = changed.get("__snapToGrid").and_then(Value::as_bool) {
+        app.ui.view.snap_to_grid = on;
+    }
+    if let Some(on) = changed.get("__taskBar").and_then(Value::as_bool) {
+        app.ui.task_bar = on;
+    }
+    if let Some(on) = changed.get(crate::varos::panel_stack::PREF_KEY).and_then(Value::as_bool) {
         crate::varos::panel_stack::set_enabled(app, on);
     }
-    // Varos: the Varos shell (new) on or off.
-    if let Some(on) = d.fields.get(crate::varos::shell::PREF_KEY).and_then(Value::as_bool) {
+    if let Some(on) = changed.get(crate::varos::shell::PREF_KEY).and_then(Value::as_bool) {
         crate::varos::shell::set_enabled(app, on);
     }
-    app.ui.dialog = None;
+    // Refresh untouched values from the live editor and establish the next Apply baseline.
+    // Keep edited representations intact (for example an entered integer vs an engine float).
+    let mut next = current_fields(app);
+    for (key, value) in &changed {
+        if next.contains_key(key) {
+            next.insert(key.clone(), value.clone());
+        }
+    }
+    for (key, value) in &next {
+        d.fields.insert(key.clone(), value.clone());
+    }
+    d.fields.insert(BASELINE.into(), Value::Object(next));
+    d.fields.remove(TOUCHED);
+    // The draft now edits the active document's units.
+    d.fields.insert(DOCUMENT_UID.into(), json!(app.session.active().map(|doc| doc.uid)));
+    app.ui.dialog = Some(d);
     app.ui.engine_prefs = app.session.prefs.to_json();
     app.prefs_changed = true;
+    if skipped_units {
+        let message = tl!("The active document changed, so its units were not changed. The other settings were applied.");
+        app.status(message);
+        return Ok(json!({ "skipped": ["unitsGeneral"], "message": message }));
+    }
     Ok(Value::Null)
+}
+
+/// OK applies the same validated draft as Apply, then closes Preferences.
+pub fn confirm(app: &mut VectorcraftApp) -> Result<Value, String> {
+    let result = apply(app)?;
+    app.ui.dialog = None;
+    Ok(result)
 }
 
 /// Copy the engine prefs into `UiState` so the host persists them with the UI state.
@@ -188,78 +287,115 @@ pub(crate) fn reapply(app: &mut VectorcraftApp, ctx: &egui::Context) {
 
 pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.dialog.clone() else { return };
+    let drawn = d.fields.clone();
     let t = Tokens::get(ctx);
-    let (mut ok, mut cancel, mut reset) = (false, false, false);
+    let (mut ok, mut apply_now, mut cancel, mut reset) = (false, false, false, false);
+    let mut open = true;
+    let screen = ctx.content_rect();
+    let body_height = (screen.height() - 160.0).clamp(80.0, 430.0);
     let cat = d.str("__category");
     let cat = PREF_CATEGORIES.iter().find(|c| **c == cat).copied().unwrap_or(PREF_CATEGORIES[0]);
-    crate::dialogs::modal::show(ctx, tl!("Preferences"), egui::Id::unique("dialog-preferences"), -20.0, 20, |ui| {
-        ui.set_width(760.0);
-        crate::dialogs::modal::heading(ui, tl!("Preferences"));
-        ui.add_space(12.0);
-        ui.horizontal_top(|ui| {
-            // Category list.
-            egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(4)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-                ui.set_width(196.0);
-                ui.set_min_height(430.0);
+    egui::Window::new(tl!("Preferences"))
+        .id(egui::Id::unique("dialog-preferences"))
+        .order(egui::Order::Foreground)
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .movable(true)
+        .default_pos(screen.center() - egui::vec2(400.0, (body_height + 110.0) * 0.5))
+        .constrain_to(screen)
+        .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(20)))
+        .show(ctx, |ui| {
+            ui.set_width(760.0);
+            ui.horizontal_top(|ui| {
+                // Category list.
+                egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(4)).inner_margin(egui::Margin::same(6)).show(
+                    ui,
+                    |ui| {
+                        ui.set_width(196.0);
+                        egui::ScrollArea::vertical().id_salt("prefs-categories").max_height(body_height).auto_shrink([false, false]).show(ui, |ui| {
+                            // ScrollArea inherits the surrounding horizontal layout; categories
+                            // need their own vertical column rather than one very wide row.
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                for c in PREF_CATEGORIES {
+                                    let sel = *c == cat;
+                                    let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
+                                    let b = egui::Button::selectable(sel, text).min_size(egui::vec2(184.0, 24.0));
+                                    if ui.add(b).clicked() {
+                                        d.fields.insert("__category".into(), json!(c));
+                                    }
+                                }
+                            });
+                        });
+                    },
+                );
+                ui.add_space(14.0);
+                // Fields.
                 ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    for c in PREF_CATEGORIES {
-                        let sel = *c == cat;
-                        let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
-                        let b = egui::Button::selectable(sel, text).min_size(egui::vec2(184.0, 24.0));
-                        if ui.add(b).clicked() {
-                            d.fields.insert("__category".into(), json!(c));
-                        }
-                    }
+                    ui.set_width(530.0);
+                    ui.label(egui::RichText::new(tl!(cat)).font(theme::semibold(14.0)).color(t.text_strong));
+                    ui.add_space(8.0);
+                    egui::ScrollArea::vertical().id_salt(("prefs", cat)).max_height((body_height - 30.0).max(50.0)).auto_shrink([false, false]).show(
+                        ui,
+                        |ui| {
+                            category_fields(ui, &mut d, cat);
+                        },
+                    );
                 });
             });
             ui.add_space(14.0);
-            // Fields.
-            ui.vertical(|ui| {
-                ui.set_width(530.0);
-                ui.label(egui::RichText::new(tl!(cat)).font(theme::semibold(14.0)).color(t.text_strong));
-                ui.add_space(8.0);
-                egui::ScrollArea::vertical().id_salt(("prefs", cat)).max_height(400.0).auto_shrink([false, false]).show(ui, |ui| {
-                    category_fields(ui, &mut d, cat);
+            ui.horizontal(|ui| {
+                if widgets::secondary_button(ui, tl!("Reset Preferences"))
+                    .on_hover_text(tl!("Restore every preference to its default (applied on Apply or OK)"))
+                    .clicked()
+                {
+                    reset = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::primary_button(ui, tl!("OK")).clicked() {
+                        ok = true;
+                    }
+                    ui.add_space(8.0);
+                    if widgets::secondary_button(ui, tl!("Apply")).clicked() {
+                        apply_now = true;
+                    }
+                    ui.add_space(8.0);
+                    if widgets::secondary_button(ui, tl!("Cancel")).clicked() {
+                        cancel = true;
+                    }
+                    ui.add_space(16.0);
+                    let i = PREF_CATEGORIES.iter().position(|c| *c == cat).unwrap_or(0);
+                    if ui.add_enabled(i + 1 < PREF_CATEGORIES.len(), egui::Button::new(tl!("Next"))).clicked() {
+                        d.fields.insert("__category".into(), json!(PREF_CATEGORIES[i + 1]));
+                    }
+                    if ui.add_enabled(i > 0, egui::Button::new(tl!("Previous"))).clicked() {
+                        d.fields.insert("__category".into(), json!(PREF_CATEGORIES[i - 1]));
+                    }
                 });
             });
         });
-        ui.add_space(14.0);
-        ui.horizontal(|ui| {
-            if widgets::secondary_button(ui, tl!("Reset Preferences"))
-                .on_hover_text(tl!("Restore every preference to its default (applied on OK)"))
-                .clicked()
-            {
-                reset = true;
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::primary_button(ui, tl!("OK")).clicked() {
-                    ok = true;
-                }
-                ui.add_space(8.0);
-                if widgets::secondary_button(ui, tl!("Cancel")).clicked() {
-                    cancel = true;
-                }
-                ui.add_space(16.0);
-                let i = PREF_CATEGORIES.iter().position(|c| *c == cat).unwrap_or(0);
-                if ui.add_enabled(i + 1 < PREF_CATEGORIES.len(), egui::Button::new(tl!("Next"))).clicked() {
-                    d.fields.insert("__category".into(), json!(PREF_CATEGORIES[i + 1]));
-                }
-                if ui.add_enabled(i > 0, egui::Button::new(tl!("Previous"))).clicked() {
-                    d.fields.insert("__category".into(), json!(PREF_CATEGORIES[i - 1]));
-                }
-            });
-        });
-    });
     if reset {
-        for (k, v) in Prefs::default().to_json().as_object().cloned().unwrap_or_default() {
+        let defaults = Prefs::default().to_json().as_object().cloned().unwrap_or_default();
+        mark_touched(&mut d, defaults.keys().map(String::as_str));
+        for (k, v) in defaults {
             d.fields.insert(k, v);
         }
     }
+    // Every field a widget changed this frame counts as edited until the next Apply.
+    let edited: Vec<String> =
+        d.fields.iter().filter(|(key, value)| !is_meta(key) && drawn.get(*key) != Some(*value)).map(|(key, _)| key.clone()).collect();
+    if !edited.is_empty() {
+        mark_touched(&mut d, edited.iter().map(String::as_str));
+    }
     app.ui.dialog = Some(d);
-    if cancel {
-        app.ui.dialog = None;
-    } else if ok && let Err(e) = confirm(app) {
+    if cancel || !open {
+        crate::dialogs::cancel(app);
+    } else if ok {
+        if let Err(e) = confirm(app) {
+            app.status(e);
+        }
+    } else if apply_now && let Err(e) = apply(app) {
         app.status(e);
     }
 }
@@ -441,11 +577,13 @@ fn bool_row(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
 fn labeled(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(egui::vec2(210.0, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.set_min_width(210.0);
-            ui.add(egui::Label::new(egui::RichText::new(format!("{}{}", tl!(label), tl!(":"))).color(t.text)).truncate());
-        });
-        add(ui);
+        let label = ui
+            .allocate_ui_with_layout(egui::vec2(210.0, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(210.0);
+                ui.add(egui::Label::new(egui::RichText::new(format!("{}{}", tl!(label), tl!(":"))).color(t.text)).truncate())
+            })
+            .inner;
+        ui.label_inputs_by(label.id, add);
     });
 }
 
@@ -535,6 +673,160 @@ mod tests {
 
     fn app() -> VectorcraftApp {
         VectorcraftApp::new(Session::new(), Services::default())
+    }
+
+    #[test]
+    fn apply_keeps_the_draft_and_category_then_cancel_preserves_applied_values() {
+        let mut a = app();
+        open(&mut a, Some("Smart Guides"));
+        let d = a.ui.dialog.as_mut().unwrap();
+        d.fields.insert("keyboardIncrement".into(), json!(4));
+        d.fields.insert("__smartGuides".into(), json!(false));
+        let draft = d.fields.clone();
+        apply(&mut a).unwrap();
+        let after = &a.ui.dialog.as_ref().unwrap().fields;
+        for (key, value) in draft.iter().filter(|(key, _)| key.as_str() != BASELINE) {
+            assert_eq!(after.get(key), Some(value), "draft field {key}");
+        }
+        assert_eq!(a.session.prefs.keyboard_increment, 4.0);
+        assert!(!a.ui.view.smart_guides);
+        assert_eq!(a.ui.engine_prefs["keyboardIncrement"], json!(4.0));
+        assert!(a.prefs_changed);
+        let d = a.ui.dialog.as_mut().unwrap();
+        d.fields.insert("keyboardIncrement".into(), json!(9));
+        d.fields.insert("__smartGuides".into(), json!(true));
+        crate::dialogs::cancel(&mut a);
+        assert!(a.ui.dialog.is_none());
+        assert_eq!(a.session.prefs.keyboard_increment, 4.0);
+        assert!(!a.ui.view.smart_guides);
+        assert_eq!(a.ui.engine_prefs["keyboardIncrement"], json!(4.0));
+    }
+
+    #[test]
+    fn modeless_apply_merges_only_edited_fields_with_live_editor_preferences() {
+        let mut a = app();
+        open(&mut a, Some("General"));
+        a.ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(4));
+        let smart = !a.ui.view.smart_guides;
+        let grid = !a.ui.view.snap_to_grid;
+        a.run("prefs.set", json!({"key": "gridlineEvery", "value": 73})).unwrap();
+        a.ui.view.smart_guides = smart;
+        a.ui.view.snap_to_grid = grid;
+        apply(&mut a).unwrap();
+        assert_eq!(a.session.prefs.keyboard_increment, 4.0);
+        assert_eq!(a.session.prefs.gridline_every, 73.0);
+        assert_eq!(a.ui.view.smart_guides, smart);
+        assert_eq!(a.ui.view.snap_to_grid, grid);
+        let d = a.ui.dialog.as_ref().unwrap();
+        assert_eq!(d.fields["gridlineEvery"], json!(73.0));
+        assert_eq!(d.fields["__smartGuides"], json!(smart));
+        assert_eq!(d.fields["__snapToGrid"], json!(grid));
+        // The next Apply also leaves an externally changed, untouched field alone.
+        a.run("prefs.set", json!({"key": "keyboardIncrement", "value": 7})).unwrap();
+        apply(&mut a).unwrap();
+        assert_eq!(a.session.prefs.keyboard_increment, 7.0);
+        assert_eq!(a.ui.dialog.as_ref().unwrap().fields["keyboardIncrement"], json!(7.0));
+    }
+
+    #[test]
+    fn modeless_units_edit_for_a_document_no_longer_active_is_skipped_and_the_rest_applies() {
+        let mut a = app();
+        a.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+        open(&mut a, Some("Units"));
+        let original_units = a.ui.dialog.as_ref().unwrap().fields["unitsGeneral"].clone();
+        let changed_units = if original_units == "millimeters" { "points" } else { "millimeters" };
+        a.ui.dialog.as_mut().unwrap().fields.insert("unitsGeneral".into(), json!(changed_units));
+        a.ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(4));
+        a.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+        let units: Vec<_> = a.session.documents().iter().map(|doc| doc.doc.units).collect();
+        let active = a.session.active_index();
+        let result = apply(&mut a).unwrap();
+        assert_eq!(result["skipped"], json!(["unitsGeneral"]), "the units edit is reported as skipped");
+        assert!(a.ui.status.contains("active document changed"), "{}", a.ui.status);
+        assert_eq!(a.session.prefs.keyboard_increment, 4.0, "unrelated edits apply");
+        assert_eq!(a.session.active_index(), active);
+        assert_eq!(a.session.documents().iter().map(|doc| doc.doc.units).collect::<Vec<_>>(), units, "no document's units change");
+        let d = a.ui.dialog.as_ref().unwrap();
+        assert_eq!(d.str("__category"), "Units");
+        assert_eq!(d.fields[DOCUMENT_UID], json!(a.session.active().map(|doc| doc.uid)), "the draft now edits the active document");
+        assert_eq!(d.fields["unitsGeneral"], json!(a.session.active().unwrap().doc.units.key()), "the units field shows the active document's");
+        // A units edit made now applies to the active document.
+        a.ui.dialog.as_mut().unwrap().fields.insert("unitsGeneral".into(), json!(changed_units));
+        assert!(apply(&mut a).unwrap().is_null());
+        assert_eq!(a.session.active().unwrap().doc.units.key(), changed_units);
+    }
+
+    /// A field set back to the value Preferences opened with still applies when the user touched
+    /// it, over a change made elsewhere meanwhile; an untouched field still keeps that change.
+    #[test]
+    fn a_touched_field_back_at_its_opening_value_overrides_a_live_change() {
+        let mut a = app();
+        open(&mut a, Some("General"));
+        let opening = a.session.prefs.keyboard_increment;
+        a.run("prefs.set", json!({"key": "keyboardIncrement", "value": opening + 6.0})).unwrap();
+        a.run("prefs.set", json!({"key": "gridlineEvery", "value": 73})).unwrap();
+        let d = a.ui.dialog.as_mut().unwrap();
+        d.fields.insert("keyboardIncrement".into(), json!(opening + 4.0));
+        d.fields.insert("keyboardIncrement".into(), json!(opening));
+        mark_touched(d, ["keyboardIncrement"]);
+        apply(&mut a).unwrap();
+        assert_eq!(a.session.prefs.keyboard_increment, opening, "the touched field wins");
+        assert_eq!(a.session.prefs.gridline_every, 73.0, "the untouched field keeps the live change");
+        assert!(a.ui.dialog.as_ref().unwrap().fields.get(TOUCHED).is_none(), "Apply starts a fresh edit record");
+    }
+
+    #[test]
+    fn invalid_apply_leaves_engine_ui_and_saved_preferences_unchanged() {
+        let mut a = app();
+        open(&mut a, Some("User Interface"));
+        let before = a.session.prefs.clone();
+        let saved = a.ui.engine_prefs.clone();
+        let smart = a.ui.view.smart_guides;
+        let changed = a.prefs_changed;
+        let d = a.ui.dialog.as_mut().unwrap();
+        d.fields.insert("keyboardIncrement".into(), json!(4));
+        d.fields.insert("anchorSize".into(), json!(42));
+        d.fields.insert("__smartGuides".into(), json!(!smart));
+        let draft = d.fields.clone();
+        assert!(apply(&mut a).is_err());
+        assert_eq!(a.session.prefs, before);
+        assert_eq!(a.ui.engine_prefs, saved);
+        assert_eq!(a.ui.view.smart_guides, smart);
+        assert_eq!(a.prefs_changed, changed);
+        assert_eq!(a.ui.dialog.as_ref().unwrap().fields, draft);
+    }
+
+    #[test]
+    fn preferences_apply_button_stays_open_and_outside_clicks_are_modeless() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut a = app();
+        open(&mut a, Some("General"));
+        a.ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(6));
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 900.0)).with_context_setup(crate::theme::install_fonts).build_ui_state(
+            |ui, a: &mut VectorcraftApp| {
+                if ui.button("Outside Preferences").clicked() {
+                    a.status("outside click reached editor");
+                }
+                if a.ui.dialog.is_some() {
+                    show(a, ui.ctx());
+                }
+            },
+            a,
+        );
+        h.run_steps(3);
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Apply").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.prefs.keyboard_increment, 6.0);
+        assert_eq!(h.state().ui.dialog.as_ref().unwrap().str("__category"), "General");
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Outside Preferences").click();
+        h.run_steps(3);
+        assert_eq!(h.state().ui.status, "outside click reached editor");
+        assert!(h.state().ui.dialog.is_some());
+        h.state_mut().ui.dialog.as_mut().unwrap().fields.insert("keyboardIncrement".into(), json!(8));
+        h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel").click();
+        h.run_steps(3);
+        assert!(h.state().ui.dialog.is_none());
+        assert_eq!(h.state().session.prefs.keyboard_increment, 6.0);
     }
 
     #[test]

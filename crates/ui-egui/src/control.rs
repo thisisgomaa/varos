@@ -456,14 +456,18 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context, req: &ControlReques
                     let names = crate::dialogs::field_names(d).join(", ");
                     return err(format!("the `{}` dialog has no field `{f}`; its fields: {names}", d.kind));
                 }
+                let keys: Vec<String> = fields.iter().map(|(f, _)| f.clone()).collect();
                 for (f, value) in fields {
                     d.fields.insert(f, value);
                 }
+                // An agent's edit counts as the user's: Apply sends it even at its opening value.
+                crate::prefs_dialog::mark_touched(d, keys.iter().map(String::as_str));
                 ok(serde_json::to_value(&*d).unwrap_or_default())
             }
             None => err("no dialog open"),
         },
         "ui.dialog.confirm" => wrap(crate::dialogs::confirm(app)),
+        "ui.dialog.apply" => wrap(app.run("preferences.apply", json!({}))),
         "ui.dialog.cancel" => {
             crate::dialogs::cancel(app);
             ok(Value::Null)

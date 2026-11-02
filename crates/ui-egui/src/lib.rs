@@ -2364,7 +2364,7 @@ impl VectorcraftApp {
         }
         crate::state::sync_zoom_stops_display_print_size(self.session.prefs.display_print_size);
         let t0 = now_ms();
-        widgets::set_dialog_open(&ctx, self.ui.dialog.is_some());
+        widgets::set_dialog_open(&ctx, dialogs::blocks_workspace(self));
         // The canvas records this pass's IME caret geometry; a pass that draws no canvas has none.
         self.ime_caret_rect = None;
         scrub::begin_frame(self, &ctx);

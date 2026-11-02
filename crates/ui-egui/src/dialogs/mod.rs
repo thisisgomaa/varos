@@ -706,3 +706,8 @@ mod tests_shortcut_import;
 
 #[cfg(test)]
 mod tests_warp;
+
+/// Editing preferences does not reserve the rest of the workspace.
+pub(crate) fn blocks_workspace(app: &VectorcraftApp) -> bool {
+    app.ui.dialog.as_ref().is_some_and(|dialog| dialog.kind != "preferences")
+}

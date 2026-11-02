@@ -174,6 +174,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "{section?: recents|projects|templates|gettingStarted, action?: show|open|reveal|removeRecent|addProject|project|hideTips|showTips|sort, path?, sort?: modified|name|created} Home screen and local file actions",
     ),
     ("edit.preferences", "Preferences…", "Cmd+K", "{category?} open Preferences (engine: prefs.get / prefs.set / prefs.list)"),
+    ("preferences.apply", "Apply Preferences", "", "{} validate and apply the open Preferences draft while keeping the window open"),
     ("edit.keyboardShortcuts", "Keyboard Shortcuts…", "Cmd+Alt+Shift+K", "{}"),
     ("shortcuts.set", "Set Keyboard Shortcut", "", "{id: command id or tool:<id>, shortcut: \"Cmd+Shift+K\" | \"\" (none) | null (default), force?}"),
     ("shortcuts.list", "List Keyboard Shortcuts", "", "{query?} → [{id, label, group, shortcut, default, overridden}]"),
@@ -1342,6 +1343,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         }
         "file.newWithoutDialog" => crate::dialogs::new_document_without_dialog(app),
         "app.home" => crate::varos::home::command(app, p),
+        "preferences.apply" => crate::prefs_dialog::apply(app),
         "file.open" => match s("path") {
             Some(path) => io::open_path(app, &path),
             None => io::open_dialog(app).map(|_| Value::Null),
