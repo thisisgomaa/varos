@@ -1,9 +1,88 @@
 # Varos fork: backlog
 
 Ordered. Owner feedback comes first. Each item has one acceptance line; an item is closed only when
-its acceptance is met and recorded in `STATE.md`. Updated 2026-11-01; older dated entries below retain their original context.
+its acceptance is met and recorded in `STATE.md`. Updated 2026-11-02; older dated entries below retain their original context.
 
 Tags: **[done, owner to look]** = built, gates green, waiting for the owner's eye in the real window.
+
+## Current owner priority — 2026-11-02
+
+**Current mode: native panel workspace built and committed locally (not pushed); owner hand test
+pending.** Builds 20261102.13–.16 implemented the unified panel workspace (groups, docking at four
+edges, floating, Expanded / icon+name / icon-only, Tools and Control as special bars), the side Color
+panel separated from the toolbar's wheel picker, horizontal document-tab reordering, and a modeless
+Preferences with Apply. Two read-only reviews (Codex Sol, Cursor/Grok, 2026-11-02) requested changes;
+all twelve findings were fixed or answered with evidence, each with a test that runs with the panel
+workspace presenting the editor (`varos/panel_system/review_fix_tests.rs`). Nothing here is accepted
+by the owner yet; `STATE.md` lists each piece as provisional.
+
+Open, in order:
+1. Owner hand test of the side Color panel and horizontal tab dragging in build .16.
+2. Owner hand test of the review fixes: Control-bar Opacity/Style links open their panels; library
+   panels close/restore; Presentation Mode hides all chrome; Window items and panel keys toggle;
+   Tab hides Tools + Control + panels while Shift+Tab hides panels only; turning "Varos shell" off
+   returns to the classic dock; Control's X/Y/W/H reachable by scrolling the bar; a tab released in
+   the scrolling edge lands at the very end/start; Preferences Apply sends every field you edited,
+   and Escape in a Preferences field keeps the window and the draft.
+3. Detaching a document into its own window is not supported (dropping outside the strip cancels);
+   a separate task if wanted.
+4. Other dialogs stay modal; make them modeless one at a time only if asked.
+
+Revision: 2026-11-02 — native panel workspace and review fixes recorded; owner acceptance pending.
+
+## Panel queue as approved — 2026-11-01
+
+This queue takes precedence over the older list below. The owner approved the larger-icon preview
+with «ممتاز اعتمد» and then asked how to implement it professionally. See the
+[implementation plan and approval record](PANEL_IMPLEMENTATION_PLAN.md) for the frozen reference,
+metrics, staged migration and per-slice acceptance. Its items below were then built natively (see the
+2026-11-02 section above); Color clipping acceptance remains separate. The paragraphs below preserve
+the earlier research gate; their pending visual-preview status is superseded by this update.
+
+Earlier foundation-review scope:
+The owner explicitly stopped native implementation, builds and UI testing until the foundations are
+agreed. The owner has now approved fixed context-specific Properties order, workspace-wide floating,
+and whole-container X hiding with reopening from the top Window menu. **Current delivery: visual
+preview of groups and all three presentation states; approval to implement is still pending.**
+Read [the architecture study](PANEL_ARCHITECTURE_STUDY_2026-11-01.md) first; it covers
+current and legacy source, earlier agreements, public Blender documentation and open decisions.
+Study may proceed while Color clipping in 0.19.1 awaits owner review. Neither that review alone nor
+the existence of this proposal authorizes implementation. After architecture agreement, work one
+small item at a time; the owner reviews and accepts it before the next.
+
+0. Color palette clipping — owner acceptance pending.
+   **Next, before item 1: P0A, unified panel/group/container model.** One layout model for tab
+   groups and horizontal/vertical stacks, whether floating, docked at any of the four edges, or
+   attached to internal dividers as in the earlier approved architecture;
+   expanded, icon-with-name and icon-only presentations preserve identity, membership and position.
+   Control and Tools must use the same move/join/split/collapse/persistence rules. Start with a
+   decision ledger and diagram, then an approved visual preview and a two-panel slice; stacking,
+   docking, Control, Tools and saved-layout migration follow
+   one at a time; do not launch a wholesale rewrite or parallel implementation.
+1. Panel header geometry, tab appearance, control/icon sizes and separators.
+2. Dark-header and name-tab drag regions.
+3. Expanded / icon-only / icon-with-name states; retain floating position on collapse and reopen.
+4. Icon groups, group grips and separators in both compact modes.
+5. Adjacent flyouts, active icon/tab agreement and unclipped content.
+6. Dock, join, reorder and detach panels, icon groups and columns.
+7. Smooth dragging without jumps or unintended snapping.
+8. Compact top Control bar.
+9. Consistent internal panel layout, one existing panel at a time.
+10. Tool strip groups and icon/control sizing using existing Varos assets and tools.
+11. Final integrated build and owner review, including workspace persistence.
+
+Detailed reference mapping, expected behavior and per-item acceptance:
+[Panel system review queue](PANEL_SYSTEM_REVIEW_QUEUE.md).
+Use clearly labeled image previews during iteration; defer full release packaging to the end.
+Do not copy reference assets, run Adobe applications, or turn pictured features into new scope.
+The earlier keyboard-undo follow-up remains deferred and excluded from the 0.19.1 clipping build.
+
+Revision: 2026-11-01 — research-only architecture gate added at the owner's request; prior agreements,
+legacy foundations, numeric scrubbing and internal-divider rails included. The owner subsequently
+approved the three decisions above and requested a visual preview before implementation. No native
+implementation, Color acceptance or visual acceptance claimed.
+
+## Older backlog — retained for context, below the current owner queue
 
 1. **[done, owner to look] Home screen with no menus at all.** Owner, 2026-10-19: «خلي صفحة البداية القوائم متظهرش فيها
    خالص» ("on the start page, the menus must not appear at all"). Lane brand2 removed the in-window
