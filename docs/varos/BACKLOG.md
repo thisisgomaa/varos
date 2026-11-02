@@ -59,7 +59,7 @@ panel separated from the toolbar's wheel picker, horizontal document-tab reorder
 Preferences with Apply. Two read-only reviews (Codex Sol, Cursor/Grok, 2026-11-02) requested changes;
 all twelve findings were fixed or answered with evidence, each with a test that runs with the panel
 workspace presenting the editor (now in the behaviour test files over the shared
-`varos/panel_system/test_support.rs` harness). Four code-cleanliness passes (2026-11-02) did the
+`varos/panel_system/test_support.rs` harness). Five code-cleanliness passes (2026-11-02) did the
 review's P1 and P2 items and the third review's sign-off list; `STATE.md` (revision history)
 separates what was extracted, what still lives in upstream files, and what is deferred. Still
 pending, by decision: (#6) one presentation representation per column (it needs a layout format
