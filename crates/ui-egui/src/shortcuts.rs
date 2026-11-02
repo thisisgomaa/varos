@@ -529,7 +529,7 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     if !crate::take_frame_once(&mut app.shortcuts_frames, frame) {
         return;
     }
-    if crate::document_drag::tab_reorder_keys(ctx) {
+    if crate::varos::tab_reorder::tab_reorder_keys(ctx) {
         crate::ime::controls_without_editor(app, ctx);
         return;
     }

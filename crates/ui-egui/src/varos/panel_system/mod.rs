@@ -1,13 +1,15 @@
 //! Registry-backed panel workspace with one ownership and interaction model.
 //! The ordinary shell remains untouched when this review is not explicitly enabled.
 mod commands;
-mod content;
+pub(crate) mod content;
+pub(crate) mod control_bar;
 mod geometry;
 pub(crate) mod metrics;
 pub mod model;
 mod paint;
 pub(crate) mod presenter;
 mod registry;
+pub(crate) mod tools_host;
 pub(crate) mod workspace;
 
 pub use commands::command;

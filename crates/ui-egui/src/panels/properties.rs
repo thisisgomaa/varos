@@ -1414,7 +1414,7 @@ pub(crate) fn show_editor(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str,
 /// The sections of editor `instance` for what it shows, and the move of one of them by its grip.
 fn draw_sections(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str, view: &mut PropertiesView) {
     let ctx = ui.ctx().clone();
-    let fixed_order = crate::varos::panel_system::enabled(app);
+    let fixed_order = crate::varos::panel_system::content::fixed_properties_order(app); // Varos
     let mut list: Vec<Option<Section>> = section_list(app).into_iter().map(Some).collect();
     let ids: Vec<SectionId> = list.iter().flatten().map(|s| s.id).collect();
     let mut hits = SectionHits::default();

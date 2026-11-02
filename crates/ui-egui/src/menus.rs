@@ -1356,7 +1356,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         "file.newWithoutDialog" => crate::dialogs::new_document_without_dialog(app),
         "app.home" => crate::varos::home::command(app, p),
         "preferences.apply" => crate::prefs_dialog::apply(app),
-        "document.reorder" => crate::document_drag::reorder(app, p),
+        "document.reorder" => crate::varos::tab_reorder::reorder(app, p),
         "file.open" => match s("path") {
             Some(path) => io::open_path(app, &path),
             None => io::open_dialog(app).map(|_| Value::Null),

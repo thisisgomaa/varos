@@ -145,45 +145,6 @@ pub(crate) fn shell_body(app: &mut VectorcraftApp, ui: &mut Ui) {
     body(app, ui, usize::from(app.ui.varos_shell.tools_columns.clamp(1, 3)), None);
 }
 
-/// Real tool contents for a generic panel host. Its host owns all moving, resizing and hiding.
-/// Tools stay vertical in one or two columns; a short host scrolls the entire strip.
-pub(crate) fn panel_content(app: &mut VectorcraftApp, ui: &mut Ui) {
-    let bounds = ui.max_rect();
-    let t = Tokens::get(ui.ctx());
-    widgets::panel_scroll(
-        ui,
-        egui::ScrollArea::vertical().id_salt("hosted-tools-scroll").max_height(bounds.height()).auto_shrink([false, false]),
-        |ui| {
-            let cols = if ui.available_width() >= 2.0 * metrics::TOOL_BUTTON { 2 } else { 1 };
-            body_with_layout(app, ui, cols, None, true);
-            ui.vertical_centered(|ui| bottom_controls(app, ui, &t, cols));
-        },
-    );
-    // Body sublayouts must not replace the outer host used by the drawer and flyout anchors.
-    let pass = ui.ctx().cumulative_pass_nr();
-    ui.ctx().data_mut(|d| {
-        d.insert_temp(crate::edit_toolbar::toolbar_id(), bounds);
-        d.insert_temp(panel_host_id(), (pass, bounds));
-    });
-}
-
-fn panel_host_id() -> egui::Id {
-    egui::Id::unique("panel-system-tools-host")
-}
-
-fn current_panel_host(ctx: &egui::Context) -> Option<egui::Rect> {
-    ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(panel_host_id())).filter(|(pass, _)| *pass == ctx.cumulative_pass_nr()).map(|(_, rect)| rect)
-}
-
-/// Called once after the generic hosts. A hidden Tools tab has no live popup anchor.
-pub(crate) fn panel_popovers(app: &mut VectorcraftApp, ctx: &egui::Context, region: egui::Rect) {
-    if current_panel_host(ctx).is_none() {
-        app.ui.flyout = None;
-        app.ui.tools_drawer = false;
-    }
-    shell_popovers(app, ctx, region);
-}
-
 pub(crate) fn shell_popovers(app: &mut VectorcraftApp, ctx: &egui::Context, region: egui::Rect) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("shell-tools-region"), region));
     floating(app, ctx);
@@ -197,7 +158,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
     body_with_layout(app, ui, cols, floating, false);
 }
 
-fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egui::Pos2>, hosted: bool) {
+pub(crate) fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egui::Pos2>, hosted: bool) {
     let t = Tokens::get(ui.ctx());
     let all = slots(app);
     let bounds = ui.max_rect();
@@ -686,7 +647,7 @@ fn shell_wells(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens, cols: usize) {
 }
 
 /// Hosted Tools keeps three compact paint chips in one row. The legacy strip keeps its layout.
-fn shell_chips(app: &mut VectorcraftApp, ui: &mut Ui) {
+pub(crate) fn shell_chips(app: &mut VectorcraftApp, ui: &mut Ui) {
     let hosted = crate::varos::panel_system::enabled(app);
     let gap = if hosted { metrics::TOOL_PAINT_GAP } else { 4.0 };
     let chip = if hosted { ((ui.available_width() - 2.0 * gap) / 3.0).floor().clamp(1.0, metrics::TOOL_PAINT_HIT) } else { metrics::TOOL_BUTTON };
@@ -723,40 +684,6 @@ fn shell_chips(app: &mut VectorcraftApp, ui: &mut Ui) {
         app.run(cmd, json!({})).ok();
     }
     ui.add_space(6.0);
-}
-
-fn draw_modes() -> [(vectorcraft_engine::DrawMode, &'static str, &'static str, &'static str); 3] {
-    [
-        (vectorcraft_engine::DrawMode::Normal, "dc-draw-normal", "Draw Normal", "normal"),
-        (vectorcraft_engine::DrawMode::Behind, "dc-draw-behind", "Draw Behind", "behind"),
-        (vectorcraft_engine::DrawMode::Inside, "dc-draw-inside", "Draw Inside", "inside"),
-    ]
-}
-
-fn edit_toolbar_button(app: &mut VectorcraftApp, ui: &mut Ui) {
-    let shell = crate::varos::shell::enabled(app);
-    let edit = widgets::icon_button(ui, "ellipsis", "Edit Toolbar", app.ui.tools_drawer, if shell { 28.0 } else { 26.0 });
-    ui.data_mut(|d| d.insert_temp(crate::edit_toolbar::button_id(), edit.rect));
-    if shell {
-        egui::Popup::menu(&edit).show(|ui| {
-            // Generic panel hosts derive columns from their width; they have no legacy strip setting.
-            if !crate::varos::panel_system::enabled(app) {
-                for (n, label) in [(1, tl!("1 column")), (2, tl!("2 columns")), (3, tl!("3 columns"))] {
-                    if ui.selectable_label(app.ui.varos_shell.tools_columns == n, label).clicked() {
-                        app.ui.varos_shell.tools_columns = n;
-                        ui.close();
-                    }
-                }
-            }
-            if ui.button(tl!("Edit Toolbar")).clicked() {
-                app.run("window.editToolbar", json!({})).ok();
-                crate::edit_toolbar::opened_from_popup(ui.ctx());
-                ui.close();
-            }
-        });
-    } else if edit.clicked() {
-        app.run("window.editToolbar", json!({})).ok();
-    }
 }
 
 /// The Fill/Stroke proxy, Color/Gradient/None, the drawing modes, screen mode and Edit Toolbar, as
@@ -801,7 +728,11 @@ pub(crate) fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens,
         });
         ui.add_space(6.0);
     }
-    let modes = draw_modes();
+    let modes = [
+        (vectorcraft_engine::DrawMode::Normal, "dc-draw-normal", "Draw Normal", "normal"),
+        (vectorcraft_engine::DrawMode::Behind, "dc-draw-behind", "Draw Behind", "behind"),
+        (vectorcraft_engine::DrawMode::Inside, "dc-draw-inside", "Draw Inside", "inside"),
+    ];
     if two && show.draw_mode {
         // Side by side, each one a click away.
         ui.horizontal(|ui| {
@@ -829,7 +760,29 @@ pub(crate) fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens,
             app.run("view.screenMode", json!({})).ok();
         }
         // Edit Toolbar: the All Tools drawer opens beside the toolbar, by this button.
-        edit_toolbar_button(app, ui);
+        let edit =
+            widgets::icon_button(ui, "ellipsis", "Edit Toolbar", app.ui.tools_drawer, if crate::varos::shell::enabled(app) { 28.0 } else { 26.0 });
+        ui.data_mut(|d| d.insert_temp(crate::edit_toolbar::button_id(), edit.rect));
+        if crate::varos::shell::enabled(app) {
+            egui::Popup::menu(&edit).show(|ui| {
+                // Varos: a panel-workspace host derives its columns from its width.
+                if !crate::varos::panel_system::enabled(app) {
+                    for (n, label) in [(1, tl!("1 column")), (2, tl!("2 columns")), (3, tl!("3 columns"))] {
+                        if ui.selectable_label(app.ui.varos_shell.tools_columns == n, label).clicked() {
+                            app.ui.varos_shell.tools_columns = n;
+                            ui.close();
+                        }
+                    }
+                }
+                if ui.button(tl!("Edit Toolbar")).clicked() {
+                    app.run("window.editToolbar", json!({})).ok();
+                    crate::edit_toolbar::opened_from_popup(ui.ctx());
+                    ui.close();
+                }
+            });
+        } else if edit.clicked() {
+            app.run("window.editToolbar", json!({})).ok();
+        }
     });
     let _ = t;
 }
@@ -1085,10 +1038,9 @@ fn flyout(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let active = app.session.tool_id();
     let mut input = FlyoutInput::default();
     let id = egui::Id::unique("tool-flyout");
-    let at = if let Some(host) = current_panel_host(ctx).filter(|_| crate::varos::panel_system::enabled(app)) {
-        let region = ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("shell-tools-region"))).unwrap_or_else(|| ctx.content_rect());
-        let size = ctx.memory(|m| m.area_rect(id)).map_or(vec2(240.0, tools.len() as f32 * PITCH + 2.0), |r| r.size());
-        panel_flyout_position(host, anchor, size, region)
+    // Varos: beside the Tools host of the panel workspace.
+    let at = if let Some(at) = crate::varos::panel_system::tools_host::flyout_at(app, ctx, id, anchor, tools.len() as f32 * PITCH + 2.0) {
+        at
     } else if shell {
         let edge = crate::varos::shell::hit_rects(ctx)
             .into_iter()
@@ -1151,17 +1103,6 @@ fn flyout(app: &mut VectorcraftApp, ctx: &egui::Context) {
         app.ui.flyout = None;
     }
     let _ = theme::semibold;
-}
-
-/// Prefer the side facing the workspace; keep the popup beside its live host after moves.
-fn panel_flyout_position(host: egui::Rect, anchor: egui::Rect, size: egui::Vec2, region: egui::Rect) -> egui::Pos2 {
-    let gap = 6.0;
-    let right = host.right() + gap;
-    let preferred = pos2(if right + size.x <= region.right() { right } else { host.left() - size.x - gap }, anchor.top());
-    pos2(
-        preferred.x.clamp(region.left(), (region.right() - size.x).max(region.left())),
-        preferred.y.clamp(region.top(), (region.bottom() - size.y).max(region.top())),
-    )
 }
 
 /// The flyouts torn off the toolbar, each floating where its bar was dragged; its × puts it back.
@@ -1252,51 +1193,6 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::widgets::accessibility_tests::{role_and_state, tree};
-
-    #[test]
-    fn hosted_paint_chips_are_small_adjacent_squares_at_both_toolbar_widths() {
-        for (width, size) in [(44.0, 13.0), (80.0, metrics::TOOL_PAINT_HIT)] {
-            let mut app = VectorcraftApp::new(Session::new(), Default::default());
-            app.ui.varos_shell.enabled = true;
-            app.ui.varos_panel_review = Some(Default::default());
-            let ctx = egui::Context::default();
-            let rect = egui::Rect::from_min_size(pos2(20.0, 20.0), vec2(width, 100.0));
-            for _ in 0..3 {
-                let mut out = ctx.run_ui(Default::default(), |ui| {
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
-                        ui.set_width(width);
-                        shell_chips(&mut app, ui);
-                    });
-                });
-                out.textures_delta.clear();
-            }
-            let mut chips = widget_rects(&ctx, egui::Vec2::splat(size));
-            chips.sort_by(|a, b| a.left().total_cmp(&b.left()));
-            assert_eq!(chips.len(), 3);
-            assert!(chips.iter().all(|chip| rect.contains_rect(*chip)));
-            for pair in chips.windows(2) {
-                assert_eq!(pair[0].top(), pair[1].top(), "the paint choices never stack");
-                assert!((pair[1].left() - pair[0].right() - metrics::TOOL_PAINT_GAP).abs() < 0.1);
-            }
-        }
-    }
-
-    #[test]
-    fn hosted_tools_flyout_opens_inward_at_the_right_and_bottom_edges() {
-        let region = egui::Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 800.0));
-        let size = vec2(240.0, 300.0);
-        let right_host = egui::Rect::from_min_size(pos2(920.0, 100.0), vec2(80.0, 600.0));
-        let anchor = egui::Rect::from_min_size(pos2(940.0, 650.0), vec2(28.0, 28.0));
-        let popup = egui::Rect::from_min_size(panel_flyout_position(right_host, anchor, size, region), size);
-        assert!(region.contains_rect(popup));
-        assert!(popup.right() < right_host.left());
-        let bottom_host = egui::Rect::from_min_size(pos2(0.0, 700.0), vec2(80.0, 100.0));
-        let anchor = egui::Rect::from_min_size(pos2(20.0, 750.0), vec2(28.0, 28.0));
-        let popup = egui::Rect::from_min_size(panel_flyout_position(bottom_host, anchor, size, region), size);
-        assert!(region.contains_rect(popup));
-        assert!(popup.left() > bottom_host.right());
-        assert!(popup.top() < anchor.top(), "a low tool's flyout stays inside the workspace");
-    }
 
     /// One headless frame of the toolbar; returns the tool buttons' rects, top to bottom.
     fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, time: f64, events: Vec<Event>) -> Vec<egui::Rect> {

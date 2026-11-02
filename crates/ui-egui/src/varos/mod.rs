@@ -30,6 +30,7 @@ pub(crate) mod panel_stack;
 pub(crate) mod panel_system;
 // Varos: the new shell (stage 1): boxes, Board, dividers, tabs, behind Preferences › Varos shell (new).
 pub(crate) mod shell;
+pub(crate) mod tab_reorder;
 pub(crate) mod tab_scroll;
 #[cfg(test)]
 mod tests_agents;

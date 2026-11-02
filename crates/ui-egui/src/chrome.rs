@@ -272,7 +272,7 @@ fn snapping_menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     egui::Popup::menu(&resp).show(|ui| snapping_options(app, ui));
 }
 
-fn snapping_options(app: &mut VectorcraftApp, ui: &mut Ui) {
+pub(crate) fn snapping_options(app: &mut VectorcraftApp, ui: &mut Ui) {
     for (label, cmd, on) in [
         (tl!("Smart Guides"), "view.smartGuides", app.ui.view.smart_guides),
         (tl!("Snap to Point"), "view.snapToPoint", app.ui.view.snap_to_point),
@@ -294,79 +294,6 @@ fn snapping_options(app: &mut VectorcraftApp, ui: &mut Ui) {
             crate::menus::invoke(app, "prefs.set", json!({"key": key, "value": !on}));
         }
     }
-}
-
-/// Four fixed-width controls remain reachable while the contextual fields scroll.
-pub(crate) const CONTROL_QUICK_ACCESS_WIDTH: f32 = 112.0;
-
-pub(crate) fn control_quick_access(app: &mut VectorcraftApp, ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        if control_quick_button(ui, "grid", tl!("Snap to Grid"), app.ui.view.snap_to_grid).clicked() {
-            menus::invoke(app, "view.snapToGrid", json!({}));
-        }
-        let pixel = control_quick_button(ui, "pixel", tl!("Snap to Pixel"), app.ui.view.snap_to_pixel);
-        if pixel.clicked() {
-            menus::invoke(app, "view.snapToPixel", json!({}));
-        }
-        if app.ui.view.snap_to_grid {
-            pixel.on_hover_text(tl!("Snap to Grid takes priority over Snap to Pixel"));
-        }
-        // This opens options; it is deliberately not an invented master snapping switch.
-        let snapping = control_quick_button(ui, "snapping", tl!("Snapping"), false);
-        egui::Popup::menu(&snapping).show(|ui| snapping_options(app, ui));
-        let menu = control_quick_button(ui, "menu", tl!("Control options"), false);
-        egui::Popup::menu(&menu).show(|ui| {
-            snapping_options(app, ui);
-            ui.separator();
-            if ui.button(tl!("Preferences")).clicked() {
-                menus::invoke(app, "edit.preferences", json!({}));
-                ui.close();
-            }
-        });
-    });
-}
-
-fn control_quick_button(ui: &mut Ui, key: &str, label: &str, selected: bool) -> egui::Response {
-    let t = Tokens::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
-    let response = ui.interact(rect, ui.make_persistent_id(("control-quick", key)), Sense::click());
-    if selected || response.hovered() {
-        ui.painter().rect_filled(rect.shrink(2.0), 3.0, if selected { t.tool_active } else { t.hover });
-    }
-    let color = if selected { t.text_strong } else { t.icon };
-    let glyph = rect.shrink(6.0);
-    match key {
-        "grid" => icons::paint(ui, "layout-grid", glyph, color),
-        "menu" => icons::paint(ui, "menu", glyph, color),
-        "pixel" => {
-            // Original pixel-grid symbol: a selected pixel surrounded by eight cells.
-            for row in 0..3 {
-                for col in 0..3 {
-                    let cell = egui::Rect::from_min_size(glyph.min + vec2(1.0 + col as f32 * 5.0, 1.0 + row as f32 * 5.0), vec2(3.0, 3.0));
-                    if row == 1 && col == 1 {
-                        ui.painter().rect_filled(cell, 0.0, color);
-                    } else {
-                        ui.painter().rect_stroke(cell, 0.0, Stroke::new(0.8, color), egui::StrokeKind::Inside);
-                    }
-                }
-            }
-        }
-        "snapping" => {
-            // Original U-shaped magnet with a small disclosure arrow, drawn in theme tint.
-            let at = |x, y| glyph.min + vec2(x, y);
-            ui.painter().add(egui::Shape::line(
-                vec![at(1.5, 2.0), at(1.5, 10.0), at(3.0, 13.0), at(5.5, 14.0), at(8.0, 13.0), at(9.5, 10.0), at(9.5, 2.0)],
-                Stroke::new(2.0, color),
-            ));
-            ui.painter().line_segment([at(0.0, 5.0), at(3.0, 5.0)], Stroke::new(1.0, t.panel));
-            ui.painter().line_segment([at(8.0, 5.0), at(11.0, 5.0)], Stroke::new(1.0, t.panel));
-            ui.painter().add(egui::Shape::line(vec![at(12.0, 7.0), at(14.0, 9.0), at(16.0, 7.0)], Stroke::new(1.0, color)));
-        }
-        _ => {}
-    }
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, label));
-    response.on_hover_text(label)
 }
 
 /// The Control bar's isolation button. In isolation mode it is Exit Isolation Mode, except while a
@@ -426,7 +353,7 @@ fn tab_title(d: &vectorcraft_engine::DocState, zoom: f64, outline: bool, display
 
 /// Whether a document tab's × comes before its title (macOS) rather than after it (Windows,
 /// Linux and the web).
-const CLOSE_BEFORE_TITLE: bool = cfg!(target_os = "macos");
+pub(crate) const CLOSE_BEFORE_TITLE: bool = cfg!(target_os = "macos"); // Varos: shared with varos::tab_reorder
 
 /// The first of tabs `widths` wide that the strip shows in `room`: the first one, or a later one so
 /// that the `active` tab fits.
@@ -496,7 +423,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
     }
     let reorder_strip = egui::Rect::from_min_max(strip.min, egui::pos2(strip.left() + room, strip.bottom()));
-    step += crate::document_drag::tab_scroll_step(app, ui.ctx(), overflow.then_some(reorder_strip));
+    step += crate::varos::tab_reorder::tab_scroll_step(app, ui.ctx(), overflow.then_some(reorder_strip));
     let first = if overflow { crate::varos::tab_scroll::first(ui, &widths, active, app.session.active().map(|s| s.uid), room, step) } else { 0 };
     let mut x = strip.left();
     let mut activate = None;
@@ -523,7 +450,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         let xr = egui::Rect::from_center_size(egui::pos2(x_center, r.center().y), vec2(12.0, 12.0));
         let xresp = ui.interact(xr.expand(3.0), ui.scope_id().with(("tabx", uid)), Sense::click());
         hovering_art |= crate::document_drag::hover_tab(app, &resp, i, xr.expand(3.0));
-        crate::document_drag::begin_tab_reorder(app, &resp, uid, xr.expand(3.0));
+        crate::varos::tab_reorder::begin_tab_reorder(app, &resp, uid, xr.expand(3.0));
         if xresp.clicked() {
             close = Some(i);
         } else if resp.clicked() {
@@ -532,29 +459,8 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         responses.push((uid, i, resp.hovered(), xresp.hovered()));
         x += w;
     }
-    let preview = crate::document_drag::tab_preview(app, ui.ctx(), reorder_strip, &drawn_tabs);
-    for (uid, index, hovered, close_hovered) in responses {
-        if preview.dragged.is_some_and(|(dragged, _)| dragged == uid) {
-            continue;
-        }
-        if let Some((_, rect)) = preview.positions.iter().find(|(candidate, _)| *candidate == uid)
-            && let Some((_, galley)) = tabs.get(index)
-        {
-            let mut paint_ui = ui.new_child(egui::UiBuilder::new().max_rect(*rect));
-            paint_ui.set_clip_rect(reorder_strip.intersect(ui.clip_rect()));
-            paint_document_tab(&paint_ui, *rect, galley, shell, Some(index) == active, hovered && preview.dragged.is_none(), close_hovered);
-        }
-    }
-    if let Some((uid, rect)) = preview.dragged
-        && let Some(index) = app.session.documents().iter().position(|document| document.uid == uid)
-        && let Some((_, galley)) = tabs.get(index)
-    {
-        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("document-tab-drag-paint"));
-        let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
-        paint_ui.set_clip_rect(reorder_strip.intersect(ui.clip_rect()));
-        paint_ui.painter().rect_filled(rect, if shell { 6.0 } else { 0.0 }, t.app_bar);
-        paint_document_tab(&paint_ui, rect, galley, shell, Some(index) == active, false, false);
-    }
+    // Varos: tabs paint at their reorder preview positions; the held tab follows the pointer.
+    crate::varos::tab_reorder::paint_tabs(app, ui, reorder_strip, &drawn_tabs, &responses, &tabs, active, shell);
     if shell {
         let r = egui::Rect::from_min_size(egui::pos2(x.min(strip.right() - 28.0), strip.top()), vec2(28.0, 28.0));
         let response = ui.interact(r, ui.scope_id().with("new-document"), Sense::click());
@@ -608,35 +514,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
             crate::panels::artboards::select(app, selected);
         }
     }
-    crate::document_drag::finish_tab_reorder(app, ui, reorder_strip, &drawn_tabs);
-}
-
-fn paint_document_tab(
-    ui: &Ui,
-    rect: egui::Rect,
-    galley: &std::sync::Arc<egui::Galley>,
-    shell: bool,
-    active: bool,
-    hovered: bool,
-    close_hovered: bool,
-) {
-    let t = Tokens::get(ui.ctx());
-    if active {
-        ui.painter().rect_filled(rect, if shell { 6.0 } else { 0.0 }, if shell { t.hover } else { t.panel });
-    } else if hovered {
-        ui.painter().rect_filled(rect, 0.0, t.hover.gamma_multiply(0.4));
-    }
-    if !shell {
-        ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.5, t.border));
-    }
-    let (x, title_left) = if CLOSE_BEFORE_TITLE { (rect.left() + 16.0, rect.left() + 32.0) } else { (rect.right() - 16.0, rect.left() + 14.0) };
-    let close = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), vec2(12.0, 12.0));
-    icons::paint(ui, "x", close, if close_hovered { t.text_strong } else { t.text });
-    ui.painter().with_clip_rect(rect.intersect(ui.clip_rect())).galley(
-        egui::pos2(title_left, rect.center().y - galley.size().y / 2.0),
-        galley.clone(),
-        t.text,
-    );
+    crate::varos::tab_reorder::finish_tab_reorder(app, ui, reorder_strip, &drawn_tabs);
 }
 
 /// The isolation mode breadcrumb bar. It is drawn over the top of `area` (the canvas), after the
@@ -2888,26 +2766,13 @@ fn simple_app_bar_right(app: &mut VectorcraftApp, ui: &mut Ui) {
 }
 
 pub(crate) fn control_panel(app: &mut VectorcraftApp, ui: &mut Ui) {
-    if crate::varos::panel_system::enabled(app) {
-        // The host owns horizontal scrolling. Keep a finite viewport width for the
-        // context-sensitive inline fields, while allowing this one row to overflow.
-        let viewport_width = ui.clip_rect().width().max(1.0);
-        ui.horizontal(|ui| {
-            ui.set_max_width(viewport_width);
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.spacing_mut().button_padding = vec2(6.0, 3.0);
-            control_contents(app, ui);
-        });
-    } else {
-        ui.horizontal_wrapped(|ui| {
-            control_contents(app, ui);
-        });
-    }
+    ui.horizontal_wrapped(|ui| {
+        control_contents(app, ui);
+    });
 }
-fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
+pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let hosted = crate::varos::panel_system::enabled(app);
+    let hosted = crate::varos::panel_system::control_bar::hosted(app); // Varos: one scrolling row, compact fields
     // Gripper
     if !crate::varos::shell::enabled(app) {
         let (g, _) = ui.allocate_exact_size(vec2(6.0, 20.0), Sense::hover());
@@ -2920,6 +2785,7 @@ fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     }
     // The Artboard tool's controls fill the narrowest window, so they keep it to themselves there.
+    // Varos: the hosted row keeps snapping in its pinned quick-access buttons.
     if !hosted && (app.session.tool_id() != "artboard" || ui.available_width() >= ARTBOARD_SNAPPING_WIDTH) {
         snapping_menu(app, ui);
     }
@@ -2970,7 +2836,7 @@ fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
         // The link opens the Stroke panel as a popover under it; then the weight spinner
         // (with presets) and the width profile.
         stroke_panel::link(app, ui, tl!("Stroke:"));
-        stroke_panel::weight_field(app, ui, "cb-stroke", weight, if hosted { 72.0 } else { 100.0 });
+        stroke_panel::weight_field(app, ui, "cb-stroke", weight, if hosted { 72.0 } else { 100.0 }); // Varos
         if let Some(id) = stroke_panel::profile_dropdown(app, ui, shown_stroke.as_ref().and_then(|s| s.profile.as_ref())) {
             app.run("stroke.set", json!({"profile": id})).ok();
         }
@@ -2980,7 +2846,7 @@ fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     if control_link(app, ui, tl!("Opacity:"), t.text).clicked() {
         app.ui.open_panel = Some("transparency".into());
     }
-    if let Some(o) = widgets::plain_field(ui, "cb-opacity", opacity as f64 * 100.0, "%", 0, if hosted { 50.0 } else { 56.0 })
+    if let Some(o) = widgets::plain_field(ui, "cb-opacity", opacity as f64 * 100.0, "%", 0, if hosted { 50.0 } else { 56.0 }) // Varos
         && !sel.is_empty()
     {
         app.run("transparency.set", json!({"opacity": o.clamp(0.0, 100.0)})).ok();
@@ -3019,6 +2885,7 @@ fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Hosted, the row scrolls horizontally: the fields always exist and the overflow reaches them.
     if let Some(b) = app.selection_box()
         && (hosted || ui.available_width() >= INLINE_TRANSFORM_WIDTH)
+    // Varos
     {
         let c = b.center();
         let origin = app.ruler_origin();
@@ -3034,9 +2901,9 @@ fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
             widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
             let (id, shown) = (("cb", k), Some(v - offset));
             let set = if matches!(k, "width" | "height") {
-                widgets::size_field(ui, id, shown, units, if hosted { 64.0 } else { 80.0 })
+                widgets::size_field(ui, id, shown, units, if hosted { 64.0 } else { 80.0 }) // Varos
             } else {
-                widgets::num_field(ui, id, shown, units, if hosted { 64.0 } else { 80.0 })
+                widgets::num_field(ui, id, shown, units, if hosted { 64.0 } else { 80.0 }) // Varos
             };
             if let Some(nv) = set {
                 app.run("object.setBounds", json!({k: nv + offset, "reference": 4, "proportional": link, "copy": copy})).ok();
@@ -3045,6 +2912,7 @@ fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     // Varos: shared Make/Release; preserve upstream fields on narrow control bars.
     if hosted || ui.available_width() >= 164.0 {
+        // Varos
         crate::varos::clipping::button(app, ui);
     }
 }
@@ -3054,79 +2922,5 @@ pub(crate) fn control_link(app: &VectorcraftApp, ui: &mut Ui, label: &str, color
         ui.add(egui::Label::new(egui::RichText::new(label).size(11.0).color(color)).sense(Sense::click()))
     } else {
         ui.link(egui::RichText::new(label).size(12.0).color(color).underline())
-    }
-}
-
-#[cfg(test)]
-mod control_quick_access_tests {
-    use super::*;
-
-    fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<(String, egui::Rect)> {
-        fn labels(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
-            match shape {
-                egui::Shape::Text(text) => out.push((text.galley.text().to_owned(), egui::Rect::from_min_size(text.pos, text.galley.size()))),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| labels(shape, out)),
-                _ => {}
-            }
-        }
-        let mut out = ctx.run_ui(
-            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(640.0, 600.0))), events, ..Default::default() },
-            |ui| control_quick_access(app, ui),
-        );
-        let mut text = vec![];
-        for shape in &out.shapes {
-            labels(&shape.shape, &mut text);
-        }
-        out.textures_delta.clear();
-        text
-    }
-
-    fn click(app: &mut VectorcraftApp, ctx: &egui::Context, pos: egui::Pos2) {
-        frame(app, ctx, vec![egui::Event::PointerMoved(pos)]);
-        for pressed in [true, false] {
-            frame(app, ctx, vec![egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }]);
-        }
-    }
-
-    #[test]
-    fn compact_control_quick_access_toggles_real_flags_and_exposes_glyph_options() {
-        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
-        app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
-        app.ui.view.snap_to_grid = false;
-        app.ui.view.snap_to_pixel = false;
-        app.ui.view.snap_to_glyph = false;
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        frame(&mut app, &ctx, vec![]);
-        frame(&mut app, &ctx, vec![]);
-        let mut buttons: Vec<egui::Rect> = ctx.viewport(|vp| {
-            vp.prev_pass
-                .widgets
-                .layers()
-                .flat_map(|(_, widgets)| widgets.iter())
-                .filter(|w| w.rect.size() == vec2(28.0, 28.0))
-                .map(|w| w.rect)
-                .collect()
-        });
-        buttons.sort_by(|a, b| a.left().total_cmp(&b.left()));
-        buttons.dedup();
-        assert_eq!(buttons.len(), 4);
-        assert_eq!(buttons[3].right() - buttons[0].left(), CONTROL_QUICK_ACCESS_WIDTH);
-        click(&mut app, &ctx, buttons[0].center());
-        assert!(app.ui.view.snap_to_grid);
-        click(&mut app, &ctx, buttons[1].center());
-        assert!(app.ui.view.snap_to_pixel);
-        click(&mut app, &ctx, buttons[0].center());
-        assert!(!app.ui.view.snap_to_grid);
-        click(&mut app, &ctx, buttons[2].center());
-        assert!(egui::Popup::is_any_open(&ctx));
-        frame(&mut app, &ctx, vec![]);
-        let labels = frame(&mut app, &ctx, vec![]);
-        for expected in ["Smart Guides", "Snap to Point", "Snap to Glyph", "Alignment Guides", "Snap to Tangent", "Snap to Perpendicular"] {
-            assert!(labels.iter().any(|(label, _)| label == expected), "missing {expected}: {labels:?}");
-        }
-        let glyph = labels.iter().find(|(label, _)| label == "Snap to Glyph").unwrap().1;
-        click(&mut app, &ctx, glyph.center());
-        assert!(app.ui.view.snap_to_glyph);
     }
 }

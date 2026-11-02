@@ -4,6 +4,12 @@ use super::metrics;
 use crate::VectorcraftApp;
 use egui::{Align, Id, Layout, Rect, Ui, UiBuilder, UiStackInfo};
 
+/// The panel workspace shows the Properties sections in each context's canonical order, without
+/// section grips; the legacy shell keeps the user's saved custom order (still saved here).
+pub(crate) fn fixed_properties_order(app: &VectorcraftApp) -> bool {
+    super::enabled(app)
+}
+
 /// Draw special panel content inside the host's body rectangle. `false` uses the ordinary panel
 /// body path. Call before that fallback, not inside its additional scrolling wrapper.
 pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, panel: &str, rect: Rect) -> bool {
@@ -28,7 +34,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, panel: &str, rect: Rec
             style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(metrics::FONT));
             style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(11.0, egui::FontFamily::Name("ui-medium".into())));
             match kind {
-                "tools" => crate::toolbar::panel_content(app, ui),
+                "tools" => super::tools_host::content(app, ui),
                 "control" => {
                     let height = egui::Frame::NONE
                         .inner_margin(egui::Margin::symmetric(4, 3))
@@ -36,7 +42,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, panel: &str, rect: Rec
                             // The quick-access buttons stay pinned at the right while the host
                             // leaves the scrolling row a usable width; a narrower host scrolls
                             // them with the row, so nothing paints past the host.
-                            let reserve = crate::chrome::CONTROL_QUICK_ACCESS_WIDTH + 8.0;
+                            let reserve = super::control_bar::QUICK_ACCESS_WIDTH + 8.0;
                             let pinned = ui.available_width() >= reserve + MIN_CONTROL_ROW;
                             let width = if pinned { ui.available_width() - reserve } else { ui.available_width() }.max(1.0);
                             ui.horizontal(|ui| {
@@ -48,10 +54,10 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, panel: &str, rect: Rec
                                         .auto_shrink([false, true])
                                         .show(ui, |ui| {
                                             ui.horizontal(|ui| {
-                                                crate::chrome::control_panel(app, ui);
+                                                super::control_bar::row(app, ui);
                                                 if !pinned {
                                                     ui.add_space(8.0);
-                                                    crate::chrome::control_quick_access(app, ui);
+                                                    super::control_bar::quick_access(app, ui);
                                                 }
                                             });
                                         })
@@ -60,7 +66,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, panel: &str, rect: Rec
                                 });
                                 if pinned {
                                     ui.add_space(8.0);
-                                    crate::chrome::control_quick_access(app, ui);
+                                    super::control_bar::quick_access(app, ui);
                                 }
                                 row.inner.max(28.0)
                             })
@@ -95,7 +101,7 @@ pub(crate) fn control_height(ctx: &egui::Context, panel: &str) -> Option<f32> {
 
 /// Popups must be drawn once after all hosts, using the current Tools body's anchor geometry.
 pub(crate) fn popovers(app: &mut VectorcraftApp, ctx: &egui::Context, workspace: Rect) {
-    crate::toolbar::panel_popovers(app, ctx, workspace);
+    super::tools_host::popovers(app, ctx, workspace);
 }
 
 #[cfg(test)]
