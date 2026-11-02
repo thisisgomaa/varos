@@ -30,6 +30,8 @@ pub(super) struct PanelSpec<'a> {
     pub required: bool,
     /// The body manages its own scrolling (lists, the Properties editor); others get a scroll area.
     pub scrolls_itself: bool,
+    /// A flyout sizes to the body's measured content instead of its remembered height.
+    pub fits_content: bool,
 }
 
 /// Varos sizes for the panels whose bodies need more than the standard 260 x 360 (min 240 x 180).
@@ -46,6 +48,9 @@ const SIZES: &[(&str, [f32; 2], [f32; 2])] = &[
 /// The pair the workspace was approved with; every layout keeps them.
 const REQUIRED: [&str; 2] = ["layers", "swatches"];
 
+/// Bodies whose flyout fits their measured content.
+const FITS_CONTENT: [&str; 1] = ["color"];
+
 /// Bodies that scroll themselves rather than inside the host's scroll area.
 const SCROLLS_ITSELF: [&str; 3] = ["layers", "properties", "libraries"];
 
@@ -58,6 +63,7 @@ const TOOLS: PanelSpec<'static> = PanelSpec {
     kind: PanelKind::Tools,
     required: false,
     scrolls_itself: false,
+    fits_content: false,
 };
 
 const CONTROL: PanelSpec<'static> = PanelSpec {
@@ -69,6 +75,7 @@ const CONTROL: PanelSpec<'static> = PanelSpec {
     kind: PanelKind::Control,
     required: false,
     scrolls_itself: false,
+    fits_content: false,
 };
 
 /// All fixed identities that have real bodies: the existing panel catalogue (the dock tabs, then
@@ -93,6 +100,7 @@ pub(super) static BUILTINS: std::sync::LazyLock<Vec<PanelSpec<'static>>> = std::
                 kind: PanelKind::Standard,
                 required: REQUIRED.contains(&id),
                 scrolls_itself: SCROLLS_ITSELF.contains(&id),
+                fits_content: FITS_CONTENT.contains(&id),
             }
         })
         .chain([TOOLS, CONTROL])

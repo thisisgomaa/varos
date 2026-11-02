@@ -1096,12 +1096,11 @@ fn render_flyout(
     let Some(g) = layout.group(group) else { return };
     let remembered = layout.expanded_group_size(group).unwrap_or([300.0, 380.0]);
     let width = remembered[0].max(240.0).min(region.width());
-    // The side Color panel fits its slider/spectrum contents, independently of
-    // both the toolbar's wheel preferences and an older remembered wheel size.
-    let preferred_height = if g.active == "color" {
-        crate::panels::color::content_height(ctx).unwrap_or(300.0) + paint::TITLE + paint::TABS + paint::FOOT
-    } else {
-        remembered[1].max(180.0)
+    // A body that fits its content (the side Color panel's sliders/spectrum) ignores an older
+    // remembered size; the others open at their remembered expanded height.
+    let preferred_height = match content::fitted_height(ctx, &g.active) {
+        Some(content) => content + paint::TITLE + paint::TABS + paint::FOOT,
+        None => remembered[1].max(180.0),
     };
     let height = preferred_height.min(region.height());
     let prefer_left = host.dock == Some(Edge::Right);

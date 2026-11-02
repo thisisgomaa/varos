@@ -4,6 +4,18 @@ use super::metrics;
 use crate::VectorcraftApp;
 use egui::{Align, Id, Layout, Rect, Ui, UiBuilder, UiStackInfo};
 
+/// The measured content height of a body whose descriptor `fits_content` (the side Color panel's
+/// sliders/spectrum, independent of the popup's wheel preferences); `None` for the others.
+pub(crate) fn fitted_height(ctx: &egui::Context, panel: &str) -> Option<f32> {
+    if !super::registry::get(panel).is_some_and(|spec| spec.fits_content) {
+        return None;
+    }
+    match crate::varos::shell::persist::instance_kind(panel) {
+        "color" => Some(crate::panels::color::content_height(ctx).unwrap_or(300.0)),
+        _ => None,
+    }
+}
+
 /// The panel workspace shows the Properties sections in each context's canonical order, without
 /// section grips; the legacy shell keeps the user's saved custom order (still saved here).
 pub(crate) fn fixed_properties_order(app: &VectorcraftApp) -> bool {
