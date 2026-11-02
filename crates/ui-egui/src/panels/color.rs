@@ -470,11 +470,24 @@ fn set_mode(app: &mut VectorcraftApp, tgt: &Target, mode: Mode) {
 /// none yet), whether the options show, and the mode the panel shows the color in (`tint` for a
 /// tint of a global or spot swatch).
 pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
+    let params = params(p)?;
+    Ok(apply_params(app, params))
+}
+
+/// Varos: [`command`]'s parameters (`mode`, `options`), checked before anything changes; shared
+/// with the Varos command that adds its own (`varos/color_panel.rs`), so both report the same
+/// first error.
+pub(crate) fn params(p: &Value) -> Result<(Option<Mode>, Option<bool>), String> {
     let mode = match p.get("mode") {
         None | Some(Value::Null) => None,
         Some(v) => Some(menu_mode(v).ok_or("`mode` must be grayscale, rgb, hsb, cmyk or websafe")?),
     };
     let options = crate::menus::opt_bool(p, "options")?;
+    Ok((mode, options))
+}
+
+/// Varos: [`command`] once [`params`] accepted its parameters; it cannot fail.
+pub(crate) fn apply_params(app: &mut VectorcraftApp, (mode, options): (Option<Mode>, Option<bool>)) -> Value {
     let (fill, stroke) = app.session.proxy_mixed();
     let mixed = if app.session.fill_active { fill } else { stroke };
     if let Some(m) = mode {
@@ -488,7 +501,7 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
         Some(_) => json!("tint"),
         None => json!(shown_mode(app, tgt.color().as_ref())),
     };
-    Ok(json!({"mode": app.ui.color_mode, "options": !app.ui.color_hide_options, "shown": shown}))
+    json!({"mode": app.ui.color_mode, "options": !app.ui.color_hide_options, "shown": shown})
 }
 
 /// Tint mode's rows: the swatch's chip and name, and the T slider and field. Returns a new tint
