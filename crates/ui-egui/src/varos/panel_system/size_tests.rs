@@ -3,6 +3,8 @@
 
 use super::*;
 
+const PANELS: [&str; 2] = ["layers", "swatches"];
+
 fn sized_layout() -> Layout {
     let mut layout = Layout::new_slice();
     for (panel, width, height) in [("layers", 280.0, 340.0), ("swatches", 420.0, 520.0)] {

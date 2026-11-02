@@ -41,9 +41,10 @@ pub struct State {
 }
 
 impl Default for State {
+    /// The production default: the Design workspace.
     fn default() -> Self {
         Self {
-            layout: Layout::new_slice(),
+            layout: Layout::new_workspace(),
             workspaces: Default::default(),
             hidden: None,
             compact_offsets: Default::default(),
@@ -750,10 +751,7 @@ fn render_host(
             }
             for (index, column) in geo.columns.iter().enumerate() {
                 let toggle = Rect::from_min_size(pos2(column.rect.right() - 19.0, title.top()), vec2(20.0, paint::TITLE));
-                let tools = geo.groups.iter().any(|g| {
-                    g.column == column.key
-                        && model::groups(&host.root).iter().any(|source| source.id == g.id && source.panels.iter().any(|p| p == "tools"))
-                });
+                let tools = model::column_has_tools(&host.root, column.key);
                 let narrow_tools = state.layout.tools_width().is_some_and(|w| w <= metrics::TOOLS_MIN_WIDTH + 0.01);
                 let action = commands::column_toggle(&state.layout, column.key, None);
                 let response = ui.interact(toggle, id.with(("column-mode", column.key)), Sense::click());
@@ -862,10 +860,7 @@ fn render_host(
             }
         }
         for column in &geo.columns {
-            let tools = geo.groups.iter().any(|g| {
-                g.column == column.key
-                    && model::groups(&host.root).iter().any(|source| source.id == g.id && source.panels.iter().any(|p| p == "tools"))
-            });
+            let tools = model::column_has_tools(&host.root, column.key);
             if control || (tools && geo.columns.len() == 1) {
                 continue;
             }
@@ -1019,13 +1014,9 @@ fn render_group(
             if crate::panels::panel_menu_items(app, ui, super::shell::persist::instance_kind(&group.active)) {
                 ui.separator();
             }
-            if group.active == "tools" {
-                let narrow = geo.rect.width() + model::HOST_CHROME[0] <= metrics::TOOLS_MIN_WIDTH + 0.01;
-                if ui.button(if narrow { "Two tool columns" } else { "One tool column" }).clicked() {
-                    actions.push(Action::SetToolsWidth { width: if narrow { metrics::TOOLS_MAX_WIDTH } else { metrics::TOOLS_MIN_WIDTH } });
-                    ui.close();
-                }
-            } else if ui.button("Collapse to icons").clicked() {
+            // Tools never reach this menu: special bars have no tabs and return above, and they
+            // never collapse, so they never open a flyout.
+            if ui.button("Collapse to icons").clicked() {
                 actions.push(Action::SetColumnMode { group: group.id, mode: Mode::Icons });
                 ui.close();
             }
@@ -1051,7 +1042,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, panel: &str, rect: Rect) {
             if content::show(app, ui, panel, rect) {
                 return;
             }
-            if matches!(panel, "layers" | "properties" | "libraries") || panel.starts_with("properties@") {
+            if registry::get(panel).is_some_and(|spec| spec.scrolls_itself) {
                 super::shell::boxes::panel_body(app, ui, panel, rect.width(), (rect.height() - 18.0).max(0.0));
             } else {
                 crate::widgets::panel_scroll(

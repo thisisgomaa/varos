@@ -168,7 +168,7 @@ fn execute(app: &mut VectorcraftApp, intent: Intent) -> Result<Value, String> {
         }
         Intent::Enable(true) => {
             app.ui.varos_shell.enabled = true;
-            app.ui.varos_panel_review.get_or_insert_with(|| State { layout: Layout::new_workspace(), ..Default::default() });
+            app.ui.varos_panel_review.get_or_insert_with(State::default);
             return Ok(json!({"enabled":true,"panels":registry::BUILTINS.iter().map(|p|p.id).collect::<Vec<_>>()}));
         }
         Intent::ToolsColumns { double } => {

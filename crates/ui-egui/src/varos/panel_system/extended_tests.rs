@@ -3,6 +3,8 @@
 
 use super::*;
 
+const PANELS: [&str; 2] = ["layers", "swatches"];
+
 fn apply(layout: &mut Layout, action: Action) {
     layout.apply(&action).unwrap();
     layout.validate().unwrap();

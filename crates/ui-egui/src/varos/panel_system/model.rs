@@ -5,7 +5,6 @@ use super::registry::{self, PanelKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PANELS: [&str; 2] = ["layers", "swatches"];
 const MAX_PANELS: usize = 128;
 /// Outer host chrome excluded from its layout tree: two side borders, title and foot.
 pub const HOST_CHROME: [f32; 2] = [2.0, 26.0];
@@ -251,6 +250,11 @@ fn contains_kind(node: &Node, kind: PanelKind) -> bool {
     groups(node).iter().any(|group| group.panels.iter().any(|panel| registry::get(panel).is_some_and(|spec| spec.kind == kind)))
 }
 
+/// The column of `root` holding `group` is the Tools column.
+pub fn column_has_tools(root: &Node, group: u64) -> bool {
+    column_node(root, group).is_some_and(has_tools)
+}
+
 /// Tools remain an expanded vertical group even when joined beside ordinary panels.
 pub fn has_tools(node: &Node) -> bool {
     contains_kind(node, PanelKind::Tools)
@@ -457,7 +461,7 @@ impl Layout {
 
     /// The column holding `group` is the Tools column (which switches width, never collapses).
     pub fn column_has_tools(&self, group: u64) -> bool {
-        self.source_host(&Source::Group(group)).and_then(|host| column_node(&host.root, group)).is_some_and(has_tools)
+        self.source_host(&Source::Group(group)).is_some_and(|host| column_has_tools(&host.root, group))
     }
 
     /// The compact mode the column holding `group` collapses to: a docked column at least
@@ -468,45 +472,34 @@ impl Layout {
         if host.dock.is_some() && width.is_some_and(|width| width >= super::metrics::NAMES_MIN_WIDTH) { Mode::Names } else { Mode::Icons }
     }
 
-    pub fn new_slice() -> Self {
-        Self {
-            version: 1,
-            next_id: 10,
-            hosts: vec![
-                Host {
-                    id: 1,
-                    position: [72.0, 72.0],
-                    expanded: [300.0, 380.0],
-                    compact_width: 44.0,
-                    mode: Mode::Full,
-                    hidden: false,
-                    dock: None,
-                    dock_content_height: None,
-                    root: Node::Group(Group { id: 2, panels: vec!["layers".into()], active: "layers".into(), presentation: None }),
-                },
-                Host {
-                    id: 3,
-                    position: [400.0, 72.0],
-                    expanded: [300.0, 380.0],
-                    compact_width: 44.0,
-                    mode: Mode::Full,
-                    hidden: false,
-                    dock: None,
-                    dock_content_height: None,
-                    root: Node::Group(Group { id: 4, panels: vec!["swatches".into()], active: "swatches".into(), presentation: None }),
-                },
-            ],
-        }
+    /// The two floating blocks every workspace starts from (Layers, then Swatches 328 points to
+    /// its right) at `origin`; every other panel has one hidden owner until opened.
+    fn starter(origin: [f32; 2]) -> Self {
+        let block = |id: u64, group: u64, panel: &str, x: f32| Host {
+            id,
+            position: [x, origin[1]],
+            expanded: [300.0, 380.0],
+            compact_width: super::metrics::COMPACT,
+            mode: Mode::Full,
+            hidden: false,
+            dock: None,
+            dock_content_height: None,
+            root: Node::Group(Group { id: group, panels: vec![panel.into()], active: panel.into(), presentation: None }),
+        };
+        Self { version: 1, next_id: 10, hosts: vec![block(1, 2, "layers", origin[0]), block(3, 4, "swatches", origin[0] + 328.0)] }
     }
 
-    /// Start from the accepted pair; all other contents have one hidden owner until opened.
+    /// The two-block layout the model and geometry tests start from.
+    #[cfg(test)]
+    pub fn new_slice() -> Self {
+        Self::starter([72.0, 72.0])
+    }
+
+    /// The Design workspace: the starter pair, every registered panel with a hidden owner, and
+    /// Tools and Control docked at the left and top.
     pub fn new_workspace() -> Self {
-        let mut layout = Self::new_slice();
-        for host in &mut layout.hosts {
-            host.position[0] += 40.0;
-            host.position[1] += 80.0;
-        }
-        for spec in super::registry::BUILTINS {
+        let mut layout = Self::starter([112.0, 152.0]);
+        for spec in super::registry::BUILTINS.iter() {
             // The built-in registry is bounded and valid; keep defaults if allocation is exhausted.
             if layout.ensure_panel(spec.id).is_err() {
                 break;
@@ -713,7 +706,7 @@ impl Layout {
                 return Err("Tools dock only at the sides; Control docks only at the top or bottom".into());
             }
         }
-        if !PANELS.iter().all(|p| panels.contains(*p)) || ids.last().is_some_and(|id| *id >= self.next_id) {
+        if !registry::required().all(|p| panels.contains(p)) || ids.last().is_some_and(|id| *id >= self.next_id) {
             return Err("Panel layout is missing an owner or valid identity counter".into());
         }
         Ok(())

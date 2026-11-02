@@ -24,7 +24,7 @@ impl Harness {
     fn new() -> Self {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
         app.run("ui.panelReview", json!({"enabled":true})).unwrap();
-        app.ui.varos_panel_review = Some(State::default());
+        app.ui.varos_panel_review = Some(State { layout: super::model::Layout::new_slice(), ..Default::default() });
         app.run("file.new", json!({"width":300,"height":300})).unwrap();
         let layers = app.ui.varos_panel_review.as_ref().unwrap().layout.owner("layers").unwrap().id;
         app.run("ui.panelReview.action", json!({"action":Action::Hide { host: layers }})).unwrap();

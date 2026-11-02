@@ -32,11 +32,6 @@ pub(super) fn control(ui: &Ui, rect: Rect, name: &str, hovered: bool) {
     if hovered {
         ui.painter().rect_filled(rect, CornerRadius::same(2), t.hover);
     }
-    let name = match name {
-        "chevrons-left" => "shell-chevrons-left",
-        "chevrons-right" => "shell-chevrons-right",
-        other => other,
-    };
     icons::paint(ui, name, Rect::from_center_size(rect.center(), Vec2::splat(CONTROL)), if hovered { t.text } else { t.text_dim });
 }
 
