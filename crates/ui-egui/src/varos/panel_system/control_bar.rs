@@ -1,13 +1,37 @@
 //! The Control bar as a panel-workspace host presents it: one horizontally scrolling row of the
 //! classic contents (`chrome::control_contents`) and four pinned quick-access buttons.
+use super::Hosting;
 use crate::theme::Tokens;
 use crate::{VectorcraftApp, icons};
 use egui::{Sense, Stroke, Ui, vec2};
 use serde_json::json;
 
-/// The classic Control contents switch to their compact, single-row form while hosted.
-pub(crate) fn hosted(app: &VectorcraftApp) -> bool {
-    super::enabled(app)
+/// How `chrome::control_contents` lays out the bar for its caller's [`Hosting`]: upstream's
+/// classic bar, or the hosted single scrolling row with compact fields.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ControlLayout {
+    /// The Snapping menu link shows in the row (hosted, the pinned quick-access buttons hold it).
+    pub snapping_link: bool,
+    pub stroke_weight_width: f32,
+    pub opacity_width: f32,
+    /// The width of each X/Y/W/H field.
+    pub transform_field_width: f32,
+    /// X/Y/W/H and Make/Release show at any width (hosted, the row scrolls to them); otherwise
+    /// only while the bar has room for them.
+    pub always_inline: bool,
+}
+
+impl ControlLayout {
+    pub(crate) fn of(hosting: Hosting) -> Self {
+        match hosting {
+            Hosting::Own => {
+                Self { snapping_link: true, stroke_weight_width: 100.0, opacity_width: 56.0, transform_field_width: 80.0, always_inline: false }
+            }
+            Hosting::Workspace => {
+                Self { snapping_link: false, stroke_weight_width: 72.0, opacity_width: 50.0, transform_field_width: 64.0, always_inline: true }
+            }
+        }
+    }
 }
 
 /// The hosted row. The host owns horizontal scrolling: keep a finite viewport width for the
@@ -19,7 +43,7 @@ pub(crate) fn row(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.spacing_mut().button_padding = vec2(6.0, 3.0);
-        crate::chrome::control_contents(app, ui);
+        crate::chrome::control_contents(app, ui, Hosting::Workspace);
     });
 }
 

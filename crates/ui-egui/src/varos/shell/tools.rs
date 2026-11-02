@@ -91,7 +91,7 @@ fn contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, hits: &mut 
         child.add_space(8.0);
     }
     let columns = usize::from(app.ui.varos_shell.tools_columns.clamp(1, 3));
-    crate::toolbar::bottom_controls(app, &mut child, &t, columns);
+    crate::toolbar::bottom_controls(app, &mut child, &t, columns, super::super::panel_system::Hosting::Own);
 }
 
 /// Grab the canvas-side edge after the board, so the board's drag does not take the 8 pt band.

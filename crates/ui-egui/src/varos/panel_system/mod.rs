@@ -4,6 +4,7 @@ mod commands;
 pub(crate) mod content;
 pub(crate) mod control_bar;
 mod geometry;
+mod hosting;
 pub(crate) mod metrics;
 pub mod model;
 mod paint;
@@ -13,6 +14,7 @@ pub(crate) mod tools_host;
 pub(crate) mod workspace;
 
 pub use commands::command;
+pub(crate) use hosting::Hosting;
 pub(crate) use presenter::Presenter;
 
 use crate::{VectorcraftApp, theme::Tokens};

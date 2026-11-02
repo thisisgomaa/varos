@@ -28,8 +28,6 @@ pub(crate) const DROP_LINE: f32 = 2.0;
 // One glyph and row scale for both tool and panel identities.
 pub(crate) const TOOL_BUTTON: f32 = 28.0;
 pub(crate) const TOOL_ICON: f32 = 16.0;
-pub(crate) const TOOL_GAP: f32 = 2.0;
-pub(crate) const TOOL_GROUP_GAP: f32 = 12.0;
 pub(crate) const TOOL_PAINT_PROXY: f32 = 60.0;
 pub(crate) const TOOL_PAINT_INSET: f32 = 6.0;
 pub(crate) const TOOL_PAINT_CHIP: f32 = 16.0;

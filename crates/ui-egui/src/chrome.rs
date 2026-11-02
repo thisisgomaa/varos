@@ -334,7 +334,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(10, 0)).stroke(Stroke::new(1.0, t.border)))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
-                control_contents(app, ui);
+                control_contents(app, ui, crate::varos::panel_system::Hosting::Own); // Varos
             });
         });
 }
@@ -422,41 +422,41 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         }
     }
-    let reorder_strip = egui::Rect::from_min_max(strip.min, egui::pos2(strip.left() + room, strip.bottom()));
-    step += crate::varos::tab_reorder::tab_scroll_step(app, ui.ctx(), overflow.then_some(reorder_strip));
+    let reorder_strip = egui::Rect::from_min_max(strip.min, egui::pos2(strip.left() + room, strip.bottom())); // Varos: tab reorder
+    step += crate::varos::tab_reorder::tab_scroll_step(app, ui.ctx(), overflow.then_some(reorder_strip)); // Varos: edge dwell scrolls
     let first = if overflow { crate::varos::tab_scroll::first(ui, &widths, active, app.session.active().map(|s| s.uid), room, step) } else { 0 };
     let mut x = strip.left();
     let mut activate = None;
     let mut close = None;
     let mut hovering_art = false;
-    let mut drawn_tabs = Vec::new();
-    let mut responses = Vec::new();
+    let mut drawn_tabs = Vec::new(); // Varos: tab reorder
+    let mut responses = Vec::new(); // Varos: tab reorder
     for (i, ((_, galley), w)) in tabs.iter().zip(&widths).enumerate().skip(first) {
-        let Some(uid) = app.session.documents().get(i).map(|document| document.uid) else { continue };
+        let Some(uid) = app.session.documents().get(i).map(|document| document.uid) else { continue }; // Varos: stable tab ids
         let w = w.min(room); // Varos: even a single oversized title remains reachable.
         if x + w > strip.left() + room && i != first {
             break;
         }
         let is_active = Some(i) == active;
         let r = egui::Rect::from_min_size(egui::pos2(x, strip.top()), vec2(w, strip.height() - 1.0));
-        let resp = ui.interact(r, ui.scope_id().with(("tab", uid)), Sense::click_and_drag());
-        drawn_tabs.push((uid, r));
+        let resp = ui.interact(r, ui.scope_id().with(("tab", uid)), Sense::click_and_drag()); // Varos: stable id, draggable
+        drawn_tabs.push((uid, r)); // Varos
         if shell {
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, is_active, galley.text()));
         }
         // The × where each platform puts a tab's: before the title on macOS, after it elsewhere
         // (#673).
-        let x_center = if CLOSE_BEFORE_TITLE { r.left() + 16.0 } else { r.right() - 16.0 };
+        let x_center = if CLOSE_BEFORE_TITLE { r.left() + 16.0 } else { r.right() - 16.0 }; // Varos: tab_reorder paints the tab
         let xr = egui::Rect::from_center_size(egui::pos2(x_center, r.center().y), vec2(12.0, 12.0));
-        let xresp = ui.interact(xr.expand(3.0), ui.scope_id().with(("tabx", uid)), Sense::click());
+        let xresp = ui.interact(xr.expand(3.0), ui.scope_id().with(("tabx", uid)), Sense::click()); // Varos: stable id
         hovering_art |= crate::document_drag::hover_tab(app, &resp, i, xr.expand(3.0));
-        crate::varos::tab_reorder::begin_tab_reorder(app, &resp, uid, xr.expand(3.0));
+        crate::varos::tab_reorder::begin_tab_reorder(app, &resp, uid, xr.expand(3.0)); // Varos
         if xresp.clicked() {
             close = Some(i);
         } else if resp.clicked() {
             activate = Some(i);
         }
-        responses.push((uid, i, resp.hovered(), xresp.hovered()));
+        responses.push((uid, i, resp.hovered(), xresp.hovered())); // Varos
         x += w;
     }
     // Varos: tabs paint at their reorder preview positions; the held tab follows the pointer.
@@ -514,7 +514,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
             crate::panels::artboards::select(app, selected);
         }
     }
-    crate::varos::tab_reorder::finish_tab_reorder(app, ui, reorder_strip, &drawn_tabs);
+    crate::varos::tab_reorder::finish_tab_reorder(app, ui, reorder_strip, &drawn_tabs); // Varos: drop or cancel
 }
 
 /// The isolation mode breadcrumb bar. It is drawn over the top of `area` (the canvas), after the
@@ -2767,12 +2767,12 @@ fn simple_app_bar_right(app: &mut VectorcraftApp, ui: &mut Ui) {
 
 pub(crate) fn control_panel(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.horizontal_wrapped(|ui| {
-        control_contents(app, ui);
+        control_contents(app, ui, crate::varos::panel_system::Hosting::Own); // Varos
     });
 }
-pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
+pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui, hosting: crate::varos::panel_system::Hosting) {
     let t = Tokens::get(ui.ctx());
-    let hosted = crate::varos::panel_system::control_bar::hosted(app); // Varos: one scrolling row, compact fields
+    let layout = crate::varos::panel_system::control_bar::ControlLayout::of(hosting); // Varos: classic bar or hosted row
     // Gripper
     if !crate::varos::shell::enabled(app) {
         let (g, _) = ui.allocate_exact_size(vec2(6.0, 20.0), Sense::hover());
@@ -2786,7 +2786,7 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     // The Artboard tool's controls fill the narrowest window, so they keep it to themselves there.
     // Varos: the hosted row keeps snapping in its pinned quick-access buttons.
-    if !hosted && (app.session.tool_id() != "artboard" || ui.available_width() >= ARTBOARD_SNAPPING_WIDTH) {
+    if layout.snapping_link && (app.session.tool_id() != "artboard" || ui.available_width() >= ARTBOARD_SNAPPING_WIDTH) {
         snapping_menu(app, ui);
     }
     let Some(st) = app.session.active() else { return };
@@ -2836,7 +2836,7 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
         // The link opens the Stroke panel as a popover under it; then the weight spinner
         // (with presets) and the width profile.
         stroke_panel::link(app, ui, tl!("Stroke:"));
-        stroke_panel::weight_field(app, ui, "cb-stroke", weight, if hosted { 72.0 } else { 100.0 }); // Varos
+        stroke_panel::weight_field(app, ui, "cb-stroke", weight, layout.stroke_weight_width); // Varos
         if let Some(id) = stroke_panel::profile_dropdown(app, ui, shown_stroke.as_ref().and_then(|s| s.profile.as_ref())) {
             app.run("stroke.set", json!({"profile": id})).ok();
         }
@@ -2846,7 +2846,7 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     if control_link(app, ui, tl!("Opacity:"), t.text).clicked() {
         app.ui.open_panel = Some("transparency".into());
     }
-    if let Some(o) = widgets::plain_field(ui, "cb-opacity", opacity as f64 * 100.0, "%", 0, if hosted { 50.0 } else { 56.0 }) // Varos
+    if let Some(o) = widgets::plain_field(ui, "cb-opacity", opacity as f64 * 100.0, "%", 0, layout.opacity_width) // Varos
         && !sel.is_empty()
     {
         app.run("transparency.set", json!({"opacity": o.clamp(0.0, 100.0)})).ok();
@@ -2879,13 +2879,11 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
     crate::panels::align::align_buttons(app, ui, 24.0);
     ui.separator();
     // The Transform link opens the whole Transform panel (reference point, rotate,
-    // shear, options) in a popover; X/Y/W/H follow inline (the classic bar: while it has room).
+    // shear, options) in a popover; X/Y/W/H follow inline while the bar has room.
     crate::panels::transform::link(app, ui);
     // The bounding box, rotated with rotated objects: its centre and its own sides.
-    // Hosted, the row scrolls horizontally: the fields always exist and the overflow reaches them.
     if let Some(b) = app.selection_box()
-        && (hosted || ui.available_width() >= INLINE_TRANSFORM_WIDTH)
-    // Varos
+        && (layout.always_inline || ui.available_width() >= INLINE_TRANSFORM_WIDTH)
     {
         let c = b.center();
         let origin = app.ruler_origin();
@@ -2901,9 +2899,9 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
             widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
             let (id, shown) = (("cb", k), Some(v - offset));
             let set = if matches!(k, "width" | "height") {
-                widgets::size_field(ui, id, shown, units, if hosted { 64.0 } else { 80.0 }) // Varos
+                widgets::size_field(ui, id, shown, units, layout.transform_field_width) // Varos
             } else {
-                widgets::num_field(ui, id, shown, units, if hosted { 64.0 } else { 80.0 }) // Varos
+                widgets::num_field(ui, id, shown, units, layout.transform_field_width) // Varos
             };
             if let Some(nv) = set {
                 app.run("object.setBounds", json!({k: nv + offset, "reference": 4, "proportional": link, "copy": copy})).ok();
@@ -2911,8 +2909,7 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
     }
     // Varos: shared Make/Release; preserve upstream fields on narrow control bars.
-    if hosted || ui.available_width() >= 164.0 {
-        // Varos
+    if layout.always_inline || ui.available_width() >= 164.0 {
         crate::varos::clipping::button(app, ui);
     }
 }

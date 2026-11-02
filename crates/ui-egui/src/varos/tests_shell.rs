@@ -3164,7 +3164,7 @@ fn simple_columns_menu_uses_pointer_and_no_fixed_control_row() {
     let mut h = egui_kittest::Harness::builder().with_context_setup(crate::theme::install_fonts).with_size(vec2(240.0, 160.0)).build_ui_state(
         |ui, app: &mut VectorcraftApp| {
             let t = crate::theme::Tokens::get(ui.ctx());
-            crate::toolbar::bottom_controls(app, ui, &t, 1);
+            crate::toolbar::bottom_controls(app, ui, &t, 1, crate::varos::panel_system::Hosting::Own);
         },
         app,
     );
