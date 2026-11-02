@@ -61,6 +61,29 @@ pub(crate) fn set_field(d: &mut Dialog, draft: &mut Option<PreferencesDraft>, ke
     d.fields.insert(key, value);
 }
 
+/// The open Preferences dialog as its widgets edit it. Reads go to the dialog; every edit goes
+/// through [`set_field`], so a widget's change is recorded as the user's edit the moment it
+/// happens (a widget reporting the value the field already holds is no edit).
+struct Edit<'a> {
+    dialog: &'a mut Dialog,
+    draft: &'a mut Option<PreferencesDraft>,
+}
+
+impl Edit<'_> {
+    fn set(&mut self, key: &str, value: Value) {
+        if self.dialog.fields.get(key) != Some(&value) {
+            set_field(self.dialog, self.draft, key.to_string(), value);
+        }
+    }
+}
+
+impl std::ops::Deref for Edit<'_> {
+    type Target = Dialog;
+    fn deref(&self) -> &Dialog {
+        self.dialog
+    }
+}
+
 /// A draft outlives no Preferences dialog (called after a dialog closes, and each frame).
 pub(crate) fn settle(app: &mut VectorcraftApp) {
     if !app.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences") {
@@ -303,14 +326,15 @@ pub(crate) fn reapply(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
-    let Some(mut d) = app.ui.dialog.clone() else { return };
-    let drawn = d.fields.clone();
+    // The dialog is edited in place (taken for the frame, put back below), never copied.
+    let Some(mut dialog) = app.ui.dialog.take() else { return };
+    let mut d = Edit { dialog: &mut dialog, draft: &mut app.ui.prefs_draft };
     let t = Tokens::get(ctx);
     let (mut ok, mut apply_now, mut cancel, mut reset) = (false, false, false, false);
     let mut open = true;
     let screen = ctx.content_rect();
     let body_height = (screen.height() - 160.0).clamp(80.0, 430.0);
-    let cat = d.str("__category");
+    let cat = d.str(CATEGORY);
     let cat = PREF_CATEGORIES.iter().find(|c| **c == cat).copied().unwrap_or(PREF_CATEGORIES[0]);
     egui::Window::new(tl!("Preferences"))
         .id(egui::Id::unique("dialog-preferences"))
@@ -340,7 +364,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                                     let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
                                     let b = egui::Button::selectable(sel, text).min_size(egui::vec2(184.0, 24.0));
                                     if ui.add(b).clicked() {
-                                        d.fields.insert("__category".into(), json!(c));
+                                        d.set(CATEGORY, json!(c));
                                     }
                                 }
                             });
@@ -384,28 +408,21 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     ui.add_space(16.0);
                     let i = PREF_CATEGORIES.iter().position(|c| *c == cat).unwrap_or(0);
                     if ui.add_enabled(i + 1 < PREF_CATEGORIES.len(), egui::Button::new(tl!("Next"))).clicked() {
-                        d.fields.insert("__category".into(), json!(PREF_CATEGORIES[i + 1]));
+                        d.set(CATEGORY, json!(PREF_CATEGORIES[i + 1]));
                     }
                     if ui.add_enabled(i > 0, egui::Button::new(tl!("Previous"))).clicked() {
-                        d.fields.insert("__category".into(), json!(PREF_CATEGORIES[i - 1]));
+                        d.set(CATEGORY, json!(PREF_CATEGORIES[i - 1]));
                     }
                 });
             });
         });
     if reset {
+        // Reset is the user's edit of every preference, even one already at its default.
         for (k, v) in Prefs::default().to_json().as_object().cloned().unwrap_or_default() {
-            set_field(&mut d, &mut app.ui.prefs_draft, k, v);
+            set_field(d.dialog, d.draft, k, v);
         }
     }
-    // Every field a widget changed this frame counts as the user's edit until the next Apply.
-    if let Some(draft) = app.ui.prefs_draft.as_mut() {
-        for (key, value) in &d.fields {
-            if drawn.get(key) != Some(value) {
-                draft.touch(key);
-            }
-        }
-    }
-    app.ui.dialog = Some(d);
+    app.ui.dialog = Some(dialog);
     if cancel || !open {
         crate::dialogs::cancel(app);
     } else if ok {
@@ -417,7 +434,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     }
 }
 
-fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
+fn category_fields(ui: &mut egui::Ui, d: &mut Edit, cat: &str) {
     let t = Tokens::get(ui.ctx());
     let mut section = "";
     let mut first = true;
@@ -478,7 +495,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                         widgets::range_field(ui, sp.key, x, min..=max, &format!(" {unit}"), 3, 110.0)
                     };
                     if let Some(x) = new {
-                        d.fields.insert(sp.key.into(), json!(x));
+                        d.set(sp.key, json!(x));
                     }
                 });
             }
@@ -488,7 +505,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                 let x = d.f64(sp.key, min);
                 labeled(ui, sp.label, |ui| {
                     if let Some(x) = widgets::num_field(ui, sp.key, Some(x), unit, 110.0) {
-                        d.fields.insert(sp.key.into(), json!(x.clamp(min, max)));
+                        d.set(sp.key, json!(x.clamp(min, max)));
                     }
                 });
             }
@@ -501,7 +518,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                         widgets::range_field(ui, sp.key, x as f64, min as f64..=max as f64, "", 0, 110.0).map(|x| x as i64)
                     };
                     if let Some(x) = new {
-                        d.fields.insert(sp.key.into(), json!(x));
+                        d.set(sp.key, json!(x));
                     }
                 });
             }
@@ -533,7 +550,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                     let c = vectorcraft_color::Color::from_hex(hex).map(|c| c.to_rgba8(1.0)).unwrap_or([0, 0, 0, 255]);
                     let mut rgb = [c[0], c[1], c[2]];
                     if ui.color_edit_button_srgb(&mut rgb).changed() {
-                        d.fields.insert(sp.key.into(), json!(format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])));
+                        d.set(sp.key, json!(format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])));
                     }
                     ui.label(egui::RichText::new(hex).color(t.text_dim).size(11.0));
                 });
@@ -549,7 +566,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                     if let Some(i) = widgets::dropdown(ui, sp.key, cur_label, &labels, 260.0)
                         && let Some(code) = codes.get(i)
                     {
-                        d.fields.insert(sp.key.into(), json!(code));
+                        d.set(sp.key, json!(code));
                     }
                 });
             }
@@ -557,7 +574,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                 labeled(ui, sp.label, |ui| {
                     let mut s = v.as_str().unwrap_or("").to_string();
                     if ui.add(egui::TextEdit::singleline(&mut s).desired_width(260.0)).changed() {
-                        d.fields.insert(sp.key.into(), json!(s));
+                        d.set(sp.key, json!(s));
                     }
                 });
             }
@@ -570,7 +587,7 @@ fn picas_in_use(d: &Dialog) -> bool {
     ["unitsGeneral", "unitsStroke", "unitsType", "unitsAsianType"].iter().any(|k| d.str(k) == vectorcraft_doc::Unit::Picas.key())
 }
 
-fn choice_row(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, opts: &[(&str, &str)], v: &Value) {
+fn choice_row(ui: &mut egui::Ui, d: &mut Edit, key: &str, label: &str, opts: &[(&str, &str)], v: &Value) {
     labeled(ui, label, |ui| {
         let cur = v.as_str().unwrap_or("");
         let cur_label = opts.iter().find(|o| o.0 == cur).map(|o| o.1).unwrap_or(cur);
@@ -578,16 +595,16 @@ fn choice_row(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, opts: &
         if let Some(i) = widgets::dropdown(ui, key, cur_label, &labels, 260.0)
             && let Some(o) = opts.get(i)
         {
-            d.fields.insert(key.into(), json!(o.0));
+            d.set(key, json!(o.0));
         }
     });
 }
 
-fn bool_row(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
+fn bool_row(ui: &mut egui::Ui, d: &mut Edit, key: &str, label: &str) {
     // The app's outlined checkbox (it translates `label`): egui's own has no border at rest.
     let on = d.bool(key);
     if widgets::check(ui, label, on, ui.is_enabled()) {
-        d.fields.insert(key.into(), json!(!on));
+        d.set(key, json!(!on));
     }
 }
 
@@ -624,6 +641,49 @@ mod tests {
         assert!(a.run("view.snapping", json!({})).is_err());
     }
 
+    /// A widget's edit is recorded through the draft setter the moment it happens: a click on a
+    /// checkbox marks it touched (so Apply sends it even back at its opening value); a widget
+    /// reporting the value the field already holds, and category navigation, are no edits.
+    #[test]
+    fn preference_widgets_record_their_edits_through_the_draft_setter() {
+        let mut a = VectorcraftApp::new(Session::new(), Default::default());
+        open(&mut a, None);
+        let mut dialog = a.ui.dialog.take().unwrap();
+        let opening = dialog.bool("showToolTips");
+        let touched = |draft: &Option<PreferencesDraft>| draft.as_ref().unwrap().touched.iter().cloned().collect::<Vec<_>>();
+        let mut d = Edit { dialog: &mut dialog, draft: &mut a.ui.prefs_draft };
+        d.set("showToolTips", json!(opening));
+        d.set(CATEGORY, json!("Units"));
+        assert!(touched(d.draft).is_empty(), "no value changed, and navigation is not a setting");
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let frame = |d: &mut Edit, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 200.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| bool_row(ui, d, "showToolTips", "Show Tool Tips"));
+            out.textures_delta.clear();
+            out.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Rect(r) if r.stroke.width > 0.0 && r.rect.width() <= 24.0 && r.rect.height() <= 24.0 => Some(r.rect.center()),
+                _ => None,
+            })
+        };
+        let at = frame(&mut d, vec![]).unwrap();
+        let press = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        for _ in 0..2 {
+            frame(&mut d, vec![egui::Event::PointerMoved(at), press(true)]);
+            frame(&mut d, vec![press(false)]);
+        }
+        assert_eq!(d.bool("showToolTips"), opening, "clicked twice: back at the opening value");
+        assert_eq!(touched(d.draft), ["showToolTips"], "still the user's edit");
+        a.ui.dialog = Some(dialog);
+        a.session.prefs.show_tool_tips = !opening;
+        apply(&mut a).unwrap();
+        assert_eq!(a.session.prefs.show_tool_tips, opening, "Apply sends the touched field over a change made meanwhile");
+    }
+
     /// A resting checkbox must have a visible outline in both states and every brightness.
     #[test]
     fn preference_checkboxes_draw_outlines_without_hover() {
@@ -635,7 +695,7 @@ mod tests {
                 let mut d = Dialog::new("preferences", json!({"showToolTips": checked}));
                 let raw =
                     egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 200.0))), ..Default::default() };
-                let mut out = ctx.run_ui(raw, |ui| bool_row(ui, &mut d, "showToolTips", "Show Tool Tips"));
+                let mut out = ctx.run_ui(raw, |ui| bool_row(ui, &mut Edit { dialog: &mut d, draft: &mut None }, "showToolTips", "Show Tool Tips"));
                 out.textures_delta.clear();
                 let outlined = out.shapes.iter().any(|shape| match &shape.shape {
                     egui::Shape::Rect(r) => r.stroke.width > 0.0 && r.rect.width() <= 24.0 && r.rect.height() <= 24.0,
