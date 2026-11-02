@@ -5,6 +5,7 @@
 //! application of the UI-side preferences (brightness, canvas colour, UI scaling, render threads).
 
 use serde_json::{Map, Value, json};
+use std::collections::BTreeSet;
 use vectorcraft_engine::Prefs;
 use vectorcraft_engine::cmd::prefscmds::{GPU_PREFERENCES, PREF_CATEGORIES, PREF_GROUPS, PREF_SPECS, PrefKind};
 
@@ -19,33 +20,52 @@ pub const UI_FIELDS: &[(&str, &str, &str)] = &[
     ("__taskBar", "General", "Enable Contextual Task Bar"),
 ];
 
-const BASELINE: &str = "__baseline";
-const DOCUMENT_UID: &str = "__documentUid";
-/// The fields the user edited since the last Apply (or since opening), whatever their value now.
-const TOUCHED: &str = "__touched";
-
-/// Transaction metadata kept in the draft beside the setting values.
-fn is_meta(key: &str) -> bool {
-    matches!(key, BASELINE | DOCUMENT_UID | TOUCHED | "__category")
+/// The Preferences transaction kept beside the dialog. The setting values themselves stay in
+/// `Dialog::fields`, the boundary agents read and `ui.dialog.set` writes; this holds what Apply
+/// needs to know about them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PreferencesDraft {
+    /// The setting values at opening, or at the last Apply.
+    baseline: Map<String, Value>,
+    /// The fields the user edited since then, whatever their value now.
+    touched: BTreeSet<String>,
+    /// The document whose units the draft edits.
+    document_uid: Option<u64>,
 }
 
-/// Record that the user edited `keys` in Preferences draft `d`: Apply sends them even when they
-/// are back at the value Preferences opened with (a live change made meanwhile is overridden).
-pub(crate) fn mark_touched<'a>(d: &mut Dialog, keys: impl IntoIterator<Item = &'a str>) {
-    if d.kind != "preferences" {
-        return;
+impl PreferencesDraft {
+    fn new(app: &VectorcraftApp, baseline: Map<String, Value>) -> Self {
+        Self { baseline, touched: BTreeSet::new(), document_uid: app.session.active().map(|doc| doc.uid) }
     }
-    let mut touched: Vec<Value> = d.fields.get(TOUCHED).and_then(Value::as_array).cloned().unwrap_or_default();
-    for key in keys.into_iter().filter(|key| !is_meta(key)) {
-        if !touched.iter().any(|v| v.as_str() == Some(key)) {
-            touched.push(json!(key));
+
+    /// Record a user edit: Apply sends `key` even when it is back at the value Preferences opened
+    /// with (a live change made meanwhile is overridden).
+    fn touch(&mut self, key: &str) {
+        if key != CATEGORY {
+            self.touched.insert(key.to_string());
         }
     }
-    d.fields.insert(TOUCHED.into(), Value::Array(touched));
 }
 
-fn touched(d: &Dialog, key: &str) -> bool {
-    d.fields.get(TOUCHED).and_then(Value::as_array).is_some_and(|keys| keys.iter().any(|v| v.as_str() == Some(key)))
+/// Navigation, not a setting: never applied, never compared.
+const CATEGORY: &str = "__category";
+
+/// Set one field of the open dialog. For Preferences it also counts as the user's edit, so UI
+/// edits, Reset and agents' `ui.dialog.set` all record their edits through [`PreferencesDraft::touch`].
+pub(crate) fn set_field(d: &mut Dialog, draft: &mut Option<PreferencesDraft>, key: String, value: Value) {
+    if d.kind == "preferences"
+        && let Some(draft) = draft
+    {
+        draft.touch(&key);
+    }
+    d.fields.insert(key, value);
+}
+
+/// A draft outlives no Preferences dialog (called after a dialog closes, and each frame).
+pub(crate) fn settle(app: &mut VectorcraftApp) {
+    if !app.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences") {
+        app.ui.prefs_draft = None;
+    }
 }
 
 fn current_fields(app: &VectorcraftApp) -> Map<String, Value> {
@@ -63,12 +83,10 @@ fn current_fields(app: &VectorcraftApp) -> Map<String, Value> {
 }
 
 pub fn open(app: &mut VectorcraftApp, category: Option<&str>) {
-    // Store only setting values in the baseline, not navigation or transaction metadata.
     let mut fields = current_fields(app);
-    fields.insert(BASELINE.into(), Value::Object(fields.clone()));
-    fields.insert(DOCUMENT_UID.into(), json!(app.session.active().map(|doc| doc.uid)));
+    app.ui.prefs_draft = Some(PreferencesDraft::new(app, fields.clone()));
     let cat = category.and_then(|c| PREF_CATEGORIES.iter().find(|x| x.eq_ignore_ascii_case(c))).copied().unwrap_or(PREF_CATEGORIES[0]);
-    fields.insert("__category".into(), json!(cat));
+    fields.insert(CATEGORY.into(), json!(cat));
     app.ui.dialog = Some(Dialog { kind: "preferences".into(), fields });
 }
 
@@ -82,19 +100,19 @@ pub fn apply(app: &mut VectorcraftApp) -> Result<Value, String> {
     if d.kind != "preferences" {
         return Err("the open dialog is not Preferences".into());
     }
-    let baseline = d.fields.get(BASELINE).and_then(Value::as_object);
-    // Manually constructed/older dialogs lack a baseline and retain their full-apply contract.
+    // A dialog constructed without `open` has no draft and keeps the full-apply contract.
+    let draft = app.ui.prefs_draft.as_ref();
     let mut changed: Map<String, Value> = d
         .fields
         .iter()
-        .filter(|(key, _)| !is_meta(key))
-        .filter(|(key, value)| touched(&d, key) || baseline.is_none_or(|before| before.get(*key) != Some(*value)))
+        .filter(|(key, _)| key.as_str() != CATEGORY)
+        .filter(|(key, value)| draft.is_none_or(|draft| draft.touched.contains(*key) || draft.baseline.get(*key) != Some(*value)))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     let mut skipped_units = false;
     if changed.contains_key("unitsGeneral")
-        && let Some(document) = d.fields.get(DOCUMENT_UID)
-        && document.as_u64() != app.session.active().map(|doc| doc.uid)
+        && let Some(draft) = draft
+        && draft.document_uid != app.session.active().map(|doc| doc.uid)
     {
         changed.remove("unitsGeneral");
         skipped_units = true;
@@ -140,10 +158,8 @@ pub fn apply(app: &mut VectorcraftApp) -> Result<Value, String> {
     for (key, value) in &next {
         d.fields.insert(key.clone(), value.clone());
     }
-    d.fields.insert(BASELINE.into(), Value::Object(next));
-    d.fields.remove(TOUCHED);
-    // The draft now edits the active document's units.
-    d.fields.insert(DOCUMENT_UID.into(), json!(app.session.active().map(|doc| doc.uid)));
+    // A fresh edit record against the new baseline; the draft now edits the active document's units.
+    app.ui.prefs_draft = Some(PreferencesDraft::new(app, next));
     app.ui.dialog = Some(d);
     app.ui.engine_prefs = app.session.prefs.to_json();
     app.prefs_changed = true;
@@ -159,6 +175,7 @@ pub fn apply(app: &mut VectorcraftApp) -> Result<Value, String> {
 pub fn confirm(app: &mut VectorcraftApp) -> Result<Value, String> {
     let result = apply(app)?;
     app.ui.dialog = None;
+    app.ui.prefs_draft = None;
     Ok(result)
 }
 
@@ -376,17 +393,17 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             });
         });
     if reset {
-        let defaults = Prefs::default().to_json().as_object().cloned().unwrap_or_default();
-        mark_touched(&mut d, defaults.keys().map(String::as_str));
-        for (k, v) in defaults {
-            d.fields.insert(k, v);
+        for (k, v) in Prefs::default().to_json().as_object().cloned().unwrap_or_default() {
+            set_field(&mut d, &mut app.ui.prefs_draft, k, v);
         }
     }
-    // Every field a widget changed this frame counts as edited until the next Apply.
-    let edited: Vec<String> =
-        d.fields.iter().filter(|(key, value)| !is_meta(key) && drawn.get(*key) != Some(*value)).map(|(key, _)| key.clone()).collect();
-    if !edited.is_empty() {
-        mark_touched(&mut d, edited.iter().map(String::as_str));
+    // Every field a widget changed this frame counts as the user's edit until the next Apply.
+    if let Some(draft) = app.ui.prefs_draft.as_mut() {
+        for (key, value) in &d.fields {
+            if drawn.get(key) != Some(value) {
+                draft.touch(key);
+            }
+        }
     }
     app.ui.dialog = Some(d);
     if cancel || !open {
@@ -685,7 +702,7 @@ mod tests {
         let draft = d.fields.clone();
         apply(&mut a).unwrap();
         let after = &a.ui.dialog.as_ref().unwrap().fields;
-        for (key, value) in draft.iter().filter(|(key, _)| key.as_str() != BASELINE) {
+        for (key, value) in &draft {
             assert_eq!(after.get(key), Some(value), "draft field {key}");
         }
         assert_eq!(a.session.prefs.keyboard_increment, 4.0);
@@ -748,7 +765,7 @@ mod tests {
         assert_eq!(a.session.documents().iter().map(|doc| doc.doc.units).collect::<Vec<_>>(), units, "no document's units change");
         let d = a.ui.dialog.as_ref().unwrap();
         assert_eq!(d.str("__category"), "Units");
-        assert_eq!(d.fields[DOCUMENT_UID], json!(a.session.active().map(|doc| doc.uid)), "the draft now edits the active document");
+        assert_eq!(a.ui.prefs_draft.as_ref().unwrap().document_uid, a.session.active().map(|doc| doc.uid), "the draft now edits the active document");
         assert_eq!(d.fields["unitsGeneral"], json!(a.session.active().unwrap().doc.units.key()), "the units field shows the active document's");
         // A units edit made now applies to the active document.
         a.ui.dialog.as_mut().unwrap().fields.insert("unitsGeneral".into(), json!(changed_units));
@@ -768,11 +785,28 @@ mod tests {
         let d = a.ui.dialog.as_mut().unwrap();
         d.fields.insert("keyboardIncrement".into(), json!(opening + 4.0));
         d.fields.insert("keyboardIncrement".into(), json!(opening));
-        mark_touched(d, ["keyboardIncrement"]);
+        set_field(d, &mut a.ui.prefs_draft, "keyboardIncrement".into(), json!(opening));
         apply(&mut a).unwrap();
         assert_eq!(a.session.prefs.keyboard_increment, opening, "the touched field wins");
         assert_eq!(a.session.prefs.gridline_every, 73.0, "the untouched field keeps the live change");
-        assert!(a.ui.dialog.as_ref().unwrap().fields.get(TOUCHED).is_none(), "Apply starts a fresh edit record");
+        assert!(a.ui.prefs_draft.as_ref().unwrap().touched.is_empty(), "Apply starts a fresh edit record");
+    }
+
+    /// Agents see only setting values and the category; the transaction stays typed beside them.
+    #[test]
+    fn the_dialog_fields_carry_no_transaction_metadata_and_agent_edits_count_as_touched() {
+        let mut a = app();
+        open(&mut a, Some("General"));
+        let d = a.ui.dialog.as_mut().unwrap();
+        let opening = d.fields["keyboardIncrement"].clone();
+        set_field(d, &mut a.ui.prefs_draft, "keyboardIncrement".into(), opening);
+        let fields = &a.ui.dialog.as_ref().unwrap().fields;
+        for meta in ["__baseline", "__touched", "__documentUid"] {
+            assert!(!fields.contains_key(meta), "{meta} stays out of the agent-visible fields");
+        }
+        assert!(a.ui.prefs_draft.as_ref().unwrap().touched.contains("keyboardIncrement"));
+        crate::dialogs::cancel(&mut a);
+        assert!(a.ui.prefs_draft.is_none(), "no draft outlives its dialog");
     }
 
     #[test]

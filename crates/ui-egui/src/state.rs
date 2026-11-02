@@ -399,6 +399,9 @@ pub struct UiState {
     pub tab_hid: Option<TabHid>,
     pub view: ViewFlags,
     pub dialog: Option<Dialog>,
+    /// The open Preferences dialog's transaction (baseline, edited fields, edited document).
+    #[serde(skip)]
+    pub prefs_draft: Option<crate::prefs_dialog::PreferencesDraft>,
     /// Messages to show in a dialog once the open one is closed (`dialogs::confirm::tell`), in
     /// the order they came.
     #[serde(skip)]
@@ -866,6 +869,7 @@ impl Default for UiState {
             tab_hid: None,
             view: ViewFlags::default(),
             dialog: None,
+            prefs_draft: None,
             told: vec![],
             answering_control: false,
             flyout: None,

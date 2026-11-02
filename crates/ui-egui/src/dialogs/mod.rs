@@ -469,6 +469,7 @@ pub(crate) fn settle(app: &mut VectorcraftApp) {
     missing_fonts::stop_when_closed(app);
     find_links::stop_when_closed(app);
     missing_fonts::open_next(app);
+    crate::prefs_dialog::settle(app);
 }
 
 /// The field of a dialog that a save panel opened (its format's options): Enter doesn't confirm it

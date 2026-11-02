@@ -456,12 +456,10 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context, req: &ControlReques
                     let names = crate::dialogs::field_names(d).join(", ");
                     return err(format!("the `{}` dialog has no field `{f}`; its fields: {names}", d.kind));
                 }
-                let keys: Vec<String> = fields.iter().map(|(f, _)| f.clone()).collect();
                 for (f, value) in fields {
-                    d.fields.insert(f, value);
+                    // An agent's edit counts as the user's: Preferences' Apply sends it even at its opening value.
+                    crate::prefs_dialog::set_field(d, &mut app.ui.prefs_draft, f, value);
                 }
-                // An agent's edit counts as the user's: Apply sends it even at its opening value.
-                crate::prefs_dialog::mark_touched(d, keys.iter().map(String::as_str));
                 ok(serde_json::to_value(&*d).unwrap_or_default())
             }
             None => err("no dialog open"),
