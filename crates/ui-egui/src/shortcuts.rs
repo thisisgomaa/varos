@@ -529,6 +529,10 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     if !crate::take_frame_once(&mut app.shortcuts_frames, frame) {
         return;
     }
+    if crate::document_drag::tab_reorder_keys(ctx) {
+        crate::ime::controls_without_editor(app, ctx);
+        return;
+    }
     // Varos: Escape cancels a drag in the Varos shell before anything else sees it.
     crate::varos::shell::drag::escape(app, ctx);
     if !(ctx.input(|input| input.focused) || app.forwarded_frame && ctx.viewport_id() == egui::ViewportId::ROOT) {

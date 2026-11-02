@@ -418,44 +418,65 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         }
     }
+    let reorder_strip = egui::Rect::from_min_max(strip.min, egui::pos2(strip.left() + room, strip.bottom()));
+    step += crate::document_drag::tab_scroll_step(app, ui.ctx(), overflow.then_some(reorder_strip));
     let first = if overflow { crate::varos::tab_scroll::first(ui, &widths, active, app.session.active().map(|s| s.uid), room, step) } else { 0 };
     let mut x = strip.left();
     let mut activate = None;
     let mut close = None;
     let mut hovering_art = false;
+    let mut drawn_tabs = Vec::new();
+    let mut responses = Vec::new();
     for (i, ((_, galley), w)) in tabs.iter().zip(&widths).enumerate().skip(first) {
+        let Some(uid) = app.session.documents().get(i).map(|document| document.uid) else { continue };
         let w = w.min(room); // Varos: even a single oversized title remains reachable.
         if x + w > strip.left() + room && i != first {
             break;
         }
         let is_active = Some(i) == active;
         let r = egui::Rect::from_min_size(egui::pos2(x, strip.top()), vec2(w, strip.height() - 1.0));
-        let resp = ui.interact(r, ui.scope_id().with(("tab", i)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("tab", uid)), Sense::click_and_drag());
+        drawn_tabs.push((uid, r));
         if shell {
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, is_active, galley.text()));
         }
-        if is_active {
-            ui.painter().rect_filled(r, if shell { 6.0 } else { 0.0 }, if shell { t.hover } else { t.panel });
-        } else if resp.hovered() {
-            ui.painter().rect_filled(r, 0.0, t.hover.gamma_multiply(0.4));
-        }
-        if !shell {
-            ui.painter().line_segment([r.right_top(), r.right_bottom()], Stroke::new(1.5, t.border));
-        }
         // The × where each platform puts a tab's: before the title on macOS, after it elsewhere
         // (#673).
-        let (x_center, title_left) = if CLOSE_BEFORE_TITLE { (r.left() + 16.0, r.left() + 32.0) } else { (r.right() - 16.0, r.left() + 14.0) };
+        let x_center = if CLOSE_BEFORE_TITLE { r.left() + 16.0 } else { r.right() - 16.0 };
         let xr = egui::Rect::from_center_size(egui::pos2(x_center, r.center().y), vec2(12.0, 12.0));
-        let xresp = ui.interact(xr.expand(3.0), ui.scope_id().with(("tabx", i)), Sense::click());
-        icons::paint(ui, "x", xr, if xresp.hovered() { t.text_strong } else { t.text });
-        ui.painter().with_clip_rect(r.intersect(strip)).galley(egui::pos2(title_left, r.center().y - galley.size().y / 2.0), galley.clone(), t.text); // Varos: bounded long titles.
+        let xresp = ui.interact(xr.expand(3.0), ui.scope_id().with(("tabx", uid)), Sense::click());
         hovering_art |= crate::document_drag::hover_tab(app, &resp, i, xr.expand(3.0));
+        crate::document_drag::begin_tab_reorder(app, &resp, uid, xr.expand(3.0));
         if xresp.clicked() {
             close = Some(i);
         } else if resp.clicked() {
             activate = Some(i);
         }
+        responses.push((uid, i, resp.hovered(), xresp.hovered()));
         x += w;
+    }
+    let preview = crate::document_drag::tab_preview(app, ui.ctx(), reorder_strip, &drawn_tabs);
+    for (uid, index, hovered, close_hovered) in responses {
+        if preview.dragged.is_some_and(|(dragged, _)| dragged == uid) {
+            continue;
+        }
+        if let Some((_, rect)) = preview.positions.iter().find(|(candidate, _)| *candidate == uid)
+            && let Some((_, galley)) = tabs.get(index)
+        {
+            let mut paint_ui = ui.new_child(egui::UiBuilder::new().max_rect(*rect));
+            paint_ui.set_clip_rect(reorder_strip.intersect(ui.clip_rect()));
+            paint_document_tab(&paint_ui, *rect, galley, shell, Some(index) == active, hovered && preview.dragged.is_none(), close_hovered);
+        }
+    }
+    if let Some((uid, rect)) = preview.dragged
+        && let Some(index) = app.session.documents().iter().position(|document| document.uid == uid)
+        && let Some((_, galley)) = tabs.get(index)
+    {
+        let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("document-tab-drag-paint"));
+        let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
+        paint_ui.set_clip_rect(reorder_strip.intersect(ui.clip_rect()));
+        paint_ui.painter().rect_filled(rect, if shell { 6.0 } else { 0.0 }, t.app_bar);
+        paint_document_tab(&paint_ui, rect, galley, shell, Some(index) == active, false, false);
     }
     if shell {
         let r = egui::Rect::from_min_size(egui::pos2(x.min(strip.right() - 28.0), strip.top()), vec2(28.0, 28.0));
@@ -510,6 +531,35 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
             crate::panels::artboards::select(app, selected);
         }
     }
+    crate::document_drag::finish_tab_reorder(app, ui, reorder_strip, &drawn_tabs);
+}
+
+fn paint_document_tab(
+    ui: &Ui,
+    rect: egui::Rect,
+    galley: &std::sync::Arc<egui::Galley>,
+    shell: bool,
+    active: bool,
+    hovered: bool,
+    close_hovered: bool,
+) {
+    let t = Tokens::get(ui.ctx());
+    if active {
+        ui.painter().rect_filled(rect, if shell { 6.0 } else { 0.0 }, if shell { t.hover } else { t.panel });
+    } else if hovered {
+        ui.painter().rect_filled(rect, 0.0, t.hover.gamma_multiply(0.4));
+    }
+    if !shell {
+        ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.5, t.border));
+    }
+    let (x, title_left) = if CLOSE_BEFORE_TITLE { (rect.left() + 16.0, rect.left() + 32.0) } else { (rect.right() - 16.0, rect.left() + 14.0) };
+    let close = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), vec2(12.0, 12.0));
+    icons::paint(ui, "x", close, if close_hovered { t.text_strong } else { t.text });
+    ui.painter().with_clip_rect(rect.intersect(ui.clip_rect())).galley(
+        egui::pos2(title_left, rect.center().y - galley.size().y / 2.0),
+        galley.clone(),
+        t.text,
+    );
 }
 
 /// The isolation mode breadcrumb bar. It is drawn over the top of `area` (the canvas), after the

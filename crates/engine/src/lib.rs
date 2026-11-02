@@ -1782,6 +1782,23 @@ impl Session {
             false
         }
     }
+
+    /// Move an open document to its final tab index without activating another document or
+    /// rebuilding the current tool. Document identity, edit history and dirty state travel with it.
+    pub fn reorder_document(&mut self, uid: u64, index: usize) -> bool {
+        let Some(from) = self.docs.iter().position(|document| document.uid == uid) else { return false };
+        if index >= self.docs.len() {
+            return false;
+        }
+        if from == index {
+            return true;
+        }
+        let active = self.active().map(|document| document.uid);
+        let document = self.docs.remove(from);
+        self.docs.insert(index, document);
+        self.active = active.and_then(|uid| self.docs.iter().position(|document| document.uid == uid));
+        true
+    }
     /// The name [`Session::next_untitled`] gives next (New Document's Name field).
     pub fn peek_untitled(&self) -> String {
         format!("Untitled-{}", self.untitled_counter + 1)
