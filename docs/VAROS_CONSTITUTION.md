@@ -8,7 +8,7 @@ Later owner decisions supersede the corresponding old wording below: **Mac is th
 Original decisions were locked **2026-06-23**. Architecture, schema, and update clauses were deliberately amended **2026-07-11** by accepted [ADR-0001](adr/ADR-0001-native-gpu-ui-stack.md), [ADR-0004](adr/ADR-0004-v1-schema-policy.md), and [ADR-0007](adr/ADR-0007-visible-update-policy.md).
 
 ## Identity
-1. **Name:** Varos = **V**ector · **A**rabic · **R**TL · **O**pen **S**ource (meaning recorded by the owner 2026-11-02; the name replaced the temporary working name BStudio on 2026-06-21). **File extension: `.vrs`**.
+1. **Name:** Varos = **V**ector · **A**rabic · **R**TL · **O**pen **S**ource (decided 2026-06-21 in decision record 004, replacing the temporary working name BStudio; chosen over Argon, Cobalt, Saros, Simsim, Rasm, Fennec and runner-up NAROS). **File extension: `.vrs`**.
 2. **Mission:** a **free, open-source, desktop** alternative to **Adobe Illustrator** that the community can **easily build tools on** — the "Blender of 2D vector".
 3. **License:** **GPL** (copyleft, like Blender) — stays free and open forever; anyone who modifies and distributes must keep their code open too.
 4. **Strength / wedge:** free + open-source + Illustrator-power + **easy to add tools**. *(Arabic deferred to post-v1 — not the current strength.)*
