@@ -41,6 +41,10 @@ pub struct State {
     flyout: Option<u64>,
     #[serde(skip)]
     hits: Vec<(String, Rect)>,
+    /// A gesture ended without a release (cancelled, or its layout changed under it): egui still
+    /// owns the drag of the handle that began it until [`State::sync_drag`] ends it.
+    #[serde(skip)]
+    drag_orphaned: bool,
 }
 
 impl Default for State {
@@ -54,6 +58,7 @@ impl Default for State {
             gesture: None,
             flyout: None,
             hits: Vec::new(),
+            drag_orphaned: false,
         }
     }
 }
@@ -61,9 +66,28 @@ impl Default for State {
 impl State {
     /// Drop every in-progress interaction (gesture, open flyout, hit record) and keep the layout.
     pub(crate) fn cancel_transient(&mut self) {
-        self.gesture = None;
+        self.cancel_gesture();
         self.flyout = None;
         self.hits.clear();
+    }
+
+    /// End the gesture without committing it. egui's drag of the handle that began it is ended
+    /// by the next [`State::sync_drag`], so both interaction states finish together.
+    fn cancel_gesture(&mut self) {
+        if self.gesture.take().is_some() {
+            self.drag_orphaned = true;
+        }
+    }
+
+    /// egui's drag ownership ends with the Varos gesture: a gesture cancelled while the pointer is
+    /// still held (Escape, a layout change under it, a preview that no longer applies, Home,
+    /// Presentation Mode, lost focus) must not leave egui dragging its old handle until release,
+    /// with that handle still painted active and every other hover suppressed. Call this before
+    /// any handle can begin a new drag in the frame.
+    fn sync_drag(&mut self, ctx: &egui::Context) {
+        if std::mem::take(&mut self.drag_orphaned) {
+            ctx.stop_dragging();
+        }
     }
 }
 
@@ -201,7 +225,7 @@ pub fn gesture_keys(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     }
     if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         state.cancel_transient();
-        ctx.stop_dragging();
+        state.sync_drag(ctx);
         ctx.request_repaint();
     }
     true
@@ -214,6 +238,9 @@ pub fn showing(app: &VectorcraftApp, panel: &str) -> bool {
 /// Home owns the whole central surface, including its own title bar. The editor arrangement stays
 /// intact ([`presenter::sync`] already cancelled the transient panel interactions).
 pub(crate) fn home_frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
+    if let Some(state) = presenter::state_mut(&mut app.ui) {
+        state.sync_drag(ui.ctx());
+    }
     if app.ui.varos_picker_anchor.is_some() {
         super::picker::close(app);
     }
@@ -236,6 +263,7 @@ pub fn frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             // body can edit the document, and no block reserves canvas space.
             if let Some(state) = presenter::state_mut(&mut app.ui) {
                 state.cancel_transient();
+                state.sync_drag(ui.ctx());
             }
             super::shell::boxes::board(app, ui, region, false);
             return;
@@ -294,10 +322,14 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
         } else {
             true
         };
-        if !keep || released {
+        if !keep {
+            s.cancel_gesture();
+        } else if released {
             s.gesture = None;
         }
     }
+    // Before any handle below can begin a new drag this frame.
+    s.sync_drag(&ctx);
     let gesture = s.gesture.as_ref().map(|g| g.kind.clone());
     match commit {
         Some(Ok(actions)) => {

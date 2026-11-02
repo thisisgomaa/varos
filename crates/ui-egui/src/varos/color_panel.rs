@@ -59,9 +59,17 @@ pub(crate) fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
 }
 
 /// `ui.colorPanel {mode?, options?, recent?}`: upstream's command plus `recent`, the strip's
-/// visibility (kept with the preferences). A malformed `recent` fails before anything changes.
+/// visibility (kept with the preferences). A malformed `recent` fails before anything changes;
+/// it is checked after upstream's own `mode` and `options`, so a request with several malformed
+/// fields reports the same first error as upstream does.
 pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, String> {
-    let recent = crate::menus::opt_bool(p, "recent")?;
+    let recent = match crate::menus::opt_bool(p, "recent") {
+        Ok(recent) => recent,
+        // Upstream rejects a malformed mode or options before it changes anything, with its own
+        // message: let it report that first error.
+        Err(_) if !upstream_params_valid(p) => return crate::panels::color::command(app, p),
+        Err(error) => return Err(error),
+    };
     let mut out = crate::panels::color::command(app, p)?;
     if let Some(shown) = recent {
         app.ui.color_hide_recent = !shown;
@@ -70,6 +78,16 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
         map.insert("recent".into(), json!(!app.ui.color_hide_recent));
     }
     Ok(out)
+}
+
+/// Whether upstream's `ui.colorPanel` accepts `mode` and `options` (the checks it makes before
+/// changing anything).
+fn upstream_params_valid(p: &Value) -> bool {
+    let mode = match p.get("mode") {
+        None | Some(Value::Null) => true,
+        Some(v) => crate::panels::color::Mode::ALL.into_iter().any(|m| serde_json::to_value(m).is_ok_and(|id| id == *v)),
+    };
+    mode && crate::menus::opt_bool(p, "options").is_ok()
 }
 
 #[cfg(test)]
@@ -116,5 +134,20 @@ mod tests {
         assert_eq!(app.ui.color_mode, None, "the mode is not picked either");
         assert!(app.run("ui.colorPanel", json!({"mode": "nope", "recent": false})).is_err());
         assert!(!app.ui.color_hide_recent, "nor is the strip hidden when the mode is malformed");
+    }
+
+    #[test]
+    fn several_malformed_fields_report_upstreams_first_error() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        for (p, upstream) in [
+            (json!({"mode": "nope", "recent": "no"}), json!({"mode": "nope"})),
+            (json!({"options": 3, "recent": "no"}), json!({"options": 3})),
+            (json!({"mode": "nope", "options": 3, "recent": "no"}), json!({"mode": "nope", "options": 3})),
+        ] {
+            let expected = crate::panels::color::command(&mut app, &upstream).unwrap_err();
+            assert_eq!(app.run("ui.colorPanel", p).unwrap_err(), expected);
+        }
+        assert_eq!(app.run("ui.colorPanel", json!({"mode": "hsb", "recent": "no"})).unwrap_err(), "`recent` must be true or false");
+        assert_eq!(app.ui.color_mode, None, "a malformed recent alone still changes nothing");
     }
 }

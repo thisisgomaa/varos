@@ -250,3 +250,80 @@ fn capture_independent_dock_columns() {
     h.action(Action::ResizeColumn { group, width: 160.0 });
     save(&mut h.app, Some("names"));
 }
+
+/// Every divider line an output painted in the accent colour (a hovered or dragged divider).
+fn accent_lines(h: &Harness, output: &FullOutput, within: Rect) -> usize {
+    fn collect(shape: &Shape, accent: egui::Color32, within: Rect, count: &mut usize) {
+        match shape {
+            Shape::LineSegment { points, stroke } if stroke.color == accent && points.iter().all(|p| within.expand(1.0).contains(*p)) => {
+                *count += 1;
+            }
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, accent, within, count)),
+            _ => {}
+        }
+    }
+    let accent = crate::theme::Tokens::get(&h.ctx).accent;
+    let mut count = 0;
+    output.shapes.iter().for_each(|shape| collect(&shape.shape, accent, within, &mut count));
+    count
+}
+
+/// A gesture cancelled while the pointer is still held (its layout changed under it, or a reset
+/// replaced the arrangement) also ends egui's drag: the divider stops painting active and no
+/// widget stays dragged; the release afterwards commits nothing, and the next drag works.
+#[test]
+fn a_gesture_cancelled_under_a_held_pointer_also_ends_the_egui_drag() {
+    for reset in [false, true] {
+        let mut h = Harness::columns(Edge::Right);
+        let host = h.host_id("blend");
+        let measured = geometry::measure(h.layout(), h.workspace).into_iter().find(|candidate| candidate.id == host).unwrap();
+        let vertical = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).unwrap();
+        let (split, divider) = (vertical.id, h.hit(&format!("divider:{}", vertical.id)));
+        let from = divider.center();
+        let to = from + vec2(0.0, 70.0);
+        h.hold_drag(from, to);
+        let held = h.frame(vec![Event::PointerMoved(to + vec2(0.0, 1.0))]);
+        assert!(h.ctx.dragged_id().is_some(), "egui drags the divider during the gesture");
+        let painted = h.hit(&format!("divider:{split}"));
+        assert!(accent_lines(&h, &held, painted) > 0, "the dragged divider paints active");
+        // The layout changes under the held pointer.
+        if reset {
+            h.app.run("ui.dock.reset", json!({})).unwrap();
+        } else {
+            h.app.run("ui.panelReview.action", json!({"action": Action::SplitRatio { split, ratio: 0.3 }})).unwrap();
+        }
+        let changed = h.layout().clone();
+        let away = to + vec2(0.0, 2.0);
+        h.frame(vec![Event::PointerMoved(away)]);
+        assert!(h.state().gesture.is_none(), "the preview no longer applies, so the gesture ends");
+        assert_eq!(h.ctx.dragged_id(), None, "egui's drag ends with the gesture");
+        // egui decided this frame's hover before the gesture ended; from the next frame on, with
+        // the pointer still held, nothing keeps the divider active.
+        let output = h.frame(vec![Event::PointerMoved(away)]);
+        assert_eq!(h.ctx.dragged_id(), None, "no drag restarts while the pointer stays held");
+        if h.has_hit(&format!("divider:{split}")) {
+            let painted = h.hit(&format!("divider:{split}"));
+            if !painted.expand(4.0).contains(away) {
+                assert_eq!(accent_lines(&h, &output, painted), 0, "no stale active divider while the pointer stays held");
+            }
+        }
+        h.release(away);
+        assert_eq!(h.layout(), &changed, "the release after a cancelled gesture commits nothing");
+        // The next drag works.
+        let host = h.host_id("layers");
+        let measured = geometry::measure(h.layout(), h.workspace).into_iter().find(|candidate| candidate.id == host).unwrap();
+        let divider = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).map(|d| d.id);
+        let Some(divider) = divider.filter(|id| h.has_hit(&format!("divider:{id}"))) else {
+            // The reset workspace has no stacked row in that block: drag its block instead.
+            let grip = h.hit(&format!("host-grip:{host}")).center();
+            h.drag(grip, grip + vec2(-40.0, 30.0));
+            assert_ne!(h.layout(), &changed, "the next drag commits");
+            h.assert_owners();
+            continue;
+        };
+        let start = h.hit(&format!("divider:{divider}")).center();
+        h.drag(start, start + vec2(0.0, -40.0));
+        assert_ne!(h.layout(), &changed, "the next drag commits");
+        h.assert_owners();
+    }
+}
