@@ -465,7 +465,7 @@ fn set_mode(app: &mut VectorcraftApp, tgt: &Target, mode: Mode) {
     }
 }
 
-/// `ui.colorPanel {mode?, options?}`: pick a mode as the panel menu does ([`set_mode`]), and Show
+/// `ui.colorPanel {mode?, options?, recent?}`: pick a mode as the panel menu does ([`set_mode`]), and Show
 /// Options (true) or Hide Options (false). → {mode, options, shown}: the mode picked last (null:
 /// none yet), whether the options show, and the mode the panel shows the color in (`tint` for a
 /// tint of a global or spot swatch).
@@ -475,6 +475,7 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
         Some(v) => Some(menu_mode(v).ok_or("`mode` must be grayscale, rgb, hsb, cmyk or websafe")?),
     };
     let options = crate::menus::opt_bool(p, "options")?;
+    let recent = crate::menus::opt_bool(p, "recent")?;
     let (fill, stroke) = app.session.proxy_mixed();
     let mixed = if app.session.fill_active { fill } else { stroke };
     if let Some(m) = mode {
@@ -483,12 +484,15 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
     if let Some(shown) = options {
         app.ui.color_hide_options = !shown;
     }
+    if let Some(shown) = recent {
+        app.ui.color_hide_recent = !shown;
+    }
     let tgt = target_with(app, mixed);
     let shown = match tgt.tint() {
         Some(_) => json!("tint"),
         None => json!(shown_mode(app, tgt.color().as_ref())),
     };
-    Ok(json!({"mode": app.ui.color_mode, "options": !app.ui.color_hide_options, "shown": shown}))
+    Ok(json!({"mode": app.ui.color_mode, "options": !app.ui.color_hide_options, "recent": !app.ui.color_hide_recent, "shown": shown}))
 }
 
 /// Tint mode's rows: the swatch's chip and name, and the T slider and field. Returns a new tint
@@ -541,14 +545,37 @@ fn spectrum(ui: &mut Ui, mode: Mode, size: egui::Vec2) -> Option<SpectrumHit> {
     Some(SpectrumHit::Pick(spectrum_at(mode, (p.x - r.left()) / r.width(), (p.y - r.top()) / r.height()), phase))
 }
 
+/// The side Color panel: always the compact sliders, whatever dialog is open. It is independent
+/// of the toolbar's wheel picker and never shares its gesture state or size.
 pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
-    // Varos: the colour picker v3 is the panel's body; panel menu › Classic brings this one back.
-    if !app.ui.varos_picker.classic {
-        if app.ui.dialog.as_ref().is_some_and(|d| d.kind == "gradientStop") {
-            return crate::varos::picker::show_stop(app, ui);
+    let top = ui.cursor().top();
+    show_sliders(app, ui);
+    let height = ui.cursor().top() - top - ui.spacing().item_spacing.y;
+    if height.is_finite() && height > 0.0 {
+        let previous = content_height(ui.ctx());
+        ui.ctx().data_mut(|data| data.insert_temp(egui::Id::unique("color-panel-content-height"), height.ceil()));
+        if previous.is_none_or(|old| (old - height).abs() > 1.0) {
+            ui.ctx().request_repaint();
         }
-        return crate::varos::picker::show(app, ui);
     }
+}
+
+/// A gradient stop's popover editor: the wheel picker (sliders with Classic on). It edits only
+/// that stop and does not change the side panel's measured height.
+pub(crate) fn show_stop_editor(app: &mut VectorcraftApp, ui: &mut Ui) {
+    if app.ui.varos_picker.classic {
+        show_sliders(app, ui);
+    } else {
+        crate::varos::picker::show_stop(app, ui);
+    }
+}
+
+/// Measured slider-panel contents; popup wheel preferences do not affect this size.
+pub(crate) fn content_height(ctx: &egui::Context) -> Option<f32> {
+    ctx.data(|data| data.get_temp::<f32>(egui::Id::unique("color-panel-content-height")))
+}
+
+fn show_sliders(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let tgt = target(app, ui);
     let color = tgt.color();
@@ -576,8 +603,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         (Some(c), _) => components(mode, &c),
         (None, _) => vec![0.0; mode.labels().len()],
     };
-    let recent = super::recent_colors_row(app, ui);
-    widgets::divider(ui);
+    let recent = if app.ui.color_hide_recent {
+        None
+    } else {
+        let picked = recent_strip(app, ui);
+        widgets::divider(ui);
+        picked
+    };
     // An edit of the active colour with its displayed components (`new`), or a colour clicked with
     // Alt held for the inactive proxy (`behind`).
     let mut new: Option<(Color, Live, Vec<f32>)> = None;
@@ -711,11 +743,28 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
 }
 
+/// Compact contiguous chips for the side panel; Swatches and the popup keep their own rows.
+fn recent_strip(app: &VectorcraftApp, ui: &mut Ui) -> Option<Color> {
+    widgets::subheader(ui, tl!("Recent Colors"));
+    let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
+    let mut selected = None;
+    for (index, color) in app.session.recent_colors.iter().enumerate() {
+        let chip = Rect::from_min_size(strip.min + vec2(index as f32 * 16.0, 0.0), vec2(16.0, 16.0));
+        if chip.right() > strip.right() {
+            break;
+        }
+        let response = ui.interact(chip, ui.scope_id().with(("recent", index)), Sense::click());
+        widgets::swatch_tile(ui, chip, &Paint::solid(*color), false, response.hovered());
+        if response.on_hover_text(color.to_hex()).clicked() {
+            selected = Some(*color);
+        }
+    }
+    selected
+}
+
 pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
-    // Varos: Classic swaps the colour picker v3 for upstream's sliders and spectrum.
-    let classic = app.ui.varos_picker.classic;
-    if menu_item(ui, tl!("Classic"), true, classic) {
-        app.ui.varos_picker.classic = !classic;
+    if menu_item(ui, tl!("Show Recent Colors"), true, !app.ui.color_hide_recent) {
+        command(app, &json!({ "recent": app.ui.color_hide_recent })).ok();
     }
     ui.separator();
     let hidden = app.ui.color_hide_options;
@@ -1237,6 +1286,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn recent_colors_visibility_persists_independently_of_the_popup() {
+        let mut app = app();
+        app.ui.varos_picker.drawer_open = true;
+        let popup = app.ui.varos_picker.clone();
+        let ctx = egui::Context::default();
+        let full_height = frame(&mut app, &ctx, vec![], egui::Modifiers::NONE).1;
+        assert_eq!(app.run("ui.colorPanel", json!({"recent":false})).unwrap()["recent"], false);
+        let hidden_height = frame(&mut app, &ctx, vec![], egui::Modifiers::NONE).1;
+        assert!(hidden_height < full_height, "hiding the strip removes its space");
+        assert_eq!(app.ui.varos_picker, popup);
+        let saved: crate::UiState = serde_json::from_value(serde_json::to_value(&app.ui).unwrap()).unwrap();
+        assert!(saved.color_hide_recent);
+        assert!(app.run("ui.colorPanel", json!({"recent":"no"})).is_err());
+        assert!(app.ui.color_hide_recent);
+        app.run("ui.colorPanel", json!({"recent":true})).unwrap();
+        assert_eq!(frame(&mut app, &ctx, vec![], egui::Modifiers::NONE).1, full_height);
+        assert_eq!(app.ui.varos_picker, popup);
+    }
+
     /// `ui.colorPanel {mode}` picks a mode as the panel menu does: HSB shows an RGB fill as H, S and
     /// B, and CMYK converts it as one undo step.
     #[test]
@@ -1245,7 +1314,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.run("paint.setFill", json!({"color": "#336699"})).unwrap();
         let r = app.run("ui.colorPanel", json!({"mode": "hsb"})).unwrap();
-        assert_eq!(r, json!({"mode": "hsb", "options": true, "shown": "hsb"}));
+        assert_eq!(r, json!({"mode": "hsb", "options": true, "recent": true, "shown": "hsb"}));
         assert_eq!(slider_labels(&mut app, &ctx), ["H", "S", "B"]);
         assert_eq!(crate::control::inspect(&app, &ctx)["ui"]["color_mode"], "hsb");
         assert_eq!(paints_hex(&app).0, "#336699", "HSB keeps the RGB color");
@@ -1255,7 +1324,7 @@ mod tests {
         assert!(matches!(crate::panels::current_paints(&app).0.color(), Some(Color::Rgb { .. })), "undo restores it");
         assert_eq!(paints_hex(&app).0, "#336699");
         // `{}` reads the settings: CMYK stays picked, and the RGB fill shows in its own model.
-        assert_eq!(app.run("ui.colorPanel", json!({})).unwrap(), json!({"mode": "cmyk", "options": true, "shown": "rgb"}));
+        assert_eq!(app.run("ui.colorPanel", json!({})).unwrap(), json!({"mode": "cmyk", "options": true, "recent": true, "shown": "rgb"}));
         // A tint of a global swatch shows Tint mode.
         app.run("swatch.new", json!({"name": "Ink", "color": {"c": 0, "m": 1, "y": 0, "k": 0}, "spot": true})).unwrap();
         app.run("paint.setFill", json!({"swatch": "Ink", "tint": 50})).unwrap();

@@ -824,6 +824,7 @@ fn focus_swatch(app: &VectorcraftApp, ui: &Ui, active: Option<&str>) -> Option<S
     let reselected = last_art.as_ref().is_some_and(|l| *l != art);
     if reselected {
         set_pstate(ui.ctx(), "swatch-selected", Vec::<String>::new());
+        set_pstate(ui.ctx(), "swatch-anchor", String::new());
     }
     let changed = reselected || last_art.is_none() || last_swatch.as_deref() != active;
     set_pstate(ui.ctx(), "swatch-focus", (Some(art), active.map(str::to_string)));
@@ -1475,6 +1476,21 @@ mod tests {
         assert_eq!(app.session.paint.fill.color().map(|c| c.to_hex()), Some("#ed1c24".into()), "modifier clicks only select");
         click_tile(&mut app, &ctx, "Grays", Modifiers::NONE, 8.0);
         assert_eq!(selected(&ctx), ["Grays"], "a plain click on a group selects it alone");
+    }
+
+    #[test]
+    fn switching_documents_clears_the_swatch_range_anchor() {
+        let mut app = app();
+        let ctx = context();
+        click_tile(&mut app, &ctx, "White", Modifiers::NONE, 0.0);
+        assert_eq!(selected(&ctx), ["White"]);
+
+        app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+        frame(&mut app, &ctx, vec![], 1.0, show);
+        assert!(selected(&ctx).is_empty());
+
+        click_tile(&mut app, &ctx, "Black", Modifiers::SHIFT, 2.0);
+        assert_eq!(selected(&ctx), ["Black"]);
     }
 
     /// The hex colors of the stops of the selection's gradient fill, and its stroke's color.

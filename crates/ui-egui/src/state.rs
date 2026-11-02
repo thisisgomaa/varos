@@ -501,6 +501,9 @@ pub struct UiState {
     /// [`crate::panels::color::deserialize_hide_options`]).
     #[serde(default, deserialize_with = "crate::panels::color::deserialize_hide_options")]
     pub color_hide_options: bool,
+    /// Side Color panel only: hide its recent-color strip; the popup drawer is independent.
+    #[serde(default, deserialize_with = "crate::panels::color::deserialize_hide_options")]
+    pub color_hide_recent: bool,
     /// The SVG Options chosen last (`svg` object of the export/save commands; null: never used).
     #[serde(default)]
     pub svg_options: Value,
@@ -893,6 +896,7 @@ impl Default for UiState {
             align_spacing: 0.0,
             color_mode: None,
             color_hide_options: false,
+            color_hide_recent: false,
             svg_options: Value::Null,
             place_link: true,
             dialog_file: None,

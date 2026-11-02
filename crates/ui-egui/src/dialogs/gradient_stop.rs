@@ -121,7 +121,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     swatch_grid(app, ui, &target);
                 } else {
                     // The Color panel edits the selected stop (or point) of the active gradient.
-                    crate::panels::color::show(app, ui);
+                    crate::panels::color::show_stop_editor(app, ui);
                 }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {

@@ -855,6 +855,9 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         (Key::ArrowDown, ToolKey::Down),
     ] {
         if ctx.input(|i| i.key_pressed(k)) && app.session.tool_claims_key(tk, view) && ctx.input_mut(|i| i.consume_key(m, k)) {
+            // Tool-owned keyboard edits bypass app.run, just like canvas pointer gestures.
+            // Keep gradient-stop nudges/deletions outside the Color palette's undo group.
+            crate::varos::picker::seal_foreign(app);
             let r = app.session.tool_key(tk, crate::canvas::mods(m, false), view);
             // Keyboard actions can change the Artboard tool's active board too. Keep the
             // navigator aligned with its valid survivor, as pointer dispatch does.

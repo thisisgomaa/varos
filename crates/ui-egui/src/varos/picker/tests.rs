@@ -1088,7 +1088,7 @@ fn docked_color_body_stays_available_in_both_shells() {
         for _ in 0..4 {
             h.frame(vec![]);
         }
-        assert!(picker_rect(&h.ctx).width() >= W);
+        assert!(crate::panels::color::content_height(&h.ctx).is_some_and(|height| height > 100.0), "the side slider panel is drawn");
         assert!(h.app.ui.varos_picker_anchor.is_none());
         let well = h.well(false);
         h.click(well.left_top() + vec2(3.0, 3.0));
@@ -1377,8 +1377,7 @@ fn the_release_frames_movement_is_committed_with_the_docked_picker_also_showing(
     let fill = h.well(false);
     h.click(fill.left_top() + vec2(3.0, 3.0));
     assert_eq!(h.app.ui.varos_picker.tab, Tab::Wheel);
-    let docked = h.ctx.data(|d| d.get_temp::<u64>(state_id().with("drawn")));
-    assert!(docked.is_some(), "the docked picker is drawn too");
+    assert!(crate::panels::color::content_height(&h.ctx).is_some_and(|height| height > 100.0), "the docked slider panel is drawn too");
     let c = popover_area(&h).min + vec2(CENTER[0], HEADER_H + CENTER[1]);
     let at = |hue: f32| ring_pos(c, RING_R - RING_BAND / 2.0, hue);
     let before = undo_len(&h.app);
@@ -1520,4 +1519,105 @@ fn canvas_move_with_palette_open_is_not_undone_by_palette_escape() {
     h.app.run("edit.undo", json!({})).unwrap();
     assert_eq!(h.app.session.doc().unwrap().doc.bounds_of(&selected, false).unwrap(), before);
     assert_eq!(fill_hex(&h.app), "#112233", "canvas move is its own undo step");
+}
+
+#[test]
+fn canvas_gradient_key_with_palette_open_is_not_undone_by_palette_escape() {
+    let mut h = Harness::new(true);
+    h.app.run("paint.setFill", json!({"gradient": {}})).unwrap();
+    h.app.run("tool.select", json!({"tool": "gradient"})).unwrap();
+    h.app.run("gradient.selectStop", json!({"index": 0})).unwrap();
+    h.frame(vec![]);
+    let fill = h.well(false);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    h.frame(vec![]);
+    let offset = |app: &VectorcraftApp| {
+        let Paint::Gradient(g) = crate::panels::current_paints(app).0 else { panic!("gradient") };
+        g.gradient.stops[0].offset
+    };
+    let before = offset(&h.app);
+    assert!(h.app.ui.varos_picker_group);
+    let view = h.app.view_info();
+    assert!(h.app.session.tool_claims_key(vectorcraft_tools::ToolKey::Right, view));
+    h.frame(vec![Event::Key { key: egui::Key::ArrowRight, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }]);
+    h.frame(vec![]);
+    let moved = offset(&h.app);
+    assert!(moved > before, "the canvas Gradient tool moved the selected stop");
+    h.frame(vec![esc()]);
+    assert_eq!(offset(&h.app), moved, "palette Escape must preserve the canvas keyboard edit");
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(offset(&h.app), before, "the canvas keyboard edit is its own undo step");
+}
+
+#[test]
+fn color_drawer_respects_the_host_clip_and_remains_accessible_by_scrolling() {
+    let mut app = app();
+    app.ui.varos_picker.drawer_open = true;
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let host = |height| Rect::from_min_size(pos2(30.0, 30.0), vec2(280.0, height));
+    let mut time = 0.0;
+    let mut render = |app: &mut VectorcraftApp, height: f32, offset: f32, events: Vec<Event>| {
+        time += 0.05;
+        let mut output = ctx.run_ui(
+            egui::RawInput { events, time: Some(time), screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 900.0))), ..Default::default() },
+            |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(host(height)), |ui| {
+                    ui.set_clip_rect(host(height));
+                    egui::ScrollArea::vertical()
+                        .id_salt("color-drawer-clip-regression")
+                        .max_height(height)
+                        .auto_shrink([false, false])
+                        .vertical_scroll_offset(offset)
+                        .show(ui, |ui| show(app, ui));
+                });
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    let text = |output: &egui::FullOutput, label: &str| {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(t) if t.galley.text() == label => Some((t.visual_bounding_rect(), shape.clip_rect)),
+            _ => None,
+        })
+    };
+    for _ in 0..3 {
+        render(&mut app, 600.0, 0.0, vec![]);
+    }
+    let full = render(&mut app, 600.0, 0.0, vec![]);
+    let hidden_document = text(&full, "Document").expect("expanded drawer has a Document tab").0.center();
+    assert!(hidden_document.y > host(260.0).bottom());
+    for _ in 0..3 {
+        render(&mut app, 260.0, 0.0, vec![]);
+    }
+    let clipped = render(&mut app, 260.0, 0.0, vec![]);
+    for label in ["Recent", "Document"] {
+        if let Some((rect, clip)) = text(&clipped, label) {
+            let visible = rect.intersect(clip);
+            assert!(!visible.is_positive() || host(260.0).contains_rect(visible), "{label} escaped the Color host: {visible:?}");
+        }
+    }
+    for shape in &clipped.shapes {
+        if let egui::Shape::Rect(chip) = &shape.shape
+            && (chip.rect.width() - 16.0).abs() < 0.1
+            && (chip.rect.height() - 16.0).abs() < 0.1
+        {
+            let visible = chip.rect.intersect(shape.clip_rect);
+            assert!(!visible.is_positive() || host(260.0).contains_rect(visible), "a color chip escaped the Color host: {visible:?}");
+        }
+    }
+    render(&mut app, 260.0, 0.0, vec![Event::PointerMoved(hidden_document), button(hidden_document, true)]);
+    render(&mut app, 260.0, 0.0, vec![button(hidden_document, false)]);
+    assert_eq!(app.ui.varos_picker.drawer_tab, DrawerTab::Recent, "an off-frame drawer control cannot accept clicks");
+    for _ in 0..3 {
+        render(&mut app, 260.0, 240.0, vec![]);
+    }
+    let scrolled = render(&mut app, 260.0, 240.0, vec![]);
+    let (document, clip) = text(&scrolled, "Document").expect("scrolling exposes the drawer");
+    assert!(clip.contains_rect(document) && host(260.0).contains_rect(document), "the whole drawer tab is accessible inside the host");
+    let at = document.center();
+    render(&mut app, 260.0, 240.0, vec![Event::PointerMoved(at), button(at, true)]);
+    render(&mut app, 260.0, 240.0, vec![button(at, false)]);
+    assert_eq!(app.ui.varos_picker.drawer_tab, DrawerTab::Document, "the scrolled drawer still works");
 }

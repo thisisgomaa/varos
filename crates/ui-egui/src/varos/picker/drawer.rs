@@ -103,7 +103,9 @@ pub(super) fn show(app: &VectorcraftApp, ui: &mut Ui, origin: Pos2, prefs: &mut 
     }
     let drawer = Rect::from_min_size(row.left_bottom(), vec2(super::W, DRAWER_H));
     ui.scope_builder(egui::UiBuilder::new().max_rect(drawer.shrink2(vec2(PAD, 2.0))).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
-        ui.set_clip_rect(drawer);
+        // The drawer is content of the picker, including when the Color host is
+        // shorter than it. Preserve its parent's scroll/host clip for paint and input.
+        ui.set_clip_rect(drawer.intersect(ui.clip_rect()));
         ui.horizontal(|ui| {
             for (tab, label) in [(DrawerTab::Recent, tl!("Recent")), (DrawerTab::Document, tl!("Document"))] {
                 let on = prefs.drawer_tab == tab;

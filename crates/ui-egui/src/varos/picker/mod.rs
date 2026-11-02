@@ -874,13 +874,14 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
             }
         }
     }
-    let buttons = if shell { 18.0 } else { 0.0 };
+    let buttons = if shell { 18.0 + ctx.global_style().spacing.item_spacing.y } else { 0.0 };
     let content_h = height(&app.ui.varos_picker) + buttons;
     let content_tall = tallest(&app.ui.varos_picker) + buttons;
+    let available_h = (screen.height() - if shell { 2.0 } else { 0.0 }).max(1.0);
     // Full size whenever the window can hold it. Scroll only when the content is taller than the screen.
-    let scroll = content_tall > screen.height();
-    let h = if scroll { screen.height() } else { content_h };
-    let tall = if scroll { screen.height() } else { content_tall };
+    let scroll = content_tall > available_h;
+    let h = if scroll { available_h } else { content_h };
+    let tall = if scroll { available_h } else { content_tall };
     // `begin_undo_group` does nothing when a group is already open, and ending one would also
     // clear an agent's `edit.undoGroup.begin`. Claim the group only when this call opens it.
     if shell && !app.ui.varos_picker_group && !app.session.in_interaction() && app.session.undo_group_is_free() {
@@ -938,6 +939,9 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let body = |app: &mut VectorcraftApp, ui: &mut Ui, decision: &mut Option<bool>| {
         ui.set_width(W);
         if shell {
+            // A scroll viewport otherwise inherits the Area's previous (possibly shorter)
+            // height and keeps clipping the palette even when the screen has enough room.
+            ui.set_height(h);
             let (header, _) = ui.allocate_exact_size(vec2(W, 18.0), Sense::hover());
             let close_rect = Rect::from_min_size(pos2(header.right() - 18.0, header.top()), vec2(18.0, 18.0));
             let grip = Rect::from_min_max(header.min, pos2(close_rect.left(), header.bottom()));
@@ -968,7 +972,7 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 *decision = Some(true);
             }
         }
-        let scroll_h = if scroll { (screen.height() - buttons).max(32.0) } else { content_h };
+        let scroll_h = if scroll { (available_h - buttons).max(32.0) } else { content_h };
         egui::ScrollArea::vertical().max_height(scroll_h).show(ui, |ui| show(app, ui));
     };
     if app.ui.dialog.is_some() {

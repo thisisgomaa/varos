@@ -909,7 +909,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "ui.colorPanel",
         "Color Panel Options",
         "",
-        "{mode?: grayscale|rgb|hsb|cmyk|websafe, options?: bool} pick the Color panel's mode as its panel menu does (the active color converts to the mode's model as one undo step), and Show Options (true) or Hide Options (false); both are kept with the preferences (ui.inspect: ui.color_mode, ui.color_hide_options) → {mode (null: none picked yet), options, shown: the mode the panel shows the color in, or tint for a tint of a global or spot swatch}",
+        "{mode?: grayscale|rgb|hsb|cmyk|websafe, options?: bool, recent?: bool} pick the Color panel's mode as its panel menu does (the active color converts to the mode's model as one undo step), and Show Options (true) or Hide Options (false), plus side-panel recent colors visibility; all are kept with the preferences (ui.inspect: ui.color_mode, ui.color_hide_options, ui.color_hide_recent) → {mode (null: none picked yet), options, recent, shown: the mode the panel shows the color in, or tint for a tint of a global or spot swatch}",
     ),
     (
         "ui.savePdfDialog",
