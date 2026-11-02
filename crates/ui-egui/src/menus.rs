@@ -477,11 +477,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "",
         "{panel: id, toggle?: bool} e.g. layers, swatches, stroke (case-insensitive; display labels like \"Layers\" work too); toggle (the Window menu) hides a panel that shows, and shows it again where it was",
     ),
+    // Varos: the panel workspace's form (one action, an atomic list, or a report).
     (
         "window.panel.layout",
         "Change Panel Layout",
         "",
-        "{action} serialized docking action, including floating geometry, divider sizes and accordion state",
+        "{action} serialized docking action, including floating geometry, divider sizes and accordion state; with the Varos panel workspace on: {action: object} or {actions: [object]} applied as one transaction (one failing step leaves the layout unchanged) → {layout}; {} → {layout}",
     ),
     (
         "window.panel.move",

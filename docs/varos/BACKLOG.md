@@ -59,12 +59,16 @@ panel separated from the toolbar's wheel picker, horizontal document-tab reorder
 Preferences with Apply. Two read-only reviews (Codex Sol, Cursor/Grok, 2026-11-02) requested changes;
 all twelve findings were fixed or answered with evidence, each with a test that runs with the panel
 workspace presenting the editor (now in the behaviour test files over the shared
-`varos/panel_system/test_support.rs` harness). A code-cleanliness pass (2026-11-02) did the
-review's P1 and most P2 items; left for a second pass: one presentation representation per column
-(needs a layout format step), measured/localized tab widths, a presenter-independent panel-content
-module (the workspace still renders ordinary bodies through `shell::boxes`), the flyout's
-post-measurement tab trim, and one modality rule for artwork transfer and the picker. Nothing here is accepted
-by the owner yet; `STATE.md` lists each piece as provisional.
+`varos/panel_system/test_support.rs` harness). Two code-cleanliness passes (2026-11-02) did the
+review's P1 and P2 items except these, still pending: (#6) one presentation representation per
+column (it needs a layout format version step, a declared format change); measured/localized tab
+widths (a declared behaviour change); P3: a smaller `panel_system/mod.rs` facade, render functions
+without parallel mutable outputs, narrower model field visibility, a presenter-independent
+panel-content module (the workspace still renders ordinary bodies through `shell::boxes`) and the
+flyout's post-measurement tab trim. The third pass (one layout transaction, one explicit `Hosting`
+policy, Varos policy moved out of upstream files behind marked hooks, the Preferences draft setter,
+one modality rule for artwork transfer and the picker) is recorded in `STATE.md`. Nothing here is
+accepted by the owner yet; `STATE.md` lists each piece as provisional.
 
 Open, in order:
 1. Owner hand test of the side Color panel and horizontal tab dragging in build .16.
