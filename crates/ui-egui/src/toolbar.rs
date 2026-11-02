@@ -161,7 +161,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egu
 /// Varos: [`body`] for a caller that says where it renders. A panel-workspace host owns the
 /// header, the scrolling and the bottom controls.
 pub(crate) fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usize, floating: Option<egui::Pos2>, hosting: Hosting) {
-    let hosted = hosting == Hosting::Workspace;
+    let hosted = hosting == Hosting::Workspace; // Varos: the host owns the header, scrolling and bottom controls
     let t = Tokens::get(ui.ctx());
     let all = slots(app);
     let bounds = ui.max_rect();
@@ -200,6 +200,7 @@ pub(crate) fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usiz
     }
     // The tools and the controls under them scroll in a window too short for them.
     let mut contents = |ui: &mut Ui| {
+        // Varos: scrolled by tool_scroll, or hosted by the host
         let active = app.session.tool_id();
         // The tool button whose long press opened its flyout, until the next press.
         let held_id = egui::Id::unique("toolbar-held");
