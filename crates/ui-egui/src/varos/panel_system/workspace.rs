@@ -45,11 +45,11 @@ pub fn label(name: &str) -> String {
 }
 
 pub fn current(app: &VectorcraftApp) -> Option<&str> {
-    app.ui.varos_panel_review.as_ref().map(|s| s.workspaces.current.as_str())
+    super::presenter::state(&app.ui).map(|s| s.workspaces.current.as_str())
 }
 
 pub fn names(app: &VectorcraftApp) -> Option<Vec<String>> {
-    app.ui.varos_panel_review.as_ref().map(|s| s.workspaces.names())
+    super::presenter::state(&app.ui).map(|s| s.workspaces.names())
 }
 
 fn valid_name(name: &str) -> bool {
@@ -196,7 +196,7 @@ impl Store {
 
 /// Existing Window commands use this store while the new panel system is enabled.
 pub fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    let state = app.ui.varos_panel_review.as_ref()?;
+    let state = super::presenter::state(&app.ui)?;
     if !id.starts_with("window.workspace") {
         return None;
     }
@@ -228,12 +228,10 @@ pub fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Res
     };
     Some(result.map(|()| {
         let current = store.current.clone();
-        if let Some(state) = &mut app.ui.varos_panel_review {
+        if let Some(state) = super::presenter::state_mut(&mut app.ui) {
             state.layout = layout;
             state.workspaces = store;
-            state.gesture = None;
-            state.flyout = None;
-            state.hits.clear();
+            state.cancel_transient();
         }
         crate::workspaces::sync(&app.ui);
         json!({"workspace":current})

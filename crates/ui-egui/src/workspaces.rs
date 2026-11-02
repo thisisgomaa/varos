@@ -329,7 +329,7 @@ crate::shortcut_editor::ui_mirror!(fn panel_names_store() -> Option<Vec<&'static
 
 /// Mirror the user workspace names for the (static) menu tree.
 pub fn sync(ui: &UiState) {
-    let panels = ui.varos_panel_review.as_ref().map(|state| state.workspaces.names());
+    let panels = crate::varos::panel_system::presenter::state(ui).map(|state| state.workspaces.names()); // Varos
     let same = panel_names_store().read().map(|v| match (&*v, &panels) {
         (Some(a), Some(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x == y),
         (None, None) => true,

@@ -5,8 +5,11 @@ mod geometry;
 pub(crate) mod metrics;
 pub mod model;
 mod paint;
+pub(crate) mod presenter;
 mod registry;
 pub(crate) mod workspace;
+
+pub(crate) use presenter::Presenter;
 
 use crate::{VectorcraftApp, theme::Tokens};
 use egui::{CursorIcon, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
@@ -44,6 +47,15 @@ impl Default for State {
             flyout: None,
             hits: Vec::new(),
         }
+    }
+}
+
+impl State {
+    /// Drop every in-progress interaction (gesture, open flyout, hit record) and keep the layout.
+    pub(crate) fn cancel_transient(&mut self) {
+        self.gesture = None;
+        self.flyout = None;
+        self.hits.clear();
     }
 }
 
@@ -88,18 +100,14 @@ enum GestureKind {
     Divider { split: u64, axis: model::Axis, min: f32, max: f32 },
 }
 
-/// The panel workspace presents the editor only while the Varos shell switch is on; turning that
-/// switch off in Preferences returns to the classic dock without discarding the saved layout.
+/// Whether the panel workspace presents the editor ([`presenter`] decides).
 pub fn enabled(app: &VectorcraftApp) -> bool {
-    active_layout(&app.ui).is_some()
+    presenter::active(&app.ui)
 }
 
 /// The presented layout, or `None` while another presenter owns the editor chrome.
 pub(crate) fn active_layout(ui: &crate::state::UiState) -> Option<&Layout> {
-    if !ui.varos_shell.enabled {
-        return None;
-    }
-    ui.varos_panel_review.as_ref().map(|state| &state.layout)
+    presenter::state(ui).map(|state| &state.layout)
 }
 
 /// Whether library panel `panel` shows in the presented layout; `None` while the workspace is off.
@@ -125,10 +133,7 @@ pub(crate) fn open_library_panels(ui: &crate::state::UiState) -> Option<Vec<Stri
 
 /// A library panel showing another library keeps its place in the presented layout.
 pub(crate) fn rename_panel(ui: &mut crate::state::UiState, from: &str, to: &str) -> Result<(), String> {
-    if active_layout(ui).is_none() {
-        return Ok(());
-    }
-    let Some(state) = ui.varos_panel_review.as_mut() else { return Ok(()) };
+    let Some(state) = presenter::state_mut(ui) else { return Ok(()) };
     if state.layout.owner(from).is_none() || state.layout.owner(to).is_some() {
         return Ok(());
     }
@@ -143,10 +148,7 @@ pub(crate) fn rename_panel(ui: &mut crate::state::UiState, from: &str, to: &str)
 
 /// Forget every library panel outside `kept` (startup restores only persistent libraries).
 pub(crate) fn retain_library_panels(ui: &mut crate::state::UiState, kept: &[String]) {
-    if active_layout(ui).is_none() {
-        return;
-    }
-    let Some(state) = ui.varos_panel_review.as_mut() else { return };
+    let Some(state) = presenter::state_mut(ui) else { return };
     let stale: Vec<String> = state
         .layout
         .hosts
@@ -279,7 +281,7 @@ pub fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Res
     if let Some(result) = workspace::command(app, id, params) {
         return Some(result);
     }
-    let state = app.ui.varos_panel_review.as_mut()?;
+    let state = presenter::state_mut(&mut app.ui)?;
     if id == "ui.panelReview.inspect" {
         return Some(Ok(
             json!({"layout":state.layout,"dragging":state.gesture.is_some(),"hits":state.hits.iter().map(|(name,r)|json!({"name":name,"rect":[r.left(),r.top(),r.width(),r.height()]})).collect::<Vec<_>>()}),
@@ -312,8 +314,7 @@ pub fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Res
     }
     if id == "ui.dock.reset" {
         state.layout = Layout::new_workspace();
-        state.gesture = None;
-        state.flyout = None;
+        state.cancel_transient();
         return Some(Ok(json!({"layout":state.layout})));
     }
     if matches!(id, "window.panels" | "window.dock") {
@@ -497,13 +498,12 @@ pub fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Res
 
 /// A layout gesture owns keyboard input until it commits or is cancelled.
 pub fn gesture_keys(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
-    let Some(state) = app.ui.varos_panel_review.as_mut() else { return false };
+    let Some(state) = presenter::state_mut(&mut app.ui) else { return false };
     if state.gesture.is_none() {
         return false;
     }
     if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        state.gesture = None;
-        state.flyout = None;
+        state.cancel_transient();
         ctx.stop_dragging();
         ctx.request_repaint();
     }
@@ -511,7 +511,7 @@ pub fn gesture_keys(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
 }
 
 pub fn showing(app: &VectorcraftApp, panel: &str) -> bool {
-    enabled(app) && app.ui.varos_panel_review.as_ref().is_some_and(|state| panel_showing(state, panel))
+    presenter::state(&app.ui).is_some_and(|state| panel_showing(state, panel))
 }
 
 fn run(app: &mut VectorcraftApp, action: Action) {
@@ -520,13 +520,15 @@ fn run(app: &mut VectorcraftApp, action: Action) {
     }
 }
 
-/// Home suspends editor interactions without changing the saved workspace.
-pub(crate) fn suspend_for_home(app: &mut VectorcraftApp) {
-    if let Some(state) = app.ui.varos_panel_review.as_mut() {
-        state.gesture = None;
-        state.flyout = None;
-        state.hits.clear();
+/// Home owns the whole central surface, including its own title bar. The editor arrangement stays
+/// intact ([`presenter::sync`] already cancelled the transient panel interactions).
+pub(crate) fn home_frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
+    if app.ui.varos_picker_anchor.is_some() {
+        super::picker::close(app);
     }
+    app.canvas_rect = None;
+    let fill = Tokens::get(ui.ctx()).pasteboard;
+    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(fill)).show(ui, |ui| app.canvas_area(ui));
 }
 
 pub fn frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
@@ -541,7 +543,9 @@ pub fn frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         if app.ui.screen_mode >= 3 {
             // Presentation Mode shows the artwork alone: no Tools, Control or panels, so no panel
             // body can edit the document, and no block reserves canvas space.
-            suspend_for_home(app);
+            if let Some(state) = presenter::state_mut(&mut app.ui) {
+                state.cancel_transient();
+            }
             super::shell::boxes::board(app, ui, region, false);
             return;
         }
@@ -579,8 +583,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     let cancelled = ctx.input(|i| i.key_pressed(egui::Key::Escape) || !i.focused || i.events.iter().any(|e| matches!(e, egui::Event::PointerGone)));
     let released = ctx.input(|i| i.pointer.primary_released());
     if cancelled {
-        state.gesture = None;
-        state.flyout = None;
+        state.cancel_transient();
     }
     let mut final_action = None;
     let mut final_column_position = None;

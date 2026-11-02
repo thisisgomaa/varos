@@ -2393,16 +2393,11 @@ impl VectorcraftApp {
             varos::profile::measure("toolbar", || toolbar::show(self, ui));
         }
         varos::profile::measure("library.tidy", || panels::library_panel::tidy(self));
-        if on_home && varos::panel_system::enabled(self) {
-            // Home owns the whole central surface, including its own title bar. Keep the
-            // editor arrangement intact while discarding only transient panel interactions.
-            varos::panel_system::suspend_for_home(self);
-            if self.ui.varos_picker_anchor.is_some() {
-                varos::picker::close(self);
-            }
-            self.canvas_rect = None;
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| self.canvas_area(ui));
-        } else if varos::panel_system::enabled(self) {
+        // Varos: the unified panel workspace decides its presenter once per frame.
+        let panels = varos::panel_system::presenter::sync(self, on_home);
+        if panels == varos::panel_system::Presenter::Home {
+            varos::panel_system::home_frame(self, ui);
+        } else if panels == varos::panel_system::Presenter::Workspace {
             varos::panel_system::frame(self, ui);
         } else if varos::shell::enabled(self) {
             // Varos: Preferences › Varos shell (new): the central region is the Varos shell's boxes.
