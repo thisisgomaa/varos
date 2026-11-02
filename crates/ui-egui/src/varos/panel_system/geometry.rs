@@ -29,7 +29,6 @@ pub struct ColumnRect {
     pub key: u64,
     pub rect: Rect,
     pub mode: Mode,
-    pub compact_width: f32,
 }
 #[derive(Clone, Debug)]
 pub struct HostRect {
@@ -233,7 +232,7 @@ fn in_rect(host: &Host, rect: Rect) -> HostRect {
         if host.mode != Mode::Full && !has_overrides(host) {
             if let Some(first) = out.groups.first() {
                 let viewport = Rect::from_min_max(rect.min, pos2(rect.right(), (rect.bottom() - footer(host)).max(rect.top())));
-                out.columns.push(ColumnRect { key: first.column, rect: viewport, mode: host.mode, compact_width: host.compact_width });
+                out.columns.push(ColumnRect { key: first.column, rect: viewport, mode: host.mode });
             }
         } else {
             for group in &mut out.groups {
@@ -243,7 +242,7 @@ fn in_rect(host: &Host, rect: Rect) -> HostRect {
                     if let Some(existing) = out.columns.iter_mut().find(|c| c.key == key) {
                         existing.rect = existing.rect.union(group.rect);
                     } else {
-                        out.columns.push(ColumnRect { key, rect: group.rect, mode: group.mode, compact_width: host.compact_width });
+                        out.columns.push(ColumnRect { key, rect: group.rect, mode: group.mode });
                     }
                 }
             }
@@ -319,12 +318,7 @@ fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], out: &mut 
             if let Some(existing) = out.columns.iter_mut().find(|c| c.key == first.id) {
                 existing.rect = existing.rect.union(group.rect);
             } else {
-                out.columns.push(ColumnRect {
-                    key: first.id,
-                    rect: group.rect,
-                    mode: Mode::Full,
-                    compact_width: super::model::presentation(host, first).compact_width,
-                });
+                out.columns.push(ColumnRect { key: first.id, rect: group.rect, mode: Mode::Full });
             }
         }
         return;
@@ -334,7 +328,7 @@ fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], out: &mut 
         let Some(first) = groups.first() else { return };
         let p = super::model::presentation(host, first);
         let key = first.id;
-        out.columns.push(ColumnRect { key, rect, mode: p.mode, compact_width: p.compact_width });
+        out.columns.push(ColumnRect { key, rect, mode: p.mode });
         if p.mode == Mode::Full {
             let before = out.groups.len();
             tree(node, rect, saved, &mut out.groups, &mut out.dividers);

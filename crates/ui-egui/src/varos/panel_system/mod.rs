@@ -1,5 +1,6 @@
 //! Registry-backed panel workspace with one ownership and interaction model.
 //! The ordinary shell remains untouched when this review is not explicitly enabled.
+mod commands;
 mod content;
 mod geometry;
 pub(crate) mod metrics;
@@ -9,6 +10,7 @@ pub(crate) mod presenter;
 mod registry;
 pub(crate) mod workspace;
 
+pub use commands::command;
 pub(crate) use presenter::Presenter;
 
 use crate::{VectorcraftApp, theme::Tokens};
@@ -25,7 +27,7 @@ pub struct State {
     pub workspaces: workspace::Store,
     /// What the last Tab / Shift+Tab hid, so the next one shows exactly that again.
     #[serde(skip)]
-    hidden: Option<Hidden>,
+    hidden: Option<commands::Hidden>,
     #[serde(skip)]
     compact_offsets: std::collections::BTreeMap<u64, f32>,
     #[serde(skip)]
@@ -68,18 +70,6 @@ pub(crate) fn load<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
     }
     state.workspaces = state.workspaces.sanitized();
     Ok(Some(state))
-}
-
-/// Tab hides every visible block; Shift+Tab hides every panel except Tools and Control, one
-/// panel at a time (a panel attached beside Tools hides while Tools stays). `after` is the layout
-/// the hide produced: when nothing changed since, the next toggle restores `before` exactly.
-#[derive(Clone, Debug)]
-struct Hidden {
-    all: bool,
-    before: Layout,
-    after: Layout,
-    hosts: Vec<u64>,
-    panels: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -160,86 +150,12 @@ pub(crate) fn retain_library_panels(ui: &mut crate::state::UiState, kept: &[Stri
         .collect();
     for panel in stale {
         // A panel that cannot be detached stays where it is; the layout itself remains valid.
-        let _ = close_panel(&mut state.layout, &panel, true);
+        let _ = commands::close_panel(&mut state.layout, &panel, true);
     }
-}
-
-/// Close one panel without hiding the panels sharing its block: a panel alone hides its block
-/// (Show brings it back where it was); a tab or attached group detaches into its own hidden block.
-/// `forget` removes a dynamic (library) panel from the layout instead of hiding it.
-fn close_panel(layout: &mut Layout, panel: &str, forget: bool) -> Result<(), String> {
-    let Some(host) = layout.owner(panel) else { return Ok(()) };
-    let alone = model::groups(&host.root).iter().map(|g| g.panels.len()).sum::<usize>() == 1;
-    let position = host.position;
-    let mut next = layout.clone();
-    if !alone {
-        next.apply(&Action::Move { source: Source::Panel(panel.into()), target: Target::Float { position } })?;
-    }
-    let owner = next.owner(panel).ok_or("Panel owner missing")?.id;
-    if forget {
-        next.hosts.retain(|h| h.id != owner);
-        next.validate()?;
-    } else {
-        next.apply(&Action::Hide { host: owner })?;
-    }
-    *layout = next;
-    Ok(())
-}
-
-fn is_special(panel: &str) -> bool {
-    registry::get(panel).is_some_and(|spec| spec.kind != registry::PanelKind::Standard)
-}
-
-/// Hide what Tab (`all`) or Shift+Tab hides, recording it; `false` when nothing was visible.
-fn hide_for_tab(state: &mut State, all: bool) -> bool {
-    let before = state.layout.clone();
-    let mut next = before.clone();
-    let mut hosts = Vec::new();
-    let mut panels = Vec::new();
-    for host in before.hosts.iter().filter(|h| !h.hidden) {
-        let contents: Vec<&String> = model::groups(&host.root).into_iter().flat_map(|g| g.panels.iter()).collect();
-        if all || !contents.iter().any(|p| is_special(p)) {
-            hosts.push(host.id);
-        } else {
-            panels.extend(contents.into_iter().filter(|p| !is_special(p)).cloned());
-        }
-    }
-    for host in &mut next.hosts {
-        if hosts.contains(&host.id) {
-            host.hidden = true;
-        }
-    }
-    panels.retain(|panel| close_panel(&mut next, panel, false).is_ok());
-    if hosts.is_empty() && panels.is_empty() {
-        return false;
-    }
-    state.layout = next;
-    state.hidden = Some(Hidden { all, before, after: state.layout.clone(), hosts, panels });
-    true
-}
-
-/// Show again what the last Tab / Shift+Tab hid; `false` when there is no record.
-fn restore_hidden(state: &mut State) -> bool {
-    let Some(record) = state.hidden.take() else { return false };
-    if state.layout == record.after {
-        state.layout = record.before;
-        return true;
-    }
-    // The layout changed in between (a workspace switch, a dragged block): show what still exists.
-    for host in &mut state.layout.hosts {
-        if record.hosts.contains(&host.id) {
-            host.hidden = false;
-        }
-    }
-    for panel in &record.panels {
-        // A panel removed meanwhile has nothing left to show.
-        let _ = state.layout.apply(&Action::Show { panel: panel.clone() });
-    }
-    true
 }
 
 /// Is `panel` shown: its block is visible and, in a compact column, its flyout is open.
-fn panel_showing(state: &State, panel: &str) -> bool {
+pub(super) fn panel_showing(state: &State, panel: &str) -> bool {
     if !state.layout.owner(panel).is_some_and(|h| !h.hidden) {
         return false;
     }
@@ -265,237 +181,6 @@ fn follow_open_panel(app: &mut VectorcraftApp) -> bool {
     true
 }
 
-pub fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    if id != "ui.panelReview" && !enabled(app) {
-        return None;
-    }
-    if id == "ui.panelReview" {
-        if params.get("enabled").and_then(Value::as_bool) == Some(false) {
-            app.ui.varos_panel_review = None;
-            return Some(Ok(json!({"enabled":false})));
-        }
-        app.ui.varos_shell.enabled = true;
-        app.ui.varos_panel_review.get_or_insert_with(|| State { layout: Layout::new_workspace(), ..Default::default() });
-        return Some(Ok(json!({"enabled":true,"panels":registry::BUILTINS.iter().map(|p|p.id).collect::<Vec<_>>()})));
-    }
-    if let Some(result) = workspace::command(app, id, params) {
-        return Some(result);
-    }
-    let state = presenter::state_mut(&mut app.ui)?;
-    if id == "ui.panelReview.inspect" {
-        return Some(Ok(
-            json!({"layout":state.layout,"dragging":state.gesture.is_some(),"hits":state.hits.iter().map(|(name,r)|json!({"name":name,"rect":[r.left(),r.top(),r.width(),r.height()]})).collect::<Vec<_>>()}),
-        ));
-    }
-    if id == "ui.panelReview.action" {
-        let action = params
-            .get("action")
-            .cloned()
-            .ok_or_else(|| "Expected action".to_string())
-            .and_then(|v| serde_json::from_value::<Action>(v).map_err(|e| e.to_string()));
-        return Some(action.and_then(|action| {
-            state.layout.apply(&action)?;
-            if !matches!(action, Action::Activate { .. } | Action::Raise { .. } | Action::FitControlContent { .. }) {
-                state.flyout = None;
-            }
-            Ok(json!({"layout":state.layout}))
-        }));
-    }
-    if id == "window.panel.layout" {
-        if let Some(action) = params.get("action") {
-            return Some(
-                serde_json::from_value::<Action>(action.clone())
-                    .map_err(|e| e.to_string())
-                    .and_then(|a| state.layout.apply(&a))
-                    .map(|()| json!({"layout":state.layout})),
-            );
-        }
-        return Some(Ok(json!({"layout":state.layout})));
-    }
-    if id == "ui.dock.reset" {
-        state.layout = Layout::new_workspace();
-        state.cancel_transient();
-        return Some(Ok(json!({"layout":state.layout})));
-    }
-    if matches!(id, "window.panels" | "window.dock") {
-        state.flyout = None;
-        let all = id == "window.dock";
-        let shown = match state.hidden.as_ref().map(|record| record.all) {
-            // Tab after Shift+Tab hides the bars too; Tab after Tab shows everything again.
-            Some(false) if all => {
-                restore_hidden(state);
-                !hide_for_tab(state, true)
-            }
-            Some(record_all) => {
-                restore_hidden(state);
-                if record_all && !all {
-                    // Shift+Tab after Tab shows the panels and leaves Tools and Control hidden.
-                    for host in &mut state.layout.hosts {
-                        if model::groups(&host.root).iter().all(|g| g.panels.iter().all(|p| is_special(p))) {
-                            host.hidden = true;
-                        }
-                    }
-                }
-                true
-            }
-            None if hide_for_tab(state, all) => false,
-            None if all => {
-                // Nothing showed and nothing was hidden by Tab: show Tools and Control.
-                for panel in ["tools", "control"] {
-                    if let Err(e) = state.layout.ensure_panel(panel).and_then(|()| state.layout.apply(&Action::Show { panel: panel.into() })) {
-                        return Some(Err(e));
-                    }
-                }
-                true
-            }
-            None => true,
-        };
-        return Some(Ok(json!({"shown":shown})));
-    }
-    if matches!(id, "window.toolbar" | "window.control") {
-        let panel = if id == "window.toolbar" { "tools" } else { "control" };
-        let action =
-            state.layout.owner(panel).filter(|h| !h.hidden).map_or_else(|| Action::Show { panel: panel.into() }, |h| Action::Hide { host: h.id });
-        return Some(state.layout.ensure_panel(panel).and_then(|()| state.layout.apply(&action)).map(|()| json!({"layout":state.layout})));
-    }
-    if id == "window.toolbarColumns" {
-        let double =
-            params.get("double").and_then(Value::as_bool).unwrap_or(state.layout.tools_width().is_none_or(|w| w <= metrics::TOOLS_MIN_WIDTH));
-        let width = if double { metrics::TOOLS_MAX_WIDTH } else { metrics::TOOLS_MIN_WIDTH };
-        if let Err(e) = state.layout.apply(&Action::SetToolsWidth { width }) {
-            return Some(Err(e));
-        }
-        app.ui.toolbar_double = double;
-        app.ui.varos_shell.tools_columns = if double { 2 } else { 1 };
-        return Some(Ok(json!({"double":double})));
-    }
-    if id.starts_with("window.panel") {
-        let raw = params.get("panel").and_then(Value::as_str).unwrap_or_default();
-        let panel = if registry::contains(raw) { raw } else { crate::menus::normalize_panel(raw).unwrap_or_default() };
-        let toggle = id == "window.panel" && params.get("toggle").and_then(Value::as_bool) == Some(true);
-        if (toggle && panel_showing(state, panel)) || id == "window.panel.close" {
-            if !registry::contains(panel) {
-                return Some(Err(format!("unknown panel `{raw}`")));
-            }
-            // A compact column's open flyout closes first; its icon stays in the column.
-            if let Some(group) = state.layout.group_of(panel).map(|g| g.id)
-                && state.flyout == Some(group)
-                && state.layout.column_mode(group).is_some_and(|mode| mode != Mode::Full)
-            {
-                state.flyout = None;
-                return Some(Ok(json!({"layout":state.layout,"open":null})));
-            }
-            let forget = crate::panels::library_panel::parse(panel).is_some();
-            let mut next = state.layout.clone();
-            return Some(close_panel(&mut next, panel, forget).map(|()| {
-                state.layout = next;
-                state.flyout = None;
-                json!({"layout":state.layout,"open":null})
-            }));
-        }
-        let mut next = state.layout.clone();
-        let result = (|| -> Result<Action, String> {
-            next.ensure_panel(panel)?;
-            let host = next.owner(panel).ok_or("Panel owner missing")?;
-            let group = next.group_of(panel).ok_or("Panel group missing")?;
-            let source = if params.get("column").and_then(Value::as_bool) == Some(true) {
-                Source::Host(host.id)
-            } else if params.get("group").and_then(Value::as_bool) == Some(true) {
-                Source::Group(group.id)
-            } else {
-                Source::Panel(panel.into())
-            };
-            let action = match id {
-                "window.panel" | "window.panel.activate" => Action::Show { panel: panel.into() },
-                "window.panel.collapse" | "window.panel.minimize" if panel == "tools" => {
-                    // Tools never become an icon column: collapsing narrows them to one column.
-                    let narrow = params
-                        .get("collapsed")
-                        .or_else(|| params.get("minimized"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(next.tools_width().is_some_and(|w| w > metrics::TOOLS_MIN_WIDTH));
-                    Action::SetToolsWidth { width: if narrow { metrics::TOOLS_MIN_WIDTH } else { metrics::TOOLS_MAX_WIDTH } }
-                }
-                "window.panel.collapse" | "window.panel.minimize" => {
-                    let collapsed = params
-                        .get("collapsed")
-                        .or_else(|| params.get("minimized"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(next.column_mode(group.id) == Some(Mode::Full));
-                    Action::SetColumnMode {
-                        group: group.id,
-                        mode: if collapsed {
-                            if host.dock.is_some() && host.compact_width >= 72.0 { Mode::Names } else { Mode::Icons }
-                        } else {
-                            Mode::Full
-                        },
-                    }
-                }
-                "window.panel.float" => Action::Move {
-                    source,
-                    target: Target::Float {
-                        position: [
-                            params.get("x").and_then(Value::as_f64).map_or(host.position[0], |v| v as f32),
-                            params.get("y").and_then(Value::as_f64).map_or(host.position[1], |v| v as f32),
-                        ],
-                    },
-                },
-                "window.panel.move" | "window.panel.dock" => {
-                    let zone = params.get("zone").and_then(Value::as_str).unwrap_or("tab");
-                    let edge = match zone {
-                        "left" => Some(Edge::Left),
-                        "right" => Some(Edge::Right),
-                        "top" | "above" => Some(Edge::Top),
-                        "bottom" | "below" => Some(Edge::Bottom),
-                        "tab" | "center" => None,
-                        _ => return Err("Unknown panel drop zone".into()),
-                    };
-                    let anchor = params.get("anchor").or_else(|| params.get("onto")).and_then(Value::as_str);
-                    let target = if let Some(anchor) = anchor {
-                        let g = next.group_of(anchor).ok_or("Unknown destination panel")?;
-                        if let Some(edge) = edge {
-                            Target::Split { group: g.id, edge }
-                        } else {
-                            let index = params
-                                .get("before")
-                                .and_then(Value::as_str)
-                                .and_then(|p| g.panels.iter().position(|v| v == p))
-                                .unwrap_or(g.panels.len());
-                            Target::Merge { group: g.id, index }
-                        }
-                    } else if id == "window.panel.dock" {
-                        Target::Dock {
-                            edge: edge.unwrap_or(match registry::get(panel).map(|s| s.kind) {
-                                Some(registry::PanelKind::Tools) => Edge::Left,
-                                Some(registry::PanelKind::Control) => Edge::Top,
-                                _ => Edge::Right,
-                            }),
-                        }
-                    } else {
-                        return Err("Expected destination panel".into());
-                    };
-                    Action::Move { source, target }
-                }
-                _ => return Err("Unknown panel layout command".into()),
-            };
-            next.apply(&action)?;
-            Ok(action)
-        })();
-        return Some(result.map(|action| {
-            state.layout = next;
-            state.flyout = if matches!(action, Action::Show { .. })
-                && state.layout.group_of(panel).is_some_and(|g| state.layout.column_mode(g.id) != Some(Mode::Full))
-            {
-                state.layout.group_of(panel).map(|g| g.id)
-            } else {
-                None
-            };
-            json!({"layout":state.layout})
-        }));
-    }
-    None
-}
-
 /// A layout gesture owns keyboard input until it commits or is cancelled.
 pub fn gesture_keys(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
     let Some(state) = presenter::state_mut(&mut app.ui) else { return false };
@@ -512,12 +197,6 @@ pub fn gesture_keys(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
 
 pub fn showing(app: &VectorcraftApp, panel: &str) -> bool {
     presenter::state(&app.ui).is_some_and(|state| panel_showing(state, panel))
-}
-
-fn run(app: &mut VectorcraftApp, action: Action) {
-    if let Err(error) = app.run("ui.panelReview.action", json!({"action":action})) {
-        app.status(error);
-    }
 }
 
 /// Home owns the whole central surface, including its own title bar. The editor arrangement stays
@@ -576,7 +255,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
                 })
                 .map(|h| h.id);
         if let Some(host) = front {
-            run(app, Action::Raise { host });
+            commands::commit(app, vec![Action::Raise { host }]);
         }
     }
     let Some(mut state) = app.ui.varos_panel_review.clone() else { return };
@@ -585,172 +264,20 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     if cancelled {
         state.cancel_transient();
     }
-    let mut final_action = None;
-    let mut final_column_position = None;
-    let mut expand_after_drop = None;
     let mut shown = state.layout.clone();
     let mut drop_line = None;
+    let mut commit = None;
     if let Some(gesture) = state.gesture.clone() {
         if gesture.before != state.layout {
             state.gesture = None;
         } else if let Some(p) = pointer {
-            match &gesture.kind {
-                GestureKind::Move(source) => {
-                    let position = [(p.x - gesture.grab.x - region.left()).max(0.0), (p.y - gesture.grab.y - region.top()).max(0.0)];
-                    if shown.apply(&Action::Move { source: source.clone(), target: Target::Float { position } }).is_ok() {
-                        let panel = source_panel(&gesture.before, source);
-                        if let Some(owner) = panel.as_deref().and_then(|p| shown.owner(p)).map(|h| h.id)
-                            && let Some(index) = shown.hosts.iter().position(|h| h.id == owner)
-                        {
-                            if gesture.from_flyout && shown.apply(&Action::SetMode { host: owner, mode: Mode::Full }).is_err() {
-                                state.gesture = None;
-                            }
-                            let h = shown.hosts.remove(index);
-                            shown.hosts.push(h);
-                        }
-                    }
-                    // Commit the visible, constrained origin so collapsing at a workspace edge
-                    // cannot uncover an off-screen stored position and make the block jump.
-                    let floating_position = source_panel(&gesture.before, source)
-                        .as_deref()
-                        .and_then(|panel| shown.owner(panel))
-                        .map(|host| {
-                            let r = geometry::measure_host(host, region).rect;
-                            [r.left() - region.left(), r.top() - region.top()]
-                        })
-                        .unwrap_or(position);
-                    let target = target_at(&gesture.before, &gesture.geometry, source, p, region).map(|(target, line)| {
-                        (if matches!(target, Target::Float { .. }) { Target::Float { position: floating_position } } else { target }, line)
-                    });
-                    drop_line = target.as_ref().and_then(|(_, line)| *line);
-                    if released {
-                        if gesture.from_flyout && target.as_ref().is_some_and(|(t, _)| matches!(t, Target::Float { .. })) {
-                            expand_after_drop = source_panel(&gesture.before, source);
-                        }
-                        final_action = target.map(|(target, _)| Action::Move { source: source.clone(), target });
-                    }
+            match gesture_frame(&state.layout, &gesture, p, region, released) {
+                Some(frame) => {
+                    shown = frame.preview;
+                    drop_line = frame.drop_line;
+                    commit = frame.commit;
                 }
-                GestureKind::Height { host, top } => {
-                    let r = gesture.origin;
-                    let trim = state.layout.host(*host).map_or(0.0, geometry::docked_bar_trim);
-                    let minimum = state.layout.host(*host).map_or(180.0, |h| {
-                        let minimum = geometry::minimum_height(&h.root);
-                        if standalone_kind(h) == Some(registry::PanelKind::Tools) { minimum.max(h.expanded[0]) } else { minimum }
-                    }) - trim;
-                    let bottom = if *top {
-                        r.bottom()
-                    } else {
-                        (p.y - gesture.grab.y).clamp(r.top() + minimum.min(region.bottom() - r.top()), region.bottom())
-                    };
-                    let mut y = if *top { (p.y - gesture.grab.y).clamp(region.top(), (r.bottom() - minimum).max(region.top())) } else { r.top() };
-                    let width = state.layout.host(*host).filter(|h| h.dock.is_some()).map_or(r.width(), |h| h.expanded[0]);
-                    let mut height = (bottom - y).max(1.0);
-                    if state.layout.host(*host).is_some_and(|h| standalone_kind(h) == Some(registry::PanelKind::Control)) {
-                        height = height.min((width - trim).max(1.0));
-                        if *top {
-                            y = bottom - height;
-                        }
-                    }
-                    let action = Action::Resize { host: *host, position: [r.left() - region.left(), y - region.top()], width, height: height + trim };
-                    if shown.apply(&action).is_err() {
-                        state.gesture = None;
-                    }
-                    if released {
-                        final_action = Some(action);
-                    }
-                }
-                GestureKind::Divider { split, axis, min, max } => {
-                    let r = gesture.origin;
-                    let ratio = if *axis == model::Axis::Horizontal {
-                        (p.x - r.left()) / (r.width() - model::SPLIT_GAP).max(1.0)
-                    } else {
-                        (p.y - r.top()) / (r.height() - model::SPLIT_GAP).max(1.0)
-                    };
-                    let action = Action::SplitRatio { split: *split, ratio: ratio.clamp(*min, *max) };
-                    if shown.apply(&action).is_err() {
-                        state.gesture = None;
-                    }
-                    if released {
-                        final_action = Some(action);
-                    }
-                }
-                GestureKind::ColumnWidth { host, group, left, width } => {
-                    let delta = p.x - gesture.grab.x - if *left { gesture.origin.left() } else { gesture.origin.right() };
-                    let width = (*width + if *left { -delta } else { delta }).clamp(1.0, region.width().max(1.0));
-                    let action = Action::ResizeColumn { group: *group, width };
-                    if shown.apply(&action).is_err() {
-                        state.gesture = None;
-                    } else if *left && state.layout.host(*host).is_some_and(|h| h.dock.is_none()) {
-                        // Floating left-edge resizing keeps the block's opposite edge fixed.
-                        if let (Some(original), Some(after)) =
-                            (state.layout.host(*host), shown.host(*host).map(|h| geometry::measure_host(h, region).rect))
-                        {
-                            let before = geometry::measure_host(original, region).rect;
-                            let x = (before.right() - after.width() - region.left()).max(0.0);
-                            if let Some(h) = shown.hosts.iter_mut().find(|h| h.id == *host) {
-                                h.position[0] = x;
-                            }
-                        }
-                    }
-                    if released {
-                        final_action = Some(action);
-                        if *left && let Some(h) = shown.host(*host).filter(|h| h.dock.is_none()) {
-                            final_column_position = Some((*host, h.position));
-                        }
-                    }
-                }
-                GestureKind::Resize { host, left } => {
-                    let r = gesture.origin;
-                    let full = state.layout.host(*host).is_some_and(|h| h.mode == Mode::Full);
-                    let minimum = if full {
-                        state.layout.host(*host).map_or(240.0, |h| {
-                            let minimum = geometry::minimum_width(&h.root);
-                            if standalone_kind(h) == Some(registry::PanelKind::Control) { minimum.max(h.expanded[1]) } else { minimum }
-                        })
-                    } else {
-                        paint::COMPACT
-                    };
-                    let right = if *left {
-                        r.right()
-                    } else {
-                        (p.x - gesture.grab.x).clamp(r.left() + minimum.min(region.right() - r.left()), region.right())
-                    };
-                    let left_edge =
-                        if *left { (p.x - gesture.grab.x).clamp(region.left(), (r.right() - minimum).max(region.left())) } else { r.left() };
-                    let mut width = (right - left_edge).min(if full { region.width() } else { 320.0 }).max(1.0);
-                    if full
-                        && let Some(h) = state.layout.host(*host)
-                        && standalone_kind(h) == Some(registry::PanelKind::Tools)
-                    {
-                        width = width.clamp(metrics::TOOLS_MIN_WIDTH, metrics::TOOLS_MAX_WIDTH).min(h.expanded[1]);
-                    }
-                    let x = if *left { right - width } else { left_edge };
-                    let mut action = Action::Resize {
-                        host: *host,
-                        position: [x - region.left(), r.top() - region.top()],
-                        width,
-                        height: state.layout.host(*host).filter(|h| h.dock.is_some()).map_or(r.height(), |h| h.expanded[1]),
-                    };
-                    if shown.apply(&action).is_err() {
-                        state.gesture = None;
-                    } else if *left && state.layout.host(*host).is_some_and(|h| h.dock.is_none() && model::has_tools(&h.root)) {
-                        // Bounding a Tools leaf can reduce the resulting combined width.
-                        // Anchor using that final width, then reapply once from the original tree.
-                        if let Some(measured) = geometry::measure(&shown, region).iter().find(|h| h.id == *host) {
-                            let anchored_x = (r.right() - measured.rect.width() - region.left()).max(0.0);
-                            if let Action::Resize { position, .. } = &mut action {
-                                position[0] = anchored_x;
-                            }
-                            shown = state.layout.clone();
-                            if shown.apply(&action).is_err() {
-                                state.gesture = None;
-                            }
-                        }
-                    }
-                    if released {
-                        final_action = Some(action);
-                    }
-                }
+                None => state.gesture = None,
             }
         }
         if released {
@@ -758,24 +285,27 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
         }
     }
     app.ui.varos_panel_review = Some(state.clone());
-    if let Some(action) = final_action {
-        run(app, action);
-        if let Some((host, position)) = final_column_position {
-            run(app, Action::Move { source: Source::Host(host), target: Target::Float { position } });
+    match commit {
+        Some(Ok(actions)) => {
+            commands::commit(app, actions);
+            if let Some(s) = &app.ui.varos_panel_review {
+                state = s.clone();
+                shown = s.layout.clone();
+            }
+            drop_line = None;
         }
-        if let Some(host) = expand_after_drop.as_deref().and_then(|p| app.ui.varos_panel_review.as_ref()?.layout.owner(p)).map(|h| h.id) {
-            run(app, Action::SetMode { host, mode: Mode::Full });
+        // An invalid/outside drop ends the gesture without committing. Discard its floating
+        // preview now, so this release frame already matches saved docks.
+        Some(Err(error)) => {
+            app.status(error);
+            shown = state.layout.clone();
+            drop_line = None;
         }
-        if let Some(s) = &app.ui.varos_panel_review {
-            state = s.clone();
-            shown = s.layout.clone();
+        None if released && state.gesture.is_none() => {
+            shown = state.layout.clone();
+            drop_line = None;
         }
-        drop_line = None;
-    } else if released && state.gesture.is_none() {
-        // An invalid/outside drop ends the gesture without committing. Discard its
-        // floating preview now, so this release frame already matches saved docks.
-        shown = state.layout.clone();
-        drop_line = None;
+        None => {}
     }
     if released || cancelled {
         ctx.request_repaint();
@@ -844,8 +374,8 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
             ctx.request_repaint();
         }
     }
-    for action in actions {
-        run(app, action);
+    if !actions.is_empty() {
+        commands::commit(app, actions);
         ctx.request_repaint();
     }
     // Both floating and docked Control follow their actual wrapped rows.
@@ -865,8 +395,8 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
             })
             .collect()
     });
-    for action in fitted {
-        run(app, action);
+    if !fitted.is_empty() {
+        commands::commit(app, fitted);
         ctx.request_repaint();
     }
     if state.gesture.is_some() {
@@ -878,6 +408,148 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
             _ => CursorIcon::Default,
         });
         ctx.request_repaint();
+    }
+}
+
+/// One frame of a layout gesture: the layout to show and, on a release over a valid target, the
+/// transaction to commit. Preview and commit come from the same actions, so the committed layout
+/// is the one the user saw.
+struct GestureFrame {
+    preview: Layout,
+    drop_line: Option<Rect>,
+    commit: Option<Result<Vec<Action>, String>>,
+}
+
+/// `layout` with every action applied, or the first failure.
+fn applied(layout: &Layout, actions: &[Action]) -> Result<Layout, String> {
+    let mut next = layout.clone();
+    for action in actions {
+        next.apply(action)?;
+    }
+    Ok(next)
+}
+
+/// Drop `source` on `target`. A block dragged out of a compact flyout lands expanded when it
+/// floats; its new host is found by applying the move to a copy, as the commit will.
+fn move_actions(layout: &Layout, source: &Source, target: Target, from_flyout: bool) -> Result<Vec<Action>, String> {
+    let expand = from_flyout && matches!(target, Target::Float { .. });
+    let mut actions = vec![Action::Move { source: source.clone(), target }];
+    if expand {
+        let moved = applied(layout, &actions)?;
+        let panel = source_panel(layout, source).ok_or("Missing drag payload")?;
+        let host = moved.owner(&panel).ok_or("Missing drag payload")?.id;
+        actions.push(Action::SetMode { host, mode: Mode::Full });
+    }
+    Ok(actions)
+}
+
+/// `None` cancels the gesture: its preview no longer applies to `layout`.
+fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, released: bool) -> Option<GestureFrame> {
+    let commit_actions = |actions: &Vec<Action>| released.then(|| Ok(actions.clone()));
+    match &gesture.kind {
+        GestureKind::Move(source) => {
+            let position = [(p.x - gesture.grab.x - region.left()).max(0.0), (p.y - gesture.grab.y - region.top()).max(0.0)];
+            let preview = move_actions(layout, source, Target::Float { position }, gesture.from_flyout).and_then(|a| applied(layout, &a)).ok()?;
+            // Commit the visible, constrained origin so collapsing at a workspace edge
+            // cannot uncover an off-screen stored position and make the block jump.
+            let floating_position = source_panel(layout, source)
+                .as_deref()
+                .and_then(|panel| preview.owner(panel))
+                .map(|host| {
+                    let r = geometry::measure_host(host, region).rect;
+                    [r.left() - region.left(), r.top() - region.top()]
+                })
+                .unwrap_or(position);
+            let target = target_at(layout, &gesture.geometry, source, p, region).map(|(target, line)| {
+                (if matches!(target, Target::Float { .. }) { Target::Float { position: floating_position } } else { target }, line)
+            });
+            let drop_line = target.as_ref().and_then(|(_, line)| *line);
+            let commit = if released { target.map(|(target, _)| move_actions(layout, source, target, gesture.from_flyout)) } else { None };
+            Some(GestureFrame { preview, drop_line, commit })
+        }
+        GestureKind::Height { host, top } => {
+            let r = gesture.origin;
+            let trim = layout.host(*host).map_or(0.0, geometry::docked_bar_trim);
+            let minimum = layout.host(*host).map_or(180.0, |h| {
+                let minimum = geometry::minimum_height(&h.root);
+                if standalone_kind(h) == Some(registry::PanelKind::Tools) { minimum.max(h.expanded[0]) } else { minimum }
+            }) - trim;
+            let bottom =
+                if *top { r.bottom() } else { (p.y - gesture.grab.y).clamp(r.top() + minimum.min(region.bottom() - r.top()), region.bottom()) };
+            let mut y = if *top { (p.y - gesture.grab.y).clamp(region.top(), (r.bottom() - minimum).max(region.top())) } else { r.top() };
+            let width = layout.host(*host).filter(|h| h.dock.is_some()).map_or(r.width(), |h| h.expanded[0]);
+            let mut height = (bottom - y).max(1.0);
+            if layout.host(*host).is_some_and(|h| standalone_kind(h) == Some(registry::PanelKind::Control)) {
+                height = height.min((width - trim).max(1.0));
+                if *top {
+                    y = bottom - height;
+                }
+            }
+            let actions = vec![Action::Resize { host: *host, position: [r.left() - region.left(), y - region.top()], width, height: height + trim }];
+            Some(GestureFrame { preview: applied(layout, &actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
+        }
+        GestureKind::Divider { split, axis, min, max } => {
+            let r = gesture.origin;
+            let ratio = if *axis == model::Axis::Horizontal {
+                (p.x - r.left()) / (r.width() - model::SPLIT_GAP).max(1.0)
+            } else {
+                (p.y - r.top()) / (r.height() - model::SPLIT_GAP).max(1.0)
+            };
+            let actions = vec![Action::SplitRatio { split: *split, ratio: ratio.clamp(*min, *max) }];
+            Some(GestureFrame { preview: applied(layout, &actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
+        }
+        GestureKind::ColumnWidth { host, group, left, width } => {
+            let delta = p.x - gesture.grab.x - if *left { gesture.origin.left() } else { gesture.origin.right() };
+            let width = (*width + if *left { -delta } else { delta }).clamp(1.0, region.width().max(1.0));
+            let mut actions = vec![Action::ResizeColumn { group: *group, width }];
+            let resized = applied(layout, &actions).ok()?;
+            // Floating left-edge resizing keeps the block's opposite edge fixed.
+            if *left
+                && let Some(original) = layout.host(*host).filter(|h| h.dock.is_none())
+                && let Some(after) = resized.host(*host).map(|h| geometry::measure_host(h, region).rect)
+            {
+                let before = geometry::measure_host(original, region).rect;
+                let position = [(before.right() - after.width() - region.left()).max(0.0), original.position[1]];
+                actions.push(Action::Move { source: Source::Host(*host), target: Target::Float { position } });
+            }
+            Some(GestureFrame { preview: applied(layout, &actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
+        }
+        GestureKind::Resize { host, left } => {
+            let r = gesture.origin;
+            let full = layout.host(*host).is_some_and(|h| h.mode == Mode::Full);
+            let minimum = if full {
+                layout.host(*host).map_or(240.0, |h| {
+                    let minimum = geometry::minimum_width(&h.root);
+                    if standalone_kind(h) == Some(registry::PanelKind::Control) { minimum.max(h.expanded[1]) } else { minimum }
+                })
+            } else {
+                paint::COMPACT
+            };
+            let right =
+                if *left { r.right() } else { (p.x - gesture.grab.x).clamp(r.left() + minimum.min(region.right() - r.left()), region.right()) };
+            let left_edge = if *left { (p.x - gesture.grab.x).clamp(region.left(), (r.right() - minimum).max(region.left())) } else { r.left() };
+            let mut width = (right - left_edge).min(if full { region.width() } else { 320.0 }).max(1.0);
+            if full
+                && let Some(h) = layout.host(*host)
+                && standalone_kind(h) == Some(registry::PanelKind::Tools)
+            {
+                width = width.clamp(metrics::TOOLS_MIN_WIDTH, metrics::TOOLS_MAX_WIDTH).min(h.expanded[1]);
+            }
+            let x = if *left { right - width } else { left_edge };
+            let height = layout.host(*host).filter(|h| h.dock.is_some()).map_or(r.height(), |h| h.expanded[1]);
+            let mut position = [x - region.left(), r.top() - region.top()];
+            let mut preview = applied(layout, &[Action::Resize { host: *host, position, width, height }]).ok()?;
+            if *left && layout.host(*host).is_some_and(|h| h.dock.is_none() && model::has_tools(&h.root)) {
+                // Bounding a Tools leaf can reduce the resulting combined width.
+                // Anchor using that final width, then reapply once from the original tree.
+                if let Some(measured) = geometry::measure(&preview, region).iter().find(|h| h.id == *host) {
+                    position[0] = (r.right() - measured.rect.width() - region.left()).max(0.0);
+                    preview = applied(layout, &[Action::Resize { host: *host, position, width, height }]).ok()?;
+                }
+            }
+            let actions = vec![Action::Resize { host: *host, position, width, height }];
+            Some(GestureFrame { preview, drop_line: None, commit: commit_actions(&actions) })
+        }
     }
 }
 
@@ -1081,18 +753,7 @@ fn render_host(
                         && model::groups(&host.root).iter().any(|source| source.id == g.id && source.panels.iter().any(|p| p == "tools"))
                 });
                 let narrow_tools = state.layout.tools_width().is_some_and(|w| w <= metrics::TOOLS_MIN_WIDTH + 0.01);
-                let action = if tools {
-                    Action::SetToolsWidth { width: if narrow_tools { metrics::TOOLS_MAX_WIDTH } else { metrics::TOOLS_MIN_WIDTH } }
-                } else {
-                    Action::SetColumnMode {
-                        group: column.key,
-                        mode: if column.mode == Mode::Full {
-                            if docked && column.compact_width >= 72.0 { Mode::Names } else { Mode::Icons }
-                        } else {
-                            Mode::Full
-                        },
-                    }
-                };
+                let action = commands::column_toggle(&state.layout, column.key, None);
                 let response = ui.interact(toggle, id.with(("column-mode", column.key)), Sense::click());
                 paint::control(
                     ui,

@@ -11,6 +11,8 @@ pub(crate) const ROW: f32 = TOOL_BUTTON;
 pub(crate) const GRIP: f32 = 4.0;
 pub(crate) const COMPACT_PAD: f32 = 0.0;
 pub(crate) const COMPACT: f32 = 44.0;
+/// A compact column at least this wide shows panel names beside their icons.
+pub(crate) const NAMES_MIN_WIDTH: f32 = 72.0;
 
 pub(crate) const FONT: f32 = 12.0;
 pub(crate) const TAB_PAD: f32 = 10.0;

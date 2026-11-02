@@ -48,7 +48,7 @@ use Item::Sep;
 /// UI-level commands: (id, label, shortcut, params doc).
 pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("ui.panelReview", "Panel Workspace Preview", "", "{enabled?: bool} isolated unified panel workspace"),
-    ("ui.panelReview.action", "Panel Preview Action", "", "{action: object} transactional preview layout action"),
+    ("ui.panelReview.action", "Panel Preview Action", "", "{action: object} or {actions: [object]} one transactional layout change"),
     ("ui.panelReview.inspect", "Inspect Panel Preview", "", "{} layout and logical hit rectangles"),
     (
         "app.language",

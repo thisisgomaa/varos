@@ -455,6 +455,19 @@ impl Layout {
         Some(if p.mode == Mode::Full { group_size(&host.root, g.id, content_size(host.expanded))?[0] + HOST_CHROME[0] } else { p.compact_width })
     }
 
+    /// The column holding `group` is the Tools column (which switches width, never collapses).
+    pub fn column_has_tools(&self, group: u64) -> bool {
+        self.source_host(&Source::Group(group)).and_then(|host| column_node(&host.root, group)).is_some_and(has_tools)
+    }
+
+    /// The compact mode the column holding `group` collapses to: a docked column at least
+    /// [`NAMES_MIN_WIDTH`](super::metrics::NAMES_MIN_WIDTH) wide shows names, anything else icons.
+    pub fn collapsed_mode(&self, group: u64) -> Mode {
+        let Some(host) = self.source_host(&Source::Group(group)) else { return Mode::Icons };
+        let width = column_node(&host.root, group).and_then(|column| groups(column).first().map(|g| presentation(host, g).compact_width));
+        if host.dock.is_some() && width.is_some_and(|width| width >= super::metrics::NAMES_MIN_WIDTH) { Mode::Names } else { Mode::Icons }
+    }
+
     pub fn new_slice() -> Self {
         Self {
             version: 1,
