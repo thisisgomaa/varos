@@ -153,6 +153,11 @@ impl Harness {
         &self.state().layout
     }
 
+    /// The tab widths the last frame measured from the drawn labels.
+    pub fn tabs(&self) -> &geometry::TabWidths {
+        &self.state().tab_widths
+    }
+
     pub fn hit(&self, name: &str) -> Rect {
         self.state().hits.iter().find_map(|(key, rect)| (key == name).then_some(*rect)).unwrap_or_else(|| panic!("missing drawn hit {name}"))
     }
@@ -175,7 +180,7 @@ impl Harness {
 
     pub fn group_rect(&self, panel: &str) -> Rect {
         let group = self.group_id(panel);
-        geometry::measure(self.layout(), self.workspace).into_iter().flat_map(|host| host.groups).find(|g| g.id == group).unwrap().rect
+        geometry::measure(self.layout(), self.workspace, self.tabs()).into_iter().flat_map(|host| host.groups).find(|g| g.id == group).unwrap().rect
     }
 
     pub fn tab(&self, panel: &str) -> Rect {

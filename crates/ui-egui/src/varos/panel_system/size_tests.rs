@@ -200,7 +200,7 @@ fn joined_tools_geometry_preserves_saved_leaf_width_when_host_is_enlarged_or_cli
             layout.apply(&Action::Move { source: Source::Host(host), target: Target::Dock { edge } }).unwrap();
             let tools = layout.group_of("tools").unwrap().id;
             for region_width in [1600.0, 400.0] {
-                let measured = geometry::measure(&layout, Rect::from_min_size(pos2(0.0, 0.0), vec2(region_width, 1000.0)));
+                let measured = geometry::measure(&layout, Rect::from_min_size(pos2(0.0, 0.0), vec2(region_width, 1000.0)), &Default::default());
                 let measured = measured.iter().find(|h| h.id == host).unwrap();
                 let leaf = measured.groups.iter().find(|g| g.id == tools).unwrap();
                 let actual = leaf.rect.width() + HOST_CHROME[0];
@@ -223,7 +223,7 @@ fn narrow_floating_tools_has_full_body_without_clipped_tab_controls() {
     layout.apply(&Action::Move { source: Source::Panel("tools".into()), target: Target::Float { position: [30.0, 40.0] } }).unwrap();
     layout.apply(&Action::SetToolsWidth { width: 44.0 }).unwrap();
     let host = layout.owner("tools").unwrap();
-    let measured = geometry::measure_host(host, Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 1000.0)));
+    let measured = geometry::measure_host(host, Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 1000.0)), &Default::default());
     let group = measured.groups.first().unwrap();
     assert!(group.tabs.is_empty());
     assert_eq!(group.body, group.rect);
@@ -262,7 +262,8 @@ fn tools_geometry_divider_limits_are_ordered_in_tiny_viewports() {
         let host = layout.owner("layers").unwrap().id;
         layout.apply(&Action::Move { source: Source::Panel("tools".into()), target: Target::Attach { host, edge } }).unwrap();
         for width in [10.0, 45.0, 100.0] {
-            let measured = geometry::measure_host(layout.host(host).unwrap(), Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 100.0)));
+            let measured =
+                geometry::measure_host(layout.host(host).unwrap(), Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 100.0)), &Default::default());
             for divider in measured.dividers {
                 assert!(divider.min_ratio.is_finite() && divider.max_ratio.is_finite());
                 assert!(divider.min_ratio <= divider.max_ratio);

@@ -14,7 +14,7 @@ impl Harness {
     fn assert_control_fitted(&self) -> f32 {
         let host = self.host_id("control");
         let content = super::content::control_height(&self.ctx, "control").expect("the real Control body reports its intrinsic height");
-        let (hosts, _) = geometry::arrange(self.layout(), self.workspace);
+        let (hosts, _) = geometry::arrange(self.layout(), self.workspace, self.tabs());
         let measured = hosts.iter().find(|candidate| candidate.id == host).unwrap();
         let body = measured.groups.first().unwrap().body;
         assert!(
@@ -52,7 +52,7 @@ impl Harness {
     }
 
     fn assert_canvas_reserved(&self) {
-        let (hosts, board) = geometry::arrange(self.layout(), self.workspace);
+        let (hosts, board) = geometry::arrange(self.layout(), self.workspace, self.tabs());
         let canvas = self.canvas();
         assert!(board.expand(0.6).contains_rect(canvas), "canvas {canvas:?} must stay inside the dock-reserved board {board:?}");
         for host in hosts {
@@ -85,7 +85,7 @@ impl Harness {
         assert!(!corners.is_empty(), "the actual host frame is painted");
         if docked {
             assert!(corners.iter().all(|radius| *radius == egui::CornerRadius::ZERO), "docked outer surfaces are square: {corners:?}");
-            let measured = geometry::arrange(self.layout(), self.workspace).0;
+            let measured = geometry::arrange(self.layout(), self.workspace, self.tabs()).0;
             let host = measured.iter().find(|candidate| candidate.id == host).unwrap();
             let bottom = host.groups.iter().map(|group| group.body.bottom()).fold(f32::NEG_INFINITY, f32::max);
             assert!(
@@ -184,7 +184,7 @@ fn bars_reject_tab_merges_but_tools_accepts_an_independent_group_beside_it() {
         let action = Action::Move { source: Source::Panel("layers".into()), target: Target::Merge { group, index: 1 } };
         assert!(h.app.run("ui.panelReview.action", json!({"action":action})).is_err(), "{bar} cannot share its tab group");
         assert_eq!(h.layout(), &before, "rejecting a merge preserves the complete layout");
-        let measured = geometry::arrange(h.layout(), h.workspace).0;
+        let measured = geometry::arrange(h.layout(), h.workspace, h.tabs()).0;
         let target = measured.iter().find(|candidate| candidate.id == host).unwrap().groups.first().unwrap().body.center();
         h.drag(h.hit("tab:layers").center(), target);
         assert_ne!(h.host_id("layers"), host, "dropping inside {bar} must not merge its tabs");
@@ -211,7 +211,7 @@ fn bars_reject_tab_merges_but_tools_accepts_an_independent_group_beside_it() {
     assert_eq!(h.layout().group_of("layers").unwrap().id, layers_group);
     assert_eq!(h.layout().group(tools_group).unwrap().panels, ["tools"]);
     assert_eq!(h.layout().group(layers_group).unwrap().panels, ["layers"]);
-    let measured = geometry::arrange(h.layout(), h.workspace).0;
+    let measured = geometry::arrange(h.layout(), h.workspace, h.tabs()).0;
     let host = measured.iter().find(|candidate| candidate.id == tools).unwrap();
     let tool_rect = host.groups.iter().find(|g| g.id == tools_group).unwrap().rect;
     let layer_rect = host.groups.iter().find(|g| g.id == layers_group).unwrap().rect;
@@ -288,7 +288,7 @@ fn bottom_docked_control_fits_its_content_and_preserves_its_floating_size() {
     }
     assert_eq!(h.layout().host(host).unwrap().expanded, stored, "fitting a dock does not overwrite its remembered floating size");
     let docked = h.host_rect("control");
-    let (_, board) = geometry::arrange(h.layout(), h.workspace);
+    let (_, board) = geometry::arrange(h.layout(), h.workspace, h.tabs());
     assert!((board.bottom() - docked.top()).abs() < 0.6, "the board reserves exactly the fitted bar");
     assert!((docked.bottom() - h.workspace.bottom()).abs() < 0.6);
     h.assert_canvas_reserved();
@@ -456,7 +456,7 @@ fn tab_overflow_lists_every_group_member_and_selecting_one_makes_its_tab_visible
         h.action(Action::Move { source: Source::Panel(panel.into()), target: Target::Merge { group, index } });
     }
     let expected = h.layout().group(group).unwrap().panels.clone();
-    let (hosts, _) = geometry::arrange(h.layout(), h.workspace);
+    let (hosts, _) = geometry::arrange(h.layout(), h.workspace, h.tabs());
     let measured = hosts.iter().flat_map(|host| &host.groups).find(|candidate| candidate.id == group).unwrap();
     assert_eq!(measured.overflow, expected, "the menu offers all group members, including clipped tabs");
     assert!(measured.tabs.len() < expected.len());
@@ -790,4 +790,39 @@ fn preferences_apply_sends_touched_fields_and_escape_in_a_field_keeps_the_draft(
     assert_eq!(h.app.session.prefs.keyboard_increment, 3.0, "unrelated edits still apply");
     assert_eq!(h.app.session.documents()[..before.len()].iter().map(|d| d.doc.units).collect::<Vec<_>>(), before);
     assert!(h.app.ui.dialog.is_some());
+}
+
+/// Each drawn tab is as wide as its painted, localized label plus the tab padding (within the tab
+/// limits): the layout measures the real text, in English and after the interface language
+/// changes, never a per-character estimate.
+#[test]
+fn tabs_are_sized_from_their_measured_localized_labels() {
+    let mut h = Harness::workspace();
+    let check = |h: &mut Harness| -> Vec<(String, f32)> {
+        let texts = h.text_shapes();
+        let mut checked = Vec::new();
+        for (name, tab) in h.state().hits.iter().filter(|(name, _)| name.starts_with("tab:")) {
+            let panel = &name["tab:".len()..];
+            if h.layout().column_mode(h.layout().group_of(panel).unwrap().id) != Some(Mode::Full) {
+                continue;
+            }
+            let label = super::paint::label(panel);
+            let Some((_, text)) = texts.iter().find(|(text, rect)| text == label && tab.contains(rect.left_center())) else { continue };
+            let expected = (text.width().ceil() + 22.0).clamp(62.0, 180.0);
+            assert!((tab.width() - expected).abs() < 0.6 || tab.width() < expected, "{panel}: tab {} for a {}-wide label", tab.width(), text.width());
+            checked.push((label.to_string(), tab.width()));
+        }
+        assert!(!checked.is_empty(), "the workspace draws named tabs");
+        checked
+    };
+    let english = check(&mut h);
+    let lang = crate::i18n::Lang::for_picker()
+        .into_iter()
+        .find(|lang| english.iter().any(|(label, _)| crate::i18n::tr(*lang, label) != label && crate::i18n::tr(*lang, label).is_ascii()))
+        .expect("a language that translates a tab label");
+    h.app.run("prefs.set", json!({"key": "interfaceLanguage", "value": lang.code()})).unwrap();
+    h.settle();
+    let translated = check(&mut h);
+    assert_ne!(translated, english, "the tabs follow the translated labels");
+    crate::i18n::set_current(crate::i18n::Lang::EN);
 }

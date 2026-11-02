@@ -494,7 +494,7 @@ fn control_fitted_geometry_uses_only_content_and_border_in_all_placements() {
             let host = layout.host(id).unwrap();
             assert!(geometry::is_control(host));
             assert_eq!(geometry::title_height(host), 0.0);
-            let measured = geometry::measure(&layout, region);
+            let measured = geometry::measure(&layout, region, &Default::default());
             let rect = measured.iter().find(|rect| rect.id == id).unwrap();
             let group = rect.groups.first().unwrap();
             assert_eq!(rect.rect.height(), 36.0, "saved tall hosts cannot reserve a blank strip");
@@ -546,7 +546,7 @@ fn independent_column_modes_and_widths_preserve_expanded_neighbours_and_ownershi
         assert_eq!(layout.column_mode(b), Some(Mode::Full));
         close_size(layout.host(left).unwrap().expanded, saved);
         close_size(layout.expanded_group_size(b).unwrap(), sibling);
-        let measured = geometry::measure(&layout, egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        let measured = geometry::measure(&layout, egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)), &Default::default());
         let host = measured.iter().find(|h| h.id == left).unwrap();
         assert_eq!(host.columns.len(), 2);
         assert_eq!(host.groups.iter().find(|g| g.id == a).unwrap().mode, Mode::Icons);
@@ -617,10 +617,10 @@ fn reexpanded_columns_keep_content_minimums_and_tools_divider_limits() {
             let target = dock.map_or(Target::Float { position: [200.0, 100.0] }, |edge| Target::Dock { edge });
             apply(&mut layout, Action::Move { source: Source::Host(host), target });
             let group = layout.group_of("layers").unwrap().id;
-            let before = geometry::measure(&layout, region).into_iter().find(|h| h.id == host).unwrap();
+            let before = geometry::measure(&layout, region, &Default::default()).into_iter().find(|h| h.id == host).unwrap();
             apply(&mut layout, Action::SetColumnMode { group, mode: Mode::Icons });
             apply(&mut layout, Action::SetColumnMode { group, mode: Mode::Full });
-            let after = geometry::measure(&layout, region).into_iter().find(|h| h.id == host).unwrap();
+            let after = geometry::measure(&layout, region, &Default::default()).into_iter().find(|h| h.id == host).unwrap();
             assert_eq!(before.dividers.len(), after.dividers.len());
             for (a, b) in before.dividers.iter().zip(&after.dividers) {
                 assert_eq!(a.id, b.id);
@@ -633,7 +633,7 @@ fn reexpanded_columns_keep_content_minimums_and_tools_divider_limits() {
             }
             let divider = after.dividers.first().unwrap();
             apply(&mut layout, Action::SplitRatio { split: divider.id, ratio: divider.min_ratio });
-            let measured = geometry::measure(&layout, region).into_iter().find(|h| h.id == host).unwrap();
+            let measured = geometry::measure(&layout, region, &Default::default()).into_iter().find(|h| h.id == host).unwrap();
             let layers = measured.groups.iter().find(|g| g.id == group).unwrap();
             assert!(layers.rect.width() + HOST_CHROME[0] + 0.01 >= super::super::registry::get("layers").unwrap().min_size[0]);
             if neighbor == "tools" {
@@ -644,4 +644,19 @@ fn reexpanded_columns_keep_content_minimums_and_tools_divider_limits() {
             round_trip(&layout);
         }
     }
+}
+
+/// The model lays tabs out from the widths it is given (the presenter's measured labels): it
+/// never estimates text itself.
+#[test]
+fn tab_rects_follow_the_supplied_measured_widths() {
+    let mut layout = Layout::new_slice();
+    let group = layout.group_of("layers").unwrap().id;
+    apply(&mut layout, Action::Move { source: Source::Panel("swatches".into()), target: Target::Merge { group, index: 1 } });
+    let region = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+    let widths = super::super::geometry::TabWidths([("layers".to_string(), 97.0), ("swatches".to_string(), 131.0)].into_iter().collect());
+    let measured = super::super::geometry::measure(&layout, region, &widths);
+    let tabs = &measured.iter().flat_map(|h| &h.groups).find(|g| g.id == group).unwrap().tabs;
+    let widths: Vec<_> = tabs.iter().map(|(panel, rect)| (panel.as_str(), rect.width())).collect();
+    assert_eq!(widths, [("layers", 97.0), ("swatches", 131.0)]);
 }

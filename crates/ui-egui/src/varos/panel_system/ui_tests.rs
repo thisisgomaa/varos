@@ -435,7 +435,7 @@ fn ratio_aware_minimum_width_preserves_both_unequal_group_bodies() {
         let model::Node::Split { ratio, .. } = &host.root else { panic!("side attachment must preserve two groups") };
         assert!((*ratio - 0.5).abs() > 0.1, "exercise unequal retained group dimensions");
         host.expanded[0] = super::geometry::minimum_width(&host.root);
-        let geometry = super::geometry::measure_host(&host, Rect::from_min_size(Pos2::ZERO, vec2(2000.0, 1200.0)));
+        let geometry = super::geometry::measure_host(&host, Rect::from_min_size(Pos2::ZERO, vec2(2000.0, 1200.0)), &Default::default());
         assert_eq!(geometry.groups.len(), 2);
         for group in &geometry.groups {
             assert!(group.body.width() >= 237.99, "group {} is clipped to {} at its host's minimum width", group.id, group.body.width());

@@ -20,7 +20,7 @@ pub(crate) use presenter::Presenter;
 
 use crate::{VectorcraftApp, theme::Tokens};
 use egui::{CursorIcon, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
-use geometry::{GroupRect, HostRect};
+use geometry::{GroupRect, HostRect, TabWidths};
 use model::{Action, Edge, Host, Layout, Mode, Source, Target};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -45,6 +45,10 @@ pub struct State {
     /// owns the drag of the handle that began it until [`State::sync_drag`] ends it.
     #[serde(skip)]
     drag_orphaned: bool,
+    /// Every tab's width from its measured, localized label, refreshed each frame the workspace
+    /// draws ([`paint::tab_widths`]); the geometry lays tabs out from it.
+    #[serde(skip)]
+    tab_widths: TabWidths,
 }
 
 impl Default for State {
@@ -59,6 +63,7 @@ impl Default for State {
             flyout: None,
             hits: Vec::new(),
             drag_orphaned: false,
+            tab_widths: TabWidths::default(),
         }
     }
 }
@@ -303,6 +308,8 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     // Work on the stored state in place: only the layout is copied (once, for the frame), never
     // the saved workspace arrangements.
     let Some(s) = app.ui.varos_panel_review.as_mut() else { return };
+    // Tabs are laid out from their labels measured in this frame's fonts and language.
+    s.tab_widths = paint::tab_widths(&ctx, &s.layout);
     if cancelled {
         s.cancel_transient();
     }
@@ -313,7 +320,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
         let keep = if gesture.before != s.layout {
             false
         } else if let Some(p) = pointer {
-            gesture_frame(&s.layout, gesture, p, region, released).is_some_and(|frame| {
+            gesture_frame(&s.layout, gesture, p, region, released, &s.tab_widths).is_some_and(|frame| {
                 preview = Some(frame.preview);
                 drop_line = frame.drop_line;
                 commit = frame.commit;
@@ -355,11 +362,12 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     }
     let Some(s) = app.ui.varos_panel_review.as_ref() else { return };
     let layout = s.layout.clone();
+    let tabs = s.tab_widths.clone();
     let shown = preview.as_ref().unwrap_or(&layout);
     // The canvas and panel chrome must use the same preview layout. Keeping the
     // committed dock reservation while its panel is visibly floating leaves an
     // empty strip behind until release (and during a dock-width resize).
-    let (mut measured, board) = geometry::arrange(shown, region);
+    let (mut measured, board) = geometry::arrange(shown, region, &tabs);
     // Floating Areas are separate egui layers, so canvas gestures cannot start through them.
     super::shell::boxes::board(app, ui, board, false);
     if gesture.is_none()
@@ -392,13 +400,13 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     if let Some(front) = measured.last() {
         ctx.move_to_top(egui::LayerId::new(Order::Middle, Id::unique("panel-review-host").with(front.id)));
     }
-    let view = View { layout: &layout, dragging: gesture.is_some() };
+    let view = View { layout: &layout, dragging: gesture.is_some(), tabs: &tabs };
     for item in &measured {
         let Some(host) = shown.host(item.id) else { continue };
         render_host(app, &ctx, host, item, region, &view, &mut hits, &mut pending, &mut actions, &mut flyout);
     }
     if let Some(group) = flyout {
-        render_flyout(app, &ctx, shown, &measured, group, region, &mut hits, &mut pending, &mut actions, &mut flyout);
+        render_flyout(app, &ctx, &view, shown, &measured, group, region, &mut hits, &mut pending, &mut actions, &mut flyout);
     }
     if let Some(line) = drop_line {
         ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::unique("panel-review-drop"))).rect_filled(line, 0, Tokens::get(&ctx).accent);
@@ -415,7 +423,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
                 GestureKind::Height { top, .. } => vec2(0.0, press.y - if *top { rect.top() } else { rect.bottom() }),
                 _ => press - rect.min,
             };
-            let mut geometry = geometry::measure(&s.layout, region);
+            let mut geometry = geometry::measure(&s.layout, region, &tabs);
             geometry::scroll_compact(&mut geometry, &s.layout, &s.compact_offsets);
             s.gesture = Some(Gesture { before: s.layout.clone(), kind, grab, origin: rect, geometry, from_flyout });
             s.flyout = None;
@@ -463,6 +471,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
 struct View<'a> {
     layout: &'a Layout,
     dragging: bool,
+    tabs: &'a TabWidths,
 }
 
 /// One frame of a layout gesture: the layout to show and, on a release over a valid target, the
@@ -489,7 +498,7 @@ fn move_actions(layout: &Layout, source: &Source, target: Target, from_flyout: b
 }
 
 /// `None` cancels the gesture: its preview no longer applies to `layout`.
-fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, released: bool) -> Option<GestureFrame> {
+fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, released: bool, tabs: &TabWidths) -> Option<GestureFrame> {
     let commit_actions = |actions: &Vec<Action>| released.then(|| Ok(actions.clone()));
     match &gesture.kind {
         GestureKind::Move(source) => {
@@ -501,7 +510,7 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
                 .as_deref()
                 .and_then(|panel| preview.owner(panel))
                 .map(|host| {
-                    let r = geometry::measure_host(host, region).rect;
+                    let r = geometry::measure_host(host, region, tabs).rect;
                     [r.left() - region.left(), r.top() - region.top()]
                 })
                 .unwrap_or(position);
@@ -551,9 +560,9 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
             // Floating left-edge resizing keeps the block's opposite edge fixed.
             if *left
                 && let Some(original) = layout.host(*host).filter(|h| h.dock.is_none())
-                && let Some(after) = resized.host(*host).map(|h| geometry::measure_host(h, region).rect)
+                && let Some(after) = resized.host(*host).map(|h| geometry::measure_host(h, region, tabs).rect)
             {
-                let before = geometry::measure_host(original, region).rect;
+                let before = geometry::measure_host(original, region, tabs).rect;
                 let position = [(before.right() - after.width() - region.left()).max(0.0), original.position[1]];
                 actions.push(Action::Move { source: Source::Host(*host), target: Target::Float { position } });
             }
@@ -587,7 +596,7 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
             if *left && layout.host(*host).is_some_and(|h| h.dock.is_none() && model::has_tools(&h.root)) {
                 // Bounding a Tools leaf can reduce the resulting combined width.
                 // Anchor using that final width, then reapply once from the original tree.
-                if let Some(measured) = geometry::measure(&preview, region).iter().find(|h| h.id == *host) {
+                if let Some(measured) = geometry::measure(&preview, region, tabs).iter().find(|h| h.id == *host) {
                     position[0] = (r.right() - measured.rect.width() - region.left()).max(0.0);
                     preview = layout.applied(&[Action::Resize { host: *host, position, width, height }]).ok()?;
                 }
@@ -840,7 +849,7 @@ fn render_host(
         let clip = ui.clip_rect();
         ui.set_clip_rect(clip.intersect(Rect::from_min_max(pos2(rect.left(), title.bottom()), pos2(rect.right(), rect.bottom() - footer))));
         for g in &geo.groups {
-            render_group(app, ui, host, rect, g, view.dragging, false, hits, pending, actions, flyout);
+            render_group(app, ui, host, rect, g, view.dragging, hits, pending, actions, flyout);
         }
         ui.set_clip_rect(clip);
         for divider in &geo.dividers {
@@ -962,7 +971,6 @@ fn render_group(
     host_rect: Rect,
     geo: &GroupRect,
     dragging: bool,
-    flyout_view: bool,
     hits: &mut Vec<(String, Rect)>,
     pending: &mut Option<(GestureKind, Rect, bool)>,
     actions: &mut Vec<Action>,
@@ -973,7 +981,7 @@ fn render_group(
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(geo.rect, 0, t.panel);
     if full && geo.tabs.is_empty() {
-        let grip = Rect::from_min_max(geo.rect.min, pos2(geo.rect.right(), geo.body.top()));
+        let grip = geo.grip;
         if grip.is_positive() {
             ui.painter().rect_filled(grip, 0, t.panel_darker);
             let response =
@@ -986,18 +994,10 @@ fn render_group(
         body(app, ui, &group.active, geo.body);
         return;
     }
-    let head = Rect::from_min_size(geo.rect.min, vec2(geo.rect.width(), if full { paint::TABS } else { paint::GRIP }));
     if full {
-        ui.painter().rect_filled(head, 0, t.panel_darker);
+        ui.painter().rect_filled(Rect::from_min_size(geo.rect.min, vec2(geo.rect.width(), paint::TABS)), 0, t.panel_darker);
     }
-    let grip = if full {
-        Rect::from_min_max(
-            pos2(geo.tabs.last().map_or(head.left(), |(_, r)| r.right()), head.top()),
-            pos2(head.right() - header_controls(!geo.overflow.is_empty(), flyout_view), head.bottom()),
-        )
-    } else {
-        head
-    };
+    let grip = geo.grip;
 
     let response =
         ui.interact(grip, Id::unique("panel-review-group-grip").with((group.id, full)), Sense::click_and_drag()).on_hover_cursor(CursorIcon::Default);
@@ -1032,9 +1032,7 @@ fn render_group(
             }
         }
     }
-    if full && !geo.overflow.is_empty() {
-        let r =
-            Rect::from_min_size(pos2(head.right() - header_controls(true, flyout_view), head.top()), vec2(metrics::HEADER_CONTROL, head.height()));
+    if let Some(r) = geo.overflow_button {
         ui.scope_builder(egui::UiBuilder::new().id_salt(("tabs-overflow", group.id)).max_rect(r), |ui| {
             ui.menu_button("…", |ui| {
                 for panel in &geo.overflow {
@@ -1047,8 +1045,7 @@ fn render_group(
         });
         hits.push((format!("tabs-overflow:{}", group.id), r));
     }
-    if full {
-        let r = Rect::from_min_size(pos2(head.right() - metrics::HEADER_CONTROL, head.top()), vec2(metrics::HEADER_CONTROL, head.height()));
+    if let Some(r) = geo.menu {
         let response = ui.interact(r, Id::unique(("panel-options", group.id)), Sense::click()).on_hover_cursor(CursorIcon::Default);
         paint::control(ui, r, "menu", response.hovered());
         hits.push((format!("panel-menu:{}", group.id), r));
@@ -1072,12 +1069,6 @@ fn render_group(
         body(app, ui, &group.active, geo.body);
     }
     ui.painter().hline(geo.rect.x_range(), geo.rect.bottom() - 0.5, Stroke::new(1.0, t.divider));
-}
-
-/// The width the right end of a full group header keeps for its controls, from the right: the
-/// panel menu, the flyout's close (`flyout`) and the tab overflow menu (`overflow`).
-fn header_controls(overflow: bool, flyout: bool) -> f32 {
-    (1.0 + f32::from(u8::from(overflow)) + f32::from(u8::from(flyout))) * metrics::HEADER_CONTROL
 }
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, panel: &str, rect: Rect) {
@@ -1107,6 +1098,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, panel: &str, rect: Rect) {
 fn render_flyout(
     app: &mut VectorcraftApp,
     ctx: &egui::Context,
+    view: &View,
     layout: &Layout,
     measured: &[HostRect],
     group: u64,
@@ -1151,24 +1143,8 @@ fn render_flyout(
         mode: Mode::Full,
         ..host.clone()
     };
-    let mut geo = geometry::measure_host(&temporary, region);
-    for g in &mut geo.groups {
-        let tab_end = g.rect.right() - header_controls(true, true);
-        let mut overflow = g.overflow.clone();
-        g.tabs.retain_mut(|(panel, rect)| {
-            if rect.right() > tab_end {
-                if !overflow.contains(panel) {
-                    overflow.push(panel.clone());
-                }
-                if rect.left() >= tab_end {
-                    return false;
-                }
-                rect.max.x = tab_end;
-            }
-            true
-        });
-        g.overflow = overflow;
-    }
+    // Measured once with the flyout's own header reserve (its close button).
+    let mut geo = geometry::measure_flyout(&temporary, region, view.tabs);
     let drag_rect = geo.rect;
     geo.rect.min.y += paint::TITLE;
     egui::Area::new(Id::unique("panel-review-flyout"))
@@ -1183,21 +1159,18 @@ fn render_flyout(
             ui.painter().rect_filled(geo.rect, 3, Tokens::get(ctx).panel);
             for g in &geo.groups {
                 let mut request = None;
-                render_group(app, ui, &temporary, drag_rect, g, false, true, hits, &mut request, actions, flyout);
+                render_group(app, ui, &temporary, drag_rect, g, false, hits, &mut request, actions, flyout);
                 if let Some((kind, rect, _)) = request {
                     *pending = Some((kind, rect, true));
                 }
-            }
-            let close = Rect::from_min_size(
-                pos2(geo.rect.right() - header_controls(false, true), geo.rect.top()),
-                vec2(metrics::HEADER_CONTROL, paint::TABS),
-            );
-            let response = ui.interact(close, Id::unique(("panel-flyout-close", group)), Sense::click());
-            paint::control(ui, close, "shell-chevrons-left", response.hovered());
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close panel flyout"));
-            hits.push((format!("flyout-close:{group}"), close));
-            if response.clicked() {
-                *flyout = None;
+                let Some(close) = g.close else { continue };
+                let response = ui.interact(close, Id::unique(("panel-flyout-close", group)), Sense::click());
+                paint::control(ui, close, "shell-chevrons-left", response.hovered());
+                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close panel flyout"));
+                hits.push((format!("flyout-close:{group}"), close));
+                if response.clicked() {
+                    *flyout = None;
+                }
             }
             ui.painter().rect_stroke(geo.rect, 3, Stroke::new(1.0, Tokens::get(ctx).border), StrokeKind::Inside);
         });

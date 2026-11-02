@@ -4,11 +4,31 @@ use super::{
     paint, registry,
 };
 
-use super::metrics::{DROP_LINE, HEADER_CONTROL};
+use super::metrics::{DROP_LINE, HEADER_CONTROL, TAB_MAX_WIDTH, TAB_MIN_WIDTH};
 
 /// Compact panel rows sit this far inside their column on each side.
 const COMPACT_ROW_INSET: f32 = 3.0;
 use egui::{Rect, pos2, vec2};
+
+/// Every tab's width, from its measured, localized label. The presenter measures them with the UI
+/// fonts (`paint::tab_widths`); the model only reads them and never estimates text. A panel
+/// that was not measured (a layout checked without fonts) gets the narrowest tab.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TabWidths(pub(super) std::collections::BTreeMap<String, f32>);
+
+impl TabWidths {
+    fn width(&self, panel: &str) -> f32 {
+        self.0.get(panel).copied().unwrap_or(TAB_MIN_WIDTH).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
+    }
+}
+
+/// What one measurement needs besides the layout: the tab widths, and whether the host is a
+/// compact column's flyout, whose group headers also keep a close button.
+#[derive(Clone, Copy)]
+struct Chrome<'a> {
+    tabs: &'a TabWidths,
+    flyout: bool,
+}
 
 #[derive(Clone, Debug)]
 pub struct GroupRect {
@@ -19,6 +39,14 @@ pub struct GroupRect {
     pub tabs: Vec<(String, Rect)>,
     pub overflow: Vec<String>,
     pub body: Rect,
+    /// The strip that drags the group: a compact group's top strip, a special bar's top strip, or
+    /// a full group's header between its last tab and its controls.
+    pub grip: Rect,
+    /// A full group's header controls, measured with its tabs, right to left: the panel menu,
+    /// a flyout's close button, and the tab overflow menu while the tabs don't fit.
+    pub menu: Option<Rect>,
+    pub close: Option<Rect>,
+    pub overflow_button: Option<Rect>,
 }
 #[derive(Clone, Debug)]
 pub struct DividerRect {
@@ -44,12 +72,13 @@ pub struct HostRect {
     pub dividers: Vec<DividerRect>,
 }
 
-pub fn measure(layout: &Layout, region: Rect) -> Vec<HostRect> {
-    arrange(layout, region).0
+pub fn measure(layout: &Layout, region: Rect, tabs: &TabWidths) -> Vec<HostRect> {
+    arrange(layout, region, tabs).0
 }
 
 /// Docked hosts reserve space; floating hosts always use the entire workspace coordinate system.
-pub fn arrange(layout: &Layout, region: Rect) -> (Vec<HostRect>, Rect) {
+pub fn arrange(layout: &Layout, region: Rect, tabs: &TabWidths) -> (Vec<HostRect>, Rect) {
+    let chrome = Chrome { tabs, flyout: false };
     let mut board = region;
     let mut docks = std::collections::BTreeMap::new();
     for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
@@ -100,8 +129,12 @@ pub fn arrange(layout: &Layout, region: Rect) -> (Vec<HostRect>, Rect) {
             docks.insert(host.id, rect);
         }
     }
-    let hosts =
-        layout.hosts.iter().filter(|h| !h.hidden).map(|h| docks.get(&h.id).map_or_else(|| measure_host(h, region), |r| in_rect(h, *r))).collect();
+    let hosts = layout
+        .hosts
+        .iter()
+        .filter(|h| !h.hidden)
+        .map(|h| docks.get(&h.id).map_or_else(|| measure_host(h, region, tabs), |r| in_rect(h, *r, chrome)))
+        .collect();
     let mut hosts: Vec<HostRect> = hosts;
     hosts.sort_by_key(|h| layout.host(h.id).is_some_and(|h| h.dock.is_none()));
     (hosts, board)
@@ -130,7 +163,20 @@ fn push_compact(groups: &[&Group], rect: Rect, column: u64, mode: Mode, out: &mu
                 (p.clone(), Rect::from_min_size(row, vec2((r.width() - 2.0 * COMPACT_ROW_INSET).max(0.0), paint::ROW)))
             })
             .collect();
-        out.push(GroupRect { id: group.id, mode, column, rect: r, tabs, overflow: Vec::new(), body: Rect::NOTHING });
+        let grip = Rect::from_min_size(r.min, vec2(r.width(), paint::GRIP));
+        out.push(GroupRect {
+            id: group.id,
+            mode,
+            column,
+            rect: r,
+            tabs,
+            overflow: Vec::new(),
+            body: Rect::NOTHING,
+            grip,
+            menu: None,
+            close: None,
+            overflow_button: None,
+        });
         y += r.height();
     }
 }
@@ -179,7 +225,17 @@ pub fn docked_bar_trim(host: &Host) -> f32 {
     if host.mode == Mode::Full && standalone_docked_bar(host) { paint::TABS + paint::FOOT } else { 0.0 }
 }
 
-pub fn measure_host(host: &Host, region: Rect) -> HostRect {
+pub fn measure_host(host: &Host, region: Rect, tabs: &TabWidths) -> HostRect {
+    place_host(host, region, Chrome { tabs, flyout: false })
+}
+
+/// [`measure_host`] for a compact column's flyout (a temporary full host): its group headers also
+/// keep the flyout's close button, and its tabs are measured with that reserve.
+pub fn measure_flyout(host: &Host, region: Rect, tabs: &TabWidths) -> HostRect {
+    place_host(host, region, Chrome { tabs, flyout: true })
+}
+
+fn place_host(host: &Host, region: Rect, chrome: Chrome) -> HostRect {
     let height = if has_overrides(host) && !is_control(host) {
         visible_size(host)[1]
     } else if is_control(host) {
@@ -202,18 +258,18 @@ pub fn measure_host(host: &Host, region: Rect) -> HostRect {
         min.x.clamp(region.left(), (region.right() - size.x).max(region.left())),
         min.y.clamp(region.top(), (region.bottom() - size.y).max(region.top())),
     );
-    in_rect(host, Rect::from_min_size(min, size))
+    in_rect(host, Rect::from_min_size(min, size), chrome)
 }
 
-fn in_rect(host: &Host, rect: Rect) -> HostRect {
+fn in_rect(host: &Host, rect: Rect, chrome: Chrome) -> HostRect {
     let control = is_control(host);
     let inset = if control { vec2(1.0 + super::metrics::CONTROL_GRIP, 1.0) } else { vec2(1.0, title_height(host)) };
     let inner = Rect::from_min_max(rect.min + inset, rect.max - vec2(1.0, footer(host)));
     let mut out = HostRect { id: host.id, rect, groups: Vec::new(), columns: Vec::new(), dividers: Vec::new() };
     if has_overrides(host) {
-        column_tree(host, &host.root, inner, content_size(host.expanded), &mut out);
+        column_tree(host, &host.root, inner, content_size(host.expanded), chrome, &mut out);
     } else if host.mode == Mode::Full {
-        tree(&host.root, inner, content_size(host.expanded), &mut out.groups, &mut out.dividers);
+        tree(&host.root, inner, content_size(host.expanded), chrome, &mut out.groups, &mut out.dividers);
     } else {
         let groups = super::model::groups(&host.root);
         let column = groups.first().map_or(0, |g| g.id);
@@ -256,6 +312,8 @@ fn in_rect(host: &Host, rect: Rect) -> HostRect {
                 if matches!(host.root, Node::Split { .. }) {
                     group.body.min.y = (group.body.top() + paint::GRIP).min(group.body.bottom());
                 }
+                group.grip = Rect::from_min_max(group.rect.min, pos2(group.rect.right(), group.body.top()));
+                (group.menu, group.close, group.overflow_button) = (None, None, None);
             }
         }
     }
@@ -288,12 +346,12 @@ fn visible_size(host: &Host) -> [f32; 2] {
     [super::model::displayed_width(host, &host.root, saved) + HOST_CHROME[0], projected_height(host, &host.root, saved) + paint::TITLE + paint::FOOT]
 }
 
-fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], out: &mut HostRect) {
+fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut HostRect) {
     // Expanded subtrees retain the established content minimums and Tools bounds.
     // Presentation overrides must not change their divider limits after re-expansion.
     if super::model::groups(node).iter().all(|g| super::model::presentation(host, g).mode == Mode::Full) {
         let before = out.groups.len();
-        tree(node, rect, saved, &mut out.groups, &mut out.dividers);
+        tree(node, rect, saved, chrome, &mut out.groups, &mut out.dividers);
         for group in out.groups.iter_mut().skip(before) {
             let Some(column) = super::model::column_node(node, group.id) else { continue };
             let Some(first) = super::model::groups(column).first().copied() else { continue };
@@ -314,7 +372,7 @@ fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], out: &mut 
         out.columns.push(ColumnRect { key, rect, mode: p.mode });
         if p.mode == Mode::Full {
             let before = out.groups.len();
-            tree(node, rect, saved, &mut out.groups, &mut out.dividers);
+            tree(node, rect, saved, chrome, &mut out.groups, &mut out.dividers);
             for g in out.groups.iter_mut().skip(before) {
                 g.column = key;
                 g.mode = Mode::Full;
@@ -354,21 +412,23 @@ fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], out: &mut 
             divider.max.y = b.top();
         }
         out.dividers.push(DividerRect { id: *id, axis: *axis, rect: divider, parent: rect, min_ratio: 0.05, max_ratio: 0.95 });
-        column_tree(host, first, a, sa, out);
-        column_tree(host, second, b, sb, out);
+        column_tree(host, first, a, sa, chrome, out);
+        column_tree(host, second, b, sb, chrome, out);
     }
 }
 
-fn tab_width(panel: &str) -> f32 {
-    (registry::label(panel).chars().count() as f32 * 6.5 + 22.0).clamp(62.0, 180.0)
-}
-fn tree(node: &Node, rect: Rect, saved: [f32; 2], out: &mut Vec<GroupRect>, dividers: &mut Vec<DividerRect>) {
+fn tree(node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut Vec<GroupRect>, dividers: &mut Vec<DividerRect>) {
     match node {
         Node::Group(group) => {
-            // The panel menu (and with several tabs the drag strip) keep their header slots.
-            let available = (rect.width() - if group.panels.len() == 1 { 1.0 } else { 2.0 } * HEADER_CONTROL).max(1.0);
+            let tab_width = |panel: &str| chrome.tabs.width(panel);
+            // The header's controls keep their slots, right to left: the panel menu, a flyout's
+            // close button and, with several tabs, the drag strip, which the tab overflow menu
+            // joins when the tabs don't fit.
+            let several = group.panels.len() > 1;
+            let controls = 1.0 + f32::from(u8::from(chrome.flyout));
+            let available = (rect.width() - (controls + f32::from(u8::from(several))) * HEADER_CONTROL).max(1.0);
             let total: f32 = group.panels.iter().map(|p| tab_width(p)).sum();
-            let overflowed = group.panels.len() > 1 && total > available;
+            let overflowed = several && total > available;
             let available = (available - if overflowed { HEADER_CONTROL } else { 0.0 }).max(1.0);
             let active = group.panels.iter().position(|p| p == &group.active).unwrap_or(0);
             let mut start = 0;
@@ -385,6 +445,14 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], out: &mut Vec<GroupRect>, divi
                 tabs.push((p.clone(), Rect::from_min_size(pos2(x, rect.top()), vec2(width, paint::TABS))));
                 x += width;
             }
+            let slot = |from_right: f32| {
+                Rect::from_min_size(pos2(rect.right() - from_right * HEADER_CONTROL, rect.top()), vec2(HEADER_CONTROL, paint::TABS))
+            };
+            let controls = controls + f32::from(u8::from(overflowed));
+            let grip = Rect::from_min_max(
+                pos2(tabs.last().map_or(rect.left(), |(_, r)| r.right()), rect.top()),
+                pos2(rect.right() - controls * HEADER_CONTROL, rect.top() + paint::TABS),
+            );
             out.push(GroupRect {
                 id: group.id,
                 mode: Mode::Full,
@@ -393,6 +461,10 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], out: &mut Vec<GroupRect>, divi
                 tabs,
                 overflow: if overflowed { group.panels.clone() } else { Vec::new() },
                 body: Rect::from_min_max(rect.min + vec2(0.0, paint::TABS), rect.max),
+                grip,
+                menu: Some(slot(1.0)),
+                close: chrome.flyout.then(|| slot(2.0)),
+                overflow_button: overflowed.then(|| slot(controls)),
             });
         }
         Node::Split { id, axis, ratio, first, second } => {
@@ -453,8 +525,8 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], out: &mut Vec<GroupRect>, divi
                 min_ratio: if min_ratio <= max_ratio { min_ratio } else { 0.05 },
                 max_ratio: if min_ratio <= max_ratio { max_ratio } else { 0.95 },
             });
-            tree(first, a, saved_a, out, dividers);
-            tree(second, b, saved_b, out, dividers);
+            tree(first, a, saved_a, chrome, out, dividers);
+            tree(second, b, saved_b, chrome, out, dividers);
         }
     }
 }
@@ -530,6 +602,7 @@ pub fn scroll_compact(measured: &mut [HostRect], _layout: &Layout, offsets: &std
                 .clamp(0.0, max);
             for group in host.groups.iter_mut().filter(|g| g.column == column.key) {
                 group.rect = group.rect.translate(vec2(0.0, -offset));
+                group.grip = group.grip.translate(vec2(0.0, -offset));
                 for (_, rect) in &mut group.tabs {
                     *rect = rect.translate(vec2(0.0, -offset));
                 }

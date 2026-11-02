@@ -397,7 +397,7 @@ mod tests {
             groups(&icons.root).iter().map(|g| g.active.as_str()).collect::<Vec<_>>(),
             ["color", "swatches", "gradient", "stroke", "appearance"]
         );
-        let measured = geometry::measure(&studio, egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        let measured = geometry::measure(&studio, egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)), &Default::default());
         let full_rect = measured.iter().find(|h| h.id == full.id).unwrap().rect;
         let icon_rect = measured.iter().find(|h| h.id == icons.id).unwrap().rect;
         assert!((full_rect.width() - 320.0).abs() < 0.01);

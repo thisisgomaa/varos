@@ -132,7 +132,7 @@ fn stacked_group_collapse_and_workspace_roundtrip_preserve_independent_column_st
 fn vertical_divider_resizes_only_its_two_stacked_neighbors_and_horizontal_divider_keeps_total_width() {
     let mut h = Harness::columns(Edge::Right);
     let host = h.host_id("blend");
-    let measured = geometry::measure(h.layout(), h.workspace).into_iter().find(|candidate| candidate.id == host).unwrap();
+    let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
     let vertical = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).unwrap();
     let blend = h.group_rect("blend");
     let artboards = h.group_rect("artboards");
@@ -143,7 +143,7 @@ fn vertical_divider_resizes_only_its_two_stacked_neighbors_and_horizontal_divide
     assert!(h.group_rect("artboards").height() > artboards.height() + 40.0);
     assert!(h.group_rect("layers").height() < layers.height() - 40.0);
     near(h.group_rect("artboards").width(), artboards.width());
-    let measured = geometry::measure(h.layout(), h.workspace).into_iter().find(|candidate| candidate.id == host).unwrap();
+    let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
     let horizontal = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Horizontal).unwrap();
     let from = h.hit(&format!("divider:{}", horizontal.id)).center();
     let total = h.host_rect("blend");
@@ -167,7 +167,7 @@ fn divider_beside_a_compact_column_resizes_its_names_without_squeezing_the_full_
     assert_eq!(h.mode("blend"), Mode::Icons);
     let compact_width = h.group_rect("blend").width();
     let host = h.host_id("blend");
-    let measured = geometry::measure(h.layout(), h.workspace).into_iter().find(|candidate| candidate.id == host).unwrap();
+    let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
     let divider = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Horizontal).unwrap();
     let from = h.hit(&format!("divider:{}", divider.id)).center();
     h.drag(from, from + vec2(80.0, 0.0));
@@ -276,7 +276,7 @@ fn a_gesture_cancelled_under_a_held_pointer_also_ends_the_egui_drag() {
     for reset in [false, true] {
         let mut h = Harness::columns(Edge::Right);
         let host = h.host_id("blend");
-        let measured = geometry::measure(h.layout(), h.workspace).into_iter().find(|candidate| candidate.id == host).unwrap();
+        let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
         let vertical = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).unwrap();
         let (split, divider) = (vertical.id, h.hit(&format!("divider:{}", vertical.id)));
         let from = divider.center();
@@ -311,7 +311,7 @@ fn a_gesture_cancelled_under_a_held_pointer_also_ends_the_egui_drag() {
         assert_eq!(h.layout(), &changed, "the release after a cancelled gesture commits nothing");
         // The next drag works.
         let host = h.host_id("layers");
-        let measured = geometry::measure(h.layout(), h.workspace).into_iter().find(|candidate| candidate.id == host).unwrap();
+        let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
         let divider = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).map(|d| d.id);
         let Some(divider) = divider.filter(|id| h.has_hit(&format!("divider:{id}"))) else {
             // The reset workspace has no stacked row in that block: drag its block instead.

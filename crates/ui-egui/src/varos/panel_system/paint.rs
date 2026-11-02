@@ -3,6 +3,7 @@
 use egui::{Align2, CornerRadius, FontId, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 
 use super::{
+    geometry::TabWidths,
     metrics,
     registry::{self, PanelIcon},
 };
@@ -58,7 +59,7 @@ pub(super) fn tab(ui: &Ui, rect: Rect, label: &str, active: bool, hovered: bool)
         pos2(rect.left() + metrics::TAB_PAD, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        theme::semibold(metrics::FONT),
+        tab_font(),
         if active || hovered { t.text } else { t.text_dim },
     );
 }
@@ -93,6 +94,25 @@ pub(super) fn icon_row(ui: &Ui, rect: Rect, panel: &str, with_name: bool, active
     }
 }
 
+/// A panel's name as its tab, flyout row, menus and screen readers show it: localized.
 pub(super) fn label(panel: &str) -> &'static str {
-    registry::label(panel)
+    tl!(registry::label(panel))
+}
+
+/// The font a tab's label is painted (and measured) in.
+fn tab_font() -> FontId {
+    theme::semibold(metrics::FONT)
+}
+
+/// Every tab width `layout` needs: each panel's localized label measured in the tab font, plus
+/// its padding on both sides, so the model lays the tabs out from real text in any language.
+pub(super) fn tab_widths(ctx: &egui::Context, layout: &super::model::Layout) -> TabWidths {
+    let panels = layout.hosts.iter().flat_map(|host| super::model::groups(&host.root)).flat_map(|group| group.panels.iter());
+    let widths = panels
+        .map(|panel| {
+            let text = ctx.fonts_mut(|fonts| fonts.layout_no_wrap(label(panel).to_owned(), tab_font(), egui::Color32::PLACEHOLDER).size().x);
+            (panel.clone(), (text.ceil() + 2.0 * metrics::TAB_PAD + 2.0 * metrics::BORDER).clamp(metrics::TAB_MIN_WIDTH, metrics::TAB_MAX_WIDTH))
+        })
+        .collect();
+    TabWidths(widths)
 }

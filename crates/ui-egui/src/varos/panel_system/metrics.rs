@@ -16,6 +16,9 @@ pub(crate) const NAMES_MIN_WIDTH: f32 = 72.0;
 
 pub(crate) const FONT: f32 = 12.0;
 pub(crate) const TAB_PAD: f32 = 10.0;
+/// A tab's width: its measured label plus padding, kept between these.
+pub(crate) const TAB_MIN_WIDTH: f32 = 62.0;
+pub(crate) const TAB_MAX_WIDTH: f32 = 180.0;
 pub(crate) const ROW_PAD: f32 = 8.0;
 pub(crate) const ICON_LABEL_GAP: f32 = 10.0;
 pub(crate) const FRAME_RADIUS: u8 = 6;
