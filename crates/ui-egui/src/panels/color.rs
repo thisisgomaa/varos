@@ -606,7 +606,7 @@ fn show_sliders(app: &mut VectorcraftApp, ui: &mut Ui) {
     let recent = if app.ui.color_hide_recent {
         None
     } else {
-        let picked = recent_strip(app, ui);
+        let picked = super::recent_colors_chips(app, ui, true);
         widgets::divider(ui);
         picked
     };
@@ -741,25 +741,6 @@ fn show_sliders(app: &mut VectorcraftApp, ui: &mut Ui) {
         set_pstate(ui.ctx(), "color-comps", Some((key, comps2)));
         apply(app, &tgt, c, phase, false);
     }
-}
-
-/// Compact contiguous chips for the side panel; Swatches and the popup keep their own rows.
-fn recent_strip(app: &VectorcraftApp, ui: &mut Ui) -> Option<Color> {
-    widgets::subheader(ui, tl!("Recent Colors"));
-    let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
-    let mut selected = None;
-    for (index, color) in app.session.recent_colors.iter().enumerate() {
-        let chip = Rect::from_min_size(strip.min + vec2(index as f32 * 16.0, 0.0), vec2(16.0, 16.0));
-        if chip.right() > strip.right() {
-            break;
-        }
-        let response = ui.interact(chip, ui.scope_id().with(("recent", index)), Sense::click());
-        widgets::swatch_tile(ui, chip, &Paint::solid(*color), false, response.hovered());
-        if response.on_hover_text(color.to_hex()).clicked() {
-            selected = Some(*color);
-        }
-    }
-    selected
 }
 
 pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {

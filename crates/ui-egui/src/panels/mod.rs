@@ -461,14 +461,23 @@ pub(crate) fn label_or_name(s: &str, built_in: bool) -> &str {
 /// "Recent Colors" header + a row of chips (the Session's recent colours, which every paint
 /// command feeds); returns the one clicked, for the caller to apply.
 pub(crate) fn recent_colors_row(app: &VectorcraftApp, ui: &mut Ui) -> Option<Color> {
+    recent_colors_chips(app, ui, false)
+}
+
+/// [`recent_colors_row`]; `compact` (Varos: the side Color panel) draws contiguous chips without
+/// the frame.
+pub(crate) fn recent_colors_chips(app: &VectorcraftApp, ui: &mut Ui, compact: bool) -> Option<Color> {
     let t = Tokens::get(ui.ctx());
     crate::widgets::subheader(ui, tl!("Recent Colors"));
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-    ui.painter().rect_stroke(r, 0.0, egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+    let (inset, pitch, margin) = if compact { (0.0, 16.0, 0.0) } else { (3.0, 19.0, 2.0) };
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0 + 2.0 * inset), Sense::hover());
+    if !compact {
+        ui.painter().rect_stroke(r, 0.0, egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+    }
     let mut chosen = None;
     for (i, c) in app.session.recent_colors.iter().enumerate() {
-        let cell = Rect::from_min_size(r.min + vec2(3.0 + i as f32 * 19.0, 3.0), vec2(16.0, 16.0));
-        if cell.right() > r.right() - 2.0 {
+        let cell = Rect::from_min_size(r.min + vec2(inset + i as f32 * pitch, inset), vec2(16.0, 16.0));
+        if cell.right() > r.right() - margin {
             break;
         }
         let resp = ui.interact(cell, ui.scope_id().with(("recent", i)), Sense::click());
