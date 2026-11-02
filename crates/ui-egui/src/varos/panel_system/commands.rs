@@ -245,7 +245,8 @@ pub(super) fn transact<T>(state: &mut State, change: impl FnOnce(&mut Layout) ->
 pub(super) fn transact_actions(state: &mut State, prepare: impl FnOnce(&mut Layout) -> Result<Vec<Action>, String>) -> Result<Vec<Action>, String> {
     transact(state, |next| {
         let actions = prepare(next)?;
-        *next = next.applied(&actions)?;
+        // `next` is the transaction's copy, dropped on failure: apply on it directly.
+        next.apply_each(&actions)?;
         let structural =
             actions.iter().any(|action| !matches!(action, Action::Activate { .. } | Action::Raise { .. } | Action::FitControlContent { .. }));
         Ok((actions, if structural { Stale::Flyout } else { Stale::Nothing }))

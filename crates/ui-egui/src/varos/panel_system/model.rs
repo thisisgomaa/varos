@@ -733,14 +733,20 @@ impl Layout {
     }
 
     /// This layout with every action applied in order, or the first failure (`self` is untouched).
-    /// The commit ([`transact_actions`](super::commands::transact_actions)) and every gesture
-    /// preview share it, so the committed layout is the one the preview showed.
+    /// Every gesture preview uses it; the commit ([`transact_actions`](super::commands::transact_actions))
+    /// applies the same actions with [`Layout::apply_each`] on its own copy, so the committed
+    /// layout is the one the preview showed.
     pub fn applied(&self, actions: &[Action]) -> Result<Layout, String> {
         let mut next = self.clone();
-        for action in actions {
-            next.apply(action)?;
-        }
+        next.apply_each(actions)?;
         Ok(next)
+    }
+
+    /// Apply every action in order, stopping at the first failure. Each action is atomic, but a
+    /// failure leaves the earlier ones applied: call it only on a copy that is dropped on error
+    /// (a transaction's, or [`Layout::applied`]'s).
+    pub(super) fn apply_each(&mut self, actions: &[Action]) -> Result<(), String> {
+        actions.iter().try_for_each(|action| self.apply(action))
     }
 
     /// Carry effective presentation across host boundaries; vertical stacking adopts its destination column.

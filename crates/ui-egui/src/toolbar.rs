@@ -256,7 +256,6 @@ pub(crate) fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usiz
                     let is_active = slot.contains(&active);
                     let (rect, resp) = ui
                         .allocate_exact_size(vec2(if shell { 28.0 } else { 36.0 }, if shell { 28.0 } else { PITCH - 1.0 }), Sense::click_and_drag());
-                    crate::varos::panel_system::tools_host::note_slot(ui.ctx(), hosting, slot, rect); // Varos: the open flyout follows its host
                     let well = egui::Rect::from_center_size(rect.center(), if shell { vec2(28.0, 28.0) } else { vec2(30.0, 27.5) });
                     if is_active {
                         ui.painter().rect_filled(well, CornerRadius::same(6), t.tool_active);
@@ -305,6 +304,7 @@ pub(crate) fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usiz
                     } else if resp.clicked() {
                         app.select_tool(shown.id);
                     }
+                    crate::varos::panel_system::tools_host::note_slot(ui.ctx(), hosting, slot, rect, open_flyout.as_ref()); // Varos: the flyout follows its host
                     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), is_active, tip(shown)));
                     resp.on_hover_text(tip(shown));
                 }
