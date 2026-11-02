@@ -261,51 +261,50 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
             commands::commit(app, vec![Action::Raise { host }]);
         }
     }
-    let Some(mut state) = app.ui.varos_panel_review.clone() else { return };
     let cancelled = ctx.input(|i| i.key_pressed(egui::Key::Escape) || !i.focused || i.events.iter().any(|e| matches!(e, egui::Event::PointerGone)));
     let released = ctx.input(|i| i.pointer.primary_released());
+    // Work on the stored state in place: only the layout is copied (once, for the frame), never
+    // the saved workspace arrangements.
+    let Some(s) = app.ui.varos_panel_review.as_mut() else { return };
     if cancelled {
-        state.cancel_transient();
+        s.cancel_transient();
     }
-    let mut shown = state.layout.clone();
+    let mut preview = None;
     let mut drop_line = None;
     let mut commit = None;
-    if let Some(gesture) = state.gesture.clone() {
-        if gesture.before != state.layout {
-            state.gesture = None;
+    if let Some(gesture) = &s.gesture {
+        let keep = if gesture.before != s.layout {
+            false
         } else if let Some(p) = pointer {
-            match gesture_frame(&state.layout, &gesture, p, region, released) {
-                Some(frame) => {
-                    shown = frame.preview;
-                    drop_line = frame.drop_line;
-                    commit = frame.commit;
-                }
-                None => state.gesture = None,
-            }
-        }
-        if released {
-            state.gesture = None;
+            gesture_frame(&s.layout, gesture, p, region, released).is_some_and(|frame| {
+                preview = Some(frame.preview);
+                drop_line = frame.drop_line;
+                commit = frame.commit;
+                true
+            })
+        } else {
+            true
+        };
+        if !keep || released {
+            s.gesture = None;
         }
     }
-    app.ui.varos_panel_review = Some(state.clone());
+    let gesture = s.gesture.as_ref().map(|g| g.kind.clone());
     match commit {
         Some(Ok(actions)) => {
             commands::commit(app, actions);
-            if let Some(s) = &app.ui.varos_panel_review {
-                state = s.clone();
-                shown = s.layout.clone();
-            }
+            preview = None;
             drop_line = None;
         }
         // An invalid/outside drop ends the gesture without committing. Discard its floating
         // preview now, so this release frame already matches saved docks.
         Some(Err(error)) => {
             app.status(error);
-            shown = state.layout.clone();
+            preview = None;
             drop_line = None;
         }
-        None if released && state.gesture.is_none() => {
-            shown = state.layout.clone();
+        None if released && gesture.is_none() => {
+            preview = None;
             drop_line = None;
         }
         None => {}
@@ -313,28 +312,33 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     if released || cancelled {
         ctx.request_repaint();
     }
+    let Some(s) = app.ui.varos_panel_review.as_ref() else { return };
+    let layout = s.layout.clone();
+    let shown = preview.as_ref().unwrap_or(&layout);
     // The canvas and panel chrome must use the same preview layout. Keeping the
     // committed dock reservation while its panel is visibly floating leaves an
     // empty strip behind until release (and during a dock-width resize).
-    let (mut measured, board) = geometry::arrange(&shown, region);
+    let (mut measured, board) = geometry::arrange(shown, region);
     // Floating Areas are separate egui layers, so canvas gestures cannot start through them.
     super::shell::boxes::board(app, ui, board, false);
-    if state.gesture.is_none()
+    if gesture.is_none()
         && let Some(p) = pointer
         && let Some(host) = measured.iter().rev().find(|h| h.rect.contains(p))
         && let Some(column) = host.columns.iter().find(|c| c.rect.contains(p) && c.mode != Mode::Full)
+        && let Some(s) = app.ui.varos_panel_review.as_mut()
     {
         let delta = ctx.input(|i| i.smooth_scroll_delta.y);
         if delta != 0.0 {
-            let offset = state.compact_offsets.entry(column.key).or_default();
+            let offset = s.compact_offsets.entry(column.key).or_default();
             *offset = (*offset - delta).clamp(0.0, geometry::compact_column_scroll_max(host, column.key));
         }
     }
-    geometry::scroll_compact(&mut measured, &shown, &state.compact_offsets);
+    let Some(s) = app.ui.varos_panel_review.as_ref() else { return };
+    geometry::scroll_compact(&mut measured, shown, &s.compact_offsets);
     let mut hits = Vec::new();
     let mut pending = None;
     let mut actions = Vec::new();
-    let mut flyout = if state.gesture.is_some() { None } else { state.flyout };
+    let mut flyout = if gesture.is_some() { None } else { s.flyout };
     // Register bounds before input, then raise only the actual front host. egui queues
     // raises as a set: raising every host preserves their old order, so a formerly
     // docked Control could stay behind an ordinary floating panel after detaching.
@@ -347,12 +351,13 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     if let Some(front) = measured.last() {
         ctx.move_to_top(egui::LayerId::new(Order::Middle, Id::unique("panel-review-host").with(front.id)));
     }
+    let view = View { layout: &layout, dragging: gesture.is_some() };
     for item in &measured {
         let Some(host) = shown.host(item.id) else { continue };
-        render_host(app, &ctx, host, item, region, &state, &mut hits, &mut pending, &mut actions, &mut flyout);
+        render_host(app, &ctx, host, item, region, &view, &mut hits, &mut pending, &mut actions, &mut flyout);
     }
     if let Some(group) = flyout {
-        render_flyout(app, &ctx, &shown, &measured, group, region, &mut hits, &mut pending, &mut actions, &mut flyout);
+        render_flyout(app, &ctx, shown, &measured, group, region, &mut hits, &mut pending, &mut actions, &mut flyout);
     }
     if let Some(line) = drop_line {
         ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::unique("panel-review-drop"))).rect_filled(line, 0, Tokens::get(&ctx).accent);
@@ -360,7 +365,6 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     if let Some(s) = &mut app.ui.varos_panel_review {
         s.hits = hits;
         s.flyout = flyout;
-        s.compact_offsets = state.compact_offsets.clone();
         if let Some((kind, rect, from_flyout)) = pending {
             let press = ctx.input(|i| i.pointer.press_origin()).or(pointer).unwrap_or(rect.min);
             let grab = match &kind {
@@ -402,16 +406,22 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
         commands::commit(app, fitted);
         ctx.request_repaint();
     }
-    if state.gesture.is_some() {
-        ctx.set_cursor_icon(match state.gesture.as_ref().map(|g| &g.kind) {
-            Some(GestureKind::Resize { .. } | GestureKind::ColumnWidth { .. }) => CursorIcon::ResizeHorizontal,
-            Some(GestureKind::Height { .. }) => CursorIcon::ResizeVertical,
-            Some(GestureKind::Divider { axis: model::Axis::Horizontal, .. }) => CursorIcon::ResizeHorizontal,
-            Some(GestureKind::Divider { .. }) => CursorIcon::ResizeVertical,
-            _ => CursorIcon::Default,
+    if let Some(kind) = gesture {
+        ctx.set_cursor_icon(match kind {
+            GestureKind::Resize { .. } | GestureKind::ColumnWidth { .. } => CursorIcon::ResizeHorizontal,
+            GestureKind::Height { .. } => CursorIcon::ResizeVertical,
+            GestureKind::Divider { axis: model::Axis::Horizontal, .. } => CursorIcon::ResizeHorizontal,
+            GestureKind::Divider { .. } => CursorIcon::ResizeVertical,
+            GestureKind::Move(_) => CursorIcon::Default,
         });
         ctx.request_repaint();
     }
+}
+
+/// What rendering reads from the committed state this frame.
+struct View<'a> {
+    layout: &'a Layout,
+    dragging: bool,
 }
 
 /// One frame of a layout gesture: the layout to show and, on a release over a valid target, the
@@ -675,7 +685,7 @@ fn target_at(layout: &Layout, measured: &[HostRect], source: &Source, p: Pos2, r
             };
             let r = g.tabs.get(index).map(|(_, r)| *r).or_else(|| g.tabs.last().map(|(_, r)| *r))?;
             let line = if compact {
-                Rect::from_min_size(pos2(r.left(), if index == g.tabs.len() { r.bottom() } else { r.top() }), vec2(r.width(), 2.0))
+                Rect::from_min_size(pos2(r.left(), if index == g.tabs.len() { r.bottom() } else { r.top() }), vec2(r.width(), metrics::DROP_LINE))
             } else {
                 Rect::from_min_size(pos2(if index == g.tabs.len() { r.right() } else { r.left() }, r.top()), vec2(2.0, r.height()))
             };
@@ -693,7 +703,7 @@ fn render_host(
     host: &Host,
     geo: &HostRect,
     region: Rect,
-    state: &State,
+    view: &View,
     hits: &mut Vec<(String, Rect)>,
     pending: &mut Option<(GestureKind, Rect, bool)>,
     actions: &mut Vec<Action>,
@@ -721,7 +731,7 @@ fn render_host(
             let response = ui.interact(grip, id.with("drag"), Sense::click_and_drag()).on_hover_cursor(CursorIcon::Default);
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Move Control bar"));
             hits.extend([(format!("control-grip:{}", host.id), grip), (format!("host-grip:{}", host.id), grip)]);
-            if response.drag_started() && state.gesture.is_none() {
+            if response.drag_started() && !view.dragging {
                 *pending = Some((GestureKind::Move(Source::Host(host.id)), rect, false));
             }
         } else {
@@ -735,7 +745,7 @@ fn render_host(
                     if index == 0 {
                         hits.push((format!("host-grip:{}", host.id), grip));
                     }
-                    if response.drag_started() && state.gesture.is_none() {
+                    if response.drag_started() && !view.dragging {
                         *pending = Some((GestureKind::Move(Source::Host(host.id)), rect, false));
                     }
                 }
@@ -745,15 +755,15 @@ fn render_host(
                 paint::control(ui, close, "x", response.hovered());
                 response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Hide panel block"));
                 hits.push((format!("close:{}", host.id), close));
-                if response.clicked() && state.gesture.is_none() {
+                if response.clicked() && !view.dragging {
                     actions.push(Action::Hide { host: host.id });
                 }
             }
             for (index, column) in geo.columns.iter().enumerate() {
                 let toggle = Rect::from_min_size(pos2(column.rect.right() - 19.0, title.top()), vec2(20.0, paint::TITLE));
                 let tools = model::column_has_tools(&host.root, column.key);
-                let narrow_tools = state.layout.tools_width().is_some_and(|w| w <= metrics::TOOLS_MIN_WIDTH + 0.01);
-                let action = commands::column_toggle(&state.layout, column.key, None);
+                let narrow_tools = view.layout.tools_width().is_some_and(|w| w <= metrics::TOOLS_MIN_WIDTH + 0.01);
+                let action = commands::column_toggle(&view.layout, column.key, None);
                 let response = ui.interact(toggle, id.with(("column-mode", column.key)), Sense::click());
                 paint::control(
                     ui,
@@ -776,7 +786,7 @@ fn render_host(
                 if index + 1 == geo.columns.len() {
                     hits.push((format!("mode:{}", host.id), toggle));
                 }
-                if response.clicked() && state.gesture.is_none() {
+                if response.clicked() && !view.dragging {
                     if !docked && !tools && column.mode == Mode::Full {
                         // Collapse at the visible origin, including an oversized saved position
                         // constrained by the current workspace. Never reveal that stale position.
@@ -799,7 +809,7 @@ fn render_host(
         let clip = ui.clip_rect();
         ui.set_clip_rect(clip.intersect(Rect::from_min_max(pos2(rect.left(), title.bottom()), pos2(rect.right(), rect.bottom() - footer))));
         for g in &geo.groups {
-            render_group(app, ui, host, rect, g, state.gesture.is_some(), false, hits, pending, actions, flyout);
+            render_group(app, ui, host, rect, g, view.dragging, false, hits, pending, actions, flyout);
         }
         ui.set_clip_rect(clip);
         for divider in &geo.dividers {
@@ -815,7 +825,7 @@ fn render_host(
             };
             ui.painter().line_segment(points, egui::Stroke::new(metrics::BORDER, color));
             hits.push((format!("divider:{}", divider.id), divider.rect));
-            if response.drag_started() && state.gesture.is_none() {
+            if response.drag_started() && !view.dragging {
                 let compact = if divider.axis == model::Axis::Horizontal {
                     geo.columns.iter().find_map(|column| {
                         if column.mode == Mode::Full || column.rect.bottom() <= divider.rect.top() || column.rect.top() >= divider.rect.bottom() {
@@ -833,7 +843,7 @@ fn render_host(
                     None
                 };
                 if let Some((column, left)) = compact {
-                    let width = state.layout.column_width(column.key).unwrap_or(column.rect.width() + 2.0);
+                    let width = view.layout.column_width(column.key).unwrap_or(column.rect.width() + 2.0);
                     *pending = Some((GestureKind::ColumnWidth { host: host.id, group: column.key, left, width }, column.rect, false));
                 } else {
                     *pending = Some((
@@ -854,7 +864,7 @@ fn render_host(
                 let response =
                     ui.interact(edge, id.with(if top { "top" } else { "bottom" }), Sense::drag()).on_hover_cursor(CursorIcon::ResizeVertical);
                 hits.push((format!("resize-{}:{}", if top { "top" } else { "bottom" }, host.id), edge));
-                if response.drag_started() && state.gesture.is_none() {
+                if response.drag_started() && !view.dragging {
                     *pending = Some((GestureKind::Height { host: host.id, top }, rect, false));
                 }
             }
@@ -884,8 +894,8 @@ fn render_host(
                 if outer {
                     hits.push((format!("resize-{}:{}", if left { "left" } else { "right" }, host.id), edge));
                 }
-                if response.drag_started() && state.gesture.is_none() {
-                    let width = state.layout.column_width(column.key).unwrap_or(column.rect.width() + 2.0);
+                if response.drag_started() && !view.dragging {
+                    let width = view.layout.column_width(column.key).unwrap_or(column.rect.width() + 2.0);
                     *pending = Some((GestureKind::ColumnWidth { host: host.id, group: column.key, left, width }, column.rect, false));
                 }
             }
@@ -906,7 +916,7 @@ fn render_host(
             let response =
                 ui.interact(edge, id.with(if left { "left" } else { "right" }), Sense::drag()).on_hover_cursor(CursorIcon::ResizeHorizontal);
             hits.push((format!("resize-{}:{}", if left { "left" } else { "right" }, host.id), edge));
-            if response.drag_started() && state.gesture.is_none() {
+            if response.drag_started() && !view.dragging {
                 *pending = Some((GestureKind::Resize { host: host.id, left }, rect, false));
             }
         }
@@ -952,7 +962,7 @@ fn render_group(
     let grip = if full {
         Rect::from_min_max(
             pos2(geo.tabs.last().map_or(head.left(), |(_, r)| r.right()), head.top()),
-            pos2(head.right() - if geo.overflow.is_empty() { 24.0 } else { 48.0 } - if flyout_view { 24.0 } else { 0.0 }, head.bottom()),
+            pos2(head.right() - header_controls(!geo.overflow.is_empty(), flyout_view), head.bottom()),
         )
     } else {
         head
@@ -992,7 +1002,8 @@ fn render_group(
         }
     }
     if full && !geo.overflow.is_empty() {
-        let r = Rect::from_min_size(pos2(head.right() - if flyout_view { 72.0 } else { 48.0 }, head.top()), vec2(24.0, head.height()));
+        let r =
+            Rect::from_min_size(pos2(head.right() - header_controls(true, flyout_view), head.top()), vec2(metrics::HEADER_CONTROL, head.height()));
         ui.scope_builder(egui::UiBuilder::new().id_salt(("tabs-overflow", group.id)).max_rect(r), |ui| {
             ui.menu_button("…", |ui| {
                 for panel in &geo.overflow {
@@ -1006,7 +1017,7 @@ fn render_group(
         hits.push((format!("tabs-overflow:{}", group.id), r));
     }
     if full {
-        let r = Rect::from_min_size(pos2(head.right() - 24.0, head.top()), vec2(24.0, head.height()));
+        let r = Rect::from_min_size(pos2(head.right() - metrics::HEADER_CONTROL, head.top()), vec2(metrics::HEADER_CONTROL, head.height()));
         let response = ui.interact(r, Id::unique(("panel-options", group.id)), Sense::click()).on_hover_cursor(CursorIcon::Default);
         paint::control(ui, r, "menu", response.hovered());
         hits.push((format!("panel-menu:{}", group.id), r));
@@ -1030,6 +1041,12 @@ fn render_group(
         body(app, ui, &group.active, geo.body);
     }
     ui.painter().hline(geo.rect.x_range(), geo.rect.bottom() - 0.5, Stroke::new(1.0, t.divider));
+}
+
+/// The width the right end of a full group header keeps for its controls, from the right: the
+/// panel menu, the flyout's close (`flyout`) and the tab overflow menu (`overflow`).
+fn header_controls(overflow: bool, flyout: bool) -> f32 {
+    (1.0 + f32::from(u8::from(overflow)) + f32::from(u8::from(flyout))) * metrics::HEADER_CONTROL
 }
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, panel: &str, rect: Rect) {
@@ -1106,7 +1123,7 @@ fn render_flyout(
     };
     let mut geo = geometry::measure_host(&temporary, region);
     for g in &mut geo.groups {
-        let tab_end = g.rect.right() - 72.0;
+        let tab_end = g.rect.right() - header_controls(true, true);
         let mut overflow = g.overflow.clone();
         g.tabs.retain_mut(|(panel, rect)| {
             if rect.right() > tab_end {
@@ -1141,7 +1158,10 @@ fn render_flyout(
                     *pending = Some((kind, rect, true));
                 }
             }
-            let close = Rect::from_min_size(pos2(geo.rect.right() - 48.0, geo.rect.top()), vec2(24.0, paint::TABS));
+            let close = Rect::from_min_size(
+                pos2(geo.rect.right() - header_controls(false, true), geo.rect.top()),
+                vec2(metrics::HEADER_CONTROL, paint::TABS),
+            );
             let response = ui.interact(close, Id::unique(("panel-flyout-close", group)), Sense::click());
             paint::control(ui, close, "shell-chevrons-left", response.hovered());
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close panel flyout"));

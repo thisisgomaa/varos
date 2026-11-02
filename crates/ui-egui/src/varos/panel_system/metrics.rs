@@ -20,6 +20,10 @@ pub(crate) const ROW_PAD: f32 = 8.0;
 pub(crate) const ICON_LABEL_GAP: f32 = 10.0;
 pub(crate) const FRAME_RADIUS: u8 = 6;
 pub(crate) const BORDER: f32 = 1.0;
+/// One header control slot (panel menu, tab overflow, flyout close) at the right of a group header.
+pub(crate) const HEADER_CONTROL: f32 = 24.0;
+/// The accent line that marks a drop target.
+pub(crate) const DROP_LINE: f32 = 2.0;
 
 // One glyph and row scale for both tool and panel identities.
 pub(crate) const TOOL_BUTTON: f32 = 28.0;

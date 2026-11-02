@@ -377,7 +377,7 @@ fn replace_group_sized(node: Node, id: u64, replacement: Node, size: [f32; 2], r
     }
 }
 
-fn content_size(expanded: [f32; 2]) -> [f32; 2] {
+pub(super) fn content_size(expanded: [f32; 2]) -> [f32; 2] {
     [(expanded[0] - HOST_CHROME[0]).max(1.0), (expanded[1] - HOST_CHROME[1]).max(1.0)]
 }
 
@@ -385,7 +385,7 @@ fn expanded_size(content: [f32; 2]) -> [f32; 2] {
     [content[0] + HOST_CHROME[0], content[1] + HOST_CHROME[1]]
 }
 
-fn partition(size: [f32; 2], axis: Axis, ratio: f32) -> ([f32; 2], [f32; 2]) {
+pub(super) fn partition(size: [f32; 2], axis: Axis, ratio: f32) -> ([f32; 2], [f32; 2]) {
     let dimension = if axis == Axis::Horizontal { 0 } else { 1 };
     let available = (size[dimension] - SPLIT_GAP).max(0.0);
     let mut first = size;
