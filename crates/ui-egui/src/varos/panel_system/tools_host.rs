@@ -12,9 +12,10 @@ use serde_json::json;
 use vectorcraft_color::Paint;
 
 /// Where the hosted Tools are this frame, for the flyout placed beside them: the workspace region
-/// popovers stay inside, the first tool of the slot whose flyout is open, and that slot's button
-/// (refreshed every frame, so the open flyout follows a moved host). One typed record in egui's
-/// temporary memory, written and read only here.
+/// popovers stay inside, the first tool of the slot whose flyout is open (whichever presenter
+/// opened it: [`note_slot`]), and that slot's hosted button (refreshed every frame, so the open
+/// flyout follows a moved host). One typed record in egui's temporary memory, written and read
+/// only here.
 #[derive(Clone, Debug, Default)]
 struct Placement {
     region: Option<Rect>,
@@ -179,18 +180,22 @@ pub(crate) fn chips(app: &mut VectorcraftApp, ui: &mut Ui, hosting: Hosting) -> 
 }
 
 /// The tool body's hook for each tool button, after the button handled its press (`opening`: the
-/// slot whose flyout this frame's presses open, if any): while hosted, a button that opens its
-/// slot's flyout makes that slot the open one, and the open slot's button anchors the flyout.
+/// slot whose flyout this frame's presses open, if any). In every presenter, a button that opens
+/// its slot's flyout makes that slot the open one: the tool body is the only place a flyout opens,
+/// so the record names the open flyout across presenter hand-offs (a flyout opened in the box
+/// shell or the classic dock and still open when the workspace presents again anchors to its own
+/// hosted button). Only a hosted button anchors the flyout; the other presenters place it
+/// themselves and never read the record.
 pub(crate) fn note_slot(ctx: &egui::Context, hosting: Hosting, slot: &[&str], button: Rect, opening: Option<&(Vec<&str>, Rect)>) {
-    if hosting != Hosting::Workspace {
+    let opened = opening.is_some_and(|(open, _)| open.as_slice() == slot);
+    if !opened && hosting != Hosting::Workspace {
         return;
     }
-    let opened = opening.is_some_and(|(open, _)| open.as_slice() == slot);
     update_placement(ctx, |placement| {
         if opened {
             placement.flyout_tool = slot.first().map(|tool| (*tool).to_string());
         }
-        if placement.flyout_tool.as_deref().is_some_and(|tool| slot.first() == Some(&tool)) {
+        if hosting == Hosting::Workspace && placement.flyout_tool.as_deref().is_some_and(|tool| slot.first() == Some(&tool)) {
             placement.anchor = Some(button);
         }
     });
@@ -470,8 +475,11 @@ mod tests {
         note_slot(&ctx, Hosting::Workspace, &["rectangle", "ellipse"], other, Some(&(vec!["rectangle", "ellipse"], other)));
         assert_eq!(placement(&ctx).flyout_tool.as_deref(), Some("rectangle"));
         assert_eq!(placement(&ctx).anchor, Some(other));
+        // A flyout opened in another presenter is the open one too, but only a hosted button
+        // anchors it.
         note_slot(&ctx, Hosting::Own, &["pen"], button, Some(&(vec!["pen"], button)));
-        assert_eq!(placement(&ctx).flyout_tool.as_deref(), Some("rectangle"), "only a hosted body opens the hosted record");
+        assert_eq!(placement(&ctx).flyout_tool.as_deref(), Some("pen"), "every presenter's tool body opens the one record");
+        assert_eq!(placement(&ctx).anchor, Some(other), "an unhosted button never anchors");
     }
 
     #[test]

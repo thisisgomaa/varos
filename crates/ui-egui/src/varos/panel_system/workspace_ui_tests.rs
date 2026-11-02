@@ -826,3 +826,95 @@ fn tabs_are_sized_from_their_measured_localized_labels() {
     assert_ne!(translated, english, "the tabs follow the translated labels");
     crate::i18n::set_current(crate::i18n::Lang::EN);
 }
+
+/// The tool buttons drawn last frame inside `within`, top to bottom, then left to right.
+fn tool_buttons(h: &Harness, within: Rect) -> Vec<Rect> {
+    let mut buttons: Vec<Rect> = crate::toolbar::tests::widget_rects(&h.ctx, egui::Vec2::splat(super::metrics::TOOL_BUTTON))
+        .into_iter()
+        .filter(|button| within.contains_rect(*button))
+        .collect();
+    buttons.sort_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())));
+    buttons.dedup();
+    buttons
+}
+
+/// A right press on the tool button at `at`: the first tool of the flyout it opened, if any.
+fn open_tool_flyout(h: &mut Harness, at: Rect) -> Option<String> {
+    let secondary = |pressed| Event::PointerButton { pos: at.center(), button: egui::PointerButton::Secondary, pressed, modifiers: Modifiers::NONE };
+    h.frame(vec![Event::PointerMoved(at.center()), secondary(true)]);
+    h.frame(vec![secondary(false)]);
+    h.settle();
+    h.app.ui.flyout?;
+    h.ctx.data(|d| d.get_temp::<Vec<String>>(egui::Id::unique("flyout-tools"))).and_then(|tools| tools.first().cloned())
+}
+
+fn close_tool_flyout(h: &mut Harness) {
+    h.app.ui.flyout = None;
+    h.settle();
+}
+
+/// Each tool group's flyout among `buttons`: its first tool and its button.
+fn flyout_buttons(h: &mut Harness, buttons: &[Rect]) -> Vec<(String, Rect)> {
+    let mut found: Vec<(String, Rect)> = Vec::new();
+    for &button in buttons {
+        if let Some(tool) = open_tool_flyout(h, button)
+            && !found.iter().any(|(known, _)| *known == tool)
+        {
+            found.push((tool, button));
+        }
+        close_tool_flyout(h);
+    }
+    found
+}
+
+/// The open tool flyout's identity is the presenters' one record: flyout A opened in a hosted
+/// Tools, the workspace removed, flyout B opened in the box shell's strip, and the workspace back
+/// without reopening anything: B shows, beside its own hosted button, not A's.
+#[test]
+fn a_tool_flyout_opened_in_another_presenter_anchors_to_its_own_hosted_button() {
+    let mut h = Harness::workspace();
+    let layout = h.layout().clone();
+    let hosted = tool_buttons(&h, h.host_rect("tools"));
+    let groups = flyout_buttons(&mut h, &hosted);
+    let (a, a_button) = groups.first().cloned().expect("a hosted tool group with a flyout");
+    let (b, b_button) = groups
+        .iter()
+        .find(|(_, button)| (button.top() - a_button.top()).abs() > 2.0 * super::metrics::TOOL_BUTTON)
+        .cloned()
+        .expect("a second tool group on another row");
+    assert_eq!(open_tool_flyout(&mut h, a_button).as_deref(), Some(a.as_str()));
+    let area = || h.ctx.memory(|m| m.area_rect(egui::Id::unique("tool-flyout")));
+    near(area().unwrap().top(), a_button.top());
+
+    h.app.run("ui.panelReview", json!({"enabled": false})).unwrap();
+    h.settle();
+    assert!(h.app.ui.flyout.is_some(), "the box shell keeps the open flyout");
+    let strip = crate::varos::shell::hit_rects(&h.ctx)
+        .into_iter()
+        .find_map(|(hit, rect)| matches!(hit, crate::varos::shell::Hit::Tools).then_some(rect))
+        .expect("the box shell's Tools strip");
+    let strip_buttons = tool_buttons(&h, strip);
+    let shell_b = strip_buttons
+        .iter()
+        .copied()
+        .find(|&button| {
+            let opened = open_tool_flyout(&mut h, button);
+            if opened.as_deref() != Some(b.as_str()) {
+                close_tool_flyout(&mut h);
+                return false;
+            }
+            true
+        })
+        .expect("B's button in the box shell's strip");
+    assert_ne!(shell_b, b_button, "the strip draws B's button elsewhere");
+
+    h.app.run("ui.panelReview", json!({"enabled": true})).unwrap();
+    h.settle();
+    assert_eq!(h.layout(), &layout, "the same Design workspace presents again");
+    assert!(h.app.ui.flyout.is_some(), "B is still open");
+    let tools: Vec<String> = h.ctx.data(|d| d.get_temp(egui::Id::unique("flyout-tools"))).unwrap();
+    assert_eq!(tools.first(), Some(&b));
+    let area = h.ctx.memory(|m| m.area_rect(egui::Id::unique("tool-flyout"))).unwrap();
+    near(area.top(), b_button.top());
+    assert!(area.left() > h.host_rect("tools").right() || area.right() < h.host_rect("tools").left(), "beside the hosted Tools");
+}
