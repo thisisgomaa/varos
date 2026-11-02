@@ -58,7 +58,12 @@ edges, floating, Expanded / icon+name / icon-only, Tools and Control as special 
 panel separated from the toolbar's wheel picker, horizontal document-tab reordering, and a modeless
 Preferences with Apply. Two read-only reviews (Codex Sol, Cursor/Grok, 2026-11-02) requested changes;
 all twelve findings were fixed or answered with evidence, each with a test that runs with the panel
-workspace presenting the editor (`varos/panel_system/review_fix_tests.rs`). Nothing here is accepted
+workspace presenting the editor (now in the behaviour test files over the shared
+`varos/panel_system/test_support.rs` harness). A code-cleanliness pass (2026-11-02) did the
+review's P1 and most P2 items; left for a second pass: one presentation representation per column
+(needs a layout format step), measured/localized tab widths, a presenter-independent panel-content
+module (the workspace still renders ordinary bodies through `shell::boxes`), the flyout's
+post-measurement tab trim, and one modality rule for artwork transfer and the picker. Nothing here is accepted
 by the owner yet; `STATE.md` lists each piece as provisional.
 
 Open, in order:
