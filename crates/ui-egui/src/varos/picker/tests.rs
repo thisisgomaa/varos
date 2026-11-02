@@ -1364,6 +1364,22 @@ fn the_popover_takes_no_input_under_an_application_dialog() {
     }
 }
 
+/// Modeless Preferences reserves nothing: the popover opens from a well and its controls take
+/// clicks while Preferences stays open.
+#[test]
+fn the_popover_takes_input_while_modeless_preferences_is_open() {
+    let mut h = Harness::new(false);
+    h.app.run("edit.preferences", json!({})).unwrap();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let fill = h.well(false);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    assert_eq!(h.app.ui.varos_picker_anchor, Some(fill));
+    h.click(tab_pos(popover_area(&h), 3));
+    assert_eq!(h.app.ui.varos_picker.tab, Tab::Gradient, "the mode tab takes the click");
+    assert!(h.app.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences"), "Preferences stays open");
+}
+
 /// Review P2: with the docked Color panel drawn first in the same frame, the popover's own
 /// gesture still commits the release frame's movement.
 #[test]

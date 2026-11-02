@@ -78,7 +78,8 @@ pub(crate) fn cleanup(app: &VectorcraftApp, ctx: &Context) {
         });
         let outside_release =
             ctx.input(|i| i.pointer.primary_released() && !app.canvas_rect.is_some_and(|r| i.pointer.interact_pos().is_some_and(|p| r.contains(p))));
-        if !valid || cancel || outside_release || app.ui.dialog.is_some() {
+        // Varos: only a modal dialog cancels a transfer (modeless Preferences keeps it).
+        if !valid || cancel || outside_release || crate::dialogs::blocks_workspace(app) {
             egui::DragAndDrop::clear_payload(ctx);
         }
     }
@@ -97,7 +98,7 @@ pub(crate) fn hover_tab(app: &mut VectorcraftApp, resp: &Response, index: usize,
     let eligible = resp.contains_pointer()
         && ctx
             .input(|i| i.pointer.primary_down() && !i.key_pressed(egui::Key::Escape) && i.pointer.interact_pos().is_some_and(|p| !close.contains(p)))
-        && app.ui.dialog.is_none();
+        && !crate::dialogs::blocks_workspace(app); // Varos: modeless Preferences keeps transfers
     if !eligible || app.session.active_index() == Some(index) || ctx.data(|d| d.get_temp::<egui::Pos2>(activated_at_id()).is_some()) {
         return false;
     }

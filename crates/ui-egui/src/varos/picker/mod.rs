@@ -980,8 +980,9 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
         let scroll_h = if scroll { (available_h - buttons).max(32.0) } else { content_h };
         egui::ScrollArea::vertical().max_height(scroll_h).show(ui, |ui| show(app, ui));
     };
-    if app.ui.dialog.is_some() {
-        // Under an application dialog (its own backdrop takes the clicks): shown, inert.
+    if crate::dialogs::blocks_workspace(app) {
+        // Under a modal application dialog (its own backdrop takes the clicks): shown, inert.
+        // A modeless one (Preferences) leaves the picker live.
         area.interactable(false).show(ctx, |ui| {
             ui.disable();
             frame.show(ui, |ui| body(app, ui, &mut decision));

@@ -43,6 +43,8 @@ mod tests_control_bar;
 #[cfg(test)]
 mod tests_identity;
 #[cfg(test)]
+mod tests_modeless;
+#[cfg(test)]
 mod tests_panel_stack;
 #[cfg(test)]
 mod tests_read_only_save;
