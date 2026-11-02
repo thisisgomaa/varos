@@ -516,7 +516,9 @@ fn panel_contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: 
     });
     // Kept only when it differs from what is kept (a view that was never changed stays unsaved),
     // and only for an editor that still has an owner.
-    if stored.as_ref().unwrap_or(&Default::default()) != &view && app.ui.varos_shell.owns(id) {
+    if stored.as_ref().unwrap_or(&Default::default()) != &view
+        && (app.ui.varos_shell.owns(id) || app.ui.varos_panel_review.as_ref().is_some_and(|s| s.layout.owner(id).is_some()))
+    {
         app.ui.varos_shell.views.insert(id.to_string(), view);
     }
 }

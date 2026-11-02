@@ -44,6 +44,14 @@ pub(crate) fn command(app: &mut VectorcraftApp, p: &Value) -> Result<Value, Stri
     let action = p["action"].as_str().unwrap_or("show");
     let path = || p["path"].as_str().ok_or_else(|| tl!("Home action needs a path").to_string());
     match action {
+        "back" => {
+            // Home overlays the existing editor; returning must not activate, reopen or
+            // otherwise mutate a document. With no document, Home remains the only view.
+            if app.session.active().is_some() {
+                app.ui.home = None;
+            }
+            return Ok(Value::Null);
+        }
         "open" => return crate::io::open_recent_reporting(app, path()?),
         "reveal" => return app.services.reveal.as_mut().ok_or(tl!("File manager unavailable"))?(path()?).map(|_| Value::Null),
         "removeRecent" => {
@@ -231,8 +239,7 @@ fn top_bar(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
     let lead = app.titlebar_inset.max(10.0);
     let trail = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
     let brand = Rect::from_min_size(rect.min + vec2(lead, 9.0), vec2(22.0, 22.0));
-    ui.painter().rect_filled(brand, 5.0, t.text);
-    text(ui, brand, "V", theme::semibold(13.0), t.panel_darker, Align2::CENTER_CENTER);
+    crate::brand::paint_mark(ui, brand);
     text(
         ui,
         Rect::from_min_size(rect.min + vec2(lead + 30.0, 0.0), vec2(100.0, 40.0)),
@@ -275,6 +282,15 @@ fn sidebar(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(rect, 0.0, t.panel);
     let mut y = rect.top() + 12.0;
+    if app.session.active().is_some() {
+        let row = Rect::from_min_size(pos2(rect.left() + 8.0, y), vec2(204.0, 30.0));
+        if nav_row(ui, row, tl!("Back to document"), "chevron-left", false, false).clicked() {
+            home_action(app, json!({"action": "back"}));
+        }
+        y += 38.0;
+        ui.painter().hline(rect.left() + 12.0..=rect.right() - 12.0, y, Stroke::new(1.0, t.border));
+        y += 10.0;
+    }
     for (label, icon, section, id) in [
         (tl!("Recents"), "home-clock", Some(Section::Recents), "recents"),
         (tl!("Projects"), "home-folder", Some(Section::Projects), "projects"),

@@ -47,6 +47,9 @@ use Item::Sep;
 
 /// UI-level commands: (id, label, shortcut, params doc).
 pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
+    ("ui.panelReview", "Panel Workspace Preview", "", "{enabled?: bool} isolated unified panel workspace"),
+    ("ui.panelReview.action", "Panel Preview Action", "", "{action: object} transactional preview layout action"),
+    ("ui.panelReview.inspect", "Inspect Panel Preview", "", "{} layout and logical hit rectangles"),
     (
         "app.language",
         "Interface Language",
@@ -171,7 +174,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "app.home",
         "Home",
         "",
-        "{section?: recents|projects|templates|gettingStarted, action?: show|open|reveal|removeRecent|addProject|project|hideTips|showTips|sort, path?, sort?: modified|name|created} Home screen and local file actions",
+        "{section?: recents|projects|templates|gettingStarted, action?: show|back|open|reveal|removeRecent|addProject|project|hideTips|showTips|sort, path?, sort?: modified|name|created} Home screen and local file actions",
     ),
     ("edit.preferences", "Preferences…", "Cmd+K", "{category?} open Preferences (engine: prefs.get / prefs.set / prefs.list)"),
     (
@@ -1295,6 +1298,9 @@ pub fn check_params(session: &vectorcraft_engine::Session, id: &str, params: &Va
 /// handles its own way (a Window menu panel item that toggles, …) → `None` to leave it to the
 /// engine.
 pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = crate::varos::panel_system::command(app, id, p) {
+        return Some(result);
+    }
     // Varos: with the Varos shell on, its boxes answer the panel and dock commands.
     if let Some(result) = crate::varos::shell::command(app, id, p) {
         return Some(result);
@@ -2047,6 +2053,7 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         // A View › Rotate View item is checked when the active view is turned to its angle; without
         // a document no item is checked.
         "view.rotate" => app.view().zip(p.get("angle").and_then(Value::as_f64)).is_some_and(|(view, a)| (view.rotation - a).abs() < 1e-9),
+        "window.control" if crate::varos::panel_system::enabled(app) => crate::varos::panel_system::showing(app, "control"),
         "window.control" => {
             if crate::varos::shell::enabled(app) {
                 crate::varos::shell::showing(app, "control")
@@ -2054,6 +2061,7 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
                 app.ui.control_bar
             }
         }
+        "window.toolbar" if crate::varos::panel_system::enabled(app) => crate::varos::panel_system::showing(app, "tools"),
         "window.toolbar" => app.ui.toolbar,
         "window.toolbarAdvanced" => app.ui.toolbar_advanced,
         "window.toolbarColumns" => app.ui.toolbar_double,
@@ -2066,6 +2074,10 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "window.taskBar.pin" => app.ui.task_bar_place.pinned,
         // Varos: with the Varos shell on, its panels, another Properties editor (`properties@2`)
         // included.
+        "window.panel" if crate::varos::panel_system::enabled(app) => p.get("panel").and_then(Value::as_str).is_some_and(|raw| {
+            crate::varos::panel_system::showing(app, raw.trim())
+                || normalize_panel(raw).is_some_and(|panel| crate::varos::panel_system::showing(app, panel))
+        }),
         "window.panel" if crate::varos::shell::enabled(app) => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("");
             crate::varos::shell::resolve_panel(app, panel).is_some_and(|id| crate::varos::shell::showing(app, &id))
@@ -2083,6 +2095,11 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         }
         "window.collapseDock" => crate::panel_docking::dock_collapsed(&app.ui),
         // Varos: with the Varos shell on, its own current workspace.
+        "window.workspace" if crate::varos::panel_system::enabled(app) => p
+            .get("name")
+            .and_then(Value::as_str)
+            .zip(crate::varos::panel_system::workspace::current(app))
+            .is_some_and(|(name, current)| name.eq_ignore_ascii_case(current)),
         "window.workspace" if crate::varos::shell::enabled(app) => {
             p.get("name").and_then(Value::as_str) == Some(app.ui.varos_shell.workspace.as_str())
         }
@@ -2118,6 +2135,9 @@ pub fn dynamic_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
     match id {
         "view.outline" => if v.outline { "Preview" } else { "Outline" }.into(),
         // Varos: with the Varos shell on, its own current workspace.
+        "window.workspace.reset" if crate::varos::panel_system::enabled(app) => {
+            format!("Reset {}", crate::varos::panel_system::workspace::current(app).unwrap_or(crate::varos::panel_system::workspace::DEFAULT))
+        }
         "window.workspace.reset" if crate::varos::shell::enabled(app) => format!("Reset {}", app.ui.varos_shell.workspace),
         "window.workspace.reset" => format!("Reset {}", app.ui.workspace),
         "view.edges" => if v.edges { "Hide Edges" } else { "Show Edges" }.into(),
@@ -2250,6 +2270,7 @@ pub fn display_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
     let lang = crate::i18n::current();
     let fmt = crate::i18n::fmt;
     match id {
+        "window.workspace" if crate::varos::panel_system::enabled(app) => crate::varos::panel_system::workspace::label(label),
         "edit.undo" | "edit.redo" => {
             if let Some(label) = app.session.project().ok().and_then(|p| p.page_history_label(id == "edit.redo")) {
                 return fmt(tl!(if id == "edit.undo" { "Undo {name}" } else { "Redo {name}" }), &[("name", tl!(label))]);
@@ -2264,6 +2285,11 @@ pub fn display_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
             }
         }
         // Varos: with the Varos shell on, its own current workspace.
+        "window.workspace.reset" if crate::varos::panel_system::enabled(app) => {
+            let name = crate::varos::panel_system::workspace::current(app).unwrap_or(crate::varos::panel_system::workspace::DEFAULT);
+            let name = crate::varos::panel_system::workspace::label(name);
+            fmt(tl!("Reset {name}"), &[("name", name.as_str())])
+        }
         "window.workspace.reset" if crate::varos::shell::enabled(app) => {
             let name = crate::varos::shell::workspace::label(&app.ui.varos_shell.workspace);
             fmt(tl!("Reset {name}"), &[("name", name.as_str())])

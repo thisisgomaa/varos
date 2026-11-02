@@ -132,6 +132,9 @@ pub fn open_document(app: &mut VectorcraftApp, name: &str, bytes: &[u8], path: O
 /// A document just opened (`r`: `document.open`'s result): the views follow, the status bar says
 /// what didn't come in as it was, and missing links are asked about.
 pub(crate) fn opened(app: &mut VectorcraftApp, r: &Value) {
+    // Reopening the already-active document leaves home_key unchanged; successful
+    // open/activation must still return from Home to that document explicitly.
+    app.ui.home = None;
     app.sync_views();
     if let Some(w) = r["warnings"].as_array().filter(|w| !w.is_empty()) {
         app.status(format!("Opened with {} note(s): {}", w.len(), w[0].as_str().unwrap_or_default()));

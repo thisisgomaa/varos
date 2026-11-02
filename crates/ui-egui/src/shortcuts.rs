@@ -533,6 +533,9 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         crate::ime::controls_without_editor(app, ctx);
         return;
     }
+    if crate::varos::panel_system::gesture_keys(app, ctx) {
+        return;
+    }
     // Varos: Escape cancels a drag in the Varos shell before anything else sees it.
     crate::varos::shell::drag::escape(app, ctx);
     if !(ctx.input(|input| input.focused) || app.forwarded_frame && ctx.viewport_id() == egui::ViewportId::ROOT) {

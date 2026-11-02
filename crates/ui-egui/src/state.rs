@@ -620,6 +620,9 @@ pub struct UiState {
     /// saved apart from [`Self::docking`]; a missing or malformed value reads as the defaults.
     #[serde(default, deserialize_with = "crate::varos::shell::persist::lenient")]
     pub varos_shell: crate::varos::shell::persist::VarosShell,
+    /// Unified panel workspace, stored independently from legacy layouts.
+    #[serde(default, deserialize_with = "crate::varos::panel_system::load")]
+    pub varos_panel_review: Option<crate::varos::panel_system::State>,
 }
 
 /// The desktop window's geometry, kept across launches.
@@ -927,6 +930,7 @@ impl Default for UiState {
             varos_picker_group: false,
             varos_picker_defaults: None,
             varos_shell: Default::default(),
+            varos_panel_review: None,
         }
     }
 }

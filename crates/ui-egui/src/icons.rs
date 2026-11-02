@@ -110,10 +110,9 @@ pub fn source(name: &str) -> ImageSource<'static> {
     table().source(name)
 }
 
-/// Paint icon `name` into `rect` tinted with `tint`. The Selection and Direct Selection arrows are
-/// black and white whatever the theme, as users know them (a light theme colour would make the
-/// Selection arrow look like Direct Selection's): their fill is painted first, then their outline
-/// in `tint`.
+/// Paint an icon in the supplied theme tint. Varos Selection is outline-only and Direct
+/// Selection keeps its white fill and neutral edge. Only fallback arrows without a Varos
+/// override receive the legacy black/white underlay.
 pub fn paint(ui: &Ui, name: &str, rect: Rect, tint: Color32) {
     let fill = match name {
         "dc-selection" => Some(Color32::BLACK),
@@ -124,6 +123,8 @@ pub fn paint(ui: &Ui, name: &str, rect: Rect, tint: Color32) {
     if let Some(fill) = fill.filter(|_| crate::varos::icons::source(name).is_none()) {
         egui::Image::new(source("dc-arrow-fill")).tint(fill).fit_to_exact_size(rect.size()).paint_at(ui, rect);
     }
+    // The direct pointer keeps its requested white fill and contrasting outline in either theme.
+    let tint = if name == "dc-direct" && crate::varos::icons::source(name).is_some() { Color32::WHITE } else { tint };
     egui::Image::new(source(name)).tint(tint).fit_to_exact_size(rect.size()).paint_at(ui, rect);
 }
 
@@ -157,12 +158,12 @@ mod tests {
             .collect()
     }
 
-    /// Varos selection arrows paint only their own geometry in the theme colour.
+    /// Varos pointers have no upstream underlay; Direct Selection retains a white fill.
     #[test]
     fn selection_overrides_have_no_upstream_arrow_underlay() {
         let light = Color32::from_gray(220);
         assert_eq!(tints("dc-selection", light), [light]);
-        assert_eq!(tints("dc-direct", light), [light]);
+        assert_eq!(tints("dc-direct", light), [Color32::WHITE]);
         assert_eq!(tints("dc-group-select", light), [light]);
     }
 

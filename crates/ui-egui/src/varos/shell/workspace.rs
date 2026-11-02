@@ -335,7 +335,7 @@ fn leave(app: &mut VectorcraftApp) {
 
 /// Compact top-bar switcher; all changes use the existing workspace commands/dialogs.
 pub(crate) fn switcher(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
-    let current = app.ui.varos_shell.workspace.clone();
+    let current = crate::varos::panel_system::workspace::current(app).map(str::to_owned).unwrap_or_else(|| app.ui.varos_shell.workspace.clone());
     let t = crate::theme::Tokens::get(ui.ctx());
     let mut job = egui::text::LayoutJob::simple(label(&current), egui::FontId::proportional(11.0), t.text, 128.0);
     job.wrap.max_rows = 1;
@@ -358,7 +358,7 @@ pub(crate) fn switcher(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label(&current)));
 
     egui::Popup::menu(&response).show(|ui| {
-        for name in app.ui.varos_shell.workspace_names() {
+        for name in crate::varos::panel_system::workspace::names(app).unwrap_or_else(|| app.ui.varos_shell.workspace_names()) {
             if ui.selectable_label(name == current, label(&name)).clicked() {
                 if let Err(e) = app.run("window.workspace", json!({"name": name})) {
                     app.status(e);
@@ -375,7 +375,7 @@ pub(crate) fn switcher(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         ] {
             let enabled = !matches!(command, "window.workspace.manage" | "window.workspace.delete") || !is_preset(&current);
             if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-                if let Err(e) = app.run(command, json!({"name": current})) {
+                if let Err(e) = app.run(command, if command == "window.workspace.new" { json!({}) } else { json!({"name": current}) }) {
                     app.status(e);
                 }
                 ui.close();

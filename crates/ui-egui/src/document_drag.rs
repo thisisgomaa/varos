@@ -720,6 +720,52 @@ mod tab_reorder_tests {
         }
     }
 
+    /// G3: released in a scrolling edge before the dwell scrolls, with tabs hidden beyond that
+    /// edge, a tab goes past all of them (the end, or the start), never in front of hidden tabs.
+    /// Checked with the panel workspace presenting the editor.
+    #[test]
+    fn releasing_in_a_scroll_edge_before_the_dwell_drops_past_the_hidden_tabs() {
+        let mut tabs = Tabs::new();
+        tabs.app.ui.varos_panel_review = Some(Default::default());
+        tabs.app.ui.varos_panel_review.as_mut().unwrap().layout = crate::varos::panel_system::model::Layout::studio_workspace().unwrap();
+        assert!(crate::varos::panel_system::enabled(&tabs.app));
+        for index in 3..18 {
+            tabs.app.run("file.new", json!({"name": format!("Overflow drawing {index}"), "width":300,"height":200})).unwrap();
+        }
+        tabs.app.session.set_active(0);
+        tabs.frame(vec![]);
+        tabs.frame(vec![]);
+        let original = tabs.order();
+        let (source, last) = (original[0], *original.last().unwrap());
+        assert!(tabs.maybe_rect(last).is_none(), "tabs are hidden beyond the right edge");
+        let previous_arrow =
+            tabs.ctx.viewport(|viewport| viewport.prev_pass.widgets.get(tabs.scope.with("chevron-left")).map(|widget| widget.rect)).unwrap();
+        let right = pos2(previous_arrow.left() - 28.0 - 5.0, previous_arrow.center().y);
+        tabs.hold(source, right);
+        assert_eq!(tabs.order(), original);
+        tabs.release(right);
+        let mut expected = original[1..].to_vec();
+        expected.push(source);
+        assert_eq!(tabs.order(), expected, "the tab lands at the very end, after the hidden tabs");
+
+        // The moved (active) tab is revealed at the end; tabs are now hidden before the left edge.
+        tabs.frame(vec![]);
+        tabs.frame(vec![]);
+        assert!(tabs.maybe_rect(original[1]).is_none(), "tabs are hidden beyond the left edge");
+        let visible_left = tabs
+            .app
+            .session
+            .documents()
+            .iter()
+            .filter_map(|document| tabs.maybe_rect(document.uid))
+            .map(|rect| rect.left())
+            .fold(f32::INFINITY, f32::min);
+        let left = pos2(visible_left + 5.0, tabs.rect(source).center().y);
+        tabs.hold(source, left);
+        tabs.release(left);
+        assert_eq!(tabs.order(), original, "the tab lands at the very start, before the hidden tabs");
+    }
+
     #[test]
     fn leaving_a_tab_scroll_edge_resets_its_dwell_and_a_stall_advances_only_once() {
         let mut tabs = Tabs::new();
@@ -752,5 +798,87 @@ mod tab_reorder_tests {
         assert_eq!(poll(tabs.time + 0.6, at, true), 1);
         assert_eq!(poll(tabs.time + 1.0, at, false), 0, "release never scrolls");
         assert!(tabs.ctx.data(|data| data.get_temp::<TabDrag>(tab_drag_id())).unwrap().edge.is_none());
+    }
+
+    #[test]
+    fn whole_window_tab_drag_owns_escape_and_tool_shortcuts_without_changing_artwork() {
+        fn frame(app: &mut VectorcraftApp, ctx: &Context, time: &mut f64, events: Vec<Event>) -> egui::FullOutput {
+            *time += 0.1;
+            app.begin_host_iteration();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(*time),
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 1000.0))),
+                    events,
+                    focused: true,
+                    max_texture_side: Some(8192),
+                    ..Default::default()
+                },
+                |ui| app.ui(ui),
+            );
+            output.textures_delta.clear();
+            assert!(!app.ui.status.starts_with("Internal error:"), "{}", app.ui.status);
+            output
+        }
+        let mut tabs = Tabs::new();
+        tabs.app.canvas.worker_started = true;
+        tabs.app.custom_titlebar = true;
+        tabs.app.ui.varos_panel_review = Some(Default::default());
+        tabs.app.ui.varos_panel_review.as_mut().unwrap().layout = crate::varos::panel_system::model::Layout::studio_workspace().unwrap();
+        let object = tabs.app.run("shape.rectangle", json!({"x":20,"y":20,"width":60,"height":40})).unwrap()["id"].clone();
+        tabs.app.run("select.set", json!({"ids":[object]})).unwrap();
+        tabs.app.select_tool("selection");
+        for _ in 0..5 {
+            frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![]);
+        }
+        tabs.ctx.enable_accesskit();
+        let output = frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![]);
+        let tree = output.platform_output.accesskit_update.unwrap();
+        let tab_rect = |title: &str| {
+            let id = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.role() == egui::accesskit::Role::Tab && node.label().is_some_and(|label| label.starts_with(title)))
+                .unwrap()
+                .0;
+            tabs.ctx.viewport(|viewport| {
+                viewport
+                    .prev_pass
+                    .widgets
+                    .layers()
+                    .flat_map(|(_, widgets)| widgets.iter())
+                    .find(|widget| widget.id.accesskit_id() == id)
+                    .unwrap()
+                    .rect
+            })
+        };
+        let from = tab_rect("First drawing").center();
+        let to = tab_rect("Second drawing").right_center() - vec2(4.0, 0.0);
+        let original = tabs.order();
+        let active = tabs.app.session.active().unwrap().uid;
+        let document = tabs.app.session.active().unwrap().doc.clone();
+        let selection = tabs.app.session.active().unwrap().selection.clone();
+        let history = (tabs.app.session.active().unwrap().history.undo.len(), tabs.app.session.active().unwrap().history.redo.len());
+        let key = |key, pressed| Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: Modifiers::NONE };
+        frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![Event::PointerMoved(from)]);
+        frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![button(from, true)]);
+        for step in 1..=4 {
+            frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![Event::PointerMoved(from + (to - from) * (step as f32 / 4.0))]);
+        }
+        assert_eq!(tabs.ctx.data(|data| data.get_temp::<TabDrag>(tab_drag_id())).unwrap().uid, original[0]);
+        frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![key(Key::P, true), Event::Text("p".into())]);
+        frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![key(Key::P, false)]);
+        assert_eq!(tabs.app.session.tool_id(), "selection", "held tab drags own editor letter shortcuts");
+        frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![key(Key::Escape, true)]);
+        assert!(tabs.ctx.data(|data| data.get_temp::<TabDrag>(tab_drag_id())).is_none(), "Escape cancels the tab gesture");
+        frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![key(Key::Escape, false), button(to, false)]);
+        frame(&mut tabs.app, &tabs.ctx, &mut tabs.time, vec![]);
+        assert_eq!(tabs.order(), original);
+        let current = tabs.app.session.active().unwrap();
+        assert_eq!(current.uid, active);
+        assert!(std::sync::Arc::ptr_eq(&current.doc, &document));
+        assert_eq!(current.selection, selection, "Escape does not clear the document selection behind the tabs");
+        assert_eq!((current.history.undo.len(), current.history.redo.len()), history);
+        assert_eq!(tabs.app.session.tool_id(), "selection");
     }
 }

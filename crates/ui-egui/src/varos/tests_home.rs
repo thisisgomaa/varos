@@ -642,3 +642,73 @@ fn thumbnail_rereads_a_file_replaced_between_document_load_and_cache_hook() {
     std::fs::remove_file(&png).unwrap();
     std::fs::remove_file(png.with_extension("json")).unwrap();
 }
+
+#[test]
+fn back_to_document_keeps_active_artwork_and_panel_workspace() {
+    let mut a = app();
+    a.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+    a.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+    a.run("shape.rectangle", json!({"x": 10, "y": 20, "width": 30, "height": 40})).unwrap();
+    a.ui.varos_panel_review = Some(Default::default());
+    a.ui.varos_panel_review.as_mut().unwrap().layout = crate::varos::panel_system::model::Layout::studio_workspace().unwrap();
+    let layout = a.ui.varos_panel_review.as_ref().unwrap().layout.clone();
+    let workspaces = a.ui.varos_panel_review.as_ref().unwrap().workspaces.clone();
+    let docs: Vec<_> = a.session.documents().iter().map(|doc| doc.doc.clone()).collect();
+    let active = a.session.active_index();
+    let history = a.session.active().map(|doc| (doc.history.undo.len(), doc.history.redo.len()));
+    a.run("app.home", json!({})).unwrap();
+    let mut h = harness(a);
+    h.run_steps(2);
+    let back = h.get_by_role_and_label(egui::accesskit::Role::Button, "Back to document");
+    let recents = h.get_by_role_and_label(egui::accesskit::Role::Button, "Recents");
+    assert!(back.rect().bottom() < recents.rect().top());
+    click(&mut h, "Back to document");
+    let a = h.state();
+    assert!(!is_home(a));
+    assert!(a.ui.home.is_none());
+    assert_eq!(a.session.active_index(), active);
+    assert_eq!(a.session.documents().len(), docs.len());
+    assert_eq!(a.session.active().map(|doc| (doc.history.undo.len(), doc.history.redo.len())), history);
+    for (actual, before) in a.session.documents().iter().zip(&docs) {
+        assert!(Arc::ptr_eq(&actual.doc, before));
+    }
+    assert_eq!(a.ui.varos_panel_review.as_ref().unwrap().layout, layout);
+    assert_eq!(a.ui.varos_panel_review.as_ref().unwrap().workspaces, workspaces);
+}
+
+#[test]
+fn back_to_document_is_absent_without_an_open_document() {
+    let mut a = app();
+    a.run("app.home", json!({})).unwrap();
+    let home = a.ui.home;
+    a.run("app.home", json!({"action": "back"})).unwrap();
+    assert!(is_home(&a));
+    assert_eq!(a.ui.home, home);
+    assert!(a.session.documents().is_empty());
+    let mut h = harness(a);
+    h.run_steps(2);
+    assert!(h.query_by_label("Back to document").is_none());
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Recents");
+}
+
+#[test]
+fn home_title_bar_uses_the_same_original_brand_texture_as_the_editor() {
+    let mut a = app();
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx);
+    let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 40.0));
+    let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| top_bar(&mut a, ui, rect));
+    let brand = crate::brand::texture_id(&ctx);
+    let marks: Vec<_> = out
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Mesh(mesh) if mesh.texture_id == brand => Some(mesh.calc_bounds()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].size(), vec2(22.0, 22.0));
+    assert!(!out.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "V")));
+    out.textures_delta.clear();
+}

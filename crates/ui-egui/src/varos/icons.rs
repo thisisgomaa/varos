@@ -215,10 +215,17 @@ mod tests {
                 }
             }
             assert!(image.pixels.iter().any(|p| p.a() > 0), "{name}: empty glyph");
-            assert!(
-                image.pixels.iter().filter(|p| p.a() > 0).all(|p| p.r() == p.a() && p.g() == p.a() && p.b() == p.a()),
-                "{name}: must tint from white"
-            );
+            if *name == "dc-direct" {
+                // Its white interior needs a neutral edge to remain legible on light surfaces.
+                assert!(image.pixels.contains(&egui::Color32::WHITE));
+                assert!(image.pixels.iter().any(|p| p.a() > 240 && p.r() < 180));
+                assert!(image.pixels.iter().all(|p| p.r() == p.g() && p.g() == p.b()));
+            } else {
+                assert!(
+                    image.pixels.iter().filter(|p| p.a() > 0).all(|p| p.r() == p.a() && p.g() == p.a() && p.b() == p.a()),
+                    "{name}: must tint from white"
+                );
+            }
         }
         if let (Some(atlas), Some(path)) = (atlas, preview) {
             atlas.save(path).unwrap();

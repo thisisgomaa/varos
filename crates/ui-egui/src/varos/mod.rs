@@ -27,6 +27,7 @@ pub(crate) mod picker;
 // Varos: icon panels open as independent cards beside the icon column.
 pub(crate) mod clipping;
 pub(crate) mod panel_stack;
+pub(crate) mod panel_system;
 // Varos: the new shell (stage 1): boxes, Board, dividers, tabs, behind Preferences › Varos shell (new).
 pub(crate) mod shell;
 pub(crate) mod tab_scroll;

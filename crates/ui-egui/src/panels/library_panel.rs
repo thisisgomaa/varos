@@ -207,13 +207,20 @@ fn registered(panel: &str) -> Result<&'static str, String> {
     intern(panel).ok_or_else(|| "too many library panels were opened in this session".into())
 }
 
-/// Is panel `panel` open (in the dock or floating)?
+/// Is panel `panel` open (in the dock or floating, or shown in the Varos panel workspace)?
 pub(crate) fn is_open(ui: &UiState, panel: &str) -> bool {
+    if let Some(open) = crate::varos::panel_system::library_open(ui, panel) {
+        return open;
+    }
     crate::panel_docking::layout_of(ui).contains(&panel.to_string())
 }
 
 /// The open library panels.
 fn open_panels(ui: &UiState) -> Vec<String> {
+    // The Varos panel workspace owns its panels while it presents the editor.
+    if let Some(open) = crate::varos::panel_system::open_library_panels(ui) {
+        return open;
+    }
     let mut out: Vec<String> = vec![];
     let docked = ui.docking.iter().flat_map(|l| l.panels());
     for p in docked {
@@ -339,6 +346,7 @@ pub fn restore(app: &mut VectorcraftApp) {
         close(app, &panel);
     }
     app.ui.docking_hidden.retain(|p, _| !p.starts_with(PREFIX) || kept.contains(p));
+    crate::varos::panel_system::retain_library_panels(&mut app.ui, &kept);
     for panel in kept.into_iter().filter(|p| !is_open(&app.ui, p)).collect::<Vec<_>>() {
         if let Err(e) = float(app, &panel) {
             missing.push(format!("{panel} ({e})"));
@@ -379,6 +387,7 @@ fn rename(ui: &mut UiState, from: &str, to: &str) -> Result<(), String> {
     for (p, at) in &ui.docking_hidden {
         hidden.insert(if p == from { to.to_string() } else { p.clone() }, renamed(at, from, to)?);
     }
+    crate::varos::panel_system::rename_panel(ui, from, to)?;
     ui.docking = docking;
     ui.docking_hidden = hidden;
     if ui.open_panel.as_deref() == Some(from) {

@@ -49,7 +49,7 @@ fn contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, rect: Rect, hits: &mut 
     if floating {
         ui.painter().rect_stroke(rect, super::boxes::RADIUS, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     }
-    let movable = app.ui.screen_mode == 0;
+    let movable = app.ui.screen_mode == 0 && !super::super::panel_system::enabled(app);
     let grip_right = if floating { rect.right() } else { rect.right() - 4.0 };
     let grip = Rect::from_min_max(rect.min, pos2(grip_right, rect.top() + 18.0_f32.min(rect.height())));
     let response = ui.interact(grip, egui::Id::unique("shell-tools-grip"), if movable { Sense::drag() } else { Sense::hover() });

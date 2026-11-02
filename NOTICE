@@ -182,3 +182,7 @@ original Varos contributor work under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-AP
 picker glyph licence texts also in crates/ui-egui/assets/varos/icons/).
 The already-attributed Lucide icons and UI fonts retain their original licences.
 Per-file source commits and capture provenance are listed in ASSETS.md.
+
+Varos Selection and Direct Selection pointer glyphs (varos-draw-select.svg and
+varos-draw-direct.svg): original geometric artwork revised 2026-11-01 by the
+Varos contributors, MIT OR Apache-2.0; licence texts retained beside the icons.

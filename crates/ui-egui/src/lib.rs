@@ -2380,6 +2380,8 @@ impl VectorcraftApp {
                 varos::profile::measure("control_bar", || chrome::control_bar(self, ui));
             }
         }
+        // The app-bar Home button can switch surfaces during this same frame.
+        let on_home = varos::home::is_home(self);
         if !on_home && self.ui.status_bar && self.ui.screen_mode < 3 {
             varos::profile::measure("status_bar", || chrome::status_bar(self, ui));
             varos::profile::measure("hint_bar", || chrome::hint_bar(self, ui));
@@ -2391,7 +2393,18 @@ impl VectorcraftApp {
             varos::profile::measure("toolbar", || toolbar::show(self, ui));
         }
         varos::profile::measure("library.tidy", || panels::library_panel::tidy(self));
-        if varos::shell::enabled(self) {
+        if on_home && varos::panel_system::enabled(self) {
+            // Home owns the whole central surface, including its own title bar. Keep the
+            // editor arrangement intact while discarding only transient panel interactions.
+            varos::panel_system::suspend_for_home(self);
+            if self.ui.varos_picker_anchor.is_some() {
+                varos::picker::close(self);
+            }
+            self.canvas_rect = None;
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| self.canvas_area(ui));
+        } else if varos::panel_system::enabled(self) {
+            varos::panel_system::frame(self, ui);
+        } else if varos::shell::enabled(self) {
             // Varos: Preferences › Varos shell (new): the central region is the Varos shell's boxes.
             varos::shell::frame(self, ui);
         } else {
@@ -2404,7 +2417,9 @@ impl VectorcraftApp {
                 varos::profile::measure("dock.cards", || varos::panel_stack::frame(self, &ctx));
             }
         }
-        varos::picker::popover(self, &ctx);
+        if !on_home {
+            varos::picker::popover(self, &ctx);
+        }
         varos::profile::measure("dialogs", || dialogs::show(self, &ctx));
         updates_ui::show(self, &ctx);
         varos::profile::measure("export_progress", || export_progress::show(self, &ctx));

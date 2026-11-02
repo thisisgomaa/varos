@@ -324,9 +324,23 @@ pub fn rename(ui: &mut UiState, from: &str, to: &str) -> Result<(), String> {
 crate::shortcut_editor::ui_mirror!(fn names_store() -> Vec<&'static str>);
 // Varos: with the Varos shell on, its workspaces (presets then the user's); none while it is off.
 crate::shortcut_editor::ui_mirror!(fn shell_names_store() -> Option<Vec<&'static str>>);
+// The unified panel system owns its workspace list while it is active.
+crate::shortcut_editor::ui_mirror!(fn panel_names_store() -> Option<Vec<&'static str>>);
 
 /// Mirror the user workspace names for the (static) menu tree.
 pub fn sync(ui: &UiState) {
+    let panels = ui.varos_panel_review.as_ref().map(|state| state.workspaces.names());
+    let same = panel_names_store().read().map(|v| match (&*v, &panels) {
+        (Some(a), Some(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x == y),
+        (None, None) => true,
+        _ => false,
+    });
+    if matches!(same, Ok(false)) {
+        if let Ok(mut v) = panel_names_store().write() {
+            *v = panels.map(|names| names.iter().map(|n| crate::shortcut_editor::intern(n)).collect());
+        }
+        crate::shortcut_editor::GENERATION.fetch_add(1, Ordering::Relaxed);
+    }
     let same = names_store()
         .read()
         .map(|v| v.len() == ui.custom_workspaces.len() && v.iter().zip(&ui.custom_workspaces).all(|(a, b)| *a == b.name))
@@ -355,6 +369,20 @@ pub fn sync(ui: &UiState) {
 /// Window → Workspace submenu items.
 pub fn menu_items() -> Vec<crate::menus::Item> {
     use crate::menus::Item;
+    if let Some(names) = panel_names_store().read().ok().and_then(|v| v.clone()) {
+        let mut items = Vec::new();
+        for (index, name) in names.into_iter().enumerate() {
+            if index == 1 {
+                items.push(Item::Sep);
+            }
+            items.push(Item::Cmd(name, "window.workspace", json!({"name": name})));
+        }
+        items.push(Item::Sep);
+        items.push(Item::Cmd("Reset Essentials", "window.workspace.reset", Value::Null));
+        items.push(Item::Cmd("New Workspace…", "window.workspace.new", Value::Null));
+        items.push(Item::Cmd("Manage Workspaces…", "window.workspace.manage", Value::Null));
+        return items;
+    }
     // Varos: with the Varos shell on, its workspaces.
     if let Some(names) = shell_names_store().read().ok().and_then(|v| v.clone()) {
         let mut v: Vec<Item> = Vec::new();
@@ -446,6 +474,7 @@ pub fn run_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Resu
 pub fn confirm(app: &mut VectorcraftApp) -> Result<Value, String> {
     let Some(d) = app.ui.dialog.clone() else { return Err("no dialog open".into()) };
     let r = match d.kind.as_str() {
+        "newWorkspace" if crate::varos::panel_system::enabled(app) => app.run("window.workspace.new", json!({"name":d.str("name")})),
         // Varos: the Varos shell saves its own arrangement.
         "newWorkspace" if crate::varos::shell::enabled(app) => app.ui.varos_shell.save_workspace(&d.str("name")).map(|()| Value::Null),
         "newWorkspace" => save_as(&mut app.ui, &d.str("name")).map(|_| Value::Null),
@@ -473,10 +502,18 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 ui.set_width(ui.available_width());
                 // Varos: with the Varos shell on, its workspaces (its presets can't be renamed or
                 // deleted).
+                let panels = crate::varos::panel_system::enabled(app);
                 let shell = crate::varos::shell::enabled(app);
-                let all = if shell { app.ui.varos_shell.workspace_names() } else { names(&app.ui) };
+                let all = crate::varos::panel_system::workspace::names(app)
+                    .unwrap_or_else(|| if shell { app.ui.varos_shell.workspace_names() } else { names(&app.ui) });
                 for n in all {
-                    let builtin = if shell { crate::varos::shell::workspace::is_preset(&n) } else { is_builtin(&n) };
+                    let builtin = if panels {
+                        crate::varos::panel_system::workspace::is_builtin(&n)
+                    } else if shell {
+                        crate::varos::shell::workspace::is_preset(&n)
+                    } else {
+                        is_builtin(&n)
+                    };
                     let shown = crate::panels::label_or_name(&n, builtin);
                     let text = if builtin { egui::RichText::new(shown).color(t.text_dim) } else { egui::RichText::new(shown).color(t.text) };
                     if ui.selectable_label(d.str("selected") == n, text).clicked() && !builtin {
@@ -532,7 +569,10 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     app.ui.dialog = Some(d);
     if let Some((id, p)) = action {
         // Varos: the Varos shell answers the workspace commands while it is on.
-        match crate::varos::shell::command(app, id, &p).or_else(|| run_command(app, id, &p)) {
+        match crate::varos::panel_system::workspace::command(app, id, &p)
+            .or_else(|| crate::varos::shell::command(app, id, &p))
+            .or_else(|| run_command(app, id, &p))
+        {
             Some(Err(e)) => app.status(e),
             _ => {
                 if let Some(d) = app.ui.dialog.as_mut() {

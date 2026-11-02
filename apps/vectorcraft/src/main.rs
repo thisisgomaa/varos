@@ -1162,6 +1162,22 @@ fn main() -> std::process::ExitCode {
                 let _ = in_window_menus;
                 app.services.native_input_hook = native_input_hook(&app);
                 file_access::unconfined(|| open_files(&mut app, files));
+                // The separately bundled trial opts in without migrating the working layout.
+                if std::env::var("VAROS_PANEL_REVIEW").as_deref() == Ok("1") {
+                    let fresh_panel_workspace = app.ui.varos_panel_review.is_none();
+                    if app.session.active().is_none()
+                        && let Err(error) = app.run("file.new", serde_json::json!({"width":800,"height":600}))
+                    {
+                        app.status(error);
+                    }
+                    if let Err(error) = app.run("ui.panelReview", serde_json::json!({"enabled":true})) {
+                        app.status(error);
+                    }
+                    // Existing saved arrangements always win over the starter preset.
+                    if fresh_panel_workspace && let Err(error) = app.run("window.workspace", serde_json::json!({"name":"Studio"})) {
+                        app.status(error);
+                    }
+                }
                 // The first frame is due from now (`gpu::watch_first_frame`).
                 #[cfg(feature = "wgpu")]
                 created.ready();
