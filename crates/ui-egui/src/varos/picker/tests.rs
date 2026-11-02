@@ -1088,7 +1088,7 @@ fn docked_color_body_stays_available_in_both_shells() {
         for _ in 0..4 {
             h.frame(vec![]);
         }
-        assert!(crate::panels::color::content_height(&h.ctx).is_some_and(|height| height > 100.0), "the side slider panel is drawn");
+        assert!(crate::varos::color_panel::content_height(&h.ctx).is_some_and(|height| height > 100.0), "the side slider panel is drawn");
         assert!(h.app.ui.varos_picker_anchor.is_none());
         let well = h.well(false);
         h.click(well.left_top() + vec2(3.0, 3.0));
@@ -1377,7 +1377,7 @@ fn the_release_frames_movement_is_committed_with_the_docked_picker_also_showing(
     let fill = h.well(false);
     h.click(fill.left_top() + vec2(3.0, 3.0));
     assert_eq!(h.app.ui.varos_picker.tab, Tab::Wheel);
-    assert!(crate::panels::color::content_height(&h.ctx).is_some_and(|height| height > 100.0), "the docked slider panel is drawn too");
+    assert!(crate::varos::color_panel::content_height(&h.ctx).is_some_and(|height| height > 100.0), "the docked slider panel is drawn too");
     let c = popover_area(&h).min + vec2(CENTER[0], HEADER_H + CENTER[1]);
     let at = |hue: f32| ring_pos(c, RING_R - RING_BAND / 2.0, hue);
     let before = undo_len(&h.app);

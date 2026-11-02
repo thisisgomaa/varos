@@ -11,15 +11,16 @@ pub(crate) fn fitted_height(ctx: &egui::Context, panel: &str) -> Option<f32> {
         return None;
     }
     match crate::varos::shell::persist::instance_kind(panel) {
-        "color" => Some(crate::panels::color::content_height(ctx).unwrap_or(300.0)),
+        "color" => Some(crate::varos::color_panel::content_height(ctx).unwrap_or(300.0)),
         _ => None,
     }
 }
 
-/// The panel workspace shows the Properties sections in each context's canonical order, without
-/// section grips; the legacy shell keeps the user's saved custom order (still saved here).
-pub(crate) fn fixed_properties_order(app: &VectorcraftApp) -> bool {
-    super::enabled(app)
+/// Whether the Properties sections follow the user's saved custom order and show their move grips.
+/// The panel workspace shows each context's canonical order without grips (the custom order stays
+/// saved for the legacy shell); section bodies and collapse state are shared by both.
+pub(crate) fn properties_sections_movable(app: &VectorcraftApp) -> bool {
+    !super::enabled(app)
 }
 
 /// Draw special panel content inside the host's body rectangle. `false` uses the ordinary panel
@@ -210,5 +211,62 @@ mod tests {
             measured.push(wide);
         }
         assert_eq!(measured[0], measured[1], "changing only the host height cannot inflate intrinsic Control height");
+    }
+
+    #[test]
+    fn panel_workspace_keeps_context_order_and_collapsing_without_section_grips() {
+        use crate::panels::properties::{PropertiesView, SectionHits, SectionId, section_hits, show_editor};
+        use egui::PointerButton;
+        fn editor_frame(app: &mut VectorcraftApp, ctx: &egui::Context, view: &mut PropertiesView, events: Vec<Event>) -> SectionHits {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 900.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| show_editor(app, ui, "properties", view));
+            out.textures_delta.clear();
+            section_hits(ctx, "properties")
+        }
+
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+        app.ui.varos_shell.enabled = true;
+        app.ui.varos_panel_review = Some(Default::default());
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut view = PropertiesView { collapsed: SectionId::ALL.into_iter().collect(), ..Default::default() };
+        view.order.reverse();
+        let saved_order = view.order.clone();
+        editor_frame(&mut app, &ctx, &mut view, vec![]);
+        let hits = editor_frame(&mut app, &ctx, &mut view, vec![]);
+        assert_eq!(
+            hits.sections.iter().map(|s| s.id).collect::<Vec<_>>(),
+            [
+                SectionId::Document,
+                SectionId::Appearance,
+                SectionId::RulersGrids,
+                SectionId::Guides,
+                SectionId::Snap,
+                SectionId::Preferences,
+                SectionId::QuickActions
+            ]
+        );
+        assert!(hits.sections.iter().all(|s| !s.grip.is_positive()), "fixed sections expose no drag handle");
+        assert_eq!(view.order, saved_order, "the legacy custom order is preserved");
+
+        let at = hits.sections.first().unwrap().header.center();
+        let press = |pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Default::default() };
+        editor_frame(&mut app, &ctx, &mut view, vec![Event::PointerMoved(at), press(true)]);
+        editor_frame(&mut app, &ctx, &mut view, vec![press(false)]);
+        assert!(!view.collapsed.contains(&SectionId::Document), "the fixed header still expands its section");
+
+        app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 40, "height": 40})).unwrap();
+        let hits = editor_frame(&mut app, &ctx, &mut view, vec![]);
+        assert_eq!(
+            hits.sections.iter().map(|s| s.id).collect::<Vec<_>>(),
+            [SectionId::Transform, SectionId::Appearance, SectionId::Align, SectionId::QuickActions]
+        );
+        assert_eq!(view.order, saved_order);
+
+        app.ui.varos_panel_review = None;
+        let hits = editor_frame(&mut app, &ctx, &mut view, vec![]);
+        assert_eq!(hits.sections.first().unwrap().id, SectionId::QuickActions, "the legacy shell retains its custom order");
+        assert!(hits.sections.iter().all(|s| s.grip.is_positive()));
     }
 }

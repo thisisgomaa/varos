@@ -5,6 +5,7 @@ pub(crate) mod content;
 pub(crate) mod control_bar;
 mod geometry;
 mod hosting;
+pub(crate) mod menu;
 pub(crate) mod metrics;
 pub mod model;
 mod paint;

@@ -142,7 +142,7 @@ pub fn show_icon_panel(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
     match id {
         "pages" => crate::varos::pages::show(app, ui),
         "swatches" => swatches::show(app, ui),
-        "color" => color::show(app, ui),
+        "color" => crate::varos::color_panel::side(app, ui), // Varos: measures its contents
         "colorGuide" => color_guide::show(app, ui),
         "stroke" => stroke::show(app, ui),
         "transparency" => transparency::show(app, ui),

@@ -276,6 +276,7 @@ registry! {
     Variables: [variables::KIND] => variables::SPEC,
     Effect: ["effect"] => effect::SPEC,
     SaveChanges: [crate::unsaved::KIND] => save_changes::SPEC,
+    // Varos: Preferences is modeless.
     Preferences: ["preferences"] => DialogSpec { modeless: true, ..DialogSpec::window(crate::prefs_dialog::show, |app, _| crate::prefs_dialog::confirm(app)) },
     Shortcuts: ["shortcuts"] => DialogSpec::window(crate::shortcut_editor::show, |app, _| crate::shortcut_editor::confirm(app)),
     Workspaces: ["newWorkspace", "manageWorkspaces"] => DialogSpec::window(crate::workspaces::show, |app, _| crate::workspaces::confirm(app)),
@@ -472,7 +473,7 @@ pub(crate) fn settle(app: &mut VectorcraftApp) {
     missing_fonts::stop_when_closed(app);
     find_links::stop_when_closed(app);
     missing_fonts::open_next(app);
-    crate::prefs_dialog::settle(app);
+    crate::prefs_dialog::settle(app); // Varos: a closed Preferences drops its draft
 }
 
 /// The field of a dialog that a save panel opened (its format's options): Enter doesn't confirm it
@@ -711,7 +712,7 @@ mod tests_shortcut_import;
 #[cfg(test)]
 mod tests_warp;
 
-/// Whether the open dialog reserves the rest of the workspace ([`DialogSpec::modeless`]).
+/// Varos: whether the open dialog reserves the rest of the workspace ([`DialogSpec::modeless`]).
 pub(crate) fn blocks_workspace(app: &VectorcraftApp) -> bool {
     app.ui.dialog.as_ref().is_some_and(|dialog| !spec(&dialog.kind).modeless)
 }

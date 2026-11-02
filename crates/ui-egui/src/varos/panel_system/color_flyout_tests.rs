@@ -49,7 +49,7 @@ fn side_color_uses_sliders_and_its_own_height_independently_of_wheel_preferences
         }
         let output = h.frame_at(1000.0);
         let flyout = h.flyout();
-        let measured = crate::panels::color::content_height(&h.ctx).expect("side Color measures its own slider content");
+        let measured = crate::varos::color_panel::content_height(&h.ctx).expect("side Color measures its own slider content");
         assert!((flyout.height() - measured - super::paint::TABS - super::paint::FOOT).abs() < 1.5);
         if let Some(height) = expected_height {
             assert!((flyout.height() - height).abs() < 1.5);

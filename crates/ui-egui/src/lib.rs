@@ -2364,7 +2364,7 @@ impl VectorcraftApp {
         }
         crate::state::sync_zoom_stops_display_print_size(self.session.prefs.display_print_size);
         let t0 = now_ms();
-        widgets::set_dialog_open(&ctx, dialogs::blocks_workspace(self));
+        widgets::set_dialog_open(&ctx, dialogs::blocks_workspace(self)); // Varos: modeless Preferences
         // The canvas records this pass's IME caret geometry; a pass that draws no canvas has none.
         self.ime_caret_rect = None;
         scrub::begin_frame(self, &ctx);
@@ -2380,8 +2380,7 @@ impl VectorcraftApp {
                 varos::profile::measure("control_bar", || chrome::control_bar(self, ui));
             }
         }
-        // The app-bar Home button can switch surfaces during this same frame.
-        let on_home = varos::home::is_home(self);
+        let on_home = varos::home::is_home(self); // Varos: the app-bar Home button can switch surfaces this frame
         if !on_home && self.ui.status_bar && self.ui.screen_mode < 3 {
             varos::profile::measure("status_bar", || chrome::status_bar(self, ui));
             varos::profile::measure("hint_bar", || chrome::hint_bar(self, ui));
@@ -2412,9 +2411,7 @@ impl VectorcraftApp {
                 varos::profile::measure("dock.cards", || varos::panel_stack::frame(self, &ctx));
             }
         }
-        if !on_home {
-            varos::picker::popover(self, &ctx);
-        }
+        varos::picker::popover(self, &ctx);
         varos::profile::measure("dialogs", || dialogs::show(self, &ctx));
         updates_ui::show(self, &ctx);
         varos::profile::measure("export_progress", || export_progress::show(self, &ctx));

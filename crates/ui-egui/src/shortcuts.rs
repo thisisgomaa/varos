@@ -529,11 +529,8 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     if !crate::take_frame_once(&mut app.shortcuts_frames, frame) {
         return;
     }
-    if crate::varos::tab_reorder::tab_reorder_keys(ctx) {
-        crate::ime::controls_without_editor(app, ctx);
-        return;
-    }
-    if crate::varos::panel_system::gesture_keys(app, ctx) {
+    // Varos: a document-tab reorder or a panel-layout gesture owns the keys until it ends.
+    if crate::varos::keys::gestures(app, ctx) {
         return;
     }
     // Varos: Escape cancels a drag in the Varos shell before anything else sees it.
@@ -553,20 +550,8 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         crate::ime::controls_without_editor(app, ctx);
         return;
     }
-    // Preferences is modeless: Escape in one of its fields leaves the field and keeps the draft.
-    if !crate::dialogs::blocks_workspace(app)
-        && !app.ui.palette_open
-        && app.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences")
-        && ctx.egui_wants_keyboard_input()
-    {
-        crate::ime::controls_without_editor(app, ctx);
-        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-            ctx.memory_mut(|m| {
-                if let Some(id) = m.focused() {
-                    m.surrender_focus(id);
-                }
-            });
-        }
+    // Varos: modeless Preferences keeps a field's keys; below, only modal dialogs block.
+    if crate::varos::keys::preferences_field(app, ctx) {
         return;
     }
     if crate::dialogs::blocks_workspace(app) || app.ui.palette_open {
@@ -862,8 +847,7 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         (Key::ArrowDown, ToolKey::Down),
     ] {
         if ctx.input(|i| i.key_pressed(k)) && app.session.tool_claims_key(tk, view) && ctx.input_mut(|i| i.consume_key(m, k)) {
-            // Tool-owned keyboard edits bypass app.run, just like canvas pointer gestures.
-            // Keep gradient-stop nudges/deletions outside the Color palette's undo group.
+            // Varos: tool keys bypass app.run; keep gradient-stop nudges out of the picker's undo group.
             crate::varos::picker::seal_foreign(app);
             let r = app.session.tool_key(tk, crate::canvas::mods(m, false), view);
             // Keyboard actions can change the Artboard tool's active board too. Keep the

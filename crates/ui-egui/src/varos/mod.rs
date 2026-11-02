@@ -12,6 +12,7 @@ pub(crate) mod home;
 pub mod icons;
 // Varos: the Paragraph panel's kashida controls.
 pub(crate) mod kashida_ui;
+pub(crate) mod keys;
 // Varos: the Middle Eastern groups of the Character and Paragraph panels (direction, digits, harakat).
 pub(crate) mod middle_eastern_ui;
 // Varos: the Middle Eastern controls' icons.
@@ -26,6 +27,7 @@ pub(crate) mod read_only_save;
 pub(crate) mod picker;
 // Varos: icon panels open as independent cards beside the icon column.
 pub(crate) mod clipping;
+pub(crate) mod color_panel;
 pub(crate) mod panel_stack;
 pub(crate) mod panel_system;
 // Varos: the new shell (stage 1): boxes, Board, dividers, tabs, behind Preferences › Varos shell (new).

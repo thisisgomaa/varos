@@ -1414,20 +1414,17 @@ pub(crate) fn show_editor(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str,
 /// The sections of editor `instance` for what it shows, and the move of one of them by its grip.
 fn draw_sections(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str, view: &mut PropertiesView) {
     let ctx = ui.ctx().clone();
-    let fixed_order = crate::varos::panel_system::content::fixed_properties_order(app); // Varos
+    let movable = crate::varos::panel_system::content::properties_sections_movable(app); // Varos: the presenter's policy
     let mut list: Vec<Option<Section>> = section_list(app).into_iter().map(Some).collect();
     let ids: Vec<SectionId> = list.iter().flatten().map(|s| s.id).collect();
     let mut hits = SectionHits::default();
     let mut started = None;
-    // Each context supplies its canonical section order. Keep legacy custom orders saved but
-    // ignore them in the approved panel workspace; section bodies and collapse state are shared.
-    let order = if fixed_order { ids.clone() } else { view.ordered(&ids) };
-    for id in order {
+    for id in if movable { view.ordered(&ids) } else { ids.clone() } {
         let Some(Section { title, body, .. }) = list.iter_mut().find(|s| s.as_ref().is_some_and(|s| s.id == id)).and_then(Option::take) else {
             continue;
         };
         let collapsed = view.collapsed.contains(&id);
-        let out = section(ui, instance, id, &title, collapsed, !fixed_order, |ui| body(app, ui));
+        let out = section(ui, instance, id, &title, collapsed, movable, |ui| body(app, ui));
         if out.toggled {
             if collapsed {
                 view.collapsed.remove(&id);
@@ -1441,12 +1438,8 @@ fn draw_sections(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str, view: &m
         }
         hits.sections.push(out.hit);
     }
-    if fixed_order {
-        ctx.data_mut(|d| {
-            d.remove_temp::<SectionDrag>(drag_id());
-            d.insert_temp(hits_id(instance), hits);
-        });
-        return;
+    if !movable {
+        ctx.data_mut(|d| d.remove_temp::<SectionDrag>(drag_id())); // Varos: fixed sections have no drag
     }
     if let Some((id, title, header)) = started
         && !section_dragging(&ctx)
@@ -1521,61 +1514,6 @@ mod tests {
     use vectorcraft_engine::Session;
 
     use super::*;
-
-    #[test]
-    fn panel_workspace_keeps_context_order_and_collapsing_without_section_grips() {
-        fn editor_frame(app: &mut VectorcraftApp, ctx: &egui::Context, view: &mut PropertiesView, events: Vec<Event>) -> SectionHits {
-            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 900.0))), events, ..Default::default() };
-            let mut out = ctx.run_ui(raw, |ui| show_editor(app, ui, "properties", view));
-            out.textures_delta.clear();
-            section_hits(ctx, "properties")
-        }
-
-        let mut app = VectorcraftApp::new(Session::new(), Default::default());
-        app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
-        app.ui.varos_shell.enabled = true;
-        app.ui.varos_panel_review = Some(Default::default());
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        let mut view = PropertiesView { collapsed: SectionId::ALL.into_iter().collect(), ..Default::default() };
-        view.order.reverse();
-        let saved_order = view.order.clone();
-        editor_frame(&mut app, &ctx, &mut view, vec![]);
-        let hits = editor_frame(&mut app, &ctx, &mut view, vec![]);
-        assert_eq!(
-            hits.sections.iter().map(|s| s.id).collect::<Vec<_>>(),
-            [
-                SectionId::Document,
-                SectionId::Appearance,
-                SectionId::RulersGrids,
-                SectionId::Guides,
-                SectionId::Snap,
-                SectionId::Preferences,
-                SectionId::QuickActions
-            ]
-        );
-        assert!(hits.sections.iter().all(|s| !s.grip.is_positive()), "fixed sections expose no drag handle");
-        assert_eq!(view.order, saved_order, "the legacy custom order is preserved");
-
-        let at = hits.sections.first().unwrap().header.center();
-        let press = |pressed| Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: Default::default() };
-        editor_frame(&mut app, &ctx, &mut view, vec![Event::PointerMoved(at), press(true)]);
-        editor_frame(&mut app, &ctx, &mut view, vec![press(false)]);
-        assert!(!view.collapsed.contains(&SectionId::Document), "the fixed header still expands its section");
-
-        app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 40, "height": 40})).unwrap();
-        let hits = editor_frame(&mut app, &ctx, &mut view, vec![]);
-        assert_eq!(
-            hits.sections.iter().map(|s| s.id).collect::<Vec<_>>(),
-            [SectionId::Transform, SectionId::Appearance, SectionId::Align, SectionId::QuickActions]
-        );
-        assert_eq!(view.order, saved_order);
-
-        app.ui.varos_panel_review = None;
-        let hits = editor_frame(&mut app, &ctx, &mut view, vec![]);
-        assert_eq!(hits.sections.first().unwrap().id, SectionId::QuickActions, "the legacy shell retains its custom order");
-        assert!(hits.sections.iter().all(|s| s.grip.is_positive()));
-    }
 
     /// One frame of the panel with `events` → the texts painted, with their rects.
     fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<Event>) -> Vec<(String, Rect)> {

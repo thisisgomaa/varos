@@ -361,7 +361,8 @@ pub(crate) fn show_stop(app: &mut VectorcraftApp, ui: &mut Ui) {
     app.ui.varos_picker.tab = parent_mode;
 }
 
-/// The Color panel's body (the `// Varos` hook at the top of [`crate::panels::color::show`]).
+/// The wheel picker's body: the wells' popover and a gradient stop's editor
+/// ([`crate::varos::color_panel::stop_editor`]).
 pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let sid = instance_id(ui);
@@ -841,6 +842,10 @@ fn tallest(prefs: &Prefs) -> f32 {
 /// Render after the shell, before dialogs. The shell palette permits canvas interaction;
 /// the classic picker keeps its modal backdrop. Application dialogs make either one inert.
 pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    // Home owns the whole surface: no picker floats over it.
+    if crate::varos::home::is_home(app) {
+        return;
+    }
     let Some(anchor) = app.ui.varos_picker_anchor else { return };
     let mut screen = ctx.content_rect();
     let shell = crate::varos::shell::enabled(app);
