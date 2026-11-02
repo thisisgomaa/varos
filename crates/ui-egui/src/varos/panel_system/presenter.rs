@@ -51,6 +51,7 @@ pub(crate) fn sync(app: &mut VectorcraftApp, on_home: bool) -> Presenter {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::Harness;
     use super::*;
     use serde_json::json;
 
@@ -71,5 +72,33 @@ mod tests {
         assert!(super::super::workspace::command(&mut app, "window.workspace.manage", &json!({})).is_none());
         assert!(app.ui.dialog.is_none(), "the inactive workspace opens no dialog");
         assert!(!super::super::showing(&app, "tools"));
+    }
+
+    /// S8: the Varos shell switch is the one owner: off, the classic dock presents and the panel
+    /// workspace neither draws nor answers; back on, the same workspace returns.
+    #[test]
+    fn turning_the_varos_shell_off_in_preferences_hands_the_editor_to_the_classic_dock() {
+        let mut h = Harness::workspace();
+        let layout = h.layout().clone();
+        crate::prefs_dialog::open(&mut h.app, None);
+        h.app.ui.dialog.as_mut().unwrap().fields.insert(crate::varos::shell::PREF_KEY.into(), json!(false));
+        crate::prefs_dialog::apply(&mut h.app).unwrap();
+        h.app.ui.dialog = None;
+        assert!(!super::super::enabled(&h.app));
+        h.app.ui.varos_panel_review.as_mut().unwrap().hits.clear();
+        h.settle();
+        assert!(h.state().hits.is_empty(), "the panel workspace draws nothing while the shell is off");
+        assert!(super::super::command(&mut h.app, "window.panel.layout", &json!({})).is_none(), "nor answers panel commands");
+        h.app.run("window.panel", json!({"panel": "color"})).unwrap();
+        assert!(!h.visible("color"), "the classic dock handled Window › Color");
+        assert!(crate::panel_docking::showing(&h.app.ui, "color"));
+        crate::prefs_dialog::open(&mut h.app, None);
+        h.app.ui.dialog.as_mut().unwrap().fields.insert(crate::varos::shell::PREF_KEY.into(), json!(true));
+        crate::prefs_dialog::apply(&mut h.app).unwrap();
+        h.app.ui.dialog = None;
+        assert!(super::super::enabled(&h.app));
+        h.settle();
+        assert_eq!(h.layout(), &layout, "the saved workspace returns unchanged");
+        assert!(!h.state().hits.is_empty());
     }
 }

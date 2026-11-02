@@ -3,112 +3,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use super::{State, model};
-use crate::VectorcraftApp;
-use egui::{Event, Pos2, Rect, pos2, vec2};
-use model::{Layout, Mode};
-use serde_json::json;
-use vectorcraft_engine::Session;
-
-struct Harness {
-    app: VectorcraftApp,
-    ctx: egui::Context,
-    time: f64,
-    focused: bool,
-}
-
-fn button(pos: Pos2, pressed: bool) -> Event {
-    Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
-}
+use super::test_support::*;
 
 impl Harness {
-    fn new() -> Self {
-        let mut app = VectorcraftApp::new(Session::new(), Default::default());
-        app.run("ui.panelReview", json!({"enabled": true})).unwrap();
-        app.ui.varos_panel_review = Some(State { layout: Layout::new_slice(), ..Default::default() });
-        app.run("file.new", json!({"width": 300, "height": 300})).unwrap();
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        let mut h = Self { app, ctx, time: 0.0, focused: true };
-        h.settle();
-        h
-    }
-
-    fn frame(&mut self, events: Vec<Event>) -> egui::FullOutput {
-        self.time += 0.05;
-        let input = egui::RawInput {
-            time: Some(self.time),
-            events,
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0))),
-            focused: self.focused,
-            ..Default::default()
-        };
-        let app = &mut self.app;
-        app.begin_host_iteration();
-        let mut out = self.ctx.run_ui(input, |ui| {
-            app.tick(ui.ctx());
-            app.ui(ui);
-        });
-        out.textures_delta.clear();
-        out
-    }
-
-    fn settle(&mut self) {
-        for _ in 0..4 {
-            self.frame(vec![]);
-        }
-    }
-
-    fn state(&self) -> &State {
-        self.app.ui.varos_panel_review.as_ref().unwrap()
-    }
-
-    fn layout(&self) -> &Layout {
-        &self.state().layout
-    }
-
-    fn hit(&self, name: &str) -> Rect {
-        self.state().hits.iter().find_map(|(key, rect)| (key == name).then_some(*rect)).unwrap_or_else(|| panic!("missing drawn hit {name}"))
-    }
-
-    fn host_id(&self, panel: &str) -> u64 {
-        self.layout().owner(panel).unwrap().id
-    }
-
-    fn host_rect(&self, panel: &str) -> Rect {
-        self.hit(&format!("host:{}", self.host_id(panel)))
-    }
-
-    fn tab(&self, panel: &str) -> Rect {
-        self.hit(&format!("tab:{panel}"))
-    }
-
-    fn click(&mut self, at: Pos2) {
-        self.frame(vec![Event::PointerMoved(at), button(at, true)]);
-        self.frame(vec![button(at, false)]);
-        self.settle();
-    }
-
-    fn hold_drag(&mut self, from: Pos2, to: Pos2) {
-        self.frame(vec![Event::PointerMoved(from)]);
-        self.frame(vec![button(from, true)]);
-        for step in 1..=8 {
-            self.frame(vec![Event::PointerMoved(from + (to - from) * (step as f32 / 8.0))]);
-        }
-        assert!(self.state().gesture.is_some(), "the drawn handle must begin a pointer drag");
-    }
-
-    fn release(&mut self, at: Pos2) {
-        self.frame(vec![Event::PointerMoved(at), button(at, false)]);
-        self.settle();
-        assert!(self.state().gesture.is_none(), "pointer-up finishes the gesture");
-    }
-
-    fn drag(&mut self, from: Pos2, to: Pos2) {
-        self.hold_drag(from, to);
-        self.release(to);
-    }
-
     fn merge_tabs(&mut self) {
         let destination = self.tab("layers");
         self.drag(self.tab("swatches").center(), pos2(destination.left() + 20.0, destination.center().y));
@@ -117,17 +14,8 @@ impl Harness {
         self.assert_owners();
     }
 
-    fn assert_owners(&self) {
-        self.layout().validate().unwrap();
-        let mut panels: Vec<&str> =
-            self.layout().hosts.iter().flat_map(|host| model::groups(&host.root)).flat_map(|g| g.panels.iter().map(String::as_str)).collect();
-        panels.sort_unstable();
-        assert_eq!(panels, ["layers", "swatches"], "each actual panel has exactly one owner, including hidden blocks");
-    }
-
     fn tools_workspace(dock: Option<model::Edge>) -> Self {
-        let mut h = Self::new();
-        h.app.ui.varos_panel_review = Some(State { layout: Layout::new_workspace(), ..Default::default() });
+        let mut h = Self::workspace();
         let host = h.host_id("tools");
         let target = dock.map_or(model::Target::Float { position: [900.0, 120.0] }, |edge| model::Target::Dock { edge });
         h.app.run("ui.panelReview.action", json!({"action": model::Action::Move { source: model::Source::Host(host), target }})).unwrap();
@@ -305,7 +193,7 @@ fn floating_tools_has_no_name_or_menu_and_arrow_keeps_both_tool_widths() {
 
 #[test]
 fn pointer_tabs_merge_reorder_and_detach_only_on_release() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     let before = h.layout().clone();
     let destination = h.tab("layers");
     let at = pos2(destination.left() + 20.0, destination.center().y);
@@ -336,7 +224,7 @@ fn pointer_tabs_merge_reorder_and_detach_only_on_release() {
 
 #[test]
 fn dark_header_moves_the_whole_host_without_a_release_jump() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     let id = h.host_id("layers");
     let before = h.layout().clone();
     let rect = h.host_rect("layers");
@@ -355,7 +243,7 @@ fn dark_header_moves_the_whole_host_without_a_release_jump() {
 
 #[test]
 fn escape_cancels_a_pending_tab_detach_without_losing_panels() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     h.merge_tabs();
     let before = h.layout().clone();
     let to = pos2(1050.0, 570.0);
@@ -370,7 +258,7 @@ fn escape_cancels_a_pending_tab_detach_without_losing_panels() {
 
 #[test]
 fn losing_focus_cancels_a_host_drag_without_committing_the_preview() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     let before = h.layout().clone();
     let id = h.host_id("layers");
     let to = pos2(1050.0, 570.0);
@@ -387,7 +275,7 @@ fn losing_focus_cancels_a_host_drag_without_committing_the_preview() {
 
 #[test]
 fn compact_edges_switch_icon_and_name_modes_and_click_opens_a_flyout() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     let id = h.host_id("layers");
     let original = h.layout().host(id).unwrap().clone();
     h.click(h.hit(&format!("mode:{id}")).center());
@@ -422,7 +310,7 @@ fn compact_edges_switch_icon_and_name_modes_and_click_opens_a_flyout() {
 
 #[test]
 fn close_hides_the_whole_block_and_window_restores_its_layout() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     h.merge_tabs();
     let id = h.host_id("layers");
     let original = h.layout().host(id).unwrap().clone();
@@ -448,7 +336,7 @@ fn close_hides_the_whole_block_and_window_restores_its_layout() {
 
 #[test]
 fn dropping_a_host_on_the_bottom_edge_stacks_distinct_groups() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     let destination_id = h.host_id("layers");
     let source_id = h.host_id("swatches");
     let layers_group = h.layout().group_of("layers").unwrap().id;
@@ -472,7 +360,7 @@ fn dropping_a_host_on_the_bottom_edge_stacks_distinct_groups() {
 
 #[test]
 fn free_host_drop_retains_front_order_and_background_click_raises_the_lower_host() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     let layers = h.host_id("layers");
     let swatches = h.host_id("swatches");
     let before = h.layout().clone();
@@ -498,7 +386,7 @@ fn free_host_drop_retains_front_order_and_background_click_raises_the_lower_host
 
 #[test]
 fn detaching_a_full_flyout_tab_from_compact_mode_keeps_a_full_sized_floating_body() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     h.merge_tabs();
     let source = h.host_id("layers");
     let group = h.layout().group_of("swatches").unwrap().id;
@@ -606,7 +494,7 @@ pub(super) fn software_capture(app: &mut VectorcraftApp, width: u32, height: u32
 #[ignore = "optional software visual capture; set VAROS_PANEL_SLICE_CAPTURE"]
 fn capture_panel_slice() {
     let Some(path) = std::env::var_os("VAROS_PANEL_SLICE_CAPTURE").map(std::path::PathBuf::from) else { return };
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     h.app.run("shape.rectangle", json!({"x": 40, "y": 40, "width": 120, "height": 80})).unwrap();
     h.settle();
     let (width, height) = (1600_u32, 1000_u32);
@@ -633,7 +521,7 @@ fn capture_panel_slice() {
 
 #[test]
 fn collapsing_after_dragging_to_workspace_edge_keeps_the_visible_origin() {
-    let mut h = Harness::new();
+    let mut h = Harness::slice();
     let id = h.host_id("layers");
     let from = h.hit(&format!("host-grip:{id}")).center();
     h.drag(from, pos2(1570.0, 580.0));
@@ -649,9 +537,7 @@ fn collapsing_after_dragging_to_workspace_edge_keeps_the_visible_origin() {
 #[ignore = "optional software visual capture; set VAROS_PANEL_WORKSPACE_CAPTURE"]
 fn capture_panel_workspace() {
     let Ok(path) = std::env::var("VAROS_PANEL_WORKSPACE_CAPTURE") else { return };
-    let mut h = Harness::new();
-    h.app.ui.varos_panel_review = Some(State { layout: Layout::new_workspace(), ..Default::default() });
-    h.settle();
+    let mut h = Harness::workspace();
     let width = 1600;
     let height = 1000;
     let pixels = software_capture(&mut h.app, width, height);
@@ -678,9 +564,7 @@ fn capture_panel_workspace() {
 #[ignore = "optional software visual capture; set VAROS_CONTROL_BAR_CAPTURE"]
 fn capture_control_bar_inline_chrome() {
     let Some(path) = std::env::var_os("VAROS_CONTROL_BAR_CAPTURE").map(std::path::PathBuf::from) else { return };
-    let mut h = Harness::new();
-    h.app.ui.varos_panel_review = Some(State { layout: Layout::new_workspace(), ..Default::default() });
-    h.settle();
+    let mut h = Harness::workspace();
     let host = h.host_id("control");
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     for (name, target) in [

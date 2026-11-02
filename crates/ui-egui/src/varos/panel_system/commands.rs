@@ -484,4 +484,16 @@ mod tests {
         app.run("window.panel.collapse", json!({"panel": "layers"})).unwrap();
         assert_eq!(state(&app).layout.column_mode(group), Some(Mode::Names), "the command collapses to the column's own width");
     }
+
+    /// S6: collapsing Tools by command narrows it to one column.
+    #[test]
+    fn tools_collapse_command_changes_the_tools_width() {
+        let mut app = app();
+        app.run("window.toolbarColumns", json!({"double": true})).unwrap();
+        assert_eq!(state(&app).layout.tools_width(), Some(metrics::TOOLS_MAX_WIDTH));
+        app.run("window.panel.collapse", json!({"panel": "tools", "collapsed": true})).unwrap();
+        assert_eq!(state(&app).layout.tools_width(), Some(metrics::TOOLS_MIN_WIDTH));
+        app.run("window.panel.collapse", json!({"panel": "tools", "collapsed": false})).unwrap();
+        assert_eq!(state(&app).layout.tools_width(), Some(metrics::TOOLS_MAX_WIDTH));
+    }
 }

@@ -2,72 +2,13 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use super::{State, geometry, model, registry};
-use crate::VectorcraftApp;
-use egui::{Event, Pos2, Rect, pos2, vec2};
-use model::{Action, Edge, Layout, Mode, Source, Target};
-use serde_json::json;
-use vectorcraft_engine::Session;
-
-struct Harness {
-    app: VectorcraftApp,
-    ctx: egui::Context,
-    time: f64,
-    workspace: Rect,
-    screen_size: egui::Vec2,
-}
-
-fn button(pos: Pos2, pressed: bool) -> Event {
-    Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
-}
+use super::test_support::*;
 
 impl Harness {
-    fn new() -> Self {
-        let mut app = VectorcraftApp::new(Session::new(), Default::default());
-        app.run("ui.panelReview", json!({"enabled":true})).unwrap();
-        app.run("file.new", json!({"width":300,"height":300})).unwrap();
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        let mut h = Self { app, ctx, time: 0.0, workspace: Rect::NOTHING, screen_size: vec2(1600.0, 1000.0) };
-        h.settle();
-        let control = h.host_rect("control");
-        let tools = h.host_rect("tools");
-        h.workspace = Rect::from_min_max(control.min, pos2(control.right(), tools.bottom()));
-        h.assert_owners();
-        h
-    }
-
-    fn frame(&mut self, events: Vec<Event>) -> egui::FullOutput {
-        self.time += 0.05;
-        let input = egui::RawInput {
-            time: Some(self.time),
-            events,
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.screen_size)),
-            focused: true,
-            ..Default::default()
-        };
-        let app = &mut self.app;
-        app.begin_host_iteration();
-        let mut out = self.ctx.run_ui(input, |ui| {
-            app.tick(ui.ctx());
-            app.ui(ui);
-        });
-        out.textures_delta.clear();
-        out
-    }
-
-    fn settle(&mut self) {
-        for _ in 0..4 {
-            self.frame(vec![]);
-        }
-    }
-
     fn set_viewport_width(&mut self, width: f32) {
-        self.screen_size.x = width;
+        self.screen.x = width;
         self.settle();
-        let control = self.host_rect("control");
-        let tools = self.host_rect("tools");
-        self.workspace = Rect::from_min_max(control.min, pos2(control.right(), tools.bottom()));
+        self.measure_workspace();
     }
 
     fn assert_control_fitted(&self) -> f32 {
@@ -92,83 +33,6 @@ impl Harness {
         assert!(grip.right() <= body.left() + 0.1, "the grip is beside the controls, not above them");
         assert!(!self.has_hit("tab:control"));
         measured.rect.height()
-    }
-
-    fn state(&self) -> &State {
-        self.app.ui.varos_panel_review.as_ref().unwrap()
-    }
-
-    fn layout(&self) -> &Layout {
-        &self.state().layout
-    }
-
-    fn hit(&self, name: &str) -> Rect {
-        self.state().hits.iter().find_map(|(key, rect)| (key == name).then_some(*rect)).unwrap_or_else(|| panic!("missing drawn hit {name}"))
-    }
-
-    fn has_hit(&self, name: &str) -> bool {
-        self.state().hits.iter().any(|(key, _)| key == name)
-    }
-
-    fn host_id(&self, panel: &str) -> u64 {
-        self.layout().owner(panel).unwrap().id
-    }
-
-    fn host_rect(&self, panel: &str) -> Rect {
-        self.hit(&format!("host:{}", self.host_id(panel)))
-    }
-
-    fn canvas(&self) -> Rect {
-        self.app.canvas_rect.expect("the real canvas is drawn")
-    }
-
-    fn click(&mut self, at: Pos2) {
-        self.frame(vec![Event::PointerMoved(at), button(at, true)]);
-        self.frame(vec![button(at, false)]);
-        self.settle();
-    }
-
-    fn hold_drag(&mut self, from: Pos2, to: Pos2) {
-        self.frame(vec![Event::PointerMoved(from)]);
-        self.frame(vec![button(from, true)]);
-        for step in 1..=8 {
-            self.frame(vec![Event::PointerMoved(from + (to - from) * (step as f32 / 8.0))]);
-        }
-        assert!(
-            self.state().gesture.is_some(),
-            "the actual handle begins a gesture: from={from:?}, to={to:?}, hits={:?}",
-            self.state()
-                .hits
-                .iter()
-                .filter(|(name, _)| name.starts_with("host:") || name.starts_with("host-grip:") || name.starts_with("resize-"))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    fn release(&mut self, at: Pos2) {
-        self.frame(vec![Event::PointerMoved(at), button(at, false)]);
-        self.settle();
-        assert!(self.state().gesture.is_none());
-    }
-
-    fn drag(&mut self, from: Pos2, to: Pos2) {
-        self.hold_drag(from, to);
-        self.release(to);
-    }
-
-    fn action(&mut self, action: Action) {
-        self.app.run("ui.panelReview.action", json!({"action":action})).unwrap();
-        self.settle();
-    }
-
-    fn assert_owners(&self) {
-        self.layout().validate().unwrap();
-        let mut actual: Vec<&str> =
-            self.layout().hosts.iter().flat_map(|h| model::groups(&h.root)).flat_map(|g| g.panels.iter().map(String::as_str)).collect();
-        let mut expected: Vec<&str> = registry::BUILTINS.iter().map(|p| p.id).collect();
-        actual.sort_unstable();
-        expected.sort_unstable();
-        assert_eq!(actual, expected, "every registry panel retains exactly one owner, including hidden panels");
     }
 
     fn text_shapes(&mut self) -> Vec<(String, Rect)> {
@@ -244,7 +108,7 @@ impl Harness {
 
 #[test]
 fn tools_header_floats_redocks_right_and_escape_preserves_the_committed_layout() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let id = h.host_id("tools");
     assert_eq!(h.layout().host(id).unwrap().dock, Some(Edge::Left));
     assert!(!h.has_hit("tab:tools"), "standalone docked Tools does not repeat its name in a tab band");
@@ -290,7 +154,7 @@ fn tools_header_floats_redocks_right_and_escape_preserves_the_committed_layout()
 
 #[test]
 fn docked_tools_width_resize_updates_the_real_canvas_reservation() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let tools = h.host_id("tools");
     let before = h.host_rect("tools");
     let canvas = h.canvas();
@@ -313,7 +177,7 @@ fn docked_tools_width_resize_updates_the_real_canvas_reservation() {
 #[test]
 fn bars_reject_tab_merges_but_tools_accepts_an_independent_group_beside_it() {
     for bar in ["tools", "control"] {
-        let mut h = Harness::new();
+        let mut h = Harness::workspace();
         let host = h.host_id(bar);
         let group = h.layout().group_of(bar).unwrap().id;
         let before = h.layout().clone();
@@ -329,7 +193,7 @@ fn bars_reject_tab_merges_but_tools_accepts_an_independent_group_beside_it() {
         h.assert_owners();
     }
 
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let tools = h.host_id("tools");
     let tools_group = h.layout().group_of("tools").unwrap().id;
     let layers_group = h.layout().group_of("layers").unwrap().id;
@@ -387,7 +251,7 @@ fn bars_reject_tab_merges_but_tools_accepts_an_independent_group_beside_it() {
 #[test]
 fn bar_headers_remain_floating_when_dropped_on_an_incompatible_workspace_edge() {
     for (bar, edge) in [("tools", Edge::Top), ("control", Edge::Left)] {
-        let mut h = Harness::new();
+        let mut h = Harness::workspace();
         let host = h.host_id(bar);
         let free = pos2(1050.0, h.workspace.top() + 480.0);
         h.drag(h.hit(&format!("host-grip:{host}")).center(), free);
@@ -411,7 +275,7 @@ fn bar_headers_remain_floating_when_dropped_on_an_incompatible_workspace_edge() 
 
 #[test]
 fn bottom_docked_control_fits_its_content_and_preserves_its_floating_size() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let host = h.host_id("control");
     let stored = h.layout().host(host).unwrap().expanded;
     let initial_height = h.assert_control_fitted();
@@ -445,7 +309,7 @@ fn bottom_docked_control_fits_its_content_and_preserves_its_floating_size() {
 
 #[test]
 fn docked_control_keeps_one_row_when_the_viewport_changes_width() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let host = h.host_id("control");
     let stored = h.layout().host(host).unwrap().expanded;
     let wide_height = h.assert_control_fitted();
@@ -468,7 +332,7 @@ fn docked_control_keeps_one_row_when_the_viewport_changes_width() {
 
 #[test]
 fn window_opens_existing_color_properties_and_character_bodies_without_duplicate_hosts() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     for (panel, body_text) in [("color", "R"), ("properties", "Document"), ("character", "No text selected")] {
         let host = h.host_id(panel);
         let count = h.layout().hosts.len();
@@ -495,7 +359,7 @@ fn window_opens_existing_color_properties_and_character_bodies_without_duplicate
 
 #[test]
 fn narrow_tools_hide_and_window_restore_the_same_docked_owner() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let host = h.host_id("tools");
     h.click(h.hit(&format!("mode:{host}")).center());
     assert_eq!(h.layout().host(host).unwrap().mode, Mode::Full);
@@ -527,7 +391,7 @@ fn narrow_tools_hide_and_window_restore_the_same_docked_owner() {
 
 #[test]
 fn control_keeps_inline_grip_and_no_panel_chrome_when_floated_and_redocked() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let host = h.host_id("control");
     assert!(!h.has_hit("tab:control"), "docked Control has no redundant name band");
     h.assert_frame_chrome("control", true);
@@ -554,7 +418,7 @@ fn control_keeps_inline_grip_and_no_panel_chrome_when_floated_and_redocked() {
 
 #[test]
 fn docked_standard_groups_keep_their_tabs_under_one_shared_header() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let layers = h.host_id("layers");
     let swatches = h.host_id("swatches");
     let right = pos2(h.workspace.right() - 3.0, h.workspace.center().y);
@@ -585,7 +449,7 @@ fn docked_standard_groups_keep_their_tabs_under_one_shared_header() {
 
 #[test]
 fn tab_overflow_lists_every_group_member_and_selecting_one_makes_its_tab_visible() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let group = h.layout().group_of("layers").unwrap().id;
     for panel in ["swatches", "color", "properties", "character", "paragraph", "brushes", "stroke"] {
         let index = h.layout().group(group).unwrap().panels.len();
@@ -615,7 +479,7 @@ fn tab_overflow_lists_every_group_member_and_selecting_one_makes_its_tab_visible
 
 #[test]
 fn a_tall_compact_block_scrolls_to_the_last_panel_without_reparenting() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let group = h.layout().group_of("layers").unwrap().id;
     for panel in super::registry::BUILTINS.iter().map(|p| p.id).filter(|p| !matches!(*p, "layers" | "tools" | "control")) {
         let index = h.layout().group(group).unwrap().panels.len();
@@ -638,7 +502,7 @@ fn a_tall_compact_block_scrolls_to_the_last_panel_without_reparenting() {
 
 #[test]
 fn floating_control_width_resize_keeps_one_row_without_manual_height_handles() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let host = h.host_id("control");
     h.action(Action::Move { source: Source::Host(host), target: Target::Float { position: [160.0, 200.0] } });
     let wide_height = h.assert_control_fitted();
@@ -661,7 +525,7 @@ fn floating_control_width_resize_keeps_one_row_without_manual_height_handles() {
 
 #[test]
 fn only_the_inline_control_grip_moves_the_host_while_content_remains_interactive() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     let host = h.host_id("control");
     h.action(Action::Move { source: Source::Host(host), target: Target::Float { position: [120.0, 180.0] } });
     h.assert_control_fitted();
@@ -697,7 +561,7 @@ fn only_the_inline_control_grip_moves_the_host_while_content_remains_interactive
 
 #[test]
 fn clicking_group_and_host_grips_does_not_detach_but_deliberate_group_drag_does() {
-    let mut h = Harness::new();
+    let mut h = Harness::workspace();
     h.app.run("window.workspace", json!({"name":"Studio"})).unwrap();
     h.settle();
     let group = h.layout().group_of("swatches").unwrap().id;
@@ -729,4 +593,201 @@ fn clicking_group_and_host_grips_does_not_detach_but_deliberate_group_drag_does(
     assert_eq!(h.layout().owner("swatches").unwrap().dock, None);
     assert_eq!(h.layout().owner("color").unwrap().dock, Some(Edge::Right));
     h.assert_owners();
+}
+
+/// S1: Control bar links (Opacity, Style) and other `open_panel` requests show their panel.
+#[test]
+fn control_bar_opacity_link_opens_transparency_in_the_panel_workspace() {
+    let mut h = Harness::workspace();
+    h.select_rectangle();
+    assert!(!h.visible("transparency"));
+    let output = h.settle();
+    let (_, opacity, _) = texts(&output).into_iter().find(|(text, _, _)| text == "Opacity:").expect("the hosted Control bar draws Opacity:");
+    h.click(opacity.center());
+    assert!(h.visible("transparency"), "clicking Opacity: shows Transparency");
+    assert!(h.app.ui.open_panel.is_none(), "the request is consumed");
+    assert!(crate::menus::checked(&h.app, "window.panel", &json!({"panel": "transparency"})).unwrap());
+    // Any other caller of the compatibility request is followed too.
+    h.app.ui.open_panel = Some("graphicStyles".into());
+    h.settle();
+    assert!(h.visible("graphicStyles"));
+    assert!(h.app.ui.open_panel.is_none());
+}
+
+/// S2: a library panel opened in the workspace is open for its own lifecycle commands.
+#[test]
+fn library_panels_follow_their_lifecycle_in_the_panel_workspace() {
+    let mut h = Harness::workspace();
+    let panel = h.app.run("window.swatchLibrary", json!({"library": "pastels"})).unwrap()["panel"].as_str().unwrap().to_string();
+    h.settle();
+    assert!(h.visible(&panel), "the library panel shows in the presented layout");
+    assert!(crate::panels::library_panel::is_open(&h.app.ui, &panel));
+    let settings = h.app.run("ui.libraryPanel", json!({"panel": panel, "view": "largeList", "persistent": true})).unwrap();
+    assert_eq!((settings["open"].as_bool(), settings["persistent"].as_bool()), (Some(true), Some(true)));
+    // Showing another library keeps the panel's place under its new identity.
+    let host = h.layout().owner(&panel).unwrap().id;
+    let renamed = h.app.run("ui.libraryPanel", json!({"panel": panel, "library": "brights"})).unwrap()["panel"].as_str().unwrap().to_string();
+    assert_eq!(renamed, "library:swatches:brights");
+    assert_eq!(h.layout().owner(&renamed).map(|h| h.id), Some(host));
+    assert!(h.layout().owner(&panel).is_none());
+    h.settle();
+    // Closing every swatch library forgets their panels.
+    h.app.run("window.swatchLibrary", json!({"library": null})).unwrap();
+    assert!(h.layout().owner(&renamed).is_none(), "a closed library panel leaves the layout");
+    assert!(!crate::panels::library_panel::is_open(&h.app.ui, &renamed));
+    h.layout().validate().unwrap();
+    // A persistent library comes back at startup.
+    crate::panels::library_panel::restore(&mut h.app);
+    assert!(h.visible(&renamed), "restore floats the persistent library back into the layout");
+    h.settle();
+}
+
+/// S3: Presentation Mode presents the artwork alone: no Tools, Control or panels to edit with.
+#[test]
+fn presentation_mode_hides_all_workspace_chrome() {
+    let mut h = Harness::workspace();
+    h.select_rectangle();
+    h.app.run("window.panel", json!({"panel": "color"})).unwrap();
+    let before = h.settle();
+    assert!(texts(&before).iter().any(|(text, _, _)| text == "Opacity:"));
+    assert!(!h.state().hits.is_empty());
+    h.app.run("view.presentation", json!({})).unwrap();
+    assert_eq!(h.app.ui.screen_mode, 3);
+    let output = h.settle();
+    assert!(h.state().hits.is_empty(), "no panel host is drawn: {:?}", h.state().hits.iter().map(|(n, _)| n).collect::<Vec<_>>());
+    assert!(!texts(&output).iter().any(|(text, _, _)| text == "Opacity:" || text == "Color"), "no Control or panel content is painted");
+    let canvas = h.app.canvas_rect.expect("the canvas is drawn");
+    assert!(canvas.width() >= h.screen.x - 1.0 && canvas.height() >= h.screen.y - 1.0, "no block reserves canvas space: {canvas:?}");
+    // Leaving Presentation Mode restores the same workspace.
+    let layout = h.layout().clone();
+    h.app.run("view.presentation", json!({})).unwrap();
+    h.settle();
+    assert_eq!(h.layout(), &layout);
+    assert!(!h.state().hits.is_empty());
+}
+
+/// S4: Window-menu items and panel keys toggle a shown panel off again.
+#[test]
+fn window_menu_toggle_and_panel_keys_hide_a_shown_panel() {
+    let mut h = Harness::workspace();
+    h.app.run("window.panel", json!({"panel": "color", "toggle": true})).unwrap();
+    assert!(h.visible("color"));
+    h.app.run("window.panel", json!({"panel": "color", "toggle": true})).unwrap();
+    assert!(!h.visible("color"), "a checked Window item hides its panel");
+    // Toggling one tab off leaves its group's other tabs shown.
+    h.app.run("window.panel", json!({"panel": "align"})).unwrap();
+    h.app.run("window.panel.move", json!({"panel": "align", "anchor": "swatches", "zone": "tab"})).unwrap();
+    assert_eq!(h.layout().owner("align").map(|h| h.id), h.layout().owner("swatches").map(|h| h.id));
+    h.app.run("window.panel", json!({"panel": "align", "toggle": true})).unwrap();
+    assert!(!h.visible("align") && h.visible("swatches"), "only the toggled panel hides");
+    h.layout().validate().unwrap();
+    // The real panel key (Shift+F7, Align) shows it, then hides it again.
+    let press = |h: &mut Harness| {
+        let events = vec![Event::ModifiersChanged(Modifiers::SHIFT), key(Key::F7, Modifiers::SHIFT)];
+        h.ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| crate::shortcuts::handle(&mut h.app, ui.ctx())).textures_delta.clear();
+    };
+    press(&mut h);
+    assert!(h.visible("align"), "Shift+F7 shows Align");
+    press(&mut h);
+    assert!(!h.visible("align"), "Shift+F7 again hides Align");
+}
+
+/// S5: Tab hides Tools, Control and every panel; Shift+Tab hides the panels only, one panel at a
+/// time, so a panel attached beside Tools hides while Tools stays.
+#[test]
+fn tab_hides_everything_and_shift_tab_hides_panels_beside_tools_too() {
+    let mut h = Harness::workspace();
+    let tools = h.layout().owner("tools").unwrap().id;
+    let layers = h.layout().owner("layers").unwrap().id;
+    h.app
+        .run(
+            "ui.panelReview.action",
+            json!({"action": Action::Move { source: Source::Host(layers), target: Target::Attach { host: tools, edge: Edge::Right } }}),
+        )
+        .unwrap();
+    assert_eq!(h.layout().owner("layers").map(|h| h.id), h.layout().owner("tools").map(|h| h.id), "Layers is attached beside Tools");
+    h.settle();
+    let arranged = h.layout().clone();
+    h.app.run("window.panels", json!({})).unwrap();
+    assert!(h.visible("tools") && h.visible("control"), "Shift+Tab leaves Tools and Control");
+    assert!(!h.visible("layers") && !h.visible("swatches"), "Shift+Tab hides Layers beside Tools and the floating Swatches");
+    h.settle();
+    h.app.run("window.panels", json!({})).unwrap();
+    assert_eq!(h.layout(), &arranged, "a second Shift+Tab restores the exact arrangement");
+    h.app.run("window.dock", json!({})).unwrap();
+    for panel in ["tools", "control", "layers", "swatches"] {
+        assert!(!h.visible(panel), "Tab hides {panel}");
+    }
+    h.settle();
+    h.app.run("window.dock", json!({})).unwrap();
+    assert_eq!(h.layout(), &arranged, "a second Tab restores everything it hid");
+    // Through the real keys.
+    let press = |h: &mut Harness, modifiers: Modifiers| {
+        h.frame(vec![Event::ModifiersChanged(modifiers), key(Key::Tab, modifiers)]);
+        h.frame(vec![Event::ModifiersChanged(Modifiers::NONE)]);
+    };
+    press(&mut h, Modifiers::SHIFT);
+    assert!(h.visible("tools") && !h.visible("layers"), "Shift+Tab key");
+    press(&mut h, Modifiers::SHIFT);
+    press(&mut h, Modifiers::NONE);
+    assert!(!h.visible("tools") && !h.visible("control") && !h.visible("swatches"), "Tab key");
+    press(&mut h, Modifiers::NONE);
+    assert_eq!(h.layout(), &arranged);
+}
+
+/// G4: Apply sends the fields the user edited, even back at their opening value; a document
+/// switch skips only the units; Escape in a field keeps Preferences and its draft.
+#[test]
+fn preferences_apply_sends_touched_fields_and_escape_in_a_field_keeps_the_draft() {
+    let mut h = Harness::workspace();
+    crate::prefs_dialog::open(&mut h.app, Some("General"));
+    h.settle();
+    let opening = h.app.session.prefs.keyboard_increment;
+    // Another editor changes the setting while Preferences is open.
+    h.app.run("prefs.set", json!({"key": "keyboardIncrement", "value": opening + 6.0})).unwrap();
+    let output = h.frame(vec![]);
+    let (_, label, _) =
+        texts(&output).into_iter().find(|(text, _, _)| text == "Keyboard Increment:").expect("the General page shows Keyboard Increment");
+    // The row's label column is 210 points wide; the field follows it.
+    let field = Rect::from_min_size(pos2(label.left() + 214.0, label.center().y - 9.0), vec2(80.0, 18.0));
+    // The user types 5, then puts the field back at its opening value.
+    for typed in [format!("{}", opening + 4.0), format!("{opening}")] {
+        h.click(field.center());
+        h.frame(vec![key(Key::A, Modifiers::COMMAND)]);
+        h.frame(vec![Event::Text(typed)]);
+        h.frame(vec![key(Key::Enter, Modifiers::NONE)]);
+        h.settle();
+    }
+    assert_eq!(h.app.ui.dialog.as_ref().unwrap().fields["keyboardIncrement"].as_f64(), Some(opening));
+    h.app.run("preferences.apply", json!({})).unwrap();
+    assert_eq!(h.app.session.prefs.keyboard_increment, opening, "the edited field wins over the outside change");
+    // Escape in a focused field leaves the field, not Preferences, and keeps the draft.
+    h.click(field.center());
+    h.frame(vec![key(Key::A, Modifiers::COMMAND)]);
+    h.frame(vec![Event::Text(format!("{}", opening + 2.0))]);
+    h.frame(vec![key(Key::Enter, Modifiers::NONE)]);
+    h.click(field.center());
+    assert!(h.ctx.egui_wants_keyboard_input(), "the field has the keyboard");
+    h.frame(vec![key(Key::Escape, Modifiers::NONE)]);
+    h.settle();
+    let d = h.app.ui.dialog.as_ref().expect("Escape in a field keeps Preferences open");
+    assert_eq!(d.fields["keyboardIncrement"].as_f64(), Some(opening + 2.0), "the unapplied draft is kept");
+    assert!(!h.ctx.egui_wants_keyboard_input(), "the field gave up the keyboard");
+    // Units of a document that is no longer active are skipped; the other edits apply.
+    let units = h.app.ui.dialog.as_ref().unwrap().fields["unitsGeneral"].clone();
+    let other = if units == "millimeters" { "points" } else { "millimeters" };
+    // An agent's edit through the control channel counts as the user's.
+    let (request, _) = crate::control::ControlRequest::new(
+        "ui.dialog.set",
+        json!({"fields": [{"field": "unitsGeneral", "value": other}, {"field": "keyboardIncrement", "value": 3}]}),
+    );
+    let crate::control::Outcome::Done(reply) = crate::control::handle(&mut h.app, &h.ctx, &request) else { panic!("ui.dialog.set replies at once") };
+    assert_eq!(reply["ok"], true, "{reply}");
+    let before: Vec<_> = h.app.session.documents().iter().map(|d| d.doc.units).collect();
+    h.app.run("file.new", json!({"width": 100, "height": 100})).unwrap();
+    let result = h.app.run("preferences.apply", json!({})).unwrap();
+    assert_eq!(result["skipped"], json!(["unitsGeneral"]));
+    assert_eq!(h.app.session.prefs.keyboard_increment, 3.0, "unrelated edits still apply");
+    assert_eq!(h.app.session.documents()[..before.len()].iter().map(|d| d.doc.units).collect::<Vec<_>>(), before);
+    assert!(h.app.ui.dialog.is_some());
 }

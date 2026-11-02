@@ -1,25 +1,11 @@
 //! Color flyouts fit the full picker and its drawer before falling back to scrolling.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use super::{
-    State,
-    model::{Action, Edge, Layout, Mode, Source, Target},
-};
-use crate::{VectorcraftApp, varos::picker};
-use egui::{FullOutput, Pos2, Rect, vec2};
-use serde_json::json;
-use vectorcraft_engine::Session;
+use super::test_support::*;
+use crate::varos::picker;
 
-struct Harness {
-    app: VectorcraftApp,
-    ctx: egui::Context,
-    time: f64,
-    group: u64,
-}
 impl Harness {
-    fn new() -> Self {
-        let mut app = VectorcraftApp::new(Session::new(), Default::default());
-        app.run("file.new", json!({"width":300,"height":300})).unwrap();
-        app.run("ui.panelReview", json!({"enabled":true})).unwrap();
+    /// Color alone, docked right as an icon column with its flyout open; 18 recent picker colours.
+    fn color_flyout() -> (Self, u64) {
         let mut layout = Layout::new_workspace();
         layout.apply(&Action::Move { source: Source::Panel("color".into()), target: Target::Float { position: [100.0, 100.0] } }).unwrap();
         let host = layout.owner("color").unwrap().id;
@@ -30,36 +16,23 @@ impl Harness {
         for h in &mut layout.hosts {
             h.hidden = h.id != host;
         }
-        app.ui.varos_panel_review = Some(State { layout, flyout: Some(group), ..Default::default() });
-        app.ui.varos_picker.recent = (0..18).map(|n| format!("#{:06x}", 0xaa0000 + n * 200)).collect();
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        Self { app, ctx, time: 0.0, group }
+        let mut h = Self::unsettled(State { layout, flyout: Some(group), ..Default::default() });
+        h.app.ui.varos_picker.recent = (0..18).map(|n| format!("#{:06x}", 0xaa0000 + n * 200)).collect();
+        h.screen.x = 1200.0;
+        (h, group)
     }
-    fn frame(&mut self, screen_height: f32) -> FullOutput {
-        self.time += 0.05;
-        self.app.begin_host_iteration();
-        let app = &mut self.app;
-        let mut out = self.ctx.run_ui(
-            egui::RawInput {
-                time: Some(self.time),
-                focused: true,
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, screen_height))),
-                ..Default::default()
-            },
-            |ui| {
-                app.tick(ui.ctx());
-                app.ui(ui);
-            },
-        );
-        out.textures_delta.clear();
-        out
+
+    fn frame_at(&mut self, screen_height: f32) -> FullOutput {
+        self.screen.y = screen_height;
+        self.frame(vec![])
     }
+
     fn flyout(&self) -> Rect {
         egui::AreaState::load(&self.ctx, egui::Id::unique("panel-review-flyout")).unwrap().rect()
     }
+
     fn anchor(&self) -> Rect {
-        self.app.ui.varos_panel_review.as_ref().unwrap().hits.iter().find(|(name, _)| name == "tab:color").unwrap().1
+        self.hit("tab:color")
     }
 }
 
@@ -67,14 +40,14 @@ impl Harness {
 fn side_color_uses_sliders_and_its_own_height_independently_of_wheel_preferences() {
     let mut expected_height: Option<f32> = None;
     for tab in [picker::Tab::Wheel, picker::Tab::Sliders, picker::Tab::Harmony] {
-        let mut h = Harness::new();
+        let (mut h, group) = Harness::color_flyout();
         h.app.ui.varos_picker.tab = tab;
         h.app.ui.varos_picker.drawer_open = true;
         let prefs = h.app.ui.varos_picker.clone();
         for _ in 0..6 {
-            h.frame(1000.0);
+            h.frame_at(1000.0);
         }
-        let output = h.frame(1000.0);
+        let output = h.frame_at(1000.0);
         let flyout = h.flyout();
         let measured = crate::panels::color::content_height(&h.ctx).expect("side Color measures its own slider content");
         assert!((flyout.height() - measured - super::paint::TABS - super::paint::FOOT).abs() < 1.5);
@@ -103,26 +76,26 @@ fn side_color_uses_sliders_and_its_own_height_independently_of_wheel_preferences
             !output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(t) if t.galley.text()=="Document")),
             "the wheel drawer does not appear in side Color"
         );
-        assert_eq!(h.app.ui.varos_panel_review.as_ref().unwrap().flyout, Some(h.group));
+        assert_eq!(h.app.ui.varos_panel_review.as_ref().unwrap().flyout, Some(group));
         assert!(h.anchor().is_positive());
     }
 }
 
 #[test]
 fn opening_a_paint_well_keeps_the_wheel_popup_while_the_side_panel_stays_sliders() {
-    let mut h = Harness::new();
+    let (mut h, _) = Harness::color_flyout();
     h.app.ui.varos_picker.tab = picker::Tab::Wheel;
     h.app.ui.varos_picker.drawer_open = true;
     for _ in 0..6 {
-        h.frame(1000.0);
+        h.frame_at(1000.0);
     }
     let sidebar = h.flyout();
     h.app.ui.toolbar = true;
     picker::open_for(&mut h.app, false, Rect::from_min_size(egui::pos2(30.0, 200.0), vec2(24.0, 24.0)));
     for _ in 0..5 {
-        h.frame(1000.0);
+        h.frame_at(1000.0);
     }
-    let output = h.frame(1000.0);
+    let output = h.frame_at(1000.0);
     assert!(h.app.ui.varos_picker_anchor.is_some());
     assert_eq!(h.app.ui.varos_picker.tab, picker::Tab::Wheel);
     assert_eq!(h.flyout(), sidebar);
@@ -140,22 +113,22 @@ fn opening_a_paint_well_keeps_the_wheel_popup_while_the_side_panel_stays_sliders
 /// compact sliders at its own height and never becomes (or shares state with) that wheel.
 #[test]
 fn a_gradient_stop_popover_leaves_the_side_color_panel_on_its_sliders() {
-    let mut h = Harness::new();
+    let (mut h, _) = Harness::color_flyout();
     h.app.ui.varos_picker.tab = picker::Tab::Wheel;
     let id = h.app.run("shape.rectangle", json!({"x":10,"y":10,"width":50,"height":50})).unwrap()["id"].clone();
     h.app.run("select.set", json!({"ids":[id]})).unwrap();
     h.app.run("paint.setFill", json!({"gradient": {}})).unwrap();
     h.app.run("gradient.selectStop", json!({"index": 0})).unwrap();
     for _ in 0..6 {
-        h.frame(1000.0);
+        h.frame_at(1000.0);
     }
     let sidebar = h.flyout();
     let prefs = h.app.ui.varos_picker.clone();
     h.app.ui.dialog = Some(crate::state::Dialog::new("gradientStop", json!({"index": 0, "screen": [300.0, 600.0], "tab": "color"})));
     for _ in 0..5 {
-        h.frame(1000.0);
+        h.frame_at(1000.0);
     }
-    let output = h.frame(1000.0);
+    let output = h.frame_at(1000.0);
     assert_eq!(h.app.ui.dialog.as_ref().map(|d| d.kind.as_str()), Some("gradientStop"), "the stop popover stays open");
     let flyout = h.flyout();
     assert_eq!(flyout, sidebar, "the side panel keeps its slider height");

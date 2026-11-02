@@ -98,7 +98,10 @@ fn quick_button(ui: &mut Ui, key: &str, label: &str, selected: bool) -> egui::Re
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::{Harness, texts};
     use super::*;
+    use egui::{Event, Modifiers, Pos2, Rect, pos2};
+    use vectorcraft_engine::Session;
 
     fn frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<(String, egui::Rect)> {
         fn labels(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
@@ -167,5 +170,83 @@ mod tests {
         let glyph = labels.iter().find(|(label, _)| label == "Snap to Glyph").unwrap().1;
         click(&mut app, &ctx, glyph.center());
         assert!(app.ui.view.snap_to_glyph);
+    }
+
+    /// G2: hosted at a normal width, Control creates X/Y/W/H and the horizontal overflow reaches them.
+    #[test]
+    fn hosted_control_keeps_xywh_reachable_by_its_horizontal_overflow() {
+        let mut h = Harness::sized(vec2(1000.0, 800.0));
+        h.select_rectangle();
+        h.settle();
+        let control = h.layout().owner("control").unwrap().id;
+        let host = h.state().hits.iter().find(|(name, _)| *name == format!("host:{control}")).unwrap().1;
+        let row = pos2(host.left() + 200.0, host.center().y);
+        let scroll = Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(-5000.0, 0.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+            source: egui::MouseWheelSource::Unknown,
+        };
+        h.frame(vec![Event::PointerMoved(row), scroll]);
+        let output = h.settle();
+        let painted = texts(&output);
+        for label in ["X:", "Y:", "W:", "H:"] {
+            let (_, rect, clip) =
+                painted.iter().find(|(text, _, _)| text == label).unwrap_or_else(|| panic!("{label} exists in the hosted Control row"));
+            assert!(host.contains_rect(*rect) && clip.contains_rect(*rect), "{label} is scrolled into the host: {rect:?} in {host:?}");
+        }
+    }
+
+    /// G2: in a host narrower than the quick-access reserve, everything stays inside the host.
+    #[test]
+    fn a_narrow_control_host_scrolls_its_quick_access_instead_of_painting_past_it() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 200, "height": 200})).unwrap();
+        app.run("ui.panelReview", json!({"enabled": true})).unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        // Narrower than the quick-access reserve: before the fix the row shrank to one point and the
+        // pinned buttons ran past the host's right edge, where nothing could bring them back.
+        let rect = Rect::from_min_size(pos2(20.0, 40.0), vec2(110.0, 40.0));
+        let mut run = |events: Vec<Event>| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 400.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                assert!(super::super::content::show(&mut app, ui, "control", rect));
+            });
+            out.textures_delta.clear();
+        };
+        for _ in 0..3 {
+            run(vec![]);
+        }
+        let buttons = || -> Vec<Rect> {
+            let mut found: Vec<Rect> = ctx.viewport(|vp| {
+                vp.prev_pass
+                    .widgets
+                    .layers()
+                    .flat_map(|(_, widgets)| widgets.iter())
+                    .filter(|w| w.rect.size() == vec2(28.0, 28.0))
+                    .map(|w| w.rect)
+                    .collect()
+            });
+            found.sort_by(|a, b| a.left().total_cmp(&b.left()));
+            found.dedup();
+            found
+        };
+        assert_eq!(buttons().len(), 4, "the quick-access buttons are drawn");
+        assert!(buttons()[0].left() >= rect.left(), "the row starts inside the host");
+        let scroll = Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(-5000.0, 0.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+            source: egui::MouseWheelSource::Unknown,
+        };
+        run(vec![Event::PointerMoved(rect.center()), scroll]);
+        for _ in 0..3 {
+            run(vec![Event::PointerMoved(rect.center())]);
+        }
+        let last = *buttons().last().unwrap();
+        assert!(rect.contains_rect(last), "scrolling the row reaches the last quick-access button: {last:?} in {rect:?}");
     }
 }

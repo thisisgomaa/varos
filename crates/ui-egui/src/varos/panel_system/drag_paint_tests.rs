@@ -1,69 +1,18 @@
 //! Drag regressions inspect emitted content shapes, not only panel hit rectangles.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use super::{
-    State,
-    model::{Action, Edge, Source, Target},
-};
-use crate::VectorcraftApp;
-use egui::{Event, FullOutput, Pos2, Rect, Shape, pos2, vec2};
-use serde_json::json;
-use vectorcraft_engine::Session;
-
-struct Harness {
-    app: VectorcraftApp,
-    ctx: egui::Context,
-    time: f64,
-}
-
-fn button(pos: Pos2, pressed: bool) -> Event {
-    Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
-}
+use super::test_support::*;
 
 impl Harness {
-    fn new() -> Self {
-        let mut app = VectorcraftApp::new(Session::new(), Default::default());
-        app.run("ui.panelReview", json!({"enabled":true})).unwrap();
-        app.ui.varos_panel_review = Some(State { layout: super::model::Layout::new_slice(), ..Default::default() });
-        app.run("file.new", json!({"width":300,"height":300})).unwrap();
-        let layers = app.ui.varos_panel_review.as_ref().unwrap().layout.owner("layers").unwrap().id;
-        app.run("ui.panelReview.action", json!({"action":Action::Hide { host: layers }})).unwrap();
-        let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx);
-        let mut h = Self { app, ctx, time: 0.0 };
-        for _ in 0..5 {
-            h.frame(vec![]);
-        }
+    /// Only Swatches shows (the slice with Layers hidden).
+    fn swatches_alone() -> Self {
+        let mut h = Self::slice();
+        h.action(Action::Hide { host: h.host_id("layers") });
         h
     }
 
-    fn state(&self) -> &State {
-        self.app.ui.varos_panel_review.as_ref().unwrap()
-    }
-    fn host(&self) -> u64 {
-        self.state().layout.owner("swatches").unwrap().id
-    }
-    fn hit(&self, name: &str) -> Rect {
-        self.state().hits.iter().find_map(|(key, rect)| (key == name).then_some(*rect)).unwrap_or_else(|| panic!("missing hit {name}"))
-    }
-    fn frame(&mut self, events: Vec<Event>) -> FullOutput {
-        self.time += 0.05;
-        let input = egui::RawInput {
-            time: Some(self.time),
-            events,
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0))),
-            focused: true,
-            ..Default::default()
-        };
-        self.app.begin_host_iteration();
-        let app = &mut self.app;
-        let mut output = self.ctx.run_ui(input, |ui| {
-            app.tick(ui.ctx());
-            app.ui(ui);
-        });
-        // These tests inspect shapes without a renderer consuming texture uploads.
-        output.textures_delta.clear();
-        output
+    fn swatches_host(&self) -> u64 {
+        self.host_id("swatches")
     }
 }
 
@@ -81,12 +30,12 @@ fn text_rect(output: &FullOutput, label: &str) -> (Rect, Rect) {
 #[test]
 fn floating_panel_contents_move_with_chrome_on_every_held_drag_frame() {
     for from_tab in [false, true] {
-        let mut h = Harness::new();
+        let mut h = Harness::swatches_alone();
         let initial = h.frame(vec![]);
-        let host = h.hit(&format!("host:{}", h.host()));
+        let host = h.hit(&format!("host:{}", h.swatches_host()));
         let labels = ["Swatches", "Recent Colors", "Swatch Tiles"];
         let originals = labels.map(|label| text_rect(&initial, label).0.min - host.min);
-        let grab = h.hit(&if from_tab { "tab:swatches".into() } else { format!("host-grip:{}", h.host()) }).center();
+        let grab = h.hit(&if from_tab { "tab:swatches".into() } else { format!("host-grip:{}", h.swatches_host()) }).center();
         h.frame(vec![Event::PointerMoved(grab)]);
         h.frame(vec![button(grab, true)]);
         for step in 1..=10 {
@@ -96,7 +45,7 @@ fn floating_panel_contents_move_with_chrome_on_every_held_drag_frame() {
                 continue;
             }
             assert!(h.state().gesture.is_some());
-            let frame = h.hit(&format!("host:{}", h.host()));
+            let frame = h.hit(&format!("host:{}", h.swatches_host()));
             for (label, original) in labels.iter().zip(originals) {
                 let (painted, clip) = text_rect(&output, label);
                 let delta = painted.min - frame.min - original;
@@ -109,16 +58,19 @@ fn floating_panel_contents_move_with_chrome_on_every_held_drag_frame() {
 
 #[test]
 fn detaching_a_dock_releases_its_canvas_reservation_during_the_visible_drag() {
-    let mut h = Harness::new();
+    let mut h = Harness::swatches_alone();
     h.app
-        .run("ui.panelReview.action", json!({"action":Action::Move { source: Source::Host(h.host()), target: Target::Dock { edge: Edge::Right } }}))
+        .run(
+            "ui.panelReview.action",
+            json!({"action":Action::Move { source: Source::Host(h.swatches_host()), target: Target::Dock { edge: Edge::Right } }}),
+        )
         .unwrap();
     for _ in 0..5 {
         h.frame(vec![]);
     }
     let docked_canvas = h.app.canvas_rect.unwrap();
-    let docked = h.hit(&format!("host:{}", h.host()));
-    let from = h.hit(&format!("host-grip:{}", h.host())).center();
+    let docked = h.hit(&format!("host:{}", h.swatches_host()));
+    let from = h.hit(&format!("host-grip:{}", h.swatches_host())).center();
     h.frame(vec![Event::PointerMoved(from)]);
     h.frame(vec![button(from, true)]);
     for step in 1..=8 {
@@ -126,7 +78,7 @@ fn detaching_a_dock_releases_its_canvas_reservation_during_the_visible_drag() {
     }
     assert!(h.state().gesture.is_some());
     assert_eq!(h.state().layout.owner("swatches").unwrap().dock, Some(Edge::Right), "the committed layout stays unchanged until release");
-    let moved = h.hit(&format!("host:{}", h.host()));
+    let moved = h.hit(&format!("host:{}", h.swatches_host()));
     assert!(moved.right() < docked.left(), "the preview is now floating away from the dock");
     let canvas = h.app.canvas_rect.unwrap();
     assert!(
@@ -138,8 +90,8 @@ fn detaching_a_dock_releases_its_canvas_reservation_during_the_visible_drag() {
 #[test]
 fn releasing_a_dock_drag_outside_the_workspace_restores_chrome_and_canvas_in_that_frame() {
     for outside in [pos2(650.0, 2.0), pos2(650.0, 999.0)] {
-        let mut h = Harness::new();
-        let host = h.host();
+        let mut h = Harness::swatches_alone();
+        let host = h.swatches_host();
         h.app
             .run("ui.panelReview.action", json!({"action":Action::Move { source: Source::Host(host), target: Target::Dock { edge: Edge::Right } }}))
             .unwrap();
