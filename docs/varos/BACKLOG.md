@@ -3,7 +3,52 @@
 Ordered. Owner feedback comes first. Each item has one acceptance line; an item is closed only when
 its acceptance is met and recorded in `STATE.md`. Updated 2026-11-02; older dated entries below retain their original context.
 
-Tags: **[done, owner to look]** = built, gates green, waiting for the owner's eye in the real window.
+Tags: **[done, owner to look]** = built, local gates green, waiting for the owner's eye in the real
+window. Same meaning as **provisional (awaits owner)** in `STATE.md`. GitHub CI has never run on this
+project; "gates green" always means the local commands in `AGENTS.md`.
+
+## Summary — 2026-11-02
+
+| Item | Status |
+|---|---|
+| Panel system (unified panel workspace, Tools and Control bars, side Color panel, tab reordering, modeless Preferences) | **done, provisional (awaits owner)**: built and committed locally, review findings fixed; owner hand test pending (section below) |
+| Upstream merge | **pending**: 975 upstream non-merge commits (1,468 with merges) since `1cdc9873`; 86 predicted conflicted paths, 127 hunks (staged plan below) |
+| Repository unification | in progress: this repository's code replaces the public `thisisgomaa/varos`; the earlier engine moves to `legacy-engine` |
+
+## Upstream merge — pending, staged plan (scan of 2026-11-02)
+
+Measured with `git merge-tree` against upstream `639c9d6ce` (2026-11-01); nothing merged yet.
+
+- **Why staged:** upstream PR #4294 (merged 2026-10-26, right after our last merge) is 168
+  mechanical commits that split large files into module folders (882 files). Varos hook lines live
+  in several of the emptied files (`ui-egui/src/{chrome,toolbar,lib,menus,canvas}.rs`,
+  `engine/cmd/fileio/mod.rs`, `pdf/src/export.rs`, `text/src/layout.rs`, `mcp/src/tools.rs`,
+  `apps/vectorcraft/src/control_server.rs`). Git reports only textual conflicts; hooks in emptied
+  files must be re-homed by hand and the result must build under upstream's stricter workspace
+  lints (`wildcard_imports`, `too_many_arguments`, `cognitive_complexity` = deny).
+- **Where conflicts fall (86 paths):** 25 i18n catalogs and 9 docs/packaging/lockfile files are
+  mechanical; about 60 need hand resolution (22 ui-egui, 17 core incl. `format/lib.rs` and the
+  deleted `fileio/mod.rs`, 6 text, 4 pdf, 3 apps).
+- **Order:**
+  0. *Clean picks first* (simulate with zero conflicts), after the panel branch reaches `main`:
+     undo-scope fix `389dce727`, shadow/blur raster cache `747050511`, placed-doc redraw
+     `1c4ec81ec`, `.ai` RTL paragraphs `2dcfbb0bf`, MCP reader hardening `de6b14b54`, `76e0e5b0a`.
+  1. *Stage A*: `1cdc98735..5815205324`, 28 commits, 9 predicted conflicted files.
+  2. *Stage B*: the refactor PR alone (`5815205324..eb0e99a55`), 166 commits, 36 files / 45 hunks,
+     nearly all relocations; one lane, one build + test + clippy gate before anything else.
+  3. *Stage C*: `eb0e99a55..upstream/main`, 781 commits, in 3-4 batches: engine/format/import
+     hardening first (port the native-file read budgets and "beyond canvas" check to every page of
+     the v5 Pages loader, with a v5 round-trip test), then type/text (language shaping `locl`, marks
+     kept in one fallback font, lam-alef not an alternate glyph, keyboard-layout shortcut fixes),
+     then UI behaviours, re-implemented on the Varos shell where they collide with it.
+- **Skip or defer:** Windows/Linux-only commits, Flatpak/installer/CI changes, the Contextual Task
+  Bar, panel function-key behaviour, Control-bar Distribute buttons, ArtCraft branding text in
+  README/NOTICE.
+- **Kashida is not affected:** `crates/text/src/kashida.rs` is unchanged upstream since our base.
+- **Acceptance:** each stage merged in its own worktree, local gates green
+  (`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, then
+  `cargo xtask ci`), merge recorded in `STATE.md` (date, upstream commit, conflict count), owner
+  hand test of the shell after Stage B and after each UI batch.
 
 ## Current owner priority — 2026-11-02
 
@@ -29,6 +74,8 @@ Open, in order:
 4. Other dialogs stay modal; make them modeless one at a time only if asked.
 
 Revision: 2026-11-02 — native panel workspace and review fixes recorded; owner acceptance pending.
+Revision: 2026-11-02 (docs unification) — summary table and staged upstream-merge plan added; stale
+items 6, 8, 9, 10 and the PDF ligature entry corrected.
 
 ## Panel queue as approved — 2026-11-01
 
@@ -110,23 +157,28 @@ implementation, Color acceptance or visual acceptance claimed.
 5. **Tile-cache renderer** (tiled CPU raster + dirty-region cache, 2-4 weeks), then the GPU
    decision. *Acceptance:* a 20k-path document pans and zooms well under the current 64 ms/frame,
    measured with the same benchmark; GPU go/no-go written up for the owner.
-6. **The remaining icons:** 77 Lucide imports and 69 icons to draw in Varos style.
+6. **The remaining icons:** 77 Lucide imports and 69 icons to draw in Varos style (counts from
+   `icon-map.tsv`, last updated 2026-10-27; the override registry has since grown from 146 to 157).
    *Acceptance:* `icon-map.tsv` has no `EMPTY` rows left except deliberate ones; every asset in
    `ASSETS.md`; owner accepts the drawn set.
 7. **Port the Varos colour picker, export sheet and control bar.**
    *Acceptance:* each works on VectorCraft's own commands/model, matches the Varos design, passes
    gates; owner accepts each piece separately.
-8. **Bridge without pairing + agent presence over upstream's MCP.** Any same-user agent reads,
-   edits and saves with no approval prompt; agent edits show on the canvas in orange. Built in
-   `lane-agents` (commit `0d83c322`), not merged: security re-review pending first.
+8. **[done, owner to look] Bridge without pairing + agent presence over upstream's MCP.** Any
+   same-user agent reads, edits and saves with no approval prompt; agent edits show on the canvas in
+   orange. Merged as `31de359c` after two security reviews (STATE "Agent-native layer").
    *Acceptance:* an external agent edits an open document with no prompt, the owner sees it happen,
    undo reverts it.
-9. **Weekly upstream merge routine.** Last base: `cdba0aac` (2026-10-18). *Acceptance:* `git merge upstream/main` done weekly, conflicts
-   resolved, gates green, merge recorded (date, upstream commit, conflict count) in `STATE.md`.
+9. **Upstream merge routine.** Last base: `1cdc9873` (2026-10-26); the next merge is the staged
+   plan in "Upstream merge — pending" above. *Acceptance:* `git fetch upstream` every session, merges
+   in stages, conflicts resolved, local gates green, merge recorded (date, upstream commit, conflict
+   count) in `STATE.md`.
 10. **Publish checklist.** *Acceptance:* a written list covering the three bars in `FORK.md`
     (Arabic, performance, design), licences and `ASSETS.md` complete, `cargo xtask brands` clean,
-    the `varos-text` dependency reachable without private SSH access (unverified today), name and
-    trademark check; owner signs it off.
+    the `varos-text` dependency reachable over HTTPS after the repository replacement (rev
+    `5936eaf` must stay on the `legacy-engine` history), no ArtCraft marks (logo files removed
+    2026-11-02), no people's names in docs or commit authors, name and trademark check; owner signs
+    it off.
 11. **Agents S4 verbs + S6 review UI** (after item 8 merges). *Acceptance:* S4 verbs and the S6
     review UI exist and pass gates; undo still reverts agent edits; owner accepts.
 12. **Arabic follow-ups** (each one small; none started):
@@ -137,9 +189,9 @@ implementation, Color acceptance or visual acceptance claimed.
     - Mixed-selection state for the Direction row and the harakat swatches (today they show the
       first paragraph / no state).
     - Harakat custom colour in the UI (today only 4 swatches; the command takes `#RRGGBB`).
-    - **PDF copy-back bug:** ligature words (the Allah ligature) read back reversed; ignored test
-      `a_word_with_a_ligature_reads_back_in_order` in `crates/pdf/tests/arabic_copy_back.rs`.
-      *Acceptance:* the test is un-ignored and passes.
+    - ~~PDF copy-back bug: ligature words read back reversed~~ fixed by the 2026-10-29 PDF merge;
+      the regression in `crates/pdf/tests/arabic_copy_back.rs` passes (STATE "PDF copy-back of
+      ligature words"; external-viewer acceptance pending).
 13. **Native-speaker review of translations.** The new Arabic Essentials, kashida and font-menu
     labels were machine-written into 23 catalogs. *Acceptance:* a native reader signs off each
     language, or the rows fall back to English on purpose.

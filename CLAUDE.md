@@ -1,17 +1,78 @@
-# VectorCraft — instructions for agents
+# Varos — instructions for agents
 
-VectorCraft is a clean-room, open-source, Rust-native vector illustration app targeting Adobe Illustrator parity (and beyond). It runs natively on macOS, Windows and Linux, and on the web via WASM. Siblings: `../photocraft` (Photoshop-class) and `../pdfcraft` (Acrobat-class); same conventions.
+Varos (**V**ector · **A**rabic · **R**TL · **O**pen **S**ource) is a free, open-source vector editor in
+Rust, Arabic and right-to-left first, and AI-native (people and agents on the same file through the
+MCP bridge). It is based on VectorCraft by the ArtCraft team (MIT OR Apache-2.0,
+https://github.com/storytold/vectorcraft); most of the engine, renderer, formats and tools are
+upstream's. The official build is **macOS only** for now; keep the other targets and wasm compiling
+(`cargo xtask wasm`), but nothing is released for them.
 
-Formerly **DrawCraft** (renamed 2026-10-01): old `.drawcraft` files and `"format": "drawcraft"` headers still open (`vectorcraft_format::LEGACY_EXTENSION`), and preferences migrate from the old config folder. Keep those paths working; use the new name everywhere else.
+Old file names still open: `.vectorcraft` and the older `.drawcraft` (renamed upstream 2026-10-01;
+`vectorcraft_format::LEGACY_EXTENSION`). Varos saves `.varos` by default. Keep those paths working.
 
 ## Start every session here
-1. Read [`ROADMAP.md`](ROADMAP.md) (stage, numbers by dimension, what's next) and the ranked work list in [`docs/gaps.md`](docs/gaps.md). Unless the user gives you a task, pick work from that list.
-2. Read `plan/STATUS.md` (local session notes, may lag the ROADMAP), then the task in `plan/execution-plan.md` §3 and the relevant `plan/architecture.md` section. Behaviour reference: public documentation only (see Clean-room below); `plan/illustrator/*.md` holds notes from it.
-3. Follow the autonomous operation protocol (`plan/execution-plan.md` §7): orient → plan → implement + test → verify → record → commit. Don't stop to ask unless §7 lists the decision as the user's.
+1. Read [`docs/varos/STATE.md`](docs/varos/STATE.md) (the one truth table: what exists, its status,
+   its evidence) and [`docs/varos/BACKLOG.md`](docs/varos/BACKLOG.md) (ordered work with acceptance
+   lines). If anything else disagrees with them, they win until corrected.
+2. Then [`docs/varos/FORK.md`](docs/varos/FORK.md) (how Varos code relates to upstream: the hook
+   rule, merges, naming, licences) and [`docs/varos/WORKSHOP.md`](docs/varos/WORKSHOP.md) (task
+   cards, lanes, gates, review). Background: [`docs/varos/HISTORY.md`](docs/varos/HISTORY.md).
+3. Do the task you were given. Design, scope, budget and anything published are the owner's
+   decisions (WORKSHOP › "What goes to the owner"); don't pick new work from upstream's lists.
 
-`plan/` is gitignored (local only).
+`plan/` is gitignored (local only); upstream's `ROADMAP.md`, `docs/gaps.md` and parity docs describe
+VectorCraft, not Varos (see "Upstream progress docs" below).
 
-## Non-negotiables
+## Repository layout (Varos parts)
+- `crates/ui-egui/src/varos/`: Varos UI modules: `theme.rs` (tokens, in one place), `icons.rs`
+  (157 icon overrides) and `me_icons.rs`, `cursors.rs`, `home*.rs`, `shell/`, `panel_system/` (the
+  unified panel workspace), `picker/` (colour picker), `pages.rs`, `kashida_ui.rs`,
+  `middle_eastern_ui.rs`, `arabic_fonts.rs`, `agents.rs`, `profile.rs` (`VAROS_PROFILE=1`), with
+  their `tests_*.rs`.
+- `crates/ui-egui/assets/varos/`: Varos icons and fonts. `assets/app-icon/`: the Varos app icon
+  (upstream file names kept).
+- `crates/text/src/kashida.rs` (measuring in VectorCraft's shaper), `harakat.rs`,
+  `arabic_fonts.rs`; `crates/text-arabic/` (Varos kashida policy from `varos-text`, git-pinned over
+  HTTPS).
+- `crates/varos-agents/`: agent identity, document diffs, presence, activity log (pure logic).
+- `varos_*.rs` files inside upstream crates (for example `crates/engine/src/cmd/varos_arabic.rs`,
+  `crates/mcp/src/varos_connect.rs`, `apps/vectorcraft/src/varos_control.rs`).
+- `docs/varos/`: Varos docs; `docs/varos/lanes/` holds lane reports and gate logs (evidence, not state).
+- Everything else is upstream VectorCraft. Crate and binary names stay `vectorcraft*`.
+
+## Varos rules
+- **Hook rule.** New code goes in the Varos places above. Change an upstream file only where there
+  is no other way: the smallest possible call into a Varos module, marked with a `Varos` comment; no
+  reformatting, renaming or refactoring of upstream code. Every touched upstream file costs us at
+  each upstream merge. Details: `docs/varos/FORK.md` › Rules.
+- **The owner hand-tests.** Anything visible or felt is **provisional (awaits owner)** until the
+  owner accepts it in the real window; only then is it **done** in `STATE.md`. Never report
+  "works" without evidence.
+- **Never claim CI.** GitHub CI has never run on this project. Report the local commands you ran and
+  their real output; never write "CI green" or "CI passes".
+- **Gates** before any commit claim (one cargo build at a time on the owner's Mac, `-j 4`):
+  - `cargo test -j 4 --workspace` (or `-p vectorcraft-ui-egui` / the touched crates while iterating)
+  - `cargo clippy -j 4 --workspace --all-targets -- -D warnings`
+  - `cargo fmt --all -- --check` and `git diff --check`
+  - text changes: `cargo check -p vectorcraft-text --target wasm32-unknown-unknown`
+  - new assets: an `ASSETS.md` row, a `NOTICE` line and the licence text
+  - before publishing and after upstream merges: the full `cargo xtask ci`
+  - `cargo test` does not rebuild the app: `cargo build -j 4 --release -p vectorcraft` before handing
+    over a build.
+- **Commits:** conventional commits, files staged by name (never `git add -A`). Agents never commit,
+  push, open PRs or publish unless the owner asked.
+- **Don't take over the owner's Mac.** No mouse, keyboard, focus or window changes from agents;
+  prefer headless frame tests, `ui.render` and CLI exports over opening windows.
+- **Design language** (`theme.rs`): warm-black ramp (`#141313`), azure `#0c8ce9` only for
+  active/selection/focus, no shadows, 3 px controls / 8 px boxes.
+- **Agents need no pairing.** Same-user agents read, edit and save without approval prompts or OS
+  credential (Keychain) prompts; safety is undo and actor-tagged history.
+- **Docs name no people, studios or clients.** The product is the hero.
+- **ArtCraft marks:** Varos uses none (the logo files were removed as upstream's brand licence
+  requires of forks). The only allowed wording is plain text: "based on VectorCraft by the ArtCraft
+  team".
+
+## Upstream rules that still apply (non-negotiables)
 - **Clean-room: never use Adobe software (absolute rule, from the project owner).** Adobe's Terms of Use forbid reverse engineering, including observing a program's inputs and outputs to recreate it. So:
   - Never launch, run, script, automate (COM, AppleScript, ExtendScript, UI automation), screenshot or measure Illustrator or any other Adobe application, and never compare our output against one. Don't make test files with them, not even "synthetic" ones.
   - Never read, disassemble or copy anything inside an Adobe install (binaries, plug-ins, presets, procsets, resources, help files, fonts, ICC profiles).
@@ -29,7 +90,7 @@ Formerly **DrawCraft** (renamed 2026-10-01): old `.drawcraft` files and `"format
   - **Every asset file must have a row in [`ASSETS.md`](ASSETS.md)** (path, author, source URL, licence, notes). Put licence texts next to the assets (e.g. `assets/fonts/OFL-*.txt`) and summarize them in `NOTICE`.
   - `cargo xtask assets` (run by `cargo xtask ci`) fails on any unattributed asset.
   - **Fonts live in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), never in this repo** (rules: craftrules [`standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md)). Never commit a font file here; add new fonts to craft-fonts. The app uses it only through the optional `CRAFT_FONTS_DIR` build option (`CRAFT_FONTS_DIR="$PWD/../craft-fonts" cargo xtask ci`; use an absolute path), read by `crates/text/build.rs` into `vectorcraft_text::CRAFT_FONTS`; never add it to a `Cargo.toml`. Everything must build, test and run with `CRAFT_FONTS` empty, and tests of its glyphs skip when it is. Details: `docs/development.md` › Fonts.
-  - Code and original assets are MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`). The ArtCraft logos in `docs/brand/` are trademarks, not open source, under `docs/brand/LICENSE-brand.txt`: never modify them or use them outside VectorCraft.
+  - Code and original assets are MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`). The ArtCraft marks are trademarks, not open source (`docs/brand/LICENSE-brand.txt`, kept for reference); Varos removed the logo files and must not add or use them.
   - Prefer art generated in code for defaults (swatches, brushes, symbols, patterns, cursors). If the provenance of an asset is unclear, don't add it.
   - Reference screenshots of Illustrator stay local under the gitignored `plan/` and are never committed, published or used as assets.
 - **Never crash: no panics in shipped code.** A crash loses the user's unsaved work. Files, pasted data, MCP and control messages, and command params are all untrusted input.
@@ -47,24 +108,16 @@ Formerly **DrawCraft** (renamed 2026-10-01): old `.drawcraft` files and `"format
 - **Rust only** (no handwritten JS/TS). **Never break wasm** (`cargo xtask wasm`).
 - **Time goes through `chrono`** (workspace dependency). Never hand-roll UTC/calendar conversion (days-to-date algorithms, leap-year math); a crate owns only its output format string. The one exception is range extension: past the years chrono can represent, shift the date by whole 400-year Gregorian cycles (146,097 days, after which the calendar repeats), let chrono compute the month and day, and add the cycles back to the year (splitting seconds into hours, minutes and seconds is plain arithmetic).
 - **Shared test corpora.** Real-file test oracles (Photoshop-authored PSDs, etc.) live in [`storytold/photocraft-corpus`](https://github.com/storytold/photocraft-corpus), explained in [craftrules `standards/test-corpora.md`](https://github.com/storytold/craftrules/blob/main/standards/test-corpora.md). Never commit large binary fixtures to this repo; fetch them pinned by commit and sha256-verified, as PhotoCraft does with `cargo xtask corpus`.
-- **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings including the no-panic lints, tests, layers, wasm). One task id per commit (`M2.1: pen tool`).
+- **Quality gates:** the Varos gate list above (clippy -D warnings includes the no-panic lints); upstream's full `cargo xtask ci` (fmt, clippy, tests, assets, brands, layers, wasm) before publishing and after upstream merges.
 
 ## Running and looking at the app
-- `cargo run --release -p vectorcraft -- --control 7979 [file.svg|file.vectorcraft]` (sibling apps' agents use the same default port: if the log says it failed to bind, pick another port — otherwise your requests reach a different app).
+- `cargo run --release -p vectorcraft -- --control 7979 [file.svg|file.varos]` (sibling apps' agents use the same default port: if the log says it failed to bind, pick another port — otherwise your requests reach a different app).
 - Drive it: JSON lines on `127.0.0.1:7979`, e.g. `{"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":10,"y":10,"width":100,"height":50}}}` then `{"id":2,"method":"ui.screenshot","params":{"path":"/tmp/shot.png"}}`. Methods: `crates/ui-egui/src/control.rs`.
-- **For UI work, look at the result** (take `ui.screenshot`, read the PNG) and compare with the public documentation (`plan/illustrator/02-ui-ux.md` notes). `ui.screenshot` needs a presented frame: if it errors (screen locked), check the art with `ui.render` / `vectorcraft-cli run … --export x.png`, and cover panels with a headless egui frame test (see `panels/transparency.rs` tests).
+- **For UI work, look at the result** without taking over the owner's Mac (headless frame tests, `ui.render`, CLI exports; `ui.screenshot` only when the owner asked for it) and compare with the public documentation (`plan/illustrator/02-ui-ux.md` notes). The owner's hand test decides. `ui.screenshot` needs a presented frame: if it errors (screen locked), check the art with `ui.render` / `vectorcraft-cli run … --export x.png`, and cover panels with a headless egui frame test (see `panels/transparency.rs` tests).
 - **Performance:** `vectorcraft-cli perf` checks the budgets (render/pan/zoom, hit test, save/open, SVG, Pathfinder) on a synthetic 50k-path document; `vectorcraft-cli bench FILE` times one file. Run them before and after renderer, format or geometry changes, on an idle machine (the report warns when the load average makes timings noise).
-- MCP: `vectorcraft-cli mcp` (see `docs/mcp.md`).
+- MCP: `vectorcraft-cli mcp` attaches to the Varos that is open (its private endpoint file and token); `--connect ADDR` reaches an app started with `--control`, `--headless` runs without the app (see `docs/mcp.md`).
 - Shell gotcha: `mv`/`cp` are aliased interactive here — use `/bin/mv -f` / `/bin/cp -f`.
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent; edit only the crates you own; write manifests atomically. Each target dir grows to ~30 GB: delete yours when you finish (a full disk fails links with `errno=28`).
 
-## Roadmap and progress docs
-The progress docs follow craftrules' [`standards/progress-docs.md`](https://github.com/storytold/craftrules/blob/main/standards/progress-docs.md):
-- [`ROADMAP.md`](ROADMAP.md): stage, headline numbers, dimensions, features, languages, upcoming, progress log.
-- [`docs/target-app-parity.md`](docs/target-app-parity.md): the authoritative parity assessment (area table, methodology, calibration, evidence of what ships).
-- [`docs/gaps.md`](docs/gaps.md): every known shortfall, ranked; the work list. [`docs/roadmap.md`](docs/roadmap.md): milestones and current focus.
-- Checklists: [`ui-parity.md`](docs/ui-parity.md), [`file-format-parity.md`](docs/file-format-parity.md), [`hardware-parity.md`](docs/hardware-parity.md), [`localization-parity.md`](docs/localization-parity.md), [`effects-parity.md`](docs/effects-parity.md), [`type-parity.md`](docs/type-parity.md); [`architecture.md`](docs/architecture.md).
-
-When a task lands, update in the same PR: the area row in `docs/target-app-parity.md` (score, missing items, hours) and its evidence list, the gap entry in `docs/gaps.md` if it closed or shrank, the checklist it belongs to, the milestone row in `docs/roadmap.md`, and the ROADMAP's tables and progress log when a headline number moves. Update each touched doc's status line and revision history.
-- Grade by behaviour against the public documentation (`plan/illustrator/` notes), not by whether a menu item exists. Scores are self-assessed, so err low; mark each number measured or estimated.
-- Keep the README's Status section in step with the ROADMAP headline.
+## Upstream progress docs
+[`ROADMAP.md`](ROADMAP.md), [`docs/target-app-parity.md`](docs/target-app-parity.md), [`docs/gaps.md`](docs/gaps.md), [`docs/roadmap.md`](docs/roadmap.md) and the parity checklists (`docs/*-parity.md`) are VectorCraft's, carried from upstream and updated by upstream merges. Varos state lives only in `docs/varos/STATE.md` and `docs/varos/BACKLOG.md`. Don't edit the upstream progress docs for Varos work (they conflict at every merge); when a Varos change lands, update `STATE.md` (and `BACKLOG.md` if an item closed) in the same commit, with its evidence.

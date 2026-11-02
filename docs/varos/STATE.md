@@ -1,9 +1,13 @@
 # Varos fork: state
 
-The one truth table for what exists today. Updated: 2026-11-02 (panel workspace committed locally; owner hand test pending). Upstream base: `1cdc9873`
-(storytold/vectorcraft `main`, 2026-10-26), merged onto Varos `main` `f4b20c72` + Varos lanes (see
-`lanes/upstream-merge.log`). If anything else disagrees with this file, this file wins until it is
-corrected.
+The one truth table for what exists today. Updated: 2026-11-02 (panel workspace committed locally,
+HEAD `292bd2418`; owner hand test pending). Upstream base: `1cdc9873` (storytold/vectorcraft
+`main`, 2026-10-26), merged onto Varos `main` `f4b20c72` (see `lanes/upstream-merge.log`). Varos
+commits on top of upstream at HEAD: 188. Upstream history with Varos: stage-0 spikes on `a469568c`
+(10-09), trial merge onto `cdba0aac` (10-18, 11 conflicted files), merges of 239 commits (10-20)
+and 1,503 commits (10-26, 61 conflicts); 975 newer upstream non-merge commits are not merged yet
+(see `BACKLOG.md`). Full timeline: [FORK.md](FORK.md). If anything else disagrees with this file,
+this file wins until it is corrected.
 
 Status values:
 - **done**: built, gates green, nothing pending from the owner for this scope.
@@ -14,7 +18,7 @@ Status values:
 
 | Item | Status | What is true | Evidence |
 |---|---|---|---|
-| VSTAB.1 stability | code gates pass; native acceptance blocked | Three reproduced resize-cancellation bugs fixed, four upstream stability backports applied. All 12 CI gates pass; 11,013 checks passed, zero failed. No design change or new feature. | [STABILITY_2026-11-01.md](STABILITY_2026-11-01.md) |
+| VSTAB.1 stability | code gates pass; native acceptance blocked | Three reproduced resize-cancellation bugs fixed, four upstream stability backports applied. All 12 local `cargo xtask ci` steps pass; 11,013 checks passed, zero failed. No design change or new feature. | [STABILITY_2026-11-01.md](STABILITY_2026-11-01.md) |
 | Project pages | provisional (awaits owner) | Native v5 projects hold independent pages; commands, generic Pages panel, project save/recovery/package, all-pages PDF and additive MCP/CLI support. Persistent chrome readout awaits the shell owner hook. | [PAGES.md](PAGES.md), format/engine/MCP/egui page suites |
 | Name / branding | done | Window, menus, About, Home, pickers, messages and packaging show "Varos"; bundle id `com.varos.app`; data folder `Application Support/Varos` (no automatic migration from `VectorCraft`). Owner: name OK. | `lanes/brand-cursors-perf-report.txt` (lane brand: UI suite 1665 passed); `crates/ui-egui/src/varos/names.rs` |
 | No Discord / community promotion | done | Community module, header button, Home/About/Help promotion rows and the Discord command/URL removed; contributor attribution kept. | `lanes/brand-cursors-perf-report.txt` (lane brand) |
@@ -23,7 +27,7 @@ Status values:
 | Clean Home | provisional (awaits owner) | With no document Home shows only the title bar and the welcome page (New/Open/presets/recent): no tool rail, docks, control bar, status bars, document tabs or in-window menus. Chrome returns on New/Open. One predicate `varos::home::is_home`. Cmd+N and Cmd+O keep working. Not re-verified by the owner; no native visual pass was possible in the lane (sandbox blocked the window), headless checks only. | `lanes/home-report.txt`; commits `ee3c9a3f`, `02c90807` |
 | Theme / fonts / radii | provisional (awaits owner) | Inter / JetBrains Mono / IBM Plex Sans Arabic, 3 px controls / 8 px boxes, no shadows. Stage-0 lane A report is not in `lanes/`. | `crates/ui-egui/src/varos/theme.rs` and its tests |
 | Varos palettes = the four brightness levels | provisional (awaits owner) | Preferences > Brightness lists exactly Dark, Medium Dark, Medium Light, Light; each carries a Varos palette (token table in the lane report), azure `#0c8ce9` default accent. Retired `varos`/`varosWarm` prefs migrate silently to Dark. Inter runs at upstream's 0.92 optical scale. | `lanes/home-report.txt` (THEME); commit `ee3c9a3f` |
-| Icons | provisional (VQA additions await owner) | 146 Varos registry entries, including 29 new original VQA glyph keys; Gradient, Unlink, cut/eraser variants corrected, Graph/Symbol/type/perspective/slice variants distinguished. Unmatched names keep upstream art. | `crates/ui-egui/src/varos/icons.rs`; `icon-map.tsv`; `lanes/ui-codex-report.txt` |
+| Icons | provisional (VQA additions await owner) | 157 Varos icon overrides (`ORIGINALS` in `icons.rs`; its test asserts 157): 117 on 2026-10-19, 146 after the VQA lane (29 new original glyph keys; Gradient, Unlink, cut/eraser variants corrected, Graph/Symbol/type/perspective/slice variants distinguished), 157 after the simple Home/shell lanes (10-28). Middle Eastern control icons live separately in `me_icons.rs`. Unmatched names keep upstream art. `icon-map.tsv` was last updated 2026-10-27. | `crates/ui-egui/src/varos/icons.rs`; `icon-map.tsv`; `lanes/ui-codex-report.txt` |
 | UI production-test fixes (VQA-01/03/04/05/06/07/08/10/17/18) | provisional (verification in progress) | Requested group tab wins; overflow arrows and active-tab reveal; atomic card docking; contextual clipping action; hidden-edge hint/check; Gradient panel navigation; distinct icons; shared build identity. Headless results and remaining limits are recorded in the lane report. | `lanes/ui-codex-report.txt` |
 | Cursors | provisional (awaits owner) | Varos v1.1 set (38 SVGs) as real NSCursor objects on macOS, 1x/2x. States without a Varos cursor (Type I-beam, plain crosshair, ...) use the macOS system cursor; no painted glyph on macOS. | `lanes/brand-cursors-perf-report.txt` (lane cursors: 1668 passed); commit `ce3b1dae` |
 | Pointer lag: painted glyph | done (owner 2026-10-19: «أسرع كتير فعلاً») | The painted cursor glyph that trailed the pointer by a frame or more is gone on macOS (system or native cursor instead). Owner confirmed the speed-up in the bundle built from `ce3b1dae`. | commit `ce3b1dae`; tests `macos_states_without_a_varos_cursor_take_the_system_cursor`, `system_fallback_builds_never_paint_a_glyph` |
@@ -47,8 +51,8 @@ Status values:
 | PDF copy-back of ligature words | provisional (external viewer acceptance pending) | The current non-ignored authored-order round-trip regression passes after the Oct 29 merge. | `crates/pdf/tests/arabic_copy_back.rs`; 2026-11-01 release suite: 22 passed |
 | Agent-native layer | provisional (awaits owner) | Merged 31de359c: actor-tagged history, orange presence, always-on loopback listener with 0600 token + server proof, attach-only MCP proxy (`vectorcraft-cli mcp`), write guards; two security reviews, findings fixed. S4 verbs + S6 review UI later. | `lanes/agents-report.txt`; gates-v7 log |
 | Bundle for hand test | v18 stabilization candidate; native acceptance pending | Build version 0.18.0 (engine 0.17.0). Exact source/hash/signature data and installation completion are recorded after the code commit in `dist/stability-2026-11-01/manifest.json` and `installed.json`. Verified baseline on 2026-11-01: fork 0.17.0 / `018ee491` at `~/Documents/AI workspace/reference/artcraft/spikes/Varos.app`, ID `com.varos.app`. The separate `/Applications/Varos.app` is `com.varos.editor`. | [Stability record and receipt procedure](STABILITY_2026-11-01.md) |
-| `varos-text` dependency | done | Pinned git rev `5936eaf` over SSH (`github.com/thisisgomaa/varos`), `default-features = false` (policy only, no second shaper). The comment in `crates/text-arabic/Cargo.toml` still says "path to the Varos worktree" and is stale. | `crates/text-arabic/Cargo.toml` |
-| Gates | pass (panel workspace commits, 2026-11-02; VSTAB.1, 2026-11-01) | 2026-11-02, before the local panel-workspace commits: `cargo test -p vectorcraft-ui-egui` 2,747 passed / 0 failed / 23 ignored (+2 integration); `cargo test --workspace` 11,161 passed / 0 failed / 38 ignored; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt --check` clean. Full `cargo xtask ci` (layers, wasm, assets) not run for these commits. Earlier, VSTAB.1: `cargo xtask ci`: all 12 steps pass, including strict clippy, native tests, no-bundled-fonts and wasm. 11,013 passing checks, zero failures, 33 ignored; UI 2,595 passed / 18 ignored. Release/debug evidence and repaired test-fixture failures are separated in the verification record. | `/tmp/varos-stability-2026-11-01/ci-unrestricted.log`; [verification record](STABILITY_2026-11-01.md) |
+| `varos-text` dependency | done | Pinned git rev `5936eaf` over HTTPS (`https://github.com/thisisgomaa/varos.git`, public; no SSH key needed), `default-features = false` (policy only, no second shaper). After the public repository is replaced by this code, `5936eaf` must stay reachable through the `legacy-engine` branch/tag. | `crates/text-arabic/Cargo.toml` |
+| Gates | pass locally (panel workspace commits, 2026-11-02; VSTAB.1, 2026-11-01); GitHub CI has never run on this project | 2026-11-02, before the local panel-workspace commits: `cargo test -p vectorcraft-ui-egui` 2,747 passed / 0 failed / 23 ignored (+2 integration); `cargo test --workspace` 11,161 passed / 0 failed / 38 ignored; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt --check` clean. Full `cargo xtask ci` (layers, wasm, assets) not run for these commits. Earlier, VSTAB.1: local `cargo xtask ci`: all 12 steps pass, including strict clippy, native tests, no-bundled-fonts and wasm. 11,013 passing checks, zero failures, 33 ignored; UI 2,595 passed / 18 ignored. Release/debug evidence and repaired test-fixture failures are separated in the verification record. | `/tmp/varos-stability-2026-11-01/ci-unrestricted.log`; [verification record](STABILITY_2026-11-01.md) |
 
 ## Build, run, hand-test (macOS)
 
@@ -60,6 +64,8 @@ Status values:
 6. Hand test: the owner opens the bundle and follows the task card's hand-test steps; anything that looks or feels wrong goes into `BACKLOG.md` in his words.
 
 ## Revision history
+
+- 2026-11-02 (docs unification): base/merge history corrected from git, icon count 146 → 157, `varos-text` pinned over HTTPS (not SSH), stale Cargo.toml comment note removed, gates marked local-only.
 
 - 2026-11-02: panel workspace, side Color panel, horizontal tab reordering and modeless Preferences committed locally with the review fixes; all provisional, owner hand test pending.
 - 2026-11-01: record stability work, verify fork bundle identity, correct stale shell default and PDF test status. Native release acceptance remains pending.

@@ -1,12 +1,13 @@
 # Varos workshop v0
 
-How agents build Varos. Agents only: there is no UI or dashboard for the owner. Updated 2026-10-19.
+How agents build Varos. Agents only: there is no UI or dashboard for the owner. Updated 2026-11-02
+(hook rule wording, local-gates note).
 
 ## Roles
 
 | Role | Who | Does |
 |---|---|---|
-| Owner | Ahmed | Decides design, scope, budget, publishing; hand-tests in the real window. |
+| Owner | the project owner | Decides design, scope, budget, publishing; hand-tests in the real window. |
 | Moderator | the Claude Fable session | Plans, writes task cards, dispatches, runs fetch/build/gates, reviews, keeps `STATE.md` and `BACKLOG.md`, reports to the owner in plain Egyptian Arabic. Does not implement. |
 | Implementer | Codex Sol 6.1, Opus 5.5 (later Grok) | Executes one task card inside its lane. Never commits to `main`, merges, pushes or publishes. |
 | Reviewer | a different agent from the author | Reviews the diff against the card and the gates. Author is never the reviewer. |
@@ -37,7 +38,8 @@ Report:          what changed, how verified (commands + real output), what is le
 - The owner's Mac overheats: **at most 2 lanes building at once**, always `-j 4`. A third lane may
   be read-only or design work. The moderator runs its own gate passes after lanes finish, one at a
   time, and never prebuilds what a lane will build itself.
-- Lanes follow `FORK.md`: additive files, minimal marked hook lines in upstream files.
+- Lanes follow the hook rule in `FORK.md`: new code in Varos modules; upstream files changed only
+  where unavoidable, with minimal hook lines marked `Varos`.
 - Lane reports go to `docs/varos/lanes/<lane>-report.txt`.
 
 ## Gates (before any merge to `main`)
@@ -53,6 +55,8 @@ Report:          what changed, how verified (commands + real output), what is le
 8. Anything visible: owner hand test. Only owner-accepted items become **done** in `STATE.md`.
 
 Upstream's full `cargo xtask ci` is heavy; run it before publishing and after upstream merges.
+All gates run locally: GitHub CI has never run on this project, so reports quote the local
+commands and their output and never say "CI green".
 
 ## State files
 
