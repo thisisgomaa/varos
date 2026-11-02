@@ -76,6 +76,14 @@ impl State {
         self.hits.clear();
     }
 
+    /// [`State::cancel_transient`] and end egui's drag of the handle a cancelled gesture began, in
+    /// one step: for a cancel that no workspace frame follows (a presenter hand-off, removing the
+    /// state) or that must not wait for one (Escape, Presentation Mode).
+    pub(crate) fn cancel_now(&mut self, ctx: &egui::Context) {
+        self.cancel_transient();
+        self.sync_drag(ctx);
+    }
+
     /// End the gesture without committing it. egui's drag of the handle that began it is ended
     /// by the next [`State::sync_drag`], so both interaction states finish together.
     fn cancel_gesture(&mut self) {
@@ -229,8 +237,7 @@ pub fn gesture_keys(app: &mut VectorcraftApp, ctx: &egui::Context) -> bool {
         return false;
     }
     if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        state.cancel_transient();
-        state.sync_drag(ctx);
+        state.cancel_now(ctx);
         ctx.request_repaint();
     }
     true
@@ -241,11 +248,8 @@ pub fn showing(app: &VectorcraftApp, panel: &str) -> bool {
 }
 
 /// Home owns the whole central surface, including its own title bar. The editor arrangement stays
-/// intact ([`presenter::sync`] already cancelled the transient panel interactions).
+/// intact ([`presenter::sync`] already cancelled the transient panel interactions and egui's drag).
 pub(crate) fn home_frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
-    if let Some(state) = presenter::state_mut(&mut app.ui) {
-        state.sync_drag(ui.ctx());
-    }
     if app.ui.varos_picker_anchor.is_some() {
         super::picker::close(app);
     }
@@ -267,8 +271,7 @@ pub fn frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             // Presentation Mode shows the artwork alone: no Tools, Control or panels, so no panel
             // body can edit the document, and no block reserves canvas space.
             if let Some(state) = presenter::state_mut(&mut app.ui) {
-                state.cancel_transient();
-                state.sync_drag(ui.ctx());
+                state.cancel_now(ui.ctx());
             }
             super::shell::boxes::board(app, ui, region, false);
             return;

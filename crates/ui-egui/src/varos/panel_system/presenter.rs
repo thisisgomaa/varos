@@ -34,8 +34,9 @@ pub(crate) fn active(ui: &UiState) -> bool {
 
 /// Decide this frame's presenter once. Whenever the workspace is not drawing the editor (Home
 /// covers it, or another presenter took over), its in-progress gestures, flyout and hit record
-/// are cancelled here, so no stale interaction survives a switch back.
-pub(crate) fn sync(app: &mut VectorcraftApp, on_home: bool) -> Presenter {
+/// are cancelled here, egui's drag of a held handle included: no workspace frame runs to end it,
+/// so no stale interaction survives the hand-off or a switch back.
+pub(crate) fn sync(app: &mut VectorcraftApp, ctx: &egui::Context, on_home: bool) -> Presenter {
     let presenter = match state(&app.ui) {
         None => Presenter::Inactive,
         Some(_) if on_home => Presenter::Home,
@@ -44,7 +45,7 @@ pub(crate) fn sync(app: &mut VectorcraftApp, on_home: bool) -> Presenter {
     if presenter != Presenter::Workspace
         && let Some(state) = app.ui.varos_panel_review.as_mut()
     {
-        state.cancel_transient();
+        state.cancel_now(ctx);
     }
     presenter
 }
@@ -58,15 +59,16 @@ mod tests {
     #[test]
     fn switching_the_shell_off_hands_queries_to_the_other_presenter_and_cancels_interaction() {
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        let ctx = egui::Context::default();
         app.run("ui.panelReview", json!({"enabled": true})).unwrap();
         let state = app.ui.varos_panel_review.as_mut().unwrap();
         state.flyout = state.layout.group_of("layers").map(|group| group.id);
-        assert_eq!(sync(&mut app, false), Presenter::Workspace);
+        assert_eq!(sync(&mut app, &ctx, false), Presenter::Workspace);
         assert!(app.ui.varos_panel_review.as_ref().unwrap().flyout.is_some(), "drawing the workspace keeps its flyout");
-        assert_eq!(sync(&mut app, true), Presenter::Home);
+        assert_eq!(sync(&mut app, &ctx, true), Presenter::Home);
         assert!(app.ui.varos_panel_review.as_ref().unwrap().flyout.is_none(), "Home cancels the flyout");
         crate::varos::shell::set_enabled(&mut app, false);
-        assert_eq!(sync(&mut app, false), Presenter::Inactive);
+        assert_eq!(sync(&mut app, &ctx, false), Presenter::Inactive);
         assert!(app.ui.varos_panel_review.is_some(), "the saved layout survives the switch");
         assert_eq!(super::super::workspace::current(&app), None);
         assert!(super::super::workspace::command(&mut app, "window.workspace.manage", &json!({})).is_none());

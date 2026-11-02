@@ -165,7 +165,11 @@ fn decode_panel(id: &str, params: &Value) -> Result<Intent, String> {
 fn execute(app: &mut VectorcraftApp, intent: Intent) -> Result<Value, String> {
     match intent {
         Intent::Enable(false) => {
-            app.ui.varos_panel_review = None;
+            // No workspace frame runs after this to end egui's drag of a held handle: end it
+            // before the state goes (without a context no frame ran, so nothing is dragged).
+            if let (Some(mut state), Some(ctx)) = (app.ui.varos_panel_review.take(), app.ui_ctx.as_ref()) {
+                state.cancel_now(ctx);
+            }
             return Ok(json!({"enabled":false}));
         }
         Intent::Enable(true) => {

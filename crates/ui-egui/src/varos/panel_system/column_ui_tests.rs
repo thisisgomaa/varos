@@ -268,6 +268,42 @@ fn accent_lines(h: &Harness, output: &FullOutput, within: Rect) -> usize {
     count
 }
 
+/// Hold a drag on the vertical divider of Blend's docked block: the gesture is live, egui drags
+/// the divider and paints it active. Returns the divider's split and where the pointer is held.
+fn hold_divider(h: &mut Harness) -> (u64, Pos2) {
+    let host = h.host_id("blend");
+    let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
+    let vertical = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).unwrap();
+    let (split, divider) = (vertical.id, h.hit(&format!("divider:{}", vertical.id)));
+    let from = divider.center();
+    let to = from + vec2(0.0, 70.0);
+    h.hold_drag(from, to);
+    let held = h.frame(vec![Event::PointerMoved(to + vec2(0.0, 1.0))]);
+    assert!(h.ctx.dragged_id().is_some(), "egui drags the divider during the gesture");
+    let painted = h.hit(&format!("divider:{split}"));
+    assert!(accent_lines(h, &held, painted) > 0, "the dragged divider paints active");
+    (split, to)
+}
+
+/// After a cancelled gesture and its release, the next drag in the workspace commits.
+fn next_drag_commits(h: &mut Harness, changed: &Layout) {
+    let host = h.host_id("layers");
+    let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
+    let divider = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).map(|d| d.id);
+    let Some(divider) = divider.filter(|id| h.has_hit(&format!("divider:{id}"))) else {
+        // The reset workspace has no stacked row in that block: drag its block instead.
+        let grip = h.hit(&format!("host-grip:{host}")).center();
+        h.drag(grip, grip + vec2(-40.0, 30.0));
+        assert_ne!(h.layout(), changed, "the next drag commits");
+        h.assert_owners();
+        return;
+    };
+    let start = h.hit(&format!("divider:{divider}")).center();
+    h.drag(start, start + vec2(0.0, -40.0));
+    assert_ne!(h.layout(), changed, "the next drag commits");
+    h.assert_owners();
+}
+
 /// A gesture cancelled while the pointer is still held (its layout changed under it, or a reset
 /// replaced the arrangement) also ends egui's drag: the divider stops painting active and no
 /// widget stays dragged; the release afterwards commits nothing, and the next drag works.
@@ -275,17 +311,7 @@ fn accent_lines(h: &Harness, output: &FullOutput, within: Rect) -> usize {
 fn a_gesture_cancelled_under_a_held_pointer_also_ends_the_egui_drag() {
     for reset in [false, true] {
         let mut h = Harness::columns(Edge::Right);
-        let host = h.host_id("blend");
-        let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
-        let vertical = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).unwrap();
-        let (split, divider) = (vertical.id, h.hit(&format!("divider:{}", vertical.id)));
-        let from = divider.center();
-        let to = from + vec2(0.0, 70.0);
-        h.hold_drag(from, to);
-        let held = h.frame(vec![Event::PointerMoved(to + vec2(0.0, 1.0))]);
-        assert!(h.ctx.dragged_id().is_some(), "egui drags the divider during the gesture");
-        let painted = h.hit(&format!("divider:{split}"));
-        assert!(accent_lines(&h, &held, painted) > 0, "the dragged divider paints active");
+        let (split, to) = hold_divider(&mut h);
         // The layout changes under the held pointer.
         if reset {
             h.app.run("ui.dock.reset", json!({})).unwrap();
@@ -309,21 +335,55 @@ fn a_gesture_cancelled_under_a_held_pointer_also_ends_the_egui_drag() {
         }
         h.release(away);
         assert_eq!(h.layout(), &changed, "the release after a cancelled gesture commits nothing");
-        // The next drag works.
-        let host = h.host_id("layers");
-        let measured = geometry::measure(h.layout(), h.workspace, h.tabs()).into_iter().find(|candidate| candidate.id == host).unwrap();
-        let divider = measured.dividers.iter().find(|divider| divider.axis == model::Axis::Vertical).map(|d| d.id);
-        let Some(divider) = divider.filter(|id| h.has_hit(&format!("divider:{id}"))) else {
-            // The reset workspace has no stacked row in that block: drag its block instead.
-            let grip = h.hit(&format!("host-grip:{host}")).center();
-            h.drag(grip, grip + vec2(-40.0, 30.0));
-            assert_ne!(h.layout(), &changed, "the next drag commits");
-            h.assert_owners();
-            continue;
-        };
-        let start = h.hit(&format!("divider:{divider}")).center();
-        h.drag(start, start + vec2(0.0, -40.0));
-        assert_ne!(h.layout(), &changed, "the next drag commits");
-        h.assert_owners();
+        next_drag_commits(&mut h, &changed);
+    }
+}
+
+/// The workspace stops presenting under a held pointer: the Varos shell is turned off (the classic
+/// dock takes over), or `ui.panelReview {"enabled": false}` removes the workspace (the box shell
+/// takes over). Its gesture and egui's drag of the divider end at once, though no workspace frame
+/// runs; the release afterwards commits nothing, and once the workspace presents again (the same
+/// one after the shell-off, a fresh one after the removal) the next drag works.
+#[test]
+fn the_workspace_handing_off_under_a_held_pointer_also_ends_the_egui_drag() {
+    for removed in [false, true] {
+        let mut h = Harness::columns(Edge::Right);
+        let before = h.layout().clone();
+        let (_, to) = hold_divider(&mut h);
+        if removed {
+            h.app.run("ui.panelReview", json!({"enabled": false})).unwrap();
+            assert!(h.app.ui.varos_panel_review.is_none());
+            assert_eq!(h.ctx.dragged_id(), None, "removing the workspace ends egui's drag before the state goes");
+        } else {
+            crate::varos::shell::set_enabled(&mut h.app, false);
+        }
+        let away = to + vec2(0.0, 2.0);
+        h.frame(vec![Event::PointerMoved(away)]);
+        assert!(!super::enabled(&h.app), "another presenter draws the editor");
+        assert_eq!(h.ctx.dragged_id(), None, "egui's drag ends with the hand-off");
+        if let Some(state) = h.app.ui.varos_panel_review.as_ref() {
+            assert!(state.gesture.is_none(), "the hand-off cancels the gesture");
+            assert!(!state.drag_orphaned, "and ends egui's drag in the hand-off itself");
+        }
+        h.frame(vec![Event::PointerMoved(away)]);
+        assert_eq!(h.ctx.dragged_id(), None, "no drag restarts while the pointer stays held");
+        h.frame(vec![Event::PointerMoved(away), button(away, false)]);
+        h.settle();
+        if removed {
+            h.app.run("ui.panelReview", json!({"enabled": true})).unwrap();
+        } else {
+            crate::varos::shell::set_enabled(&mut h.app, true);
+        }
+        h.settle();
+        assert!(super::enabled(&h.app));
+        assert!(h.state().gesture.is_none());
+        assert!(!h.state().drag_orphaned);
+        let changed = h.layout().clone();
+        if !removed {
+            assert_eq!(changed, before, "the release while another presenter drew committed nothing");
+        }
+        h.owners = owners(&changed);
+        h.measure_workspace();
+        next_drag_commits(&mut h, &changed);
     }
 }

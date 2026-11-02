@@ -2393,7 +2393,7 @@ impl VectorcraftApp {
         }
         varos::profile::measure("library.tidy", || panels::library_panel::tidy(self));
         // Varos: the unified panel workspace decides its presenter once per frame.
-        let panels = varos::panel_system::presenter::sync(self, on_home);
+        let panels = varos::panel_system::presenter::sync(self, &ctx, on_home);
         if panels == varos::panel_system::Presenter::Home {
             varos::panel_system::home_frame(self, ui);
         } else if panels == varos::panel_system::Presenter::Workspace {
