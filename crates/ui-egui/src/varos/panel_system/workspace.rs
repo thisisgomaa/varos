@@ -217,25 +217,27 @@ pub fn command(app: &mut VectorcraftApp, id: &str, params: &Value) -> Option<Res
         return Some(Ok(Value::Null));
     }
     let mut store = state.workspaces.clone();
-    let mut layout = state.layout.clone();
-    let result = match id {
-        "window.workspace" => store.switch(&mut layout, name),
-        "window.workspace.reset" => store.reset(&mut layout),
-        "window.workspace.new" => store.save(&layout, name),
-        "window.workspace.rename" => store.rename(name, params.get("to").and_then(Value::as_str).unwrap_or_default()),
-        "window.workspace.delete" => store.delete(&mut layout, name),
-        _ => return Some(Err(format!("Unknown workspace command `{id}`"))),
-    };
-    Some(result.map(|()| {
-        let current = store.current.clone();
-        if let Some(state) = super::presenter::state_mut(&mut app.ui) {
-            state.layout = layout;
-            state.workspaces = store;
-            state.cancel_transient();
-        }
-        crate::workspaces::sync(&app.ui);
-        json!({"workspace":current})
-    }))
+    let state = super::presenter::state_mut(&mut app.ui)?;
+    // The store changes on its own copy and the layout through the one layout transaction; both
+    // are kept only when the command succeeds.
+    let result = super::commands::transact(state, |layout| {
+        match id {
+            "window.workspace" => store.switch(layout, name),
+            "window.workspace.reset" => store.reset(layout),
+            "window.workspace.new" => store.save(layout, name),
+            "window.workspace.rename" => store.rename(name, params.get("to").and_then(Value::as_str).unwrap_or_default()),
+            "window.workspace.delete" => store.delete(layout, name),
+            _ => Err(format!("Unknown workspace command `{id}`")),
+        }?;
+        Ok(((), super::commands::Stale::Everything))
+    });
+    if let Err(error) = result {
+        return Some(Err(error));
+    }
+    let current = store.current.clone();
+    state.workspaces = store;
+    crate::workspaces::sync(&app.ui);
+    Some(Ok(json!({"workspace":current})))
 }
 
 #[cfg(test)]

@@ -732,6 +732,17 @@ impl Layout {
         Ok(())
     }
 
+    /// This layout with every action applied in order, or the first failure (`self` is untouched).
+    /// The commit ([`transact_actions`](super::commands::transact_actions)) and every gesture
+    /// preview share it, so the committed layout is the one the preview showed.
+    pub fn applied(&self, actions: &[Action]) -> Result<Layout, String> {
+        let mut next = self.clone();
+        for action in actions {
+            next.apply(action)?;
+        }
+        Ok(next)
+    }
+
     /// Carry effective presentation across host boundaries; vertical stacking adopts its destination column.
     fn prepare_column_move(&mut self, action: &Action) -> Option<(u64, Presentation)> {
         let Action::Move { source, target } = action else { return None };

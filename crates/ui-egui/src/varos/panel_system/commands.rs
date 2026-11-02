@@ -1,6 +1,8 @@
-//! Layout commands. Every entry point decodes once into a typed [`Intent`]; every intent that
-//! changes the layout commits through [`transact`]: its actions apply to a copy, the copy replaces
-//! the layout only when every step succeeded, and transient state is invalidated in one place.
+//! Layout commands. Every entry point decodes once into a typed [`Intent`]. Every change to the
+//! layout (action lists, closing a panel, Tab / Shift+Tab, reset, workspace changes and the library
+//! adapters) commits through [`transact`]: the change runs on a copy, the copy replaces the layout
+//! only when every step succeeded, and the transient state it made stale ([`Stale`]) is dropped in
+//! that one place. Gesture previews use the same [`Layout::applied`] as the commit.
 use super::{
     State, metrics,
     model::{self, Action, Edge, Layout, Mode, Source, Target},
@@ -173,7 +175,7 @@ fn execute(app: &mut VectorcraftApp, intent: Intent) -> Result<Value, String> {
         }
         Intent::ToolsColumns { double } => {
             let state = presenter::state_mut(&mut app.ui).ok_or("The panel workspace is not active")?;
-            let actions = transact(state, |layout| Ok(vec![tools_width_toggle(layout, double.map(|double| !double))]))?;
+            let actions = transact_actions(state, |layout| Ok(vec![tools_width_toggle(layout, double.map(|double| !double))]))?;
             let double = matches!(actions.first(), Some(Action::SetToolsWidth { width }) if *width > metrics::TOOLS_MIN_WIDTH);
             app.ui.toolbar_double = double;
             app.ui.varos_shell.tools_columns = if double { 2 } else { 1 };
@@ -188,18 +190,20 @@ fn execute(app: &mut VectorcraftApp, intent: Intent) -> Result<Value, String> {
             json!({"layout":state.layout,"dragging":state.gesture.is_some(),"hits":state.hits.iter().map(|(name,r)|json!({"name":name,"rect":[r.left(),r.top(),r.width(),r.height()]})).collect::<Vec<_>>()}),
         ),
         Intent::Apply(actions) => {
-            transact(state, |_| Ok(actions))?;
+            transact_actions(state, |_| Ok(actions))?;
             Ok(json!({"layout":state.layout}))
         }
         Intent::Report => Ok(json!({"layout":state.layout})),
         Intent::Reset => {
-            state.layout = Layout::new_workspace();
-            state.cancel_transient();
+            transact(state, |next| {
+                *next = Layout::new_workspace();
+                Ok(((), Stale::Everything))
+            })?;
             Ok(json!({"layout":state.layout}))
         }
         Intent::ToggleBlocks { all } => toggle_blocks(state, all).map(|shown| json!({"shown":shown})),
         Intent::ToggleBar(panel) => {
-            transact(state, |layout| {
+            transact_actions(state, |layout| {
                 layout.ensure_panel(panel)?;
                 let shown = layout.owner(panel).filter(|h| !h.hidden).map(|h| h.id);
                 Ok(vec![shown.map_or_else(|| Action::Show { panel: panel.into() }, |host| Action::Hide { host })])
@@ -210,20 +214,42 @@ fn execute(app: &mut VectorcraftApp, intent: Intent) -> Result<Value, String> {
     }
 }
 
-/// Apply the actions `prepare` returns to a copy of the layout (after any registration it does
-/// there); the copy replaces the layout only when every step succeeds. Then invalidate the
-/// transient state those actions made stale: any structural change closes the compact flyout.
-pub(super) fn transact(state: &mut State, prepare: impl FnOnce(&mut Layout) -> Result<Vec<Action>, String>) -> Result<Vec<Action>, String> {
+/// The transient state a committed change leaves stale.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stale {
+    /// Activating, raising or fitting a block: nothing.
+    Nothing,
+    /// A structural change: the compact flyout closes.
+    Flyout,
+    /// The arrangement was replaced (reset, a workspace change): every in-progress interaction.
+    Everything,
+}
+
+/// The one commit step. `change` runs on a copy of the layout; the copy replaces the layout only
+/// when it succeeds (a failure leaves the layout and the transient state as they were), then the
+/// transient state the change reports stale is dropped.
+pub(super) fn transact<T>(state: &mut State, change: impl FnOnce(&mut Layout) -> Result<(T, Stale), String>) -> Result<T, String> {
     let mut next = state.layout.clone();
-    let actions = prepare(&mut next)?;
-    for action in &actions {
-        next.apply(action)?;
-    }
+    let (value, stale) = change(&mut next)?;
     state.layout = next;
-    if actions.iter().any(|action| !matches!(action, Action::Activate { .. } | Action::Raise { .. } | Action::FitControlContent { .. })) {
-        state.flyout = None;
+    match stale {
+        Stale::Nothing => {}
+        Stale::Flyout => state.flyout = None,
+        Stale::Everything => state.cancel_transient(),
     }
-    Ok(actions)
+    Ok(value)
+}
+
+/// [`transact`] for the actions `prepare` returns (after any registration it does on the copy),
+/// applied as one batch. Any action other than Activate, Raise or FitControlContent is structural.
+pub(super) fn transact_actions(state: &mut State, prepare: impl FnOnce(&mut Layout) -> Result<Vec<Action>, String>) -> Result<Vec<Action>, String> {
+    transact(state, |next| {
+        let actions = prepare(next)?;
+        *next = next.applied(&actions)?;
+        let structural =
+            actions.iter().any(|action| !matches!(action, Action::Activate { .. } | Action::Raise { .. } | Action::FitControlContent { .. }));
+        Ok((actions, if structural { Stale::Flyout } else { Stale::Nothing }))
+    })
 }
 
 /// Tools never become an icon column: collapsing narrows them to one column of tools.
@@ -257,14 +283,11 @@ fn panel_command(state: &mut State, panel: &str, raw: &str, op: PanelOp) -> Resu
             return Ok(json!({"layout":state.layout,"open":null}));
         }
         let forget = crate::panels::library_panel::parse(panel).is_some();
-        let mut next = state.layout.clone();
-        close_panel(&mut next, panel, forget)?;
-        state.layout = next;
-        state.flyout = None;
+        transact(state, |next| close_panel(next, panel, forget).map(|()| ((), Stale::Flyout)))?;
         return Ok(json!({"layout":state.layout,"open":null}));
     }
     let show = matches!(op, PanelOp::Show { .. } | PanelOp::Activate);
-    transact(state, |next| {
+    transact_actions(state, |next| {
         next.ensure_panel(panel)?;
         let host = next.owner(panel).ok_or("Panel owner missing")?;
         let group = next.group_of(panel).ok_or("Panel group missing")?;
@@ -313,35 +336,50 @@ fn panel_command(state: &mut State, panel: &str, raw: &str, op: PanelOp) -> Resu
     Ok(json!({"layout":state.layout}))
 }
 
+/// Tab (`all`) or Shift+Tab as one transaction: the restore of both bars either completes or
+/// leaves the layout and the hidden record as they were.
 fn toggle_blocks(state: &mut State, all: bool) -> Result<bool, String> {
-    state.flyout = None;
-    Ok(match state.hidden.as_ref().map(|record| record.all) {
+    let record = state.hidden.clone();
+    let (shown, hidden) = transact(state, |next| Ok((toggle(next, record, all)?, Stale::Flyout)))?;
+    state.hidden = hidden;
+    Ok(shown)
+}
+
+/// What Tab or Shift+Tab does to `layout` given the last `record`: whether blocks show afterwards,
+/// and the record the next toggle restores from.
+fn toggle(layout: &mut Layout, record: Option<Hidden>, all: bool) -> Result<(bool, Option<Hidden>), String> {
+    Ok(match record {
         // Tab after Shift+Tab hides the bars too; Tab after Tab shows everything again.
-        Some(false) if all => {
-            restore_hidden(state);
-            !hide_for_tab(state, true)
+        Some(record) if !record.all && all => {
+            restore_hidden(layout, record);
+            let hidden = hide_for_tab(layout, true);
+            (hidden.is_none(), hidden)
         }
-        Some(record_all) => {
-            restore_hidden(state);
+        Some(record) => {
+            let record_all = record.all;
+            restore_hidden(layout, record);
             if record_all && !all {
                 // Shift+Tab after Tab shows the panels and leaves Tools and Control hidden.
-                for host in &mut state.layout.hosts {
+                for host in &mut layout.hosts {
                     if model::groups(&host.root).iter().all(|g| g.panels.iter().all(|p| is_special(p))) {
                         host.hidden = true;
                     }
                 }
             }
-            true
+            (true, None)
         }
-        None if hide_for_tab(state, all) => false,
-        None if all => {
-            // Nothing showed and nothing was hidden by Tab: show Tools and Control.
-            for panel in ["tools", "control"] {
-                state.layout.ensure_panel(panel).and_then(|()| state.layout.apply(&Action::Show { panel: panel.into() }))?;
+        None => match hide_for_tab(layout, all) {
+            Some(hidden) => (false, Some(hidden)),
+            None if all => {
+                // Nothing showed and nothing was hidden by Tab: show Tools and Control.
+                for panel in ["tools", "control"] {
+                    layout.ensure_panel(panel)?;
+                    layout.apply(&Action::Show { panel: panel.into() })?;
+                }
+                (true, None)
             }
-            true
-        }
-        None => true,
+            None => (true, None),
+        },
     })
 }
 
@@ -371,9 +409,10 @@ fn is_special(panel: &str) -> bool {
     registry::get(panel).is_some_and(|spec| spec.kind != registry::PanelKind::Standard)
 }
 
-/// Hide what Tab (`all`) or Shift+Tab hides, recording it; `false` when nothing was visible.
-fn hide_for_tab(state: &mut State, all: bool) -> bool {
-    let before = state.layout.clone();
+/// Hide what Tab (`all`) or Shift+Tab hides and return the record; `None` (and `layout`
+/// untouched) when nothing was visible.
+fn hide_for_tab(layout: &mut Layout, all: bool) -> Option<Hidden> {
+    let before = layout.clone();
     let mut next = before.clone();
     let mut hosts = Vec::new();
     let mut panels = Vec::new();
@@ -392,46 +431,39 @@ fn hide_for_tab(state: &mut State, all: bool) -> bool {
     }
     panels.retain(|panel| close_panel(&mut next, panel, false).is_ok());
     if hosts.is_empty() && panels.is_empty() {
-        return false;
+        return None;
     }
-    state.layout = next;
-    state.hidden = Some(Hidden { all, before, after: state.layout.clone(), hosts, panels });
-    true
+    *layout = next;
+    Some(Hidden { all, before, after: layout.clone(), hosts, panels })
 }
 
-/// Show again what the last Tab / Shift+Tab hid; `false` when there is no record.
-fn restore_hidden(state: &mut State) -> bool {
-    let Some(record) = state.hidden.take() else { return false };
-    if state.layout == record.after {
-        state.layout = record.before;
-        return true;
+/// Show again what `record` hid.
+fn restore_hidden(layout: &mut Layout, record: Hidden) {
+    if *layout == record.after {
+        *layout = record.before;
+        return;
     }
     // The layout changed in between (a workspace switch, a dragged block): show what still exists.
-    for host in &mut state.layout.hosts {
+    for host in &mut layout.hosts {
         if record.hosts.contains(&host.id) {
             host.hidden = false;
         }
     }
     for panel in &record.panels {
         // A panel removed meanwhile has nothing left to show.
-        let _ = state.layout.apply(&Action::Show { panel: panel.clone() });
+        let _ = layout.apply(&Action::Show { panel: panel.clone() });
     }
-    true
 }
 
 /// Commit one gesture's or one frame's clicked actions as a single transaction, through the same
-/// command path as agents (`ui.panelReview.action`). A failure reaches the status line and the
-/// layout stays as it was; `false` tells the caller to stop.
-pub(super) fn commit(app: &mut VectorcraftApp, actions: Vec<Action>) -> bool {
+/// command path as agents (`ui.panelReview.action`). A failure reaches the status line and leaves
+/// the layout as it was; nothing else depends on the outcome.
+pub(super) fn commit(app: &mut VectorcraftApp, actions: Vec<Action>) {
     if actions.is_empty() {
-        return true;
+        return;
     }
-    match app.run("ui.panelReview.action", json!({"actions": actions})) {
-        Ok(_) => true,
-        Err(error) => {
-            app.status(error);
-            false
-        }
+    if let Err(error) = app.run("ui.panelReview.action", json!({"actions": actions})) {
+        app.status(error);
     }
 }
 
@@ -495,5 +527,80 @@ mod tests {
         assert_eq!(state(&app).layout.tools_width(), Some(metrics::TOOLS_MIN_WIDTH));
         app.run("window.panel.collapse", json!({"panel": "tools", "collapsed": false})).unwrap();
         assert_eq!(state(&app).layout.tools_width(), Some(metrics::TOOLS_MAX_WIDTH));
+    }
+
+    /// Decision (2026-11-02): collapse switches the Tools width for the Tools panel only. The
+    /// command acts on the column holding the panel, as that column's header does, and the layout
+    /// policy keeps every other panel out of the Tools column (never in its tab group, never
+    /// stacked under it), so only `tools` itself reaches the width switch.
+    #[test]
+    fn collapse_switches_the_tools_width_for_the_tools_panel_only() {
+        let mut app = app();
+        app.run("window.toolbarColumns", json!({"double": true})).unwrap();
+        let layout = &mut app.ui.varos_panel_review.as_mut().unwrap().layout;
+        let tools = layout.owner("tools").unwrap().id;
+        let layers = layout.owner("layers").unwrap().id;
+        let tools_group = layout.group_of("tools").unwrap().id;
+        for target in [Target::Attach { host: tools, edge: Edge::Bottom }, Target::Merge { group: tools_group, index: 0 }] {
+            assert!(layout.apply(&Action::Move { source: Source::Host(layers), target }).is_err(), "nothing shares the Tools column");
+        }
+        layout.apply(&Action::Move { source: Source::Host(layers), target: Target::Attach { host: tools, edge: Edge::Right } }).unwrap();
+        let group = layout.group_of("layers").unwrap().id;
+        assert!(layout.column_has_tools(tools_group) && !layout.column_has_tools(group));
+        app.run("window.panel.collapse", json!({"panel": "layers", "collapsed": true})).unwrap();
+        assert_eq!(state(&app).layout.tools_width(), Some(metrics::TOOLS_MAX_WIDTH), "a panel beside Tools leaves the width");
+        assert_ne!(state(&app).layout.column_mode(group), Some(Mode::Full), "it collapses its own column");
+        app.run("window.panel.collapse", json!({"panel": "tools", "collapsed": true})).unwrap();
+        assert_eq!(state(&app).layout.tools_width(), Some(metrics::TOOLS_MIN_WIDTH));
+        assert_eq!(state(&app).layout.column_mode(tools_group), Some(Mode::Full), "Tools never become an icon column");
+    }
+
+    /// Tab with nothing visible and nothing recorded registers and shows Tools, then Control. When
+    /// the panel limit leaves room for Tools only, the command fails and nothing changes.
+    #[test]
+    fn tab_restoring_both_bars_is_atomic_at_the_panel_limit() {
+        let mut app = app();
+        let mut layout = Layout::new_workspace();
+        layout.hosts.retain(|h| !model::groups(&h.root).iter().any(|g| g.panels.iter().any(|p| is_special(p))));
+        for host in &mut layout.hosts {
+            host.hidden = true;
+        }
+        let count = |layout: &Layout| layout.hosts.iter().flat_map(|h| model::groups(&h.root)).map(|g| g.panels.len()).sum::<usize>();
+        let mut n = 2;
+        while count(&layout) < 127 {
+            layout.ensure_panel(&format!("properties@{n}")).unwrap();
+            n += 1;
+        }
+        layout.validate().unwrap();
+        let s = app.ui.varos_panel_review.as_mut().unwrap();
+        s.layout = layout.clone();
+        let group = layout.group_of("layers").unwrap().id;
+        s.flyout = Some(group);
+        assert!(app.run("window.dock", json!({})).is_err(), "Control does not fit");
+        assert_eq!(state(&app).layout, layout, "Tools was not left registered or shown");
+        assert_eq!(state(&app).flyout, Some(group), "a failed toggle changes nothing");
+        assert!(state(&app).hidden.is_none());
+    }
+
+    #[test]
+    fn close_reset_and_tab_commit_through_one_transaction() {
+        let mut app = app();
+        let group = state(&app).layout.group_of("layers").unwrap().id;
+        app.ui.varos_panel_review.as_mut().unwrap().flyout = Some(group);
+        app.run("window.panel.close", json!({"panel": "swatches"})).unwrap();
+        assert_eq!(state(&app).flyout, None, "closing is structural");
+        assert!(state(&app).layout.owner("swatches").unwrap().hidden);
+        app.run("window.dock", json!({})).unwrap();
+        assert!(state(&app).hidden.is_some());
+        app.run("window.dock", json!({})).unwrap();
+        assert!(state(&app).hidden.is_none(), "the second Tab restores");
+        let before = state(&app).layout.clone();
+        // Unknown panels fail before anything changes.
+        assert!(app.run("window.panel.close", json!({"panel": "nope"})).is_err());
+        assert_eq!(state(&app).layout, before);
+        app.ui.varos_panel_review.as_mut().unwrap().flyout = Some(group);
+        app.run("ui.dock.reset", json!({})).unwrap();
+        assert_eq!(state(&app).layout, Layout::new_workspace());
+        assert_eq!(state(&app).flyout, None, "reset drops every interaction");
     }
 }

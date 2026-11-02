@@ -130,13 +130,14 @@ pub(crate) fn rename_panel(ui: &mut crate::state::UiState, from: &str, to: &str)
     if state.layout.owner(from).is_none() || state.layout.owner(to).is_some() {
         return Ok(());
     }
-    let mut next = state.layout.clone();
-    for host in &mut next.hosts {
-        model::rename_panel(&mut host.root, from, to);
-    }
-    next.validate()?;
-    state.layout = next;
-    Ok(())
+    commands::transact(state, |next| {
+        for host in &mut next.hosts {
+            model::rename_panel(&mut host.root, from, to);
+        }
+        next.validate()?;
+        // Groups and blocks keep their identities: an open flyout stays open.
+        Ok(((), commands::Stale::Nothing))
+    })
 }
 
 /// Forget every library panel outside `kept` (startup restores only persistent libraries).
@@ -151,10 +152,15 @@ pub(crate) fn retain_library_panels(ui: &mut crate::state::UiState, kept: &[Stri
         .filter(|panel| panel.starts_with(crate::panels::library_panel::PREFIX) && !kept.contains(panel))
         .cloned()
         .collect();
-    for panel in stale {
-        // A panel that cannot be detached stays where it is; the layout itself remains valid.
-        let _ = commands::close_panel(&mut state.layout, &panel, true);
-    }
+    // The change below cannot fail, so there is no outcome to report.
+    let _ = commands::transact(state, |next| {
+        for panel in &stale {
+            // A panel that cannot be detached stays where it is; each close is atomic, so the
+            // layout itself remains valid.
+            let _ = commands::close_panel(next, panel, true);
+        }
+        Ok(((), commands::Stale::Flyout))
+    });
 }
 
 /// Is `panel` shown: its block is visible and, in a compact column, its flyout is open.
@@ -433,22 +439,13 @@ struct GestureFrame {
     commit: Option<Result<Vec<Action>, String>>,
 }
 
-/// `layout` with every action applied, or the first failure.
-fn applied(layout: &Layout, actions: &[Action]) -> Result<Layout, String> {
-    let mut next = layout.clone();
-    for action in actions {
-        next.apply(action)?;
-    }
-    Ok(next)
-}
-
 /// Drop `source` on `target`. A block dragged out of a compact flyout lands expanded when it
 /// floats; its new host is found by applying the move to a copy, as the commit will.
 fn move_actions(layout: &Layout, source: &Source, target: Target, from_flyout: bool) -> Result<Vec<Action>, String> {
     let expand = from_flyout && matches!(target, Target::Float { .. });
     let mut actions = vec![Action::Move { source: source.clone(), target }];
     if expand {
-        let moved = applied(layout, &actions)?;
+        let moved = layout.applied(&actions)?;
         let panel = source_panel(layout, source).ok_or("Missing drag payload")?;
         let host = moved.owner(&panel).ok_or("Missing drag payload")?.id;
         actions.push(Action::SetMode { host, mode: Mode::Full });
@@ -462,7 +459,7 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
     match &gesture.kind {
         GestureKind::Move(source) => {
             let position = [(p.x - gesture.grab.x - region.left()).max(0.0), (p.y - gesture.grab.y - region.top()).max(0.0)];
-            let preview = move_actions(layout, source, Target::Float { position }, gesture.from_flyout).and_then(|a| applied(layout, &a)).ok()?;
+            let preview = move_actions(layout, source, Target::Float { position }, gesture.from_flyout).and_then(|a| layout.applied(&a)).ok()?;
             // Commit the visible, constrained origin so collapsing at a workspace edge
             // cannot uncover an off-screen stored position and make the block jump.
             let floating_position = source_panel(layout, source)
@@ -499,7 +496,7 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
                 }
             }
             let actions = vec![Action::Resize { host: *host, position: [r.left() - region.left(), y - region.top()], width, height: height + trim }];
-            Some(GestureFrame { preview: applied(layout, &actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
+            Some(GestureFrame { preview: layout.applied(&actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
         }
         GestureKind::Divider { split, axis, min, max } => {
             let r = gesture.origin;
@@ -509,13 +506,13 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
                 (p.y - r.top()) / (r.height() - model::SPLIT_GAP).max(1.0)
             };
             let actions = vec![Action::SplitRatio { split: *split, ratio: ratio.clamp(*min, *max) }];
-            Some(GestureFrame { preview: applied(layout, &actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
+            Some(GestureFrame { preview: layout.applied(&actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
         }
         GestureKind::ColumnWidth { host, group, left, width } => {
             let delta = p.x - gesture.grab.x - if *left { gesture.origin.left() } else { gesture.origin.right() };
             let width = (*width + if *left { -delta } else { delta }).clamp(1.0, region.width().max(1.0));
             let mut actions = vec![Action::ResizeColumn { group: *group, width }];
-            let resized = applied(layout, &actions).ok()?;
+            let resized = layout.applied(&actions).ok()?;
             // Floating left-edge resizing keeps the block's opposite edge fixed.
             if *left
                 && let Some(original) = layout.host(*host).filter(|h| h.dock.is_none())
@@ -525,7 +522,7 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
                 let position = [(before.right() - after.width() - region.left()).max(0.0), original.position[1]];
                 actions.push(Action::Move { source: Source::Host(*host), target: Target::Float { position } });
             }
-            Some(GestureFrame { preview: applied(layout, &actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
+            Some(GestureFrame { preview: layout.applied(&actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
         }
         GestureKind::Resize { host, left } => {
             let r = gesture.origin;
@@ -551,13 +548,13 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
             let x = if *left { right - width } else { left_edge };
             let height = layout.host(*host).filter(|h| h.dock.is_some()).map_or(r.height(), |h| h.expanded[1]);
             let mut position = [x - region.left(), r.top() - region.top()];
-            let mut preview = applied(layout, &[Action::Resize { host: *host, position, width, height }]).ok()?;
+            let mut preview = layout.applied(&[Action::Resize { host: *host, position, width, height }]).ok()?;
             if *left && layout.host(*host).is_some_and(|h| h.dock.is_none() && model::has_tools(&h.root)) {
                 // Bounding a Tools leaf can reduce the resulting combined width.
                 // Anchor using that final width, then reapply once from the original tree.
                 if let Some(measured) = geometry::measure(&preview, region).iter().find(|h| h.id == *host) {
                     position[0] = (r.right() - measured.rect.width() - region.left()).max(0.0);
-                    preview = applied(layout, &[Action::Resize { host: *host, position, width, height }]).ok()?;
+                    preview = layout.applied(&[Action::Resize { host: *host, position, width, height }]).ok()?;
                 }
             }
             let actions = vec![Action::Resize { host: *host, position, width, height }];
@@ -583,8 +580,7 @@ fn standalone_kind(host: &Host) -> Option<registry::PanelKind> {
 }
 
 fn valid_target(layout: &Layout, source: &Source, target: Target, line: Rect) -> Option<(Target, Option<Rect>)> {
-    let mut next = layout.clone();
-    next.apply(&Action::Move { source: source.clone(), target: target.clone() }).ok()?;
+    layout.applied(&[Action::Move { source: source.clone(), target: target.clone() }]).ok()?;
     Some((target, Some(line)))
 }
 
