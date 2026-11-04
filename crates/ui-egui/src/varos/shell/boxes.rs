@@ -482,10 +482,10 @@ pub(crate) fn panel_body(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, 
 
 fn panel_contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: f32, tall: f32) {
     ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_width: 4.0, floating_width: 2.0, ..egui::style::ScrollStyle::floating() };
-    let style = ui.style_mut();
-    style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(12.0));
-    style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(11.0, egui::FontFamily::Name("ui-medium".into())));
-    style.text_styles.insert(egui::TextStyle::Heading, crate::theme::semibold(14.0));
+    crate::varos::theme_components::FOUNDATION.panel_text(ui);
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Heading, crate::theme::semibold(crate::varos::theme_components::FOUNDATION.panel_heading_font));
     if id == "color" {
         crate::panels::show_icon_panel(app, ui, id);
         return;

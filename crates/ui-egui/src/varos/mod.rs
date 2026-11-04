@@ -57,6 +57,7 @@ mod tests_text_scale;
 #[cfg(test)]
 mod tests_zoom;
 pub mod theme;
+pub(crate) mod theme_components;
 // Varos: General › Smooth Zoom (off: every zoom lands in one frame).
 pub(crate) mod zoom;
 

@@ -3,7 +3,7 @@
 
 pub(crate) const TITLE: f32 = 20.0;
 // Match tab height to the application's standard 24-point controls.
-pub(crate) const TABS: f32 = 24.0;
+pub(crate) const TABS: f32 = crate::varos::theme_components::FOUNDATION.tab_height;
 pub(crate) const ICON: f32 = TOOL_ICON;
 pub(crate) const CONTROL: f32 = 14.0;
 pub(crate) const FOOT: f32 = 6.0;
@@ -14,8 +14,8 @@ pub(crate) const COMPACT: f32 = 44.0;
 /// A compact column at least this wide shows panel names beside their icons.
 pub(crate) const NAMES_MIN_WIDTH: f32 = 72.0;
 
-pub(crate) const FONT: f32 = 12.0;
-pub(crate) const TAB_PAD: f32 = 10.0;
+pub(crate) const FONT: f32 = crate::varos::theme_components::FOUNDATION.panel_body_font;
+pub(crate) const TAB_PAD: f32 = crate::varos::theme_components::FOUNDATION.tab_padding;
 /// A tab's width: its measured label plus padding, kept between these.
 pub(crate) const TAB_MIN_WIDTH: f32 = 62.0;
 pub(crate) const TAB_MAX_WIDTH: f32 = 180.0;

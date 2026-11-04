@@ -230,7 +230,7 @@ pub fn tokens_for(b: Brightness, base: Tokens, default_accent: bool) -> Tokens {
         guide: p.guide,
         measure_bg: p.panel,
         button: p.pressed,
-        radius: 3,
+        radius: crate::varos::theme_components::FOUNDATION.control_radius,
         text_strong: p.text,
         tab_strip: p.tab_bar,
         button_border: p.border_strong,
@@ -245,7 +245,7 @@ pub fn tokens_for(b: Brightness, base: Tokens, default_accent: bool) -> Tokens {
 
 /// All four appearances share box geometry, independent of accent selection.
 pub fn box_radius(_t: &Tokens, _upstream: u8) -> CornerRadius {
-    CornerRadius::same(8)
+    CornerRadius::same(crate::varos::theme_components::FOUNDATION.box_radius)
 }
 pub fn chrome_shadow(_t: &Tokens, _offset: [i8; 2], _blur: u8, _alpha: u8) -> egui::epaint::Shadow {
     egui::epaint::Shadow::NONE
@@ -313,8 +313,8 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
     v.extreme_bg_color = t.input;
     v.faint_bg_color = palette(b).row_stripe();
     v.window_stroke = Stroke::new(1.0, t.border);
-    v.window_corner_radius = CornerRadius::same(8);
-    v.menu_corner_radius = CornerRadius::same(8);
+    v.window_corner_radius = CornerRadius::same(crate::varos::theme_components::FOUNDATION.box_radius);
+    v.menu_corner_radius = CornerRadius::same(crate::varos::theme_components::FOUNDATION.box_radius);
     v.window_shadow = egui::epaint::Shadow::NONE;
     v.popup_shadow = egui::epaint::Shadow::NONE;
     v.override_text_color = Some(t.text);
@@ -336,7 +336,7 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
         widget.weak_bg_fill = fill;
         widget.bg_stroke = Stroke::new(1.0, t.border);
         widget.fg_stroke = Stroke::new(1.0, t.text);
-        widget.corner_radius = CornerRadius::same(3);
+        widget.corner_radius = CornerRadius::same(crate::varos::theme_components::FOUNDATION.control_radius);
         widget.expansion = 0.0;
     }
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, t.text_dim);
@@ -578,7 +578,7 @@ mod tests {
                     assert_eq!(t.panel, p.panel);
                     assert_eq!(t.pasteboard, p.canvas);
                     assert_eq!(t.radius, 3);
-                    assert_eq!(box_radius(&t, 4), CornerRadius::same(8));
+                    assert_eq!(box_radius(&t, 4), CornerRadius::same(crate::varos::theme_components::FOUNDATION.box_radius));
                     assert_eq!(chrome_shadow(&t, [0, 3], 10, 90), egui::epaint::Shadow::NONE);
                     if scheme == Scheme::Modern {
                         let want = if accent == Accent::default() { ACCENT } else { t.with_accent(accent).accent };
@@ -587,7 +587,7 @@ mod tests {
                     let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                         assert_eq!(ui.visuals().window_shadow, egui::epaint::Shadow::NONE);
                         assert_eq!(ui.visuals().popup_shadow, egui::epaint::Shadow::NONE);
-                        assert_eq!(ui.visuals().window_corner_radius, CornerRadius::same(8));
+                        assert_eq!(ui.visuals().window_corner_radius, CornerRadius::same(crate::varos::theme_components::FOUNDATION.box_radius));
                         assert_eq!(ui.visuals().widgets.inactive.corner_radius, CornerRadius::same(3));
                         assert_eq!(ui.visuals().widgets.inactive.bg_fill, p.field);
                         assert_eq!(ui.visuals().widgets.hovered.bg_fill, p.pressed);

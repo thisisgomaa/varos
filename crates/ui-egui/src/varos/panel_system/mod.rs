@@ -1256,3 +1256,6 @@ mod test_support;
 
 #[cfg(test)]
 mod sizing_tests;
+
+#[cfg(test)]
+mod theme_components_tests;

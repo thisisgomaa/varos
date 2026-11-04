@@ -8,7 +8,7 @@ use super::{
     registry::{self, PanelIcon},
 };
 use crate::icons;
-use crate::theme::{self, Tokens};
+use crate::theme::Tokens;
 
 // Keep existing geometry call sites stable while sharing one density source.
 pub(super) use super::metrics::{COMPACT, CONTROL, FOOT, GRIP, ICON, ROW, TABS, TITLE};
@@ -40,28 +40,9 @@ pub(super) fn control(ui: &Ui, rect: Rect, name: &str, hovered: bool) {
 pub(super) fn tab(ui: &Ui, rect: Rect, label: &str, active: bool, hovered: bool) {
     let t = Tokens::get(ui.ctx());
     let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    p.rect_filled(
-        rect,
-        0.0,
-        if active {
-            t.panel
-        } else if hovered {
-            t.hover
-        } else {
-            t.panel_darker
-        },
-    );
-    p.line_segment([pos2(rect.right() - 0.5, rect.top()), pos2(rect.right() - 0.5, rect.bottom())], Stroke::new(metrics::BORDER, t.border));
-    if !active {
-        p.line_segment([pos2(rect.left(), rect.bottom() - 0.5), pos2(rect.right(), rect.bottom() - 0.5)], Stroke::new(metrics::BORDER, t.border));
-    }
-    p.text(
-        pos2(rect.left() + metrics::TAB_PAD, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        tab_font(),
-        if active || hovered { t.text } else { t.text_dim },
-    );
+    let look = &crate::varos::theme_components::FOUNDATION;
+    look.tab_surface(&p, rect, &t, active, hovered);
+    look.tab_label(&p, rect, label, &t, active, hovered);
 }
 
 /// One compact panel row, with an unchanged glyph size when its name becomes visible.
@@ -101,7 +82,7 @@ pub(super) fn label(panel: &str) -> &'static str {
 
 /// The font a tab's label is painted (and measured) in.
 fn tab_font() -> FontId {
-    theme::semibold(metrics::FONT)
+    crate::varos::theme_components::FOUNDATION.tab_font()
 }
 
 /// Every tab width `layout` needs: each panel's localized label measured in the tab font, plus

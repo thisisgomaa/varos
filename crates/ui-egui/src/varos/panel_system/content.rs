@@ -1,5 +1,6 @@
 //! Adapters for the existing Tools and Control contents. The generic host supplies their chrome
 //! and owns grouping, hiding and gestures; these adapters only draw the working controls.
+#[cfg(test)]
 use super::metrics;
 use crate::VectorcraftApp;
 use egui::{Align, Id, Layout, Rect, Ui, UiBuilder, UiStackInfo};
@@ -61,9 +62,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, panel: &str, rect: Rec
             ui.set_clip_rect(rect.intersect(ui.clip_rect()));
             ui.set_min_size(rect.size());
             ui.set_max_size(rect.size());
-            let style = ui.style_mut();
-            style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(metrics::FONT));
-            style.text_styles.insert(egui::TextStyle::Button, egui::FontId::new(11.0, egui::FontFamily::Name("ui-medium".into())));
+            crate::varos::theme_components::FOUNDATION.panel_text(ui);
             match kind {
                 "tools" => super::tools_host::content(app, ui),
                 "control" => {

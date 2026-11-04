@@ -243,15 +243,21 @@ pub(crate) fn paint_tabs(
         let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("document-tab-drag-paint"));
         let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(rect));
         paint_ui.set_clip_rect(strip.intersect(ui.clip_rect()));
-        paint_ui.painter().rect_filled(rect, if shell { 6.0 } else { 0.0 }, Tokens::get(ui.ctx()).app_bar);
+        paint_ui.painter().rect_filled(
+            rect,
+            if shell { f32::from(crate::varos::theme_components::FOUNDATION.tab_radius) } else { 0.0 },
+            Tokens::get(ui.ctx()).app_bar,
+        );
         paint_tab(&paint_ui, rect, galley, shell, Some(index) == active, false, false);
     }
 }
 
 fn paint_tab(ui: &Ui, rect: egui::Rect, galley: &std::sync::Arc<egui::Galley>, shell: bool, active: bool, hovered: bool, close_hovered: bool) {
     let t = Tokens::get(ui.ctx());
-    if active {
-        ui.painter().rect_filled(rect, if shell { 6.0 } else { 0.0 }, if shell { t.hover } else { t.panel });
+    if shell {
+        crate::varos::theme_components::FOUNDATION.tab_surface(ui.painter(), rect, &t, active, hovered);
+    } else if active {
+        ui.painter().rect_filled(rect, 0.0, t.panel);
     } else if hovered {
         ui.painter().rect_filled(rect, 0.0, t.hover.gamma_multiply(0.4));
     }

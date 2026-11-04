@@ -376,7 +376,8 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let shell = crate::varos::shell::enabled(app);
     let (height, title_size) = if shell {
-        (28.0, 11.0)
+        // Varos: shared tab typography and geometry.
+        (crate::varos::theme_components::FOUNDATION.document_tab_height, crate::varos::theme_components::FOUNDATION.tab_font)
     } else if app.session.prefs.large_tabs {
         (44.0, 14.0)
     } else {
@@ -403,7 +404,14 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
                 tab_title(d, zoom, app.ui.view.outline, app.session.prefs.display_print_size)
             };
             let color = if Some(i) == active { t.text_strong } else { t.text_dim };
-            (title.clone(), ui.painter().layout_no_wrap(title, theme::semibold(title_size), color))
+            (
+                title.clone(),
+                ui.painter().layout_no_wrap(
+                    title,
+                    if shell { crate::varos::theme_components::FOUNDATION.tab_font() } else { theme::semibold(title_size) },
+                    color,
+                ),
+            )
         })
         .collect();
     let widths: Vec<f32> = tabs.iter().map(|(_, g)| g.size().x + if shell { 46.0 } else { 50.0 }).collect();
@@ -2723,9 +2731,13 @@ fn simple_app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let mut right = ui.new_child(egui::UiBuilder::new().max_rect(available).layout(egui::Layout::right_to_left(egui::Align::Center)));
                 simple_app_bar_right(app, &mut right);
                 let right_left = right.min_rect().left().min(available.right());
+                // Varos: the containing clip follows the shared document tab height.
                 let tabs = egui::Rect::from_min_max(
-                    egui::pos2(available.left(), available.center().y - 14.0),
-                    egui::pos2((right_left - 8.0).max(available.left()), available.center().y + 14.0),
+                    egui::pos2(available.left(), available.center().y - crate::varos::theme_components::FOUNDATION.document_tab_height / 2.0),
+                    egui::pos2(
+                        (right_left - 8.0).max(available.left()),
+                        available.center().y + crate::varos::theme_components::FOUNDATION.document_tab_height / 2.0,
+                    ),
                 );
                 #[cfg(test)]
                 ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("simple-tabs-rect"), tabs));
