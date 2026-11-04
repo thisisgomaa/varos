@@ -104,7 +104,9 @@ impl Foundation {
     pub fn panel_text(&self, ui: &mut egui::Ui) {
         let style = ui.style_mut();
         style.text_styles.insert(egui::TextStyle::Body, FontId::proportional(self.panel_body_font));
-        style.text_styles.insert(egui::TextStyle::Button, FontId::new(self.control_font, egui::FontFamily::Name("ui-medium".into())));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, FontId::new(self.control_font, egui::FontFamily::Name(crate::theme::FONT_UI_MEDIUM.into())));
     }
     /// Visuals only: no interaction allocation or keyboard/focus side effects.
     pub fn tab_surface(&self, p: &Painter, rect: Rect, t: &Tokens, active: bool, hovered: bool) {

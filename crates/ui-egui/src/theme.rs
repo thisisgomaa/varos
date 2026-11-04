@@ -485,7 +485,7 @@ pub fn card<R>(ui: &mut egui::Ui, t: &Tokens, margin: egui::Margin, body: impl F
 }
 
 /// The corner radius of [`card`]s and floating windows.
-pub const CARD_RADIUS: u8 = 8;
+pub const CARD_RADIUS: u8 = crate::varos::theme_components::FOUNDATION.box_radius; // Varos: shared floating box geometry.
 
 /// Selected text in the text fields `ui` draws from here on is in the strong text colour. egui
 /// paints it in the selection stroke's colour, the accent, which is hard to read on the selection's
@@ -497,6 +497,7 @@ pub fn strong_selected_text(ui: &mut egui::Ui) {
 
 pub const FONT_UI: &str = "ui";
 pub const FONT_UI_SEMIBOLD: &str = "ui-semibold";
+pub const FONT_UI_MEDIUM: &str = crate::varos::theme::FONT_UI_MEDIUM; // Varos: one medium-role identity.
 pub const FONT_MONO: &str = "mono";
 
 pub fn semibold(size: f32) -> FontId {
@@ -507,7 +508,7 @@ pub fn mono(size: f32) -> FontId {
 }
 
 /// Installs the interface's fonts and binds the families the panels and dialogs draw in
-/// ([`FONT_UI`], [`FONT_UI_SEMIBOLD`], [`FONT_MONO`]). egui 0.37 only bundles its own faces when
+/// ([`FONT_UI`], [`FONT_UI_MEDIUM`], [`FONT_UI_SEMIBOLD`], [`FONT_MONO`]). egui 0.37 only bundles its own faces when
 /// its `default_fonts` feature is on (this crate enables it); without any face a family lays out
 /// tofu, and the `egui_kittest` harness alone panics on a missing glyph. Every context that shows
 /// these families needs this once: [`crate::VectorcraftApp::ui`] calls it on its first pass, and

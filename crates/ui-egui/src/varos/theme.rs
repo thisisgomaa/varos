@@ -13,6 +13,8 @@ const fn rgb(hex: u32) -> Color32 {
 pub const ACCENT: Color32 = rgb(0x0c8ce9);
 /// Text and glyphs on an [`ACCENT`] fill.
 pub const ACCENT_ON: Color32 = Color32::WHITE;
+/// Medium-weight interface role, sharing the regular UI fallback chain.
+pub const FONT_UI_MEDIUM: &str = "ui-medium";
 /// Owner 2026-10-08: azure is the person's selection and focus; AGENT (orange, #F29A3E since the
 /// 2026-10-28 colour round) is anything an agent is doing: the artboard it works on, the objects it
 /// adds, its rows in the History panel.
@@ -285,10 +287,12 @@ pub fn register_fonts(fonts: &mut FontDefinitions) {
         }
         fonts.font_data.insert(name.into(), Arc::new(data));
     }
+    let fallback = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    fonts.families.entry(FontFamily::Name(FONT_UI_MEDIUM.into())).or_insert(fallback);
     for (family, face) in [
         (FontFamily::Proportional, "Varos Inter"),
         (FontFamily::Name(FONT_UI.into()), "Varos Inter"),
-        (FontFamily::Name("ui-medium".into()), "Varos Inter Medium"),
+        (FontFamily::Name(FONT_UI_MEDIUM.into()), "Varos Inter Medium"),
         (FontFamily::Name(FONT_UI_SEMIBOLD.into()), "Varos Inter Semibold"),
         (FontFamily::Monospace, "Varos Mono"),
         (FontFamily::Name(FONT_MONO.into()), "Varos Mono"),
@@ -332,8 +336,8 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
     v.error_fg_color = t.error;
     v.selection.bg_fill = t.accent;
     v.selection.stroke = Stroke::new(1.0, t.text);
-    // egui's own widgets follow Figma's controls: field tone at rest, one step up (pressed) on
-    // hover and press (Figma's hover tone equals its field tone, so it cannot mark a field's hover).
+    // Base field/widget visuals retain the field and pressed tones. The ButtonStyle provider
+    // below gives ordinary actions their shared button/hover/pressed roles.
     for (widget, fill) in [
         (&mut v.widgets.noninteractive, t.panel),
         (&mut v.widgets.inactive, t.input),
@@ -362,7 +366,7 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
             (egui::TextStyle::Body, egui::FontId::proportional(crate::varos::theme_components::FOUNDATION.body_font)),
             (
                 egui::TextStyle::Button,
-                egui::FontId::new(crate::varos::theme_components::FOUNDATION.button_font, FontFamily::Name("ui-medium".into())),
+                egui::FontId::new(crate::varos::theme_components::FOUNDATION.button_font, FontFamily::Name(FONT_UI_MEDIUM.into())),
             ),
             (egui::TextStyle::Heading, crate::theme::semibold(crate::varos::theme_components::FOUNDATION.heading_font)),
             (egui::TextStyle::Monospace, crate::theme::mono(crate::varos::theme_components::FOUNDATION.metadata_font)),
@@ -449,6 +453,20 @@ mod tests {
         };
         let (a, b) = (luminance(a), luminance(b));
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn medium_interface_role_inherits_every_regular_fallback() {
+        let mut definitions = FontDefinitions::default();
+        let fallback = definitions.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+        assert!(!fallback.is_empty());
+        register_fonts(&mut definitions);
+        let medium = definitions.families.get(&FontFamily::Name(FONT_UI_MEDIUM.into())).expect("medium role");
+        assert_eq!(medium.first().map(String::as_str), Some("Varos Inter Medium"));
+        assert_eq!(medium.get(1).map(String::as_str), Some("Varos Arabic"));
+        for face in fallback {
+            assert!(medium.contains(&face), "missing fallback {face}");
+        }
     }
 
     /// The brief's two endpoints, value by value: the owner wants this exact palette.

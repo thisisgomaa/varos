@@ -357,6 +357,7 @@ fn bundled_fonts_cover_the_catalogs() {
             egui::FontFamily::Proportional,
             egui::FontFamily::Name(crate::theme::FONT_UI.into()),
             egui::FontFamily::Name(crate::theme::FONT_UI_SEMIBOLD.into()),
+            egui::FontFamily::Name(crate::theme::FONT_UI_MEDIUM.into()), // Varos: buttons share full catalog coverage.
             egui::FontFamily::Name(crate::theme::FONT_MONO.into()),
         ];
         for l in LANGUAGES.iter().filter(|l| !l.source.is_empty()) {
