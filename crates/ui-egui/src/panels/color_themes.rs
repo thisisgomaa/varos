@@ -4,6 +4,7 @@
 //! saved, edited, deleted and added to Swatches as colour groups through `colorTheme.*`; the theme
 //! being made is panel state.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Rect, Sense, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::Color;
@@ -131,7 +132,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let cur = tab(&ctx);
         for (i, label) in [tl!("Create"), tl!("My Themes")].into_iter().enumerate() {
-            if ui.selectable_label(cur == i, egui::RichText::new(label).font(theme::semibold(12.5))).clicked() {
+            if ui.selectable_label(cur == i, egui::RichText::new(label).font(theme::semibold(VAROS_UI.legacy_control_font))).clicked() {
                 set_pstate(&ctx, "ct-tab", i);
             }
         }
@@ -177,10 +178,15 @@ fn create(app: &mut VectorcraftApp, ui: &mut Ui) {
     for (i, c) in d.colors.iter().enumerate() {
         let r = Rect::from_min_size(row.min + vec2(i as f32 * cw, 0.0), vec2(cw - 3.0, row.height()));
         let resp = ui.interact(r, ui.scope_id().with(("ct-chip", i)), Sense::click());
-        ui.painter().rect_filled(r, 2.0, c32(c));
-        ui.painter().rect_stroke(r, 2.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+        ui.painter().rect_filled(r, f32::from(VAROS_UI.preview_radius), c32(c));
+        ui.painter().rect_stroke(r, f32::from(VAROS_UI.preview_radius), egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
         if i == d.sel {
-            ui.painter().rect_stroke(r.expand(1.5), 3.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Outside);
+            ui.painter().rect_stroke(
+                r.expand(1.5),
+                f32::from(VAROS_UI.preview_radius.saturating_add(1)),
+                egui::Stroke::new(1.5, t.accent),
+                egui::StrokeKind::Outside,
+            );
         }
         if resp.on_hover_text(c.to_hex()).clicked() {
             d.sel = i;
@@ -258,7 +264,13 @@ fn my_themes(app: &mut VectorcraftApp, ui: &mut Ui) {
                         ui.painter().rect_filled(r, 0.0, t.hover);
                     }
                     let inner = r.shrink2(vec2(6.0, 4.0));
-                    ui.painter().text(inner.left_top(), egui::Align2::LEFT_TOP, &th.name, egui::FontId::proportional(12.0), t.text);
+                    ui.painter().text(
+                        inner.left_top(),
+                        egui::Align2::LEFT_TOP,
+                        &th.name,
+                        egui::FontId::proportional(VAROS_UI.panel_body_font),
+                        t.text,
+                    );
                     let strip = Rect::from_min_max(inner.left_bottom() - vec2(0.0, 18.0), inner.right_bottom());
                     let w = strip.width() / th.colors.len().max(1) as f32;
                     for (i, c) in th.colors.iter().enumerate() {

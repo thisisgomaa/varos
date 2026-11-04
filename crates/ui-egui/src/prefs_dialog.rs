@@ -6,6 +6,7 @@
 //! Varos: Preferences is a modeless window with Apply, and OK applies only what the user edited
 //! (`varos::preferences`, reached through the marked hooks below).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use serde_json::{Map, Value, json};
 use vectorcraft_engine::Prefs;
 use vectorcraft_engine::cmd::prefscmds::{GPU_PREFERENCES, PREF_CATEGORIES, PREF_GROUPS, PREF_SPECS, PrefKind};
@@ -201,7 +202,7 @@ pub(crate) fn category_fields(ui: &mut egui::Ui, d: &mut Edit, cat: &str) {
                 if !first {
                     ui.add_space(8.0);
                 }
-                ui.label(egui::RichText::new(tl!(section)).font(theme::semibold(12.5)).color(t.text_strong));
+                ui.label(egui::RichText::new(tl!(section)).font(theme::semibold(VAROS_UI.legacy_control_font)).color(t.text_strong));
                 ui.add_space(2.0);
             }
         }
@@ -222,7 +223,7 @@ pub(crate) fn category_fields(ui: &mut egui::Ui, d: &mut Edit, cat: &str) {
                 if cfg!(all(not(target_arch = "wasm32"), not(target_os = "macos"))) {
                     bool_row(ui, d, sp.key, sp.label);
                     // The window's decorations are chosen once, when the app starts.
-                    ui.label(egui::RichText::new(tl!("Applies the next time VectorCraft starts.")).color(t.text_dim).size(11.0));
+                    ui.label(egui::RichText::new(tl!("Applies the next time VectorCraft starts.")).color(t.text_dim).size(VAROS_UI.control_font));
                 }
             }
             // Varos: Panel cards (Varos) under Auto-Collapse Iconic Panels, which it sits beside.
@@ -279,14 +280,14 @@ pub(crate) fn category_fields(ui: &mut egui::Ui, d: &mut Edit, cat: &str) {
                 choice_row(ui, d, sp.key, sp.label, opts, &v);
                 if sp.key == "gpuPreference" || sp.key == "linuxDisplayServer" {
                     // The window's graphics device and display server are chosen once, when the app starts.
-                    ui.label(egui::RichText::new(tl!("Applies the next time VectorCraft starts.")).color(t.text_dim).size(11.0));
+                    ui.label(egui::RichText::new(tl!("Applies the next time VectorCraft starts.")).color(t.text_dim).size(VAROS_UI.control_font));
                 }
                 if sp.key == "linuxDisplayServer" {
                     // Many Wayland desktops give a drawing tablet's pen to the window only through XWayland (#2028).
                     ui.label(
                         egui::RichText::new(tl!("If a drawing tablet's pen doesn't draw, choose an X11 (XWayland) option."))
                             .color(t.text_dim)
-                            .size(11.0),
+                            .size(VAROS_UI.control_font),
                     );
                 }
             }
@@ -298,7 +299,7 @@ pub(crate) fn category_fields(ui: &mut egui::Ui, d: &mut Edit, cat: &str) {
                     if ui.color_edit_button_srgb(&mut rgb).changed() {
                         d.set(sp.key, json!(format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2])));
                     }
-                    ui.label(egui::RichText::new(hex).color(t.text_dim).size(11.0));
+                    ui.label(egui::RichText::new(hex).color(t.text_dim).size(VAROS_UI.control_font));
                 });
             }
             PrefKind::Text if sp.key == "interfaceLanguage" => {

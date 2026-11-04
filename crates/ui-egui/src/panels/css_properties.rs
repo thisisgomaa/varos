@@ -5,6 +5,7 @@
 //! (`css.exportFile`). The panel menu holds the export options (units, absolute position, width
 //! and height, unnamed objects, rasterize), which all of these use.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat};
@@ -142,7 +143,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         .chain(shown.warnings.iter().map(|w| sentence(w)));
     let dim = Tokens::get(&ctx).text_dim;
     for n in notes {
-        ui.add(egui::Label::new(egui::RichText::new(n).size(11.0).color(dim)).wrap());
+        ui.add(egui::Label::new(egui::RichText::new(n).size(VAROS_UI.control_font).color(dim)).wrap());
     }
     let has_css = shown.rules > 0;
     let scope = if all { "all" } else { "selection" };

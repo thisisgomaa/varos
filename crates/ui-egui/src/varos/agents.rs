@@ -319,8 +319,13 @@ pub(crate) fn paint(app: &mut VectorcraftApp, painter: &egui::Painter, xf: &Xf) 
             let galley = painter.layout_no_wrap(label.clone(), egui::FontId::proportional(AGENT_LABEL_TEXT), t.text);
             let size = egui::vec2(galley.size().x + AGENT_LABEL_PAD * 2.0, AGENT_LABEL_H);
             let chip = egui::Rect::from_min_size(egui::pos2(r.right() - size.x, top - AGENT_LABEL_H), size);
-            painter.rect_filled(chip, CornerRadius::same(3), t.panel);
-            painter.rect_stroke(chip, CornerRadius::same(3), Stroke::new(1.0, AGENT), StrokeKind::Inside);
+            painter.rect_filled(chip, CornerRadius::same(crate::varos::theme_components::FOUNDATION.control_radius), t.panel);
+            painter.rect_stroke(
+                chip,
+                CornerRadius::same(crate::varos::theme_components::FOUNDATION.control_radius),
+                Stroke::new(1.0, AGENT),
+                StrokeKind::Inside,
+            );
             painter.galley(egui::pos2(chip.left() + AGENT_LABEL_PAD, chip.center().y - galley.size().y / 2.0), galley, t.text);
             top -= AGENT_LABEL_H + AGENT_LABEL_GAP;
         }

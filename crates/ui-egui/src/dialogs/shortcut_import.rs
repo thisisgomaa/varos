@@ -18,6 +18,7 @@
 //! to), `__recording` (the key code waiting for a key press), `__keysOpen` (the Keys section is open:
 //! at first when a code is not known), and `__query` and `__attention` (the filter of the rows shown).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
@@ -677,7 +678,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 "Each entry of the file is matched to a VectorCraft tool, command or panel. Check the matches and answer what is left."
             ))
             .color(t.text_dim)
-            .size(11.5),
+            .size(VAROS_UI.metadata_font),
         );
         lists = keys_section(ui, &mut d, &mut review, keys_h) + rows_section(ui, &mut d, &mut review, &statuses, rows_h);
         ui.add_space(8.0);
@@ -708,7 +709,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             summary.push_str(" · ");
             summary.push_str(tl!("The file is too large to read in full, so only its first part is listed."));
         }
-        ui.label(egui::RichText::new(summary).color(t.text_dim).size(11.5));
+        ui.label(egui::RichText::new(summary).color(t.text_dim).size(VAROS_UI.metadata_font));
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if widgets::secondary_button(ui, tl!("Copy Report")).clicked() {
@@ -776,7 +777,7 @@ fn keys_section(ui: &mut egui::Ui, d: &mut Dialog, review: &mut Review, height: 
             "The file writes keys and modifiers as codes. Check the proposed meanings and answer the codes that are not known yet."
         ))
         .color(t.text_dim)
-        .size(11.5),
+        .size(VAROS_UI.metadata_font),
     );
     let recording = d.str("__recording");
     let list = egui::Frame::NONE.fill(t.input).stroke(egui::Stroke::new(1.0, t.input_border)).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
@@ -846,10 +847,10 @@ fn code_notes(ui: &mut egui::Ui, c: &Code) {
     let t = Tokens::get(ui.ctx());
     let from = source(c);
     if !from.is_empty() {
-        ui.label(egui::RichText::new(from).color(t.text_dim).size(11.0));
+        ui.label(egui::RichText::new(from).color(t.text_dim).size(VAROS_UI.control_font));
     }
     let names = c.names.join(", ");
-    ui.add(egui::Label::new(egui::RichText::new(names).color(t.text_dim).size(11.0).italics()).truncate());
+    ui.add(egui::Label::new(egui::RichText::new(names).color(t.text_dim).size(VAROS_UI.control_font).italics()).truncate());
 }
 
 /// The rows: a check box, the name as the file writes it, what it stands for in VectorCraft (a
@@ -889,9 +890,9 @@ fn rows_section(ui: &mut egui::Ui, d: &mut Dialog, review: &mut Review, statuses
         ui.horizontal(|ui| {
             ui.add_space(22.0);
             for (label, w) in [(tl!("In the File"), NAME_W), (tl!("In VectorCraft"), TARGET_W), (tl!("Shortcut"), CHORD_W)] {
-                cell(ui, w, |ui| ui.label(egui::RichText::new(label).color(t.text_dim).size(11.0)));
+                cell(ui, w, |ui| ui.label(egui::RichText::new(label).color(t.text_dim).size(VAROS_UI.control_font)));
             }
-            ui.label(egui::RichText::new(tl!("Status")).color(t.text_dim).size(11.0));
+            ui.label(egui::RichText::new(tl!("Status")).color(t.text_dim).size(VAROS_UI.control_font));
         });
         scrolling_list("shortcut-import-rows", height).auto_shrink([false, false]).show_rows(ui, ROW_H, visible.len(), |ui, range| {
             for i in range.filter_map(|v| visible.get(v).copied()) {
@@ -915,7 +916,7 @@ fn rows_section(ui: &mut egui::Ui, d: &mut Dialog, review: &mut Review, statuses
                         Status::Off | Status::NoEquivalent => t.text_dim,
                         _ => t.warning,
                     };
-                    ui.add(egui::Label::new(egui::RichText::new(status.label()).color(color).size(11.5)).truncate());
+                    ui.add(egui::Label::new(egui::RichText::new(status.label()).color(color).size(VAROS_UI.metadata_font)).truncate());
                 });
             }
         })

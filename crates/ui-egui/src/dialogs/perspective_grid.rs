@@ -12,6 +12,7 @@
 //! the preset), plus `__mode` (`save`, `edit` or none for Define Grid), `__from` (`define`: Save
 //! Preset… returns to Define Grid) and `__original` (the saved preset an edit changes).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_doc::Unit;
 use vectorcraft_tools::distort::perspective::define::is_builtin;
@@ -192,9 +193,9 @@ fn color(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
     widgets::label_row(ui, label, LABEL, |ui| {
         let (chip, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
         if let Some(Rgb([r, g, b])) = cur {
-            ui.painter().rect_filled(chip, 2.0, egui::Color32::from_rgb(r, g, b));
+            ui.painter().rect_filled(chip, f32::from(VAROS_UI.preview_radius), egui::Color32::from_rgb(r, g, b));
         }
-        ui.painter().rect_stroke(chip, 2.0, egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(chip, f32::from(VAROS_UI.preview_radius), egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
         let hex = cur.map(|c| c.hex()).unwrap_or_default();
         if let Some(c) = widgets::hex_field(ui, ("persp-color", key), hex.trim_start_matches('#')).as_deref().and_then(Rgb::parse) {
             d.fields.insert(key.into(), json!(c.hex()));
@@ -303,7 +304,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             &[("unit", unit.suffix()), ("real", &real.to_string())],
         );
         widgets::label_row(ui, "", LABEL, |ui| {
-            ui.label(egui::RichText::new(note).size(11.5).color(t.text_dim));
+            ui.label(egui::RichText::new(note).size(VAROS_UI.metadata_font).color(t.text_dim));
         });
     }
     ui.add_space(4.0);

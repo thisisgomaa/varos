@@ -8,6 +8,8 @@
 //! and tab row by a double-click on a tab. A floating strip has the same title strip with `×` and
 //! `>>` (each of its groups becomes a floating panel); its icons open flyouts beside it.
 
+use crate::varos::theme_components::FOUNDATION as LOOK;
+
 use egui::{CornerRadius, Id, LayerId, Order, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +22,7 @@ use crate::VectorcraftApp;
 use crate::theme::Tokens;
 
 /// The title strip's height (floating panels).
-pub(crate) const TITLE: f32 = 18.0;
+pub(crate) const TITLE: f32 = LOOK.floating_title_height;
 /// A lone-icon pill: a 16-point grip row (`>>` lives there, clear of the tiles), then 28-point
 /// tiles with 2-point gaps, then 6 points.
 pub(crate) const PILL_GRIP: f32 = 16.0;
@@ -163,7 +165,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, hi
 fn button(ui: &mut egui::Ui, rect: Rect, id: Id, glyph: &str, label: &str, t: &Tokens) -> bool {
     let response = ui.interact(rect, id, Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(3), t.hover);
+        ui.painter().rect_filled(rect, CornerRadius::same(LOOK.control_radius), t.hover);
     }
     let color = if response.hovered() { t.text_strong } else { t.text_dim };
     crate::icons::paint(

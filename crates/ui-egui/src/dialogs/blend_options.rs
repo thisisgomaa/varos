@@ -8,6 +8,7 @@
 //! `orientation` (`page` | `path`), `preview`, and `__target` (`blend` or `defaults`, from
 //! `object.blend.info`).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{CornerRadius, Sense, Stroke, Vec2, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -112,7 +113,7 @@ pub(crate) fn orientation_button(ui: &mut egui::Ui, along: bool, selected: bool,
     } else {
         egui::Color32::TRANSPARENT
     };
-    ui.painter().rect_filled(rect, CornerRadius::same(3), bg);
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_UI.control_radius), bg);
     let color = if selected { t.text } else { t.icon };
     // An arch through the button: y = c + a·x² with x in -1..1.
     let c = rect.center() + vec2(0.0, -2.0);

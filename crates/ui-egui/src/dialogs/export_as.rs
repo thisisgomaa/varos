@@ -7,6 +7,7 @@
 //! installed exporter plug-ins come after the built-in ones: they write the whole document, and one
 //! with parameters asks for them before writing (`plugin::open_export`).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::LazyLock;
 
 use serde_json::{Value, json};
@@ -121,7 +122,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         (true, _) => crate::i18n::fmt(tl!("One file per artboard: <name>-<artboard>.{ext}"), &[("ext", ext)]),
         (false, _) => tl!("The bounds of the visible art.").to_string(),
     };
-    ui.label(egui::RichText::new(hint).color(t.text_dim).size(11.5));
+    ui.label(egui::RichText::new(hint).color(t.text_dim).size(VAROS_UI.metadata_font));
     false
 }
 

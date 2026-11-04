@@ -8,6 +8,8 @@
 //! The row is one line: too many tabs scroll sideways with the wheel or trackpad and with a
 //! middle-button drag; `‹` / `›` at its ends show there is more. The front workspace is lit.
 
+use crate::varos::theme_components::FOUNDATION as LOOK;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -337,7 +339,7 @@ fn leave(app: &mut VectorcraftApp) {
 pub(crate) fn switcher(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let current = crate::varos::panel_system::workspace::current(app).map(str::to_owned).unwrap_or_else(|| app.ui.varos_shell.workspace.clone());
     let t = crate::theme::Tokens::get(ui.ctx());
-    let mut job = egui::text::LayoutJob::simple(label(&current), egui::FontId::proportional(11.0), t.text, 128.0);
+    let mut job = egui::text::LayoutJob::simple(label(&current), egui::FontId::proportional(LOOK.control_font), t.text, 128.0);
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     job.wrap.overflow_character = Some('…');
@@ -346,7 +348,7 @@ pub(crate) fn switcher(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     #[cfg(test)]
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("simple-workspace-rect"), rect));
     if response.hovered() {
-        ui.painter().rect_filled(rect, 6.0, t.hover);
+        ui.painter().rect_filled(rect, f32::from(LOOK.control_radius), t.hover);
     }
     ui.painter().galley(rect.left_center() + egui::vec2(8.0, -galley.size().y / 2.0), galley, t.text);
     crate::icons::paint(

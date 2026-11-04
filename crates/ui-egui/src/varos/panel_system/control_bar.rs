@@ -83,7 +83,11 @@ fn quick_button(ui: &mut Ui, key: &str, label: &str, selected: bool) -> egui::Re
     let (rect, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
     let response = ui.interact(rect, ui.make_persistent_id(("control-quick", key)), Sense::click());
     if selected || response.hovered() {
-        ui.painter().rect_filled(rect.shrink(2.0), 3.0, if selected { t.tool_active } else { t.hover });
+        ui.painter().rect_filled(
+            rect.shrink(2.0),
+            f32::from(crate::varos::theme_components::FOUNDATION.control_radius),
+            if selected { t.tool_active } else { t.hover },
+        );
     }
     let color = if selected { t.text_strong } else { t.icon };
     let glyph = rect.shrink(6.0);

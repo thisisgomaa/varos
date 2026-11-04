@@ -1,5 +1,6 @@
 //! The Properties panel: context-sensitive sections like Illustrator's.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::Ui;
 use serde_json::json;
 use vectorcraft_color::{Color, Paint};
@@ -25,7 +26,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Edit Artboards (the Artboard tool): the active artboard, whatever is selected.
     let editing_artboards = app.session.tool_id() == "artboard";
     let label = selection_label(app, first.as_ref(), n_sel);
-    ui.label(egui::RichText::new(label).size(11.5).color(t.text_dim));
+    ui.label(egui::RichText::new(label).size(VAROS_UI.metadata_font).color(t.text_dim));
     ui.add_space(4.0);
     if editing_artboards {
         artboard_sections(app, ui);
@@ -334,7 +335,7 @@ fn image_section_in(app: &mut VectorcraftApp, ui: &mut Ui, header: bool) {
     if header {
         section_header(ui, if linked { tl!("Linked File") } else { tl!("Embedded Image") });
     }
-    ui.add(egui::Label::new(egui::RichText::new(&name).size(12.0).color(t.text_strong)).truncate());
+    ui.add(egui::Label::new(egui::RichText::new(&name).size(VAROS_UI.panel_body_font).color(t.text_strong)).truncate());
     dim_label(ui, &details);
     ui.add_space(4.0);
     let w = (ui.available_width() - 6.0) / 2.0;
@@ -881,7 +882,7 @@ fn appearance_section_in(app: &mut VectorcraftApp, ui: &mut Ui, header: bool) {
     width_profile_row(app, ui);
     let fw = super::field_width(ui);
     ui.horizontal(|ui| {
-        widgets::field_label(ui, egui::RichText::new(tl!("Opacity")).size(12.0));
+        widgets::field_label(ui, egui::RichText::new(tl!("Opacity")).size(VAROS_UI.panel_body_font));
         ui.add_space(8.0);
         if let Some(o) = widgets::range_field(ui, "ap-op", n.opacity as f64 * 100.0, 0.0..=100.0, "%", 0, fw) {
             app.run("object.setProps", json!({"opacity": o})).ok();
@@ -922,7 +923,9 @@ fn effect_delete(app: &mut VectorcraftApp, ui: &mut Ui, id: vectorcraft_doc::Nod
             let name = super::appearance::shown_effect_label(effect);
             // A long name is cut short before the Delete and Appearance panel icons.
             let room = (ui.available_width() - 2.0 * (22.0 + ui.spacing().item_spacing.x)).max(0.0);
-            ui.allocate_ui(egui::vec2(room, 22.0), |ui| ui.add(egui::Label::new(egui::RichText::new(name).size(12.0).color(t.text)).truncate()));
+            ui.allocate_ui(egui::vec2(room, 22.0), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(name).size(VAROS_UI.panel_body_font).color(t.text)).truncate())
+            });
             if widgets::icon_button(ui, "trash-2", tl!("Remove Effect"), false, 22.0).clicked() {
                 app.run("effect.remove", json!({"ids": [id.0], "item": item, "index": k})).ok();
             }
@@ -961,7 +964,7 @@ fn fill_stroke_rows(app: &mut VectorcraftApp, ui: &mut Ui) {
     let fw = super::field_width(ui);
     ui.horizontal(|ui| {
         super::paint_chip(app, ui, false, 22.0, true);
-        ui.label(egui::RichText::new(tl!("Fill")).size(12.0).color(t.text));
+        ui.label(egui::RichText::new(tl!("Fill")).size(VAROS_UI.panel_body_font).color(t.text));
     });
     ui.horizontal(|ui| {
         super::paint_chip(app, ui, true, 22.0, true);
@@ -1364,12 +1367,12 @@ fn section(ui: &mut Ui, instance: &str, id: SectionId, title: &str, collapsed: b
     let grip_response = movable.then(|| ui.interact(grip, egui::Id::unique("varos-props-grip").with((instance, id)), egui::Sense::click_and_drag()));
     let painter = ui.painter().clone();
     if response.hovered() || grip_response.as_ref().is_some_and(egui::Response::hovered) {
-        painter.rect_filled(header, 3.0, t.hover);
+        painter.rect_filled(header, f32::from(VAROS_UI.control_radius), t.hover);
     }
     let chevron = egui::Rect::from_center_size(egui::pos2(header.left() + 8.0, header.center().y), egui::vec2(12.0, 12.0));
     icons::paint(ui, if collapsed { "chevron-right" } else { "chevron-down" }, chevron, if response.hovered() { t.text_strong } else { t.icon });
     let room = egui::Rect::from_min_max(egui::pos2(header.left() + 18.0, header.top()), egui::pos2(grip.left(), header.bottom()));
-    let galley = painter.layout_no_wrap(title.to_string(), crate::theme::semibold(11.0), t.text_strong);
+    let galley = painter.layout_no_wrap(title.to_string(), crate::theme::semibold(VAROS_UI.control_font), t.text_strong);
     painter.with_clip_rect(room.intersect(painter.clip_rect())).galley(
         egui::pos2(room.left(), room.center().y - galley.size().y / 2.0),
         galley,
@@ -1411,7 +1414,7 @@ pub(crate) fn show_editor(app: &mut VectorcraftApp, ui: &mut Ui, instance: &str,
     let first = st.selection.objects.first().and_then(|id| st.doc.node(*id)).cloned();
     let kind = selection_label(app, first.as_ref(), st.selection.len());
     let line = format!("{} · {kind}", tl!("Following selection"));
-    ui.label(egui::RichText::new(line).size(11.0).color(t.text_dim));
+    ui.label(egui::RichText::new(line).size(VAROS_UI.control_font).color(t.text_dim));
     ui.add_space(4.0);
     draw_sections(app, ui, instance, view);
 }
@@ -1484,7 +1487,7 @@ fn section_drag(ctx: &egui::Context, view: &mut PropertiesView, d: &SectionDrag,
     let accent = crate::varos::theme::ACCENT;
     let t = Tokens::get(ctx);
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("varos-props-section-preview")));
-    painter.rect_stroke(sections[from].header, 3.0, egui::Stroke::new(1.0, accent), egui::StrokeKind::Inside);
+    painter.rect_stroke(sections[from].header, f32::from(VAROS_UI.control_radius), egui::Stroke::new(1.0, accent), egui::StrokeKind::Inside);
     if let Some(k) = target {
         let y = match (k.checked_sub(1).and_then(|j| sections.get(j)), sections.get(k)) {
             (Some(above), Some(below)) => f32::midpoint(above.whole.bottom(), below.whole.top()),
@@ -1498,8 +1501,8 @@ fn section_drag(ctx: &egui::Context, view: &mut PropertiesView, d: &SectionDrag,
     }
     let ghost = egui::Rect::from_min_size(p - d.grab, d.size);
     let fade = |c: egui::Color32| c.gamma_multiply(0.7);
-    painter.rect_filled(ghost, 3.0, fade(t.button));
-    let galley = painter.layout_no_wrap(d.title.clone(), crate::theme::semibold(11.0), fade(t.text_strong));
+    painter.rect_filled(ghost, f32::from(VAROS_UI.control_radius), fade(t.button));
+    let galley = painter.layout_no_wrap(d.title.clone(), crate::theme::semibold(VAROS_UI.control_font), fade(t.text_strong));
     painter.with_clip_rect(ghost).galley(egui::pos2(ghost.left() + 18.0, ghost.center().y - galley.size().y / 2.0), galley, fade(t.text_strong));
     hits.ghost = Some(ghost);
     ctx.set_cursor_icon(egui::CursorIcon::Grabbing);

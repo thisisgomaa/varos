@@ -10,6 +10,7 @@
 //! shows a lock on a locked artboard, and a click there locks or unlocks the artboard
 //! (`artboard.setProps` with `locked`); Delete leaves locked artboards.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Sense, Ui, pos2, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::Color;
@@ -75,7 +76,7 @@ pub(crate) fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) -> bool {
     ui.separator();
     // The field shows the name as it is (names are never translated). A new name is applied on Enter
     // or a click elsewhere, and an empty field or Escape keeps the old one, as in the Properties panel.
-    ui.label(egui::RichText::new(tl!("Name:")).size(12.0).color(t.text));
+    ui.label(egui::RichText::new(tl!("Name:")).size(VAROS_UI.panel_body_font).color(t.text));
     if let Some(name) = widgets::text_field_named(ui, ("cb-ab", "name"), Some(tl!("Name:")), Some(&ab.name), 120.0, 1).filter(|n| !n.is_empty()) {
         app.run("artboard.setProps", json!({"index": i, "name": name})).ok();
     }
@@ -104,7 +105,7 @@ pub(crate) fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) -> bool {
         if k == "height" {
             super::transform::constrain_link(app, ui);
         }
-        widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
+        widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(VAROS_UI.panel_body_font).color(t.text_dim));
         let set = if matches!(k, "width" | "height") {
             widgets::size_field(ui, ("cb-ab", k), Some(v), units, 80.0)
         } else {
@@ -424,7 +425,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                     pos2(r.left() + 22.0, r.center().y),
                     egui::Align2::RIGHT_CENTER,
                     format!("{}", i + 1),
-                    egui::FontId::proportional(12.0),
+                    egui::FontId::proportional(VAROS_UI.panel_body_font),
                     t.text_dim,
                 );
                 let name_rect = egui::Rect::from_min_max(pos2(r.left() + 32.0, r.top() + 2.0), pos2(r.right() - 46.0, r.bottom() - 2.0));
@@ -438,7 +439,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                     let id = ui.scope_id().with(("ab-name", i));
                     let mut buf: String = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| shown.to_string());
                     let kept = widgets::own_field_shift_enter(ui, id, &mut buf, shown);
-                    let te = ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(id).font(egui::FontId::proportional(12.0)));
+                    let te =
+                        ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(id).font(egui::FontId::proportional(VAROS_UI.panel_body_font)));
                     if !te.has_focus() && !te.lost_focus() {
                         te.request_focus();
                     }
@@ -456,7 +458,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                         rename(app, &targets, &buf).ok();
                     }
                 } else {
-                    ui.painter().text(name_rect.left_center(), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(12.5), t.text);
+                    ui.painter().text(
+                        name_rect.left_center(),
+                        egui::Align2::LEFT_CENTER,
+                        name,
+                        egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                        t.text,
+                    );
                 }
                 // The lock column, right of the name: the lock shows while the artboard is locked
                 // (dimmed under the pointer while it isn't), and a click locks or unlocks it.
@@ -537,7 +545,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
         let new = widgets::icon_button(ui, "dc-new-item", tl!("New Artboard"), false, 24.0);
         if new.dnd_hover_payload::<RowDrag>().is_some() {
-            ui.painter().rect_stroke(new.rect, 3.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+            ui.painter().rect_stroke(new.rect, f32::from(VAROS_UI.control_radius), egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
         }
         if let Some(row) = new.dnd_release_payload::<RowDrag>() {
             duplicate(app, row.0);

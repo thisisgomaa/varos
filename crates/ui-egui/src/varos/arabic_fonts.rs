@@ -13,6 +13,7 @@
 //! Samples are textures cached by the font menu by (family, style, text, size): the text tells
 //! the script, so an Arabic and a Latin sample of one face are separate entries.
 
+use crate::varos::theme_components::FOUNDATION as LOOK;
 use egui::{Color32, Ui, vec2};
 use vectorcraft_text::FontDb;
 use vectorcraft_text::arabic_fonts::{self as af, ArabicStyle};
@@ -170,7 +171,7 @@ pub(crate) fn paint_name(
     if let Some(f) = family
         && db.known_arabic_support(f).is_some_and(af::ArabicSupport::morx_shaped)
     {
-        let r = painter.text(name_rect.right_center(), egui::Align2::RIGHT_CENTER, "AAT", egui::FontId::proportional(9.0), t.text_dim);
+        let r = painter.text(name_rect.right_center(), egui::Align2::RIGHT_CENTER, "AAT", egui::FontId::proportional(LOOK.badge_font), t.text_dim);
         let id = ui.scope_id().with(("varos-aat", f));
         ui.interact(r, id, egui::Sense::hover())
             .on_hover_text(tl!("AAT shaping: this font is shaped with its own morx tables, not OpenType Arabic rules"));
@@ -191,7 +192,7 @@ pub(crate) fn paint_name(
             None => return,
         }
     } else {
-        painter.text(name_rect.left_center(), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(12.0), t.text).right()
+        painter.text(name_rect.left_center(), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(LOOK.panel_body_font), t.text).right()
     };
     // The family's Arabic name, when it fits after the Latin one.
     if let Some(arabic) = family.and_then(|f| arabic_name(db, f))

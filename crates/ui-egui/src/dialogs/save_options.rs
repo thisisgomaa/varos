@@ -14,6 +14,7 @@
 //! artboards, a picker of the artboards to save (thumbnails to check, field `boards`, saved as
 //! `range`).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::OnceLock;
 
 use serde_json::{Map, Value, json};
@@ -285,7 +286,7 @@ fn artboard_picker(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) 
                     ui.vertical(|ui| {
                         ui.set_width(TILE.x);
                         let (r, resp) = ui.allocate_exact_size(TILE, egui::Sense::click());
-                        ui.painter().rect_filled(r, 3.0, t.pasteboard);
+                        ui.painter().rect_filled(r, f32::from(VAROS_UI.control_radius), t.pasteboard);
                         let inner = r.shrink(6.0);
                         match super::export_for_screens::artboard_thumb(app, ui.ctx(), i) {
                             Some(tex) => {
@@ -299,7 +300,7 @@ fn artboard_picker(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) 
                             }
                         }
                         let stroke = if on { egui::Stroke::new(2.0, t.accent) } else { egui::Stroke::new(1.0, t.border) };
-                        ui.painter().rect_stroke(r, 3.0, stroke, egui::StrokeKind::Inside);
+                        ui.painter().rect_stroke(r, f32::from(VAROS_UI.control_radius), stroke, egui::StrokeKind::Inside);
                         let mut flip = resp.on_hover_text(name.as_str()).clicked();
                         flip |= widgets::check_name(ui, name, on);
                         let file = files.get(i).cloned().flatten().unwrap_or_default();

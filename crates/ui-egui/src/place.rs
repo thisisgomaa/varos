@@ -2,6 +2,7 @@
 //! window, the loaded place cursor and the Control bar's image details. The engine places
 //! (`file.place`, `file.place.queue`); this gathers the files and options.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -420,7 +421,7 @@ pub fn paint_cursor(app: &mut VectorcraftApp, ctx: &egui::Context, painter: &egu
             painter.image(id, r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::from_white_alpha(200));
         }
         None => {
-            painter.text(r.center(), egui::Align2::CENTER_CENTER, name, theme::semibold(10.0), t.text_dim);
+            painter.text(r.center(), egui::Align2::CENTER_CENTER, name, theme::semibold(VAROS_UI.avatar_font), t.text_dim);
         }
     }
     painter.rect_stroke(r.expand(1.0), 0.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
@@ -428,7 +429,7 @@ pub fn paint_cursor(app: &mut VectorcraftApp, ctx: &egui::Context, painter: &egu
         // The badge: how many files are loaded.
         let c = r.right_top() + egui::vec2(-2.0, 2.0);
         painter.circle_filled(c, 9.0, t.accent);
-        painter.text(c, egui::Align2::CENTER_CENTER, count.to_string(), theme::semibold(10.5), egui::Color32::WHITE);
+        painter.text(c, egui::Align2::CENTER_CENTER, count.to_string(), theme::semibold(VAROS_UI.status_font), egui::Color32::WHITE);
     }
 }
 
@@ -584,11 +585,11 @@ pub fn control_bar_details(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> bool 
     // The file name is a link: its menu relinks (replaces) the image and reaches the Links
     // panel's other actions for it.
     let resp = ui
-        .add(egui::Label::new(egui::RichText::new(&name).size(12.0).color(t.accent).underline()).sense(egui::Sense::click()))
+        .add(egui::Label::new(egui::RichText::new(&name).size(VAROS_UI.panel_body_font).color(t.accent).underline()).sense(egui::Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     egui::Popup::menu(&resp).show(|ui| link_menu(app, ui, id, linked));
     ui.separator();
-    ui.label(egui::RichText::new(details).size(12.0).color(t.text_dim));
+    ui.label(egui::RichText::new(details).size(VAROS_UI.panel_body_font).color(t.text_dim));
     ui.separator();
     link_buttons(app, ui, id, linked, &name, None);
     crate::panels::image_trace::trace_button(app, ui, crate::panels::image_trace::TRACE_BUTTON_W);

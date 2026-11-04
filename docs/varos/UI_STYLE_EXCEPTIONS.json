@@ -1,0 +1,116 @@
+[
+  {
+    "file": "chrome.rs",
+    "expression": "size(12.0)",
+    "occurrences": 1,
+    "reason": "Spinner diameter in logical points; this is loading-indicator geometry, not a text size."
+  },
+  {
+    "file": "dialogs/find_links.rs",
+    "expression": "size(12.0)",
+    "occurrences": 1,
+    "reason": "Spinner diameter in logical points; this is loading-indicator geometry, not a text size."
+  },
+  {
+    "file": "dialogs/missing_fonts.rs",
+    "expression": "size(12.0)",
+    "occurrences": 1,
+    "reason": "Spinner diameter in logical points; this is loading-indicator geometry, not a text size."
+  },
+  {
+    "file": "export_progress.rs",
+    "expression": "size(14.0)",
+    "occurrences": 1,
+    "reason": "Spinner diameter in logical points; this is loading-indicator geometry, not a text size."
+  },
+  {
+    "file": "panels/character.rs",
+    "expression": "FontId::proportional(10.5)",
+    "occurrences": 1,
+    "reason": "Font used as a hand-drawn typographic T icon, sized to its icon box; not interface label typography."
+  },
+  {
+    "file": "panels/character.rs",
+    "expression": "FontId::proportional(15.0)",
+    "occurrences": 1,
+    "reason": "Font used as a hand-drawn typographic T icon, sized to its icon box; not interface label typography."
+  },
+  {
+    "file": "varos/shell/drag.rs",
+    "expression": "CornerRadius::same(1)",
+    "occurrences": 2,
+    "reason": "One-point rounded insertion/drop marker ends; geometry of the drag indicator, not a control surface."
+  },
+  {
+    "file": "widgets.rs",
+    "expression": "CornerRadius::same(1)",
+    "occurrences": 1,
+    "reason": "One-point cap on the subsection-tab underline; line geometry, not the surrounding control corner."
+  },
+  {
+    "file": "widgets.rs",
+    "expression": "rect_filled(..,1.0,..)",
+    "reason": "Miniature artboard grid tile inside the layout icon; not the button surface.",
+    "occurrences": 1
+  },
+  {
+    "file": "dialogs/free_distort.rs",
+    "expression": "rect_filled(..,1.0,..)",
+    "reason": "Filled geometric handle in the document distortion preview.",
+    "occurrences": 1
+  },
+  {
+    "file": "dialogs/free_distort.rs",
+    "expression": "rect_stroke(..,1.0,..)",
+    "reason": "Outline of a geometric preview handle.",
+    "occurrences": 1
+  },
+  {
+    "file": "dialogs/free_distort.rs",
+    "expression": "rect_stroke(..,2.0,..)",
+    "reason": "Expanded focus outline around a geometric preview handle.",
+    "occurrences": 1
+  },
+  {
+    "file": "varos/home.rs",
+    "expression": "rect_filled(..,2.0,..)",
+    "reason": "Miniature sheet inside a generated document thumbnail.",
+    "occurrences": 1
+  },
+  {
+    "file": "canvas.rs",
+    "expression": "rect_filled(..,2.0,..)",
+    "reason": "Filled on-canvas selection/rotation handle, document interaction geometry.",
+    "occurrences": 1
+  },
+  {
+    "file": "canvas.rs",
+    "expression": "rect_stroke(..,2.0,..)",
+    "reason": "Contrast outline of the on-canvas geometric handle.",
+    "occurrences": 1
+  },
+  {
+    "file": "panels/properties.rs",
+    "expression": "rect_filled(..,1.0,..)",
+    "reason": "Thin section insertion marker, not a control background.",
+    "occurrences": 1
+  },
+  {
+    "file": "varos/shell/tools.rs",
+    "expression": "rect_filled(..,1.5,..)",
+    "reason": "Pill-shaped three-point drag grip indicator; its radius is half its height, not a button surface.",
+    "occurrences": 1
+  },
+  {
+    "file": "varos/shell/strip.rs",
+    "expression": "rect_filled(..,1.5,..)",
+    "reason": "Pill-shaped three-point drag grip indicator, matching the tool-strip grip geometry.",
+    "occurrences": 1
+  },
+  {
+    "file": "varos/panel_system/paint.rs",
+    "expression": "rect_stroke(..,2,..)",
+    "reason": "Original four-cell Swatches glyph geometry, not a control border.",
+    "occurrences": 1
+  }
+]

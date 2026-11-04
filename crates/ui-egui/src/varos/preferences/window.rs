@@ -1,6 +1,7 @@
 //! The modeless Preferences window: upstream's category list and fields
 //! ([`crate::prefs_dialog::category_fields`]) in a movable window with Apply, so the editor stays
 //! live while it is open.
+use crate::varos::theme_components::FOUNDATION as LOOK;
 use serde_json::json;
 use vectorcraft_engine::Prefs;
 use vectorcraft_engine::cmd::prefscmds::PREF_CATEGORIES;
@@ -34,9 +35,11 @@ pub(crate) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.set_width(760.0);
             ui.horizontal_top(|ui| {
                 // Category list.
-                egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(4)).inner_margin(egui::Margin::same(6)).show(
-                    ui,
-                    |ui| {
+                egui::Frame::NONE
+                    .fill(t.panel_darker)
+                    .corner_radius(egui::CornerRadius::same(LOOK.inset_radius))
+                    .inner_margin(egui::Margin::same(6))
+                    .show(ui, |ui| {
                         ui.set_width(196.0);
                         egui::ScrollArea::vertical().id_salt("prefs-categories").max_height(body_height).auto_shrink([false, false]).show(ui, |ui| {
                             // ScrollArea inherits the surrounding horizontal layout; categories
@@ -45,21 +48,21 @@ pub(crate) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                                 ui.spacing_mut().item_spacing.y = 1.0;
                                 for c in PREF_CATEGORIES {
                                     let sel = *c == cat;
-                                    let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
-                                    let b = egui::Button::selectable(sel, text).min_size(egui::vec2(184.0, 24.0));
+                                    let text =
+                                        egui::RichText::new(tl!(*c)).size(LOOK.legacy_control_font).color(if sel { t.text_strong } else { t.text });
+                                    let b = egui::Button::selectable(sel, text).min_size(egui::vec2(184.0, LOOK.control_height));
                                     if ui.add(b).clicked() {
                                         d.set(CATEGORY, json!(c));
                                     }
                                 }
                             });
                         });
-                    },
-                );
+                    });
                 ui.add_space(14.0);
                 // Fields.
                 ui.vertical(|ui| {
                     ui.set_width(530.0);
-                    ui.label(egui::RichText::new(tl!(cat)).font(theme::semibold(14.0)).color(t.text_strong));
+                    ui.label(egui::RichText::new(tl!(cat)).font(theme::semibold(LOOK.panel_heading_font)).color(t.text_strong));
                     ui.add_space(8.0);
                     egui::ScrollArea::vertical().id_salt(("prefs", cat)).max_height((body_height - 30.0).max(50.0)).auto_shrink([false, false]).show(
                         ui,

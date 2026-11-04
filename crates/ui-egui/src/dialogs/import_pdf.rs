@@ -7,6 +7,7 @@
 //! params (Link, Template, `at`…). The file's bytes stay out of the fields, in
 //! [`crate::state::UiState::dialog_file`].
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -103,7 +104,7 @@ pub(super) fn preview_texture(
 pub(super) fn show_preview(ui: &mut egui::Ui, tex: Option<&egui::TextureHandle>, size: f32) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    ui.painter().rect_filled(r, 2.0, t.pasteboard);
+    ui.painter().rect_filled(r, f32::from(VAROS_UI.preview_radius), t.pasteboard);
     if let Some(tex) = tex {
         let sz = tex.size_vec2();
         let ir = egui::Rect::from_center_size(r.center(), sz * (size / sz.x.max(sz.y)));

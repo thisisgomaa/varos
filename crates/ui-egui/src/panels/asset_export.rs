@@ -9,6 +9,7 @@
 //!
 //! Everything runs through the `assets.*` commands.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -116,9 +117,9 @@ fn tiles(ui: &mut Ui, st: &DocState, sel: &[u64], ev: &mut Events) {
             let (r, resp) = ui.allocate_exact_size(TILE, Sense::click());
             let on = sel.contains(&a.id);
             if on {
-                ui.painter().rect_filled(r, 2.0, t.row_selected);
+                ui.painter().rect_filled(r, f32::from(VAROS_UI.control_radius), t.row_selected);
             } else if resp.hovered() {
-                ui.painter().rect_filled(r, 2.0, t.hover);
+                ui.painter().rect_filled(r, f32::from(VAROS_UI.control_radius), t.hover);
             }
             let th = Rect::from_min_size(egui::pos2(r.center().x - THUMB / 2.0, r.top() + 4.0), vec2(THUMB, THUMB));
             paint_thumb(ui, st, a, th);
@@ -130,8 +131,12 @@ fn tiles(ui: &mut Ui, st: &DocState, sel: &[u64], ev: &mut Events) {
                     let field = rename_id.with("field");
                     let kept = widgets::own_field_shift_enter(ui, field, &mut buf, &a.name);
                     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(name_rect));
-                    let te = child
-                        .add(egui::TextEdit::singleline(&mut buf).id(field).desired_width(name_rect.width()).font(egui::FontId::proportional(11.5)));
+                    let te = child.add(
+                        egui::TextEdit::singleline(&mut buf)
+                            .id(field)
+                            .desired_width(name_rect.width())
+                            .font(egui::FontId::proportional(VAROS_UI.metadata_font)),
+                    );
                     // Enter or a click elsewhere commits, Escape cancels; Shift+Enter commits and
                     // keeps the field open.
                     if te.lost_focus() {
@@ -152,7 +157,7 @@ fn tiles(ui: &mut Ui, st: &DocState, sel: &[u64], ev: &mut Events) {
                         egui::pos2(name_rect.center().x, name_rect.center().y),
                         egui::Align2::CENTER_CENTER,
                         &a.name,
-                        egui::FontId::proportional(11.5),
+                        egui::FontId::proportional(VAROS_UI.metadata_font),
                         t.text,
                     );
                 }

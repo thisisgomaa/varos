@@ -3,6 +3,7 @@
 //! it off the ruler deletes it. A stop placed or dragged on the ruler lands on the nearest whole
 //! point. With Snap to Unit on, or Shift held, it lands on the ruler's nearest tick.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Sense, Stroke, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_doc::{Node, NodeKind, ParaStyle, TabAlign, TabStop, TextKind};
@@ -139,7 +140,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         for (i, (a, label)) in ALIGNS.iter().enumerate() {
             let on = stops.get(sel).map_or(align_idx == i, |s| s.align == *a);
             let tip = align_name(*a, vertical);
-            let resp = ui.add(egui::Button::new(egui::RichText::new(*label).size(13.0)).selected(on).min_size(vec2(28.0, 24.0)));
+            let resp = ui.add(egui::Button::new(egui::RichText::new(*label).size(VAROS_UI.body_font)).selected(on).min_size(vec2(28.0, 24.0)));
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, tip));
             if resp.on_hover_text(tip).clicked() {
                 align_idx = i;
@@ -193,8 +194,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let w = ui.available_width().max(120.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click_and_drag());
     let p = ui.painter_at(rect.expand(2.0));
-    p.rect_filled(rect, 2.0, t.input);
-    p.rect_stroke(rect, 2.0, Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+    p.rect_filled(rect, f32::from(VAROS_UI.control_radius), t.input);
+    p.rect_stroke(rect, f32::from(VAROS_UI.control_radius), Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
     let scale = (w as f64 - 8.0) / span;
     let to_x = |pt: f64| rect.left() + 4.0 + (pt * scale) as f32;
     let to_pt = |x: f32| (((x - rect.left() - 4.0) as f64) / scale).max(0.0);
@@ -217,7 +218,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                 egui::pos2(x + 2.0, rect.top() + 1.0),
                 egui::Align2::LEFT_TOP,
                 crate::canvas::ruler_label(v, step),
-                egui::FontId::proportional(9.0),
+                egui::FontId::proportional(VAROS_UI.badge_font),
                 t.text_dim,
             );
         }

@@ -304,7 +304,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     ui.painter().rect_filled(rail, 0.0, t.panel);
     ui.painter().vline(rail.left() + 0.5, rail.y_range(), egui::Stroke::new(1.0, t.border));
     if toggle_response.hovered() {
-        ui.painter().rect_filled(toggle.shrink(3.0), 3.0, t.hover);
+        ui.painter().rect_filled(toggle.shrink(3.0), f32::from(crate::varos::theme_components::FOUNDATION.control_radius), t.hover);
     }
     hits.push((Hit::BoardMenu, menu_row));
     let shell = &app.ui.varos_shell;
@@ -431,7 +431,11 @@ pub(crate) fn paint_icons(
         let active = app.ui.varos_shell.open.as_deref() == Some(panel.as_str());
         r.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, boxes::label(app, &panel)));
         if r.hovered() || active {
-            paint_ui.painter().rect_filled(rect, 3.0, if active { t.button } else { t.hover });
+            paint_ui.painter().rect_filled(
+                rect,
+                f32::from(crate::varos::theme_components::FOUNDATION.control_radius),
+                if active { t.button } else { t.hover },
+            );
         }
         let icon = crate::state::rail_panel(super::persist::instance_kind(&panel))
             .map_or(if panel == "control" { "shell-sliders-horizontal" } else { "panel-left" }, |p| p.2);
@@ -585,7 +589,7 @@ pub(crate) fn flyout(
             }
         }
         if collapse_response.hovered() {
-            ui.painter().rect_filled(collapse, 3.0, t.hover);
+            ui.painter().rect_filled(collapse, f32::from(crate::varos::theme_components::FOUNDATION.control_radius), t.hover);
         }
         crate::icons::paint(ui, "shell-chevrons-right", Rect::from_center_size(collapse.center(), vec2(16.0, 16.0)), t.text_dim);
         if boxes::menu_button(app, ui, menu, u32::MAX, &front, &t) {

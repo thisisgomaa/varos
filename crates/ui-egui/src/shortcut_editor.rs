@@ -6,6 +6,7 @@
 //! mirror (synced every frame by [`sync`]) holds the keymap with them, so `menus::shortcut_of`, the
 //! dispatcher, the native menu and tooltips consult them without threading the app state through.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -706,7 +707,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             let tab = d.str("tab");
             for (id, label) in [("tools", "Tools"), ("menu", "Menu Commands")] {
-                if ui.selectable_label(tab == id, egui::RichText::new(tl!(label)).font(theme::semibold(12.5))).clicked() {
+                if ui.selectable_label(tab == id, egui::RichText::new(tl!(label)).font(theme::semibold(VAROS_UI.legacy_control_font))).clicked() {
                     d.fields.insert("tab".into(), json!(id));
                 }
             }
@@ -727,9 +728,9 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(egui::vec2(360.0, 16.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.set_min_width(360.0);
-                    ui.label(egui::RichText::new(if tools { tl!("Tool") } else { tl!("Command") }).color(t.text_dim).size(11.0));
+                    ui.label(egui::RichText::new(if tools { tl!("Tool") } else { tl!("Command") }).color(t.text_dim).size(VAROS_UI.control_font));
                 });
-                ui.label(egui::RichText::new(tl!("Shortcut")).color(t.text_dim).size(11.0));
+                ui.label(egui::RichText::new(tl!("Shortcut")).color(t.text_dim).size(VAROS_UI.control_font));
             });
             egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, false]).show(ui, |ui| {
                 for (i, e) in entries().iter().enumerate().filter(|(_, e)| e.is_tool == tools) {
@@ -808,7 +809,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         });
         let msg = d.str("__message");
         if !msg.is_empty() {
-            ui.label(egui::RichText::new(msg).color(t.accent_strong).size(11.5));
+            ui.label(egui::RichText::new(msg).color(t.accent_strong).size(VAROS_UI.metadata_font));
         }
         let n = match &km {
             Cow::Borrowed(_) => view.conflicts,
@@ -822,7 +823,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     "{n} shortcuts are assigned more than once",
                 ))
                 .color(t.text_dim)
-                .size(11.0),
+                .size(VAROS_UI.control_font),
             );
         }
         ui.add_space(12.0);

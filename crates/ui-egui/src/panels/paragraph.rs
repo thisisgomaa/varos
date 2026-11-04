@@ -4,6 +4,7 @@
 //! options); the panel menu turns Roman Hanging Punctuation on and off, opens Justification… and
 //! Hyphenation… and picks the Single-line or Every-line Composer.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_doc::{
@@ -371,7 +372,7 @@ pub fn bullets_button(app: &mut VectorcraftApp, ui: &mut Ui, size: f32) {
     }
     let (rect, arrow) = ui.allocate_exact_size(vec2(14.0, size), egui::Sense::click());
     if arrow.hovered() {
-        ui.painter().rect_filled(rect, egui::CornerRadius::same(4), t.hover);
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(VAROS_UI.control_radius), t.hover);
     }
     crate::icons::paint(ui, "chevron-down", egui::Rect::from_center_size(rect.center(), vec2(10.0, 10.0)), t.text_dim);
     arrow.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!("Bullets")));
@@ -404,10 +405,10 @@ fn bullet_row(ui: &mut Ui, name: &str, bullet: Option<vectorcraft_doc::text::Bul
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(130.0, 22.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, egui::CornerRadius::same(4), t.hover);
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(VAROS_UI.control_radius), t.hover);
     }
     let painter = ui.painter();
-    let font = egui::FontId::proportional(12.5);
+    let font = egui::FontId::proportional(VAROS_UI.legacy_control_font);
     if checked {
         painter.text(rect.left_center() + vec2(6.0, 0.0), egui::Align2::LEFT_CENTER, "✓", font.clone(), t.text_strong);
     }
@@ -438,7 +439,7 @@ pub fn numbers_button(app: &mut VectorcraftApp, ui: &mut Ui, size: f32) {
     }
     let (rect, arrow) = ui.allocate_exact_size(vec2(14.0, size), egui::Sense::click());
     if arrow.hovered() {
-        ui.painter().rect_filled(rect, egui::CornerRadius::same(4), t.hover);
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(VAROS_UI.control_radius), t.hover);
     }
     crate::icons::paint(ui, "chevron-down", egui::Rect::from_center_size(rect.center(), vec2(10.0, 10.0)), t.text_dim);
     arrow.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!("Numbered List")));
@@ -467,10 +468,10 @@ fn number_row(ui: &mut Ui, sample: &str, checked: bool) -> bool {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(130.0, 22.0), egui::Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, egui::CornerRadius::same(4), t.hover);
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(VAROS_UI.control_radius), t.hover);
     }
     let painter = ui.painter();
-    let font = egui::FontId::proportional(12.5);
+    let font = egui::FontId::proportional(VAROS_UI.legacy_control_font);
     if checked {
         painter.text(rect.left_center() + vec2(6.0, 0.0), egui::Align2::LEFT_CENTER, "✓", font.clone(), t.text_strong);
     }
@@ -512,7 +513,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Indents and paragraph spacing are distances (General); type sizes follow Units ▸ Type.
     let unit = app.session.general_unit();
     let label = |ui: &mut Ui, s: &str, tip: &str| {
-        let l = ui.add_sized(vec2(22.0, 24.0), egui::Label::new(egui::RichText::new(s).size(11.5).strong().color(t.text))).on_hover_text(tip);
+        let l = ui
+            .add_sized(vec2(22.0, 24.0), egui::Label::new(egui::RichText::new(s).size(VAROS_UI.metadata_font).strong().color(t.text)))
+            .on_hover_text(tip);
         crate::scrub::note_label(ui, l.rect);
     };
     egui::Grid::new("para-grid").num_columns(4).spacing([4.0, 4.0]).show(ui, |ui| {

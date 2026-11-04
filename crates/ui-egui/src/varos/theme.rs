@@ -1,6 +1,7 @@
 //! The Varos palettes (Figma UI3 neutrals + Varos azure, owner 2026-10-28), Inter fonts and
 //! shadowless egui visuals.
 use crate::theme::{Brightness, FONT_MONO, FONT_UI, FONT_UI_SEMIBOLD, Tokens};
+use egui::class::HasClasses as _;
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, Stroke, Visuals};
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ pub const AGENT_LABEL_H: f32 = 18.0;
 pub const AGENT_LABEL_GAP: f32 = 4.0;
 pub const AGENT_LABEL_PAD: f32 = 4.0;
 /// Size of the agent name text (chips and History rows).
-pub const AGENT_LABEL_TEXT: f32 = 11.0;
+pub const AGENT_LABEL_TEXT: f32 = crate::varos::theme_components::FOUNDATION.control_font;
 
 /// One brightness' colour roles, named as in the colour-round brief
 /// (`docs/varos/lanes/brief-colours.md`). [`tokens_for`] maps them onto [`Tokens`]; roles without a
@@ -297,6 +298,14 @@ pub fn register_fonts(fonts: &mut FontDefinitions) {
     }
 }
 
+/// Fork hook: own one complete style application, retaining upstream's initializer as fallback.
+/// A future upstream-only consumer may decline this hook without coupling to Varos style internals.
+pub(crate) fn apply_owned(ctx: &egui::Context, brightness: Brightness, tokens: Tokens) -> bool {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, tokens));
+    apply(ctx, brightness);
+    true
+}
+
 /// Apply fonts and flat widget visuals to every built-in brightness.
 pub fn apply(ctx: &egui::Context, b: Brightness) {
     let id = egui::Id::unique("varos-fonts-installed");
@@ -349,20 +358,22 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
         s.spacing.menu_margin = egui::Margin::same(6);
         s.spacing.slider_width = 120.0;
         s.text_styles = [
-            (egui::TextStyle::Small, egui::FontId::proportional(11.0)),
-            (egui::TextStyle::Body, egui::FontId::proportional(13.0)),
+            (egui::TextStyle::Small, egui::FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font)),
+            (egui::TextStyle::Body, egui::FontId::proportional(crate::varos::theme_components::FOUNDATION.body_font)),
             (
                 egui::TextStyle::Button,
                 egui::FontId::new(crate::varos::theme_components::FOUNDATION.button_font, FontFamily::Name("ui-medium".into())),
             ),
-            (egui::TextStyle::Heading, crate::theme::semibold(15.0)),
-            (egui::TextStyle::Monospace, crate::theme::mono(11.5)),
+            (egui::TextStyle::Heading, crate::theme::semibold(crate::varos::theme_components::FOUNDATION.heading_font)),
+            (egui::TextStyle::Monospace, crate::theme::mono(crate::varos::theme_components::FOUNDATION.metadata_font)),
         ]
         .into();
         s.animation_time = 0.08;
         s.visuals.disabled_alpha = 0.48;
     });
     ctx.replace_widget_theme::<egui::widget_style::TextEditStyle>(TextFields);
+    ctx.replace_widget_theme::<egui::widget_style::CheckboxStyle>(Checkboxes);
+    ctx.replace_widget_theme::<egui::widget_style::ButtonStyle>(Buttons);
 }
 
 /// Text fields as egui 0.36 drew them. egui 0.37's default text field style gives every text edit
@@ -377,6 +388,47 @@ impl egui::theme::StyleProvider<egui::widget_style::TextEditStyle> for TextField
         let mut style =
             <egui::theme::DefaultStyle as egui::theme::StyleProvider<egui::widget_style::TextEditStyle>>::style(&mut egui::theme::DefaultStyle, args);
         style.atom_layout.min_size.y = 0.0;
+        if !args.classes.has_class(&egui::TextEdit::CLASS_READ_ONLY) {
+            let t = Tokens::get(args.ctx);
+            style.atom_layout.frame.stroke.color = if args.state == egui::widget_style::WidgetState::Active { t.accent } else { t.input_border };
+        }
+        style
+    }
+}
+
+/// Native and custom checkboxes share the compact checkbox role, independently of buttons.
+struct Checkboxes;
+impl egui::theme::StyleProvider<egui::widget_style::CheckboxStyle> for Checkboxes {
+    fn style(&mut self, args: &egui::widget_style::StyleArgs<'_>) -> egui::widget_style::CheckboxStyle {
+        let mut style =
+            <egui::theme::DefaultStyle as egui::theme::StyleProvider<egui::widget_style::CheckboxStyle>>::style(&mut egui::theme::DefaultStyle, args);
+        style.checkbox_frame.corner_radius = CornerRadius::same(crate::varos::theme_components::FOUNDATION.checkbox_radius);
+        style
+    }
+}
+
+/// Ordinary filled actions share the button color roles; text fields keep their own surface.
+/// Native selection, frameless/combo variants and explicit widget overrides remain native.
+struct Buttons;
+impl egui::theme::StyleProvider<egui::widget_style::ButtonStyle> for Buttons {
+    fn style(&mut self, args: &egui::widget_style::StyleArgs<'_>) -> egui::widget_style::ButtonStyle {
+        let mut style =
+            <egui::theme::DefaultStyle as egui::theme::StyleProvider<egui::widget_style::ButtonStyle>>::style(&mut egui::theme::DefaultStyle, args);
+        let special = args.classes.has_class(&egui::Button::CLASS_SELECTED)
+            || args.classes.has_class(&egui::Button::CLASS_NO_FRAME)
+            || args.classes.has_class(&egui::ComboBox::CLASS)
+            || args.classes.has_class(&egui::ComboBox::CLASS_OPEN)
+            || args.classes.has_class(&egui::DragValue::CLASS);
+        if !special && style.atom_layout.frame.fill != Color32::TRANSPARENT {
+            let t = Tokens::get(args.ctx);
+            use egui::widget_style::WidgetState;
+            style.atom_layout.frame.fill = match args.state {
+                WidgetState::Inactive => t.button,
+                WidgetState::Hovered => t.hover,
+                WidgetState::Active => t.tool_active,
+                WidgetState::Noninteractive => style.atom_layout.frame.fill,
+            };
+        }
         style
     }
 }

@@ -5,6 +5,7 @@
 //! (Enter or Add turns it into chips; OK keeps it too). OK runs `file.info` with them: one undo
 //! step. On an error the dialog stays open.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_doc::CopyrightStatus;
 use vectorcraft_doc::metadata::MAX_RATING;
@@ -127,7 +128,7 @@ fn top_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal_top(|ui| {
         let (r, _) = ui.allocate_exact_size(egui::vec2(LABEL, 24.0), egui::Sense::hover());
-        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, tl!(label), egui::FontId::proportional(12.5), t.text);
+        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, tl!(label), egui::FontId::proportional(VAROS_UI.legacy_control_font), t.text);
         add(ui);
     });
 }
@@ -166,11 +167,16 @@ fn chips(ui: &mut egui::Ui, d: &mut Dialog) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         for (i, k) in list.iter().enumerate() {
-            let galley = ui.painter().layout_no_wrap(k.clone(), egui::FontId::proportional(12.0), t.text_strong);
+            let galley = ui.painter().layout_no_wrap(k.clone(), egui::FontId::proportional(VAROS_UI.panel_body_font), t.text_strong);
             let size = egui::vec2(galley.size().x + 30.0, 22.0);
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-            ui.painter().rect_filled(rect, egui::CornerRadius::same(11), t.hover);
-            ui.painter().rect_stroke(rect, egui::CornerRadius::same(11), egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+            ui.painter().rect_filled(rect, egui::CornerRadius::same(VAROS_UI.chip_radius), t.hover);
+            ui.painter().rect_stroke(
+                rect,
+                egui::CornerRadius::same(VAROS_UI.chip_radius),
+                egui::Stroke::new(1.0, t.input_border),
+                egui::StrokeKind::Inside,
+            );
             ui.painter().galley(egui::pos2(rect.left() + 9.0, rect.center().y - galley.size().y / 2.0), galley, t.text_strong);
             let x = egui::Rect::from_center_size(egui::pos2(rect.right() - 11.0, rect.center().y), egui::vec2(14.0, 14.0));
             let resp = ui

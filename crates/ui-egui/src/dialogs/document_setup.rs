@@ -5,6 +5,7 @@
 //! Fields: what `document.setup` reports (and takes back), plus `tab` and `bleedLinked`. OK runs
 //! `document.setup` with them: one undo step. On an error the dialog stays open.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_doc::setup::{GRID_COLOR_PRESETS, LANGUAGES};
 use vectorcraft_doc::{GridSize, Quotes, Unit};
@@ -129,9 +130,9 @@ fn transparency(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
             let hex = colors.get(i).map_or("", |h| h.trim_start_matches('#'));
             let (chip, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
             if let Some(c) = vectorcraft_color::Color::from_hex(hex) {
-                ui.painter().rect_filled(chip, 2.0, crate::panels::c32(&c));
+                ui.painter().rect_filled(chip, f32::from(VAROS_UI.preview_radius), crate::panels::c32(&c));
             }
-            ui.painter().rect_stroke(chip, 2.0, egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+            ui.painter().rect_stroke(chip, f32::from(VAROS_UI.preview_radius), egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
             let name = format!("{} {}", tl!("Grid Colors:"), i + 1);
             if let Some(c) = widgets::hex_field_named(ui, ("grid-color", i), Some(&name), hex).and_then(|h| vectorcraft_color::Color::from_hex(&h)) {
                 let mut v = colors.clone();
@@ -183,7 +184,7 @@ fn typography(ui: &mut egui::Ui, d: &mut Dialog) {
     egui::Grid::new("docsetup-scripts").num_columns(3).spacing([16.0, 6.0]).show(ui, |ui| {
         ui.label("");
         for h in [tl!("Size"), tl!("Position")] {
-            ui.label(egui::RichText::new(h).size(11.0).color(t.text_dim));
+            ui.label(egui::RichText::new(h).size(VAROS_UI.control_font).color(t.text_dim));
         }
         ui.end_row();
         for (key, label) in [("superscript", tl!("Superscript:")), ("subscript", tl!("Subscript:"))] {

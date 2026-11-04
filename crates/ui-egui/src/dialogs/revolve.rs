@@ -2,6 +2,7 @@
 //! The object and the rotation and light gizmos live on the artboard. All document changes run
 //! through the effect dialog's existing preview/commit commands.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Align2, FontId, Id, Pos2, Sense, Stroke, vec2};
 use serde_json::{Value, json};
 use vectorcraft_doc::Unit;
@@ -31,7 +32,7 @@ pub(super) fn body(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
         ui.allocate_ui_with_layout(vec2((width - 100.0).max(80.0), 32.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add(egui::Label::new(egui::RichText::new(super::revolve_gizmo::hint(d)).size(11.0).color(t.text_dim)).wrap());
+            ui.add(egui::Label::new(egui::RichText::new(super::revolve_gizmo::hint(d)).size(VAROS_UI.control_font).color(t.text_dim)).wrap());
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let id = d.str("__effect");
@@ -43,9 +44,15 @@ pub(super) fn body(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
             let response = ui.interact(r, Id::unique("revolve-reset-all"), Sense::click());
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!("Reset all")));
             if response.hovered() {
-                ui.painter().rect_filled(r, 3.0, t.hover);
+                ui.painter().rect_filled(r, f32::from(VAROS_UI.control_radius), t.hover);
             }
-            ui.painter().text(r.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, tl!("Reset all"), FontId::proportional(11.5), t.text);
+            ui.painter().text(
+                r.left_center() + vec2(4.0, 0.0),
+                Align2::LEFT_CENTER,
+                tl!("Reset all"),
+                FontId::proportional(VAROS_UI.metadata_font),
+                t.text,
+            );
             dot(ui, r.right_center() - vec2(10.0, 0.0), changed);
             let tip =
                 if id == REVOLVE { tl!("Reset all Revolve settings to their defaults.") } else { tl!("Reset all 3D settings to their defaults.") };
@@ -466,13 +473,14 @@ fn light_color(ui: &mut egui::Ui, d: &mut Dialog) {
 
 fn heading(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(text).font(crate::theme::semibold(13.0)).color(t.text));
+    ui.label(egui::RichText::new(text).font(crate::theme::semibold(VAROS_UI.body_font)).color(t.text));
 }
 
 fn label(ui: &mut egui::Ui, name: &str) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(LABEL_W, 24.0), Sense::hover());
-    ui.put(r, egui::Label::new(egui::RichText::new(name).size(12.5).color(t.text)).halign(egui::Align::Min).truncate()).on_hover_text(name);
+    ui.put(r, egui::Label::new(egui::RichText::new(name).size(VAROS_UI.legacy_control_font).color(t.text)).halign(egui::Align::Min).truncate())
+        .on_hover_text(name);
     scrub::note_label(ui, r);
 }
 
@@ -575,7 +583,7 @@ fn reset_dot(ui: &mut egui::Ui, key: &str, changed: bool, default: &str) -> bool
     let response = ui.interact(r, Id::unique(("revolve-reset", key)), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!("Reset to default")));
     if response.hovered() {
-        ui.painter().rect_filled(r, 3.0, Tokens::get(ui.ctx()).hover);
+        ui.painter().rect_filled(r, f32::from(VAROS_UI.control_radius), Tokens::get(ui.ctx()).hover);
     }
     dot(ui, r.center(), changed);
     response.on_hover_text(format!("{}: {default}", tl!("Reset to default"))).clicked()

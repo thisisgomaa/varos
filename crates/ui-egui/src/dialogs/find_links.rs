@@ -19,6 +19,7 @@
 //! `touched` (the rows whose file was chosen in the dialog: new search results leave their pick as
 //! it is), `copy` and `searchFolder` (set it and confirm to search that folder).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -246,9 +247,14 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
                     ui.add_space(6.0);
                     ui.vertical(|ui| {
                         ui.add_space(3.0);
-                        ui.label(egui::RichText::new(row["name"].as_str().unwrap_or_default()).font(theme::semibold(12.0)).color(t.text_strong));
+                        ui.label(
+                            egui::RichText::new(row["name"].as_str().unwrap_or_default())
+                                .font(theme::semibold(VAROS_UI.panel_body_font))
+                                .color(t.text_strong),
+                        );
                         let path = row["path"].as_str().unwrap_or_default();
-                        ui.add(egui::Label::new(egui::RichText::new(path).size(11.0).color(t.text_dim)).truncate()).on_hover_text(path);
+                        ui.add(egui::Label::new(egui::RichText::new(path).size(VAROS_UI.control_font).color(t.text_dim)).truncate())
+                            .on_hover_text(path);
                         let files = files_for(&found, row);
                         let mut chose = None;
                         for f in files {
@@ -265,11 +271,12 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
                                     _ => "",
                                 };
                                 if !tag.is_empty() {
-                                    ui.label(egui::RichText::new(tag).size(11.0).color(t.accent));
+                                    ui.label(egui::RichText::new(tag).size(VAROS_UI.control_font).color(t.accent));
                                 }
                             });
                             let folder = p.parent().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
-                            ui.add(egui::Label::new(egui::RichText::new(folder).size(11.0).color(t.text_dim)).truncate()).on_hover_text(file);
+                            ui.add(egui::Label::new(egui::RichText::new(folder).size(VAROS_UI.control_font).color(t.text_dim)).truncate())
+                                .on_hover_text(file);
                         }
                         if !files.is_empty() && widgets::radio(ui, tl!("Don't Relink"), pick.is_null(), true) {
                             chose = Some(Value::Null);

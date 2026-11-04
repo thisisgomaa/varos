@@ -4,6 +4,7 @@
 //! listed (disabled, with their shortcut) so the full surface is visible and discoverable; the
 //! parity tracker drives them to "done".
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -3609,7 +3610,7 @@ pub fn menu_bar(app: &mut VectorcraftApp, ui: &mut egui::Ui) -> f32 {
         .ui(ui, |ui| {
             let mut titles = Vec::with_capacity(tree.len());
             for (title, items) in tree.iter() {
-                let text = egui::RichText::new(tl!(title)).size(13.0).color(t.text);
+                let text = egui::RichText::new(tl!(title)).size(VAROS_UI.body_font).color(t.text);
                 let resp = ui.add(egui::Button::new(text));
                 egui::Popup::menu(&resp).show(|ui| menu_body(app, ui, items, &mut clicked));
                 titles.push(resp);
@@ -3681,7 +3682,7 @@ fn render_items(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], checks:
                 ui.separator();
             }
             Entry::Header(h) => {
-                ui.label(egui::RichText::new(h).size(11.0).color(t.text_dim));
+                ui.label(egui::RichText::new(h).size(VAROS_UI.control_font).color(t.text_dim));
             }
             Entry::Sub(label, children) => {
                 ui.menu_button(label, |ui| {

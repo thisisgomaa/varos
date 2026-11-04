@@ -831,7 +831,7 @@ fn tabs_move_between_cards_and_to_the_dock() {
 }
 
 /// The card is drawn as the kit's card: 8-point corners, a 1-point line, no shadow, a 32-point
-/// header whose tab in front is a dark well, no azure on an idle card.
+/// header whose active tab shares the body surface, no azure on an idle card.
 #[test]
 fn a_card_is_drawn_as_the_kit_card() {
     let mut h = Harness::new();
@@ -865,8 +865,9 @@ fn a_card_is_drawn_as_the_kit_card() {
     let tab = h.tab("character");
     assert_eq!(tab.height(), 24.0);
     assert!((tab.center().y - (card.top() + 16.0)).abs() < 0.6, "tabs centred in a 32-point header");
-    let well = rects.iter().find(|r| (r.rect.min - tab.min).length() < 0.6 && r.fill == t.input).expect("the tab in front is a dark well");
-    assert_eq!(well.corner_radius, egui::CornerRadius::same(3));
+    let well =
+        rects.iter().find(|r| (r.rect.min - tab.min).length() < 0.6 && r.fill == t.panel).expect("the active tab shares the common body surface");
+    assert_eq!(well.corner_radius, egui::CornerRadius::same(crate::varos::theme_components::FOUNDATION.tab_radius));
     assert!(!rects.iter().any(|r| r.fill == t.accent && r.rect.intersects(card)), "no azure on an idle card");
 }
 

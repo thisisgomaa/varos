@@ -2,6 +2,7 @@
 //! (it becomes the Symbol Sprayer's current symbol); double-click places an instance. Symbol
 //! libraries open in library panels ([`SymbolLibraries`]).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -175,7 +176,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                     ui.painter().rect_filled(r, 0.0, t.hover);
                 }
                 chip(ui, &doc, &keys, egui::Rect::from_center_size(r.left_center() + vec2(14.0, 0.0), vec2(22.0, 22.0)), n);
-                ui.painter().text(r.left_center() + vec2(32.0, 0.0), egui::Align2::LEFT_CENTER, n, egui::FontId::proportional(12.5), t.text);
+                ui.painter().text(
+                    r.left_center() + vec2(32.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    n,
+                    egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                    t.text,
+                );
                 if resp.double_clicked() {
                     clicked = Some((n.clone(), true));
                 } else if resp.clicked() {

@@ -268,11 +268,13 @@ fn paint_tab(ui: &Ui, rect: egui::Rect, galley: &std::sync::Arc<egui::Galley>, s
         if crate::chrome::CLOSE_BEFORE_TITLE { (rect.left() + 16.0, rect.left() + 32.0) } else { (rect.right() - 16.0, rect.left() + 14.0) };
     let close = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), vec2(12.0, 12.0));
     icons::paint(ui, "x", close, if close_hovered { t.text_strong } else { t.text });
-    ui.painter().with_clip_rect(rect.intersect(ui.clip_rect())).galley(
-        egui::pos2(title_left, rect.center().y - galley.size().y / 2.0),
-        galley.clone(),
-        t.text,
-    );
+    let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let at = egui::pos2(title_left, rect.center().y - galley.size().y / 2.0);
+    if shell {
+        p.galley_with_override_text_color(at, galley.clone(), crate::varos::theme_components::FOUNDATION.tab_ink(&t, active, hovered));
+    } else {
+        p.galley(at, galley.clone(), t.text);
+    }
 }
 
 #[cfg(test)]

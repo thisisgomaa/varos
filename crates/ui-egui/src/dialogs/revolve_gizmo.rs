@@ -1,6 +1,7 @@
 //! Artboard rotation and light controls for the active 3D effect dialog (Extrude & Bevel, Revolve,
 //! Inflate, Rotate). Gestures edit fields;
 //! the existing effect preview applies commands and owns OK, Cancel and undo.
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Align2, FontId, Id, Pos2, Rect, Sense, Stroke, Vec2, vec2};
 use serde_json::json;
 use vectorcraft_effects::REVOLVE;
@@ -343,7 +344,7 @@ fn paint(ui: &egui::Ui, d: &Dialog, g: Geometry, active: Option<usize>, drag: Op
         };
         let p = g.center + ring.point(phase);
         painter.circle_filled(p, 9.0, t.panel);
-        painter.text(p, Align2::CENTER_CENTER, ["X", "Y", "Z"][axis], FontId::proportional(11.0), color);
+        painter.text(p, Align2::CENTER_CENTER, ["X", "Y", "Z"][axis], FontId::proportional(VAROS_UI.control_font), color);
     }
     painter.circle(g.center, 8.0, t.panel.gamma_multiply(0.8), Stroke::new(1.5, t.text_dim));
     painter.line_segment([g.center - vec2(4.0, 0.0), g.center + vec2(4.0, 0.0)], Stroke::new(1.0, t.text_dim));
@@ -357,8 +358,8 @@ fn paint(ui: &egui::Ui, d: &Dialog, g: Geometry, active: Option<usize>, drag: Op
     {
         let text = format!("{}  {:.1}°", ["X", "Y", "Z"].get(*axis).unwrap_or(&""), d.f64(key, 0.0));
         let pos = g.center + vec2(0.0, g.radius * 1.12 + 18.0);
-        let galley = painter.layout_no_wrap(text, FontId::proportional(12.0), t.text_strong);
-        painter.rect_filled(Rect::from_center_size(pos, galley.size() + vec2(14.0, 8.0)), 4.0, t.panel);
+        let galley = painter.layout_no_wrap(text, FontId::proportional(VAROS_UI.panel_body_font), t.text_strong);
+        painter.rect_filled(Rect::from_center_size(pos, galley.size() + vec2(14.0, 8.0)), f32::from(VAROS_UI.inset_radius), t.panel);
         painter.galley(pos - galley.size() * 0.5, galley, t.text_strong);
     }
 }
@@ -386,9 +387,9 @@ fn paint_light(ui: &egui::Ui, d: &Dialog, g: Geometry, active: Option<usize>, dr
             );
         }
         let label = labels[axis];
-        painter.rect_filled(label, 4.0, if active == Some(axis) { t.hover } else { t.panel });
+        painter.rect_filled(label, f32::from(VAROS_UI.inset_radius), if active == Some(axis) { t.hover } else { t.panel });
         let text = if axis == 0 { tl!("Rotation") } else { tl!("Height") };
-        painter.text(label.center(), Align2::CENTER_CENTER, text, FontId::proportional(11.0), t.warning);
+        painter.text(label.center(), Align2::CENTER_CENTER, text, FontId::proportional(VAROS_UI.control_font), t.warning);
     }
     let p = light_position(g, options);
     let delta = g.center - p;
@@ -416,17 +417,17 @@ fn paint_light(ui: &egui::Ui, d: &Dialog, g: Geometry, active: Option<usize>, dr
         painter.line_segment([p + direction * 13.0, p + direction * 17.0], Stroke::new(1.5, t.warning));
     }
     let name = crate::i18n::tr_ctx(crate::i18n::current(), "lighting", "Light");
-    let galley = painter.layout_no_wrap(name.to_string(), FontId::proportional(11.0), t.warning);
+    let galley = painter.layout_no_wrap(name.to_string(), FontId::proportional(VAROS_UI.control_font), t.warning);
     let name_pos = p - vec2(galley.size().x * 0.5, 25.0 + galley.size().y);
-    painter.rect_filled(Rect::from_min_size(name_pos - vec2(4.0, 2.0), galley.size() + vec2(8.0, 4.0)), 3.0, t.panel);
+    painter.rect_filled(Rect::from_min_size(name_pos - vec2(4.0, 2.0), galley.size() + vec2(8.0, 4.0)), f32::from(VAROS_UI.control_radius), t.panel);
     painter.galley(name_pos, galley, t.warning);
     if drag.is_some() {
         let [rotation, height] = [("lightRotation", vectorcraft_three_d::DEFAULT_LIGHT.0), ("lightHeight", vectorcraft_three_d::DEFAULT_LIGHT.1)]
             .map(|(k, v)| d.f64(k, v));
         let text = format!("{} {rotation:.1}°   {} {height:.1}°", tl!("Rotation"), tl!("Height"));
-        let galley = painter.layout_no_wrap(text, FontId::proportional(11.5), t.text_strong);
+        let galley = painter.layout_no_wrap(text, FontId::proportional(VAROS_UI.metadata_font), t.text_strong);
         let pos = g.center + vec2(0.0, radius + 56.0);
-        painter.rect_filled(Rect::from_center_size(pos, galley.size() + vec2(12.0, 6.0)), 4.0, t.panel);
+        painter.rect_filled(Rect::from_center_size(pos, galley.size() + vec2(12.0, 6.0)), f32::from(VAROS_UI.inset_radius), t.panel);
         painter.galley(pos - galley.size() * 0.5, galley, t.text_strong);
     }
 }

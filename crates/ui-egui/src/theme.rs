@@ -594,6 +594,9 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
 /// [`apply`] with an accent colour and colour scheme.
 pub fn apply_with(ctx: &egui::Context, b: Brightness, accent: Accent, scheme: Scheme) {
     let t = Tokens::for_scheme(scheme, b, accent);
+    if crate::varos::theme::apply_owned(ctx, b, t) {
+        return;
+    } // Varos: one style owner, upstream initializer remains fallback.
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.panel;
@@ -636,7 +639,6 @@ pub fn apply_with(ctx: &egui::Context, b: Brightness, accent: Accent, scheme: Sc
         .into();
         s.animation_time = 0.08;
     });
-    crate::varos::theme::apply(ctx, b); // Varos: fonts, flat geometry and widget visuals at every brightness.
 }
 
 #[cfg(test)]

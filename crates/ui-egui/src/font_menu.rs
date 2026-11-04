@@ -10,6 +10,7 @@
 //! used families appear first, in the order they were last applied, within the same search and
 //! filters as the remaining families.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -296,8 +297,8 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
     // Font Technology (upstream): variable fonts only.
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-        ui.label(egui::RichText::new(tl!("Font Technology")).size(11.0).color(t.text_dim));
-        if ui.selectable_label(st.variable_only, egui::RichText::new(variable_label()).size(11.0)).clicked() {
+        ui.label(egui::RichText::new(tl!("Font Technology")).size(VAROS_UI.control_font).color(t.text_dim));
+        if ui.selectable_label(st.variable_only, egui::RichText::new(variable_label()).size(VAROS_UI.control_font)).clicked() {
             st.variable_only = !st.variable_only;
             refilter = true;
         }
@@ -432,7 +433,7 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
                     rect.left_center() + vec2(4.0, 0.0),
                     egui::Align2::LEFT_CENTER,
                     label,
-                    egui::FontId::proportional(11.0),
+                    egui::FontId::proportional(VAROS_UI.control_font),
                     t.text_dim,
                 );
                 continue;
@@ -444,9 +445,9 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
             }
             let p = ui.painter_at(rect);
             if st.highlight == Some(i) {
-                p.rect_filled(rect, 2.0, t.selection);
+                p.rect_filled(rect, f32::from(VAROS_UI.control_radius), t.selection);
             } else if matches!(row, Row::Family(f) if f.eq_ignore_ascii_case(current)) {
-                p.rect_filled(rect, 2.0, t.hover);
+                p.rect_filled(rect, f32::from(VAROS_UI.control_radius), t.hover);
             }
             // The disclosure triangle of a family with several styles.
             let tri = egui::Rect::from_min_size(rect.min, vec2(DISCLOSURE, row_h));
@@ -455,7 +456,13 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
                 && db.styles(f).len() > 1
             {
                 let open = st.expanded.iter().any(|e| e.eq_ignore_ascii_case(f));
-                p.text(tri.center(), egui::Align2::CENTER_CENTER, if open { "▾" } else { "▸" }, egui::FontId::proportional(11.0), t.text_dim);
+                p.text(
+                    tri.center(),
+                    egui::Align2::CENTER_CENTER,
+                    if open { "▾" } else { "▸" },
+                    egui::FontId::proportional(VAROS_UI.control_font),
+                    t.text_dim,
+                );
                 on_triangle = resp.interact_pointer_pos().is_some_and(|pos| tri.contains(pos));
                 if resp.clicked() && on_triangle {
                     toggled = Some(f.to_lowercase());
@@ -469,7 +476,13 @@ fn list(ui: &mut Ui, state_id: egui::Id, st: &mut MenuState, current: &str, samp
                 let hot = resp.hover_pos().is_some_and(|pos| star.contains(pos));
                 if on || hot || st.highlight == Some(i) {
                     let color = if on { t.accent } else { t.text_dim };
-                    p.text(star.center(), egui::Align2::CENTER_CENTER, if on { "★" } else { "☆" }, egui::FontId::proportional(12.0), color);
+                    p.text(
+                        star.center(),
+                        egui::Align2::CENTER_CENTER,
+                        if on { "★" } else { "☆" },
+                        egui::FontId::proportional(VAROS_UI.panel_body_font),
+                        color,
+                    );
                 }
                 on_star = resp.interact_pointer_pos().is_some_and(|pos| star.contains(pos));
                 if resp.clicked() && on_star {

@@ -8,6 +8,7 @@
 //! `{"model": "cmyk", "c": 0.1, "m": 0.2, "y": 0.3, "k": 0}`) and `preview`; a gradient swatch has
 //! `name`, `preview` and `__gradient` (the gradient shown) only.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::vec2;
 use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
@@ -211,7 +212,7 @@ fn sliders(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         ui.vertical(|ui| {
             for (i, lbl) in mode.labels().iter().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new(*lbl).size(12.5).color(t.text)));
+                    ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new(*lbl).size(VAROS_UI.legacy_control_font).color(t.text)));
                     let v = comps.get(i).copied().unwrap_or(0.0);
                     let track = |x: f32| crate::panels::c32(&track_color(mode, &comps, i, x));
                     let shown = widgets::SliderValue::field(v as f64, mode.min(i) as f64..=mode.max(i) as f64, mode.suffix(i), 0);
@@ -230,7 +231,7 @@ fn sliders(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             }
             if matches!(mode, Mode::Rgb | Mode::Hsb | Mode::WebSafe) {
                 ui.horizontal(|ui| {
-                    ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new("#").size(12.5).color(t.text)));
+                    ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new("#").size(VAROS_UI.legacy_control_font).color(t.text)));
                     let hex = color.to_hex().trim_start_matches('#').to_uppercase();
                     if let Some(c) = hex_field(ui, &hex) {
                         let c = if mode == Mode::WebSafe { web_safe(&c) } else { c };
@@ -262,7 +263,7 @@ fn hex_field(ui: &mut egui::Ui, hex: &str) -> Option<Color> {
     let resp = egui::Frame::NONE
         .fill(t.input)
         .stroke(egui::Stroke::new(1.0, if editing { t.accent } else { t.input_border }))
-        .corner_radius(2)
+        .corner_radius(VAROS_UI.control_radius)
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
             crate::theme::strong_selected_text(ui);

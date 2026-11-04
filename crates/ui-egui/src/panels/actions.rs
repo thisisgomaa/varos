@@ -2,6 +2,7 @@
 //! Every recorded step is an ordinary command invocation, so actions are also plain JSON that
 //! agents can author and replay (`command.batch`).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -100,7 +101,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             } else if resp.hovered() {
                 ui.painter().rect_filled(r, 0.0, t.hover);
             }
-            ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, format!("▾ {}", set.name), egui::FontId::proportional(12.5), t.text);
+            ui.painter().text(
+                r.left_center(),
+                egui::Align2::LEFT_CENTER,
+                format!("▾ {}", set.name),
+                egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                t.text,
+            );
             if resp.clicked() {
                 current = Some(si);
                 selected = None;
@@ -117,14 +124,14 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                     r.left_center() + egui::vec2(18.0, 0.0),
                     egui::Align2::LEFT_CENTER,
                     &a.name,
-                    egui::FontId::proportional(12.5),
+                    egui::FontId::proportional(VAROS_UI.legacy_control_font),
                     t.text_strong,
                 );
                 ui.painter().text(
                     r.right_center() - egui::vec2(6.0, 0.0),
                     egui::Align2::RIGHT_CENTER,
                     crate::i18n::tn(a.steps.len() as u64, "{n} step", "{n} steps"),
-                    egui::FontId::proportional(11.0),
+                    egui::FontId::proportional(VAROS_UI.control_font),
                     t.text_dim,
                 );
                 if resp.clicked() {

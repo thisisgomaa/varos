@@ -10,6 +10,7 @@
 //! Options open), `bleedLinked` and `presetName` (Save Preset's name). Setting `preset` fills the
 //! fields from that preset; changing any of them afterwards makes the settings custom.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Map, Value, json};
 use vectorcraft_doc::Unit;
 use vectorcraft_engine::cmd::newdoc::{self, ArtboardLayout, DocSettings, MAX_ARTBOARDS, PreviewMode, RASTER_PPI};
@@ -245,7 +246,7 @@ fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     } else {
         tl!("BLANK DOCUMENT PRESETS")
     };
-    ui.label(egui::RichText::new(format!("{heading} ({})", list.len())).font(theme::semibold(11.0)).color(t.text_dim));
+    ui.label(egui::RichText::new(format!("{heading} ({})", list.len())).font(theme::semibold(VAROS_UI.control_font)).color(t.text_dim));
     ui.add_space(10.0);
     if list.is_empty() {
         let hint = if cat == 1 { tl!("Presets you save with the Save Preset button appear here.") } else { tl!("Documents you create appear here.") };
@@ -296,9 +297,9 @@ pub fn preset_card(ui: &mut egui::Ui, s: &DocSettings, selected: bool) -> egui::
     let label = preset_name(&s.name);
     let (r, resp) = ui.allocate_exact_size(egui::vec2(146.0, 150.0), egui::Sense::click());
     let p = ui.painter();
-    p.rect_filled(r, egui::CornerRadius::same(6), if resp.hovered() || selected { t.hover } else { t.panel_darker });
+    p.rect_filled(r, egui::CornerRadius::same(VAROS_UI.card_radius), if resp.hovered() || selected { t.hover } else { t.panel_darker });
     if selected {
-        p.rect_stroke(r, egui::CornerRadius::same(6), egui::Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+        p.rect_stroke(r, egui::CornerRadius::same(VAROS_UI.card_radius), egui::Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
     }
     let k = (60.0 / s.width.max(s.height).max(1e-9)) as f32;
     let page = egui::Rect::from_center_size(
@@ -310,14 +311,20 @@ pub fn preset_card(ui: &mut egui::Ui, s: &DocSettings, selected: bool) -> egui::
     // The name on up to two lines, then the size.
     let mut job = egui::text::LayoutJob::single_section(
         label.to_string(),
-        egui::TextFormat { font_id: theme::semibold(11.5), color: t.text_strong, ..Default::default() },
+        egui::TextFormat { font_id: theme::semibold(VAROS_UI.metadata_font), color: t.text_strong, ..Default::default() },
     );
     job.halign = egui::Align::Center;
     job.wrap = egui::text::TextWrapping { max_width: r.width() - 14.0, max_rows: 2, break_anywhere: false, overflow_character: Some('…') };
     let name = ui.fonts_mut(|f| f.layout_job(job));
     let name_h = name.size().y;
     p.galley(egui::pos2(r.center().x, r.top() + 94.0), name, t.text_strong);
-    p.text(egui::pos2(r.center().x, r.top() + 98.0 + name_h), egui::Align2::CENTER_TOP, s.size_label(), egui::FontId::proportional(11.0), t.text_dim);
+    p.text(
+        egui::pos2(r.center().x, r.top() + 98.0 + name_h),
+        egui::Align2::CENTER_TOP,
+        s.size_label(),
+        egui::FontId::proportional(VAROS_UI.control_font),
+        t.text_dim,
+    );
     resp.on_hover_text(label)
 }
 
@@ -326,7 +333,7 @@ fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut 
     let t = Tokens::get(ui.ctx());
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
     let top = ui.cursor().top();
-    ui.label(egui::RichText::new(tl!("PRESET DETAILS")).font(theme::semibold(11.0)).color(t.text_dim));
+    ui.label(egui::RichText::new(tl!("PRESET DETAILS")).font(theme::semibold(VAROS_UI.control_font)).color(t.text_dim));
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         form::text(ui, d, "name", DETAILS - 50.0);
@@ -463,11 +470,11 @@ fn background(ui: &mut egui::Ui, d: &mut Dialog, width: f32) {
             d.fields.insert("backgroundContents".into(), json!(v));
         }
         let (chip, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-        ui.painter().rect_filled(chip, 2.0, egui::Color32::WHITE);
+        ui.painter().rect_filled(chip, f32::from(VAROS_UI.preview_radius), egui::Color32::WHITE);
         if cur != "white" {
             ui.painter().line_segment([chip.left_bottom(), chip.right_top()], egui::Stroke::new(1.5, t.bleed));
         }
-        ui.painter().rect_stroke(chip, 2.0, egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(chip, f32::from(VAROS_UI.preview_radius), egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
     });
 }
 

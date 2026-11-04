@@ -24,6 +24,7 @@
 //! `__settings` names the format whose Format Settings show ("" when closed), `__savePreset` is the
 //! name being typed to save a preset (absent when not saving).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use vectorcraft_engine::cmd::fileio::{self, ArtboardPick, SCREEN_PRESETS, ScreenSize, pdf};
@@ -504,7 +505,7 @@ fn artboards(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
                             ui.painter().image(tex.id(), egui::Rect::from_center_size(r.center(), sz * s), uv, egui::Color32::WHITE);
                         }
                         None => {
-                            ui.painter().rect_filled(r, 2.0, egui::Color32::WHITE);
+                            ui.painter().rect_filled(r, f32::from(VAROS_UI.preview_radius), egui::Color32::WHITE);
                         }
                     }
                     if let Some(b) = boards.get_mut(i)

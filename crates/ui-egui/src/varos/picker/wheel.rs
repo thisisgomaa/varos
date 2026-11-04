@@ -242,7 +242,7 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &super::View, p
     let lift = if lines.len() > 3 { READOUT_LINE } else { 0.0 };
     for (i, (label, value)) in lines.into_iter().enumerate() {
         let pos = rect.min + vec2(READOUT_POS[0], READOUT_POS[1] - lift + i as f32 * READOUT_LINE);
-        let mono = egui::FontId::monospace(11.0);
+        let mono = egui::FontId::monospace(crate::varos::theme_components::FOUNDATION.control_font);
         let offset = if label.is_empty() {
             0.0
         } else {

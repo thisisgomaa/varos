@@ -109,7 +109,11 @@ pub(super) fn show(app: &VectorcraftApp, ui: &mut Ui, origin: Pos2, prefs: &mut 
         ui.horizontal(|ui| {
             for (tab, label) in [(DrawerTab::Recent, tl!("Recent")), (DrawerTab::Document, tl!("Document"))] {
                 let on = prefs.drawer_tab == tab;
-                let text = egui::RichText::new(label).size(11.5).color(if on { t.text } else { t.text_dim });
+                let text = egui::RichText::new(label).size(crate::varos::theme_components::FOUNDATION.metadata_font).color(if on {
+                    t.text
+                } else {
+                    t.text_dim
+                });
                 let resp = ui.add(egui::Button::new(text).frame(false).selected(on));
                 if on {
                     ui.painter().hline(resp.rect.x_range(), resp.rect.bottom(), egui::Stroke::new(1.0, t.text));

@@ -14,6 +14,8 @@
 //! Every drop is one change of [`VarosShell`] made on a copy and kept only when it fully worked, so
 //! each panel always has exactly one owner ([`VarosShell::invariants`], asserted in debug builds).
 
+use crate::varos::theme_components::FOUNDATION as LOOK;
+
 use egui::{CornerRadius, CursorIcon, Id, Key, LayerId, Order, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use super::floats::{self, Float, FloatStrip};
@@ -341,7 +343,7 @@ pub(crate) fn after(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect, h
     let layer = preview_layer();
     let painter = ctx.layer_painter(layer);
     if let Some(source) = source_rect(&app.ui.varos_shell, &d.item, hits) {
-        painter.rect_stroke(source, CornerRadius::same(3), Stroke::new(1.0, accent), StrokeKind::Inside);
+        painter.rect_stroke(source, CornerRadius::same(LOOK.control_radius), Stroke::new(1.0, accent), StrokeKind::Inside);
         hits.push((Hit::DragSource, source));
     }
     let ghost = Rect::from_min_size(p - d.grab, d.ghost);
@@ -367,17 +369,21 @@ fn paint_ghost(app: &VectorcraftApp, ui: &mut egui::Ui, layer: LayerId, d: &Drag
     if let Item::Tab(_) = d.item {
         let radius = CornerRadius::same((ghost.height() / 2.0).min(127.0) as u8);
         painter.rect_filled(ghost, radius, fade(t.button));
-        let label = painter.layout_no_wrap(boxes::label(app, &panel), crate::theme::semibold(12.0), fade(t.text_strong));
-        let at = pos2(ghost.left() + 10.0_f32.min(ghost.width() / 2.0), ghost.center().y - label.size().y / 2.0);
+        let label = painter.layout_no_wrap(boxes::label(app, &panel), LOOK.tab_font(), fade(t.text_strong));
+        let at = pos2(ghost.left() + LOOK.tab_padding.min(ghost.width() / 2.0), ghost.center().y - label.size().y / 2.0);
         painter.with_clip_rect(ghost.shrink2(vec2(4.0, 0.0))).galley(at, label, fade(t.text_strong));
         return;
     }
-    painter.rect_filled(ghost, CornerRadius::same(3), fade(t.button));
+    painter.rect_filled(ghost, CornerRadius::same(LOOK.control_radius), fade(t.button));
     let mut paint_ui = ui.new_child(egui::UiBuilder::new().layer_id(layer).max_rect(ghost));
     paint_ui.set_clip_rect(ghost);
     let stacked = matches!(d.item, Item::Group { .. } | Item::Strip(_) | Item::BoardStrip);
     if stacked {
-        painter.rect_filled(Rect::from_min_size(ghost.min, vec2(ghost.width(), floats::PILL_GRIP)), CornerRadius::same(2), fade(t.hover));
+        painter.rect_filled(
+            Rect::from_min_size(ghost.min, vec2(ghost.width(), floats::PILL_GRIP)),
+            CornerRadius::same(LOOK.control_radius.saturating_sub(1)),
+            fade(t.hover),
+        );
     }
     let icons = if stacked { panels } else { vec![panel] };
     for (i, panel) in icons.iter().enumerate() {

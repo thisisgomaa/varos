@@ -1,5 +1,6 @@
 //! Contextual clipping action shared by Properties and the control bar.
 use crate::VectorcraftApp;
+use crate::varos::theme_components::FOUNDATION as LOOK;
 use vectorcraft_doc::NodeKind;
 
 pub(crate) struct Action {
@@ -65,7 +66,8 @@ pub(crate) fn action(app: &VectorcraftApp) -> Action {
 
 pub(crate) fn button(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     let a = action(app);
-    let response = ui.add_enabled(a.enabled, egui::Button::new(tl!(a.label)).corner_radius(3).min_size(egui::vec2(156., 24.)));
+    let response =
+        ui.add_enabled(a.enabled, egui::Button::new(tl!(a.label)).corner_radius(LOOK.control_radius).min_size(egui::vec2(156., LOOK.control_height)));
     if response.on_hover_text(&a.tip).on_disabled_hover_text(&a.tip).clicked()
         && let Err(error) = app.run(a.command, serde_json::json!({}))
     {

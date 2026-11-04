@@ -9,6 +9,7 @@
 //! the same tiles ([`picker`]). Graphic style libraries open in library panels
 //! ([`GraphicStyleLibraries`]).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -262,7 +263,7 @@ fn large_preview(app: &VectorcraftApp, ctx: &egui::Context, s: &Shown, i: usize)
                 None => ui.painter().rect_filled(r, 0.0, Color32::WHITE),
             };
             ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.border), StrokeKind::Outside);
-            ui.label(egui::RichText::new(&g.name).size(11.5).color(t.text));
+            ui.label(egui::RichText::new(&g.name).size(VAROS_UI.metadata_font).color(t.text));
         });
     });
 }
@@ -401,7 +402,13 @@ fn rows(app: &VectorcraftApp, ui: &mut Ui, s: &Shown, sel: &[String], row: (f32,
         let th = Rect::from_min_size(r.left_center() + vec2(4.0, -side / 2.0), vec2(side, side));
         s.paint(app, ui, th, i);
         ui.painter().rect_stroke(th, 0.0, Stroke::new(1.0, t.border), StrokeKind::Outside);
-        ui.painter().text(pos2(th.right() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, &g.name, egui::FontId::proportional(12.0), t.text);
+        ui.painter().text(
+            pos2(th.right() + 8.0, r.center().y),
+            egui::Align2::LEFT_CENTER,
+            &g.name,
+            egui::FontId::proportional(VAROS_UI.panel_body_font),
+            t.text,
+        );
         cell_input(ui, &resp, s.d, i, true, ev);
     }
 }

@@ -10,7 +10,8 @@
 //!
 //! Fields: `level` (0..=100, the command's parameter).
 
-use egui::{Color32, CornerRadius, Order, Pos2, Sense, Stroke, vec2};
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
+use egui::{CornerRadius, Order, Pos2, Sense, Stroke, vec2};
 use serde_json::{Value, json};
 use vectorcraft_engine::{SIMPLIFY_LEVEL, auto_simplify_level, simplify_level_tolerance};
 use vectorcraft_geom::Rect;
@@ -137,9 +138,9 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         egui::Frame::NONE
             .fill(t.panel)
             .stroke(Stroke::new(1.0, t.tool_active))
-            .corner_radius(CornerRadius::same(5))
+            .corner_radius(CornerRadius::same(VAROS_UI.box_radius))
             .inner_margin(egui::Margin::symmetric(8, 6))
-            .shadow(egui::epaint::Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(70) })
+            .shadow(crate::varos::theme::chrome_shadow(&t, [0, 3], 10, 70))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;

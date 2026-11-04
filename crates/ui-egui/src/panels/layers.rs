@@ -38,6 +38,7 @@
 //! those scrolled into view are laid out, so a document of many thousand objects costs no more
 //! per frame than a small one.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
 
@@ -186,7 +187,7 @@ fn drag_ghost(ui: &Ui, view: &View, src: NodeId, pos: egui::Pos2) {
     }
     let label = n.identify_label(view.identify_xml_id);
     let name = if view.identify_xml_id { label } else { painted_name(n, &label, crate::i18n::current()) };
-    ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(13.0), t.text);
+    ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(VAROS_UI.body_font), t.text);
 }
 
 /// Where a dragged row goes relative to the row it is dropped on.
@@ -784,7 +785,10 @@ fn filter_button(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.horizontal(|ui| {
             widgets::subheader(ui, tl!("Filter"));
             ui.add_space(12.0);
-            if ui.add_enabled(f.is_on(), egui::Button::new(egui::RichText::new(tl!("Clear All")).size(12.5)).frame(false)).clicked() {
+            if ui
+                .add_enabled(f.is_on(), egui::Button::new(egui::RichText::new(tl!("Clear All")).size(VAROS_UI.legacy_control_font)).frame(false))
+                .clicked()
+            {
                 set = Some(json!({"objects": [], "layers": []}));
             }
         });
@@ -816,7 +820,7 @@ fn bottom_bar(app: &mut VectorcraftApp, ui: &mut Ui, view: &View, doc: &Document
         bar.left_center() + vec2(4.0, 0.0),
         egui::Align2::LEFT_CENTER,
         crate::i18n::tn(n as u64, "{n} Layer", "{n} Layers"),
-        egui::FontId::proportional(11.5),
+        egui::FontId::proportional(VAROS_UI.metadata_font),
         t.text_dim,
     );
     let m = ui.input(|i| i.modifiers);
@@ -856,7 +860,7 @@ fn bottom_bar(app: &mut VectorcraftApp, ui: &mut Ui, view: &View, doc: &Document
         let over = button.dnd_hover_payload::<LayersDrag>().is_some_and(|d| matches!(*d, LayersDrag::Rows(_)))
             || (cmd == "layer.delete" && button.dnd_hover_payload::<PanelDrag>().is_some_and(|d| matches!(*d, PanelDrag::Appearance(_))));
         if over {
-            child.painter().rect_stroke(button.rect, 3.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+            child.painter().rect_stroke(button.rect, f32::from(VAROS_UI.control_radius), Stroke::new(1.5, t.accent), StrokeKind::Inside);
         }
     }
     if widgets::icon_button(&mut child, "plus", tl!("Create New Sublayer"), false, 24.0).clicked() {
@@ -929,7 +933,7 @@ fn guide_row(ui: &mut Ui, view: &View, item: &Row, i: usize, out: &mut Out) {
     x += 22.0;
     let name = format!("<{}>", if g.vertical { tl!("Vertical Guide") } else { tl!("Horizontal Guide") });
     let color = if item.dim { t.text_dim } else { t.text };
-    ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(13.0), color);
+    ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(VAROS_UI.body_font), color);
     let col_x = r.right() - 43.5;
     ui.painter().line_segment([egui::pos2(col_x, r.top()), egui::pos2(col_x, r.bottom())], Stroke::new(1.0, t.input_border));
     if selected {
@@ -1031,7 +1035,7 @@ fn row(ui: &mut Ui, view: &View, item: &Row, out: &mut Out) {
     // Name (Preferences › Units › Identify Objects By: Object Name or XML ID).
     let xml_id = view.identify_xml_id;
     let name = if doc.mask_edit.is_some_and(|m| m.layer == n.id) { "<Opacity Mask>".to_string() } else { n.identify_label(xml_id) };
-    let font = egui::FontId::proportional(13.0);
+    let font = egui::FontId::proportional(VAROS_UI.body_font);
     let renaming: Option<(u64, String)> = ui.data(|d| d.get_temp(rename_id()));
     let name_rect = egui::Rect::from_min_max(egui::pos2(x - 2.0, r.center().y - 10.0), egui::pos2(r.right() - 44.0, r.center().y + 10.0));
     let name_end;

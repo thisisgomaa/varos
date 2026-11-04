@@ -1,5 +1,6 @@
 //! Pathfinder panel: Shape Modes (+ Expand) and Pathfinders, with icons drawn for VectorCraft.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::Ui;
 use serde_json::json;
 
@@ -62,8 +63,14 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         }
         ui.add_enabled_ui(false, |ui| {
             let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width().min(90.0), 26.0), egui::Sense::hover());
-            ui.painter().rect_filled(r, 2, t.hover.gamma_multiply(0.5));
-            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, tl!("Expand"), egui::FontId::proportional(12.5), t.text_disabled);
+            ui.painter().rect_filled(r, VAROS_UI.control_radius, t.hover.gamma_multiply(0.5));
+            ui.painter().text(
+                r.center(),
+                egui::Align2::CENTER_CENTER,
+                tl!("Expand"),
+                egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                t.text_disabled,
+            );
         })
         .response
         .on_disabled_hover_text(tl!("Expand applies to compound shapes (Alt-click a shape mode) — on the roadmap"));

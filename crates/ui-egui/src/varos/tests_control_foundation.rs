@@ -186,3 +186,201 @@ fn capture_control_foundation_gallery() {
         image::save_buffer(path.join(format!("controls-{name}.png")), &pixels, 640, 620, image::ColorType::Rgba8).unwrap();
     }
 }
+
+#[test]
+fn native_checkbox_uses_the_shared_checkbox_role() {
+    let ctx = themed(theme::Brightness::Dark);
+    let mut checked = true;
+    let mut bounds = Rect::NOTHING;
+    let mut out = frame(&ctx, 0.0, vec![], |ui| bounds = ui.checkbox(&mut checked, "Enabled").rect);
+    let mut rects = vec![];
+    for shape in &out.shapes {
+        rectangles(&shape.shape, &mut rects);
+    }
+    let painted = rects
+        .iter()
+        .filter(|r| r.fill != Color32::TRANSPARENT && bounds.expand(1.0).contains_rect(r.rect))
+        .max_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+        .expect("native checkbox frame");
+    assert_eq!(painted.corner_radius, egui::CornerRadius::same(FOUNDATION.checkbox_radius));
+    out.textures_delta.clear();
+}
+
+fn control_fill(output: &egui::FullOutput, bounds: Rect) -> Option<Color32> {
+    let mut rects = vec![];
+    for shape in &output.shapes {
+        rectangles(&shape.shape, &mut rects);
+    }
+    rects
+        .into_iter()
+        .filter(|rect| rect.fill != Color32::TRANSPARENT && bounds.expand(1.0).contains_rect(rect.rect))
+        .max_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+        .map(|rect| rect.fill)
+}
+
+#[test]
+fn native_and_shared_secondary_buttons_share_color_roles_without_recoloring_fields() {
+    for brightness in [theme::Brightness::Dark, theme::Brightness::Light] {
+        let ctx = themed(brightness);
+        let t = theme::Tokens::get(&ctx);
+        let native = Cell::new(Rect::NOTHING);
+        let shared = Cell::new(Rect::NOTHING);
+        let field = Cell::new(Rect::NOTHING);
+        let mut text = "Text عربي".to_owned();
+        let mut draw = |ui: &mut Ui| {
+            native.set(ui.button("Native secondary").rect);
+            shared.set(widgets::secondary_button(ui, "Shared secondary").rect);
+            field.set(ui.add(egui::TextEdit::singleline(&mut text)).rect);
+        };
+        for time in [0.0, 0.1] {
+            let mut out = frame(&ctx, time, vec![], &mut draw);
+            out.textures_delta.clear();
+            if time > 0.0 {
+                assert_eq!(control_fill(&out, native.get()), Some(t.button), "{brightness:?}: native button");
+                assert_eq!(control_fill(&out, shared.get()), Some(t.button), "{brightness:?}: shared button");
+                assert_eq!(control_fill(&out, field.get()), Some(t.input), "{brightness:?}: text field");
+            }
+        }
+        let mut time = 0.2;
+        for bounds in [native.get(), shared.get()] {
+            for _ in 0..2 {
+                let mut out = frame(&ctx, time, vec![Event::PointerMoved(bounds.center())], &mut draw);
+                out.textures_delta.clear();
+                time += 0.1;
+            }
+            let mut out = frame(&ctx, time, vec![Event::PointerMoved(bounds.center())], &mut draw);
+            out.textures_delta.clear();
+            time += 0.1;
+            assert_eq!(control_fill(&out, bounds), Some(t.hover), "{brightness:?}: hovered secondary button");
+            assert_eq!(control_fill(&out, field.get()), Some(t.input), "button hover must not recolor fields");
+        }
+    }
+}
+
+#[test]
+fn button_color_roles_preserve_frameless_selected_explicit_fill_and_combo_states() {
+    for brightness in [theme::Brightness::Dark, theme::Brightness::Light] {
+        let ctx = themed(brightness);
+        let t = theme::Tokens::get(&ctx);
+        let plain = Cell::new(Rect::NOTHING);
+        let selected = Cell::new(Rect::NOTHING);
+        let explicit = Cell::new(Rect::NOTHING);
+        let combo = Cell::new(Rect::NOTHING);
+        let drag_value = Cell::new(Rect::NOTHING);
+        let mut numeric_value = 42.0;
+        let combo_id = Cell::new(Id::NULL);
+        let explicit_fill = Color32::from_rgb(71, 101, 131);
+        let mut draw = |ui: &mut Ui| {
+            plain.set(ui.add(egui::Button::new("Frameless").frame(false)).rect);
+            selected.set(ui.add(egui::Button::new("Selected").selected(true)).rect);
+            explicit.set(ui.add(egui::Button::new("Explicit fill").fill(explicit_fill)).rect);
+            drag_value.set(ui.add(egui::DragValue::new(&mut numeric_value)).rect);
+            let response = egui::ComboBox::from_id_salt("shared-colors-combo")
+                .selected_text("Normal")
+                .show_ui(ui, |ui| {
+                    ui.label("Option");
+                })
+                .response;
+            combo.set(response.rect);
+            combo_id.set(response.id);
+        };
+        for time in [0.0, 0.1] {
+            let mut out = frame(&ctx, time, vec![], &mut draw);
+            out.textures_delta.clear();
+            if time > 0.0 {
+                assert_eq!(control_fill(&out, plain.get()), None, "frameless buttons must remain unfilled");
+                assert_eq!(control_fill(&out, selected.get()), Some(t.accent), "selected button keeps selection fill");
+                assert_eq!(control_fill(&out, explicit.get()), Some(explicit_fill), "explicit button fill wins");
+                assert_eq!(control_fill(&out, combo.get()), Some(t.input), "closed combo keeps the field role");
+                assert_eq!(control_fill(&out, drag_value.get()), Some(t.input), "DragValue uses ButtonStyle internally but remains a numeric field");
+            }
+        }
+        let at = combo.get().center();
+        for (time, pressed) in [(0.2, true), (0.3, false)] {
+            let mut out = frame(&ctx, time, vec![Event::PointerMoved(at), pointer(at, pressed)], &mut draw);
+            out.textures_delta.clear();
+        }
+        assert!(egui::ComboBox::is_open(&ctx, combo_id.get()), "the real combo opens");
+        let mut out = frame(&ctx, 0.4, vec![Event::PointerMoved(Pos2::new(600.0, 580.0))], &mut draw);
+        out.textures_delta.clear();
+        assert_eq!(control_fill(&out, combo.get()), Some(t.tool_active), "open combo retains its open-field role");
+        assert_eq!(control_fill(&out, drag_value.get()), Some(t.input));
+        assert_eq!(control_fill(&out, plain.get()), None);
+        assert_eq!(control_fill(&out, selected.get()), Some(t.accent));
+        assert_eq!(control_fill(&out, explicit.get()), Some(explicit_fill));
+    }
+}
+
+#[test]
+fn native_text_field_border_roles_follow_hover_and_focus_without_overriding_explicit_frames() {
+    for brightness in [theme::Brightness::Dark, theme::Brightness::Light] {
+        let ctx = themed(brightness);
+        let t = theme::Tokens::get(&ctx);
+        let field_id = Id::unique("shared-field-border");
+        let native = Cell::new(Rect::NOTHING);
+        let unframed = Cell::new(Rect::NOTHING);
+        let readonly_rect = Cell::new(Rect::NOTHING);
+        let explicit = Cell::new(Rect::NOTHING);
+        let mut text = "Text عربي".to_owned();
+        let mut plain_text = "Unframed".to_owned();
+        let mut readonly = "Read-only";
+        let mut explicit_text = "Explicit frame".to_owned();
+        let explicit_fill = Color32::from_rgb(71, 101, 131);
+        let explicit_border = Color32::from_rgb(181, 101, 51);
+        let mut draw = |ui: &mut Ui| {
+            native.set(ui.add(egui::TextEdit::singleline(&mut text).id(field_id)).rect);
+            unframed.set(ui.add(egui::TextEdit::singleline(&mut plain_text).frame(egui::Frame::NONE)).rect);
+            readonly_rect.set(ui.add(egui::TextEdit::singleline(&mut readonly)).rect);
+            explicit.set(
+                ui.add(
+                    egui::TextEdit::singleline(&mut explicit_text)
+                        .frame(egui::Frame::NONE.fill(explicit_fill).stroke(egui::Stroke::new(2.0, explicit_border))),
+                )
+                .rect,
+            );
+        };
+        let painted_frame = |out: &egui::FullOutput, bounds: Rect| {
+            let mut rects = vec![];
+            for shape in &out.shapes {
+                rectangles(&shape.shape, &mut rects);
+            }
+            rects
+                .into_iter()
+                .filter(|r| r.fill != Color32::TRANSPARENT && bounds.expand(1.0).contains_rect(r.rect))
+                .max_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+                .cloned()
+                .expect("actual framed text field")
+        };
+        for time in [0.0, 0.1] {
+            let mut out = frame(&ctx, time, vec![], &mut draw);
+            out.textures_delta.clear();
+            if time > 0.0 {
+                let field = painted_frame(&out, native.get());
+                assert_eq!(field.fill, t.input);
+                assert_eq!(field.stroke.color, t.input_border);
+                assert_eq!(control_fill(&out, unframed.get()), None, "explicit Frame::NONE stays transparent");
+                assert_eq!(control_fill(&out, readonly_rect.get()), None, "read-only text retains transparent background");
+                let custom = painted_frame(&out, explicit.get());
+                assert_eq!((custom.fill, custom.stroke.color, custom.stroke.width), (explicit_fill, explicit_border, 2.0));
+            }
+        }
+        let at = native.get().center();
+        for time in [0.2, 0.3] {
+            let mut out = frame(&ctx, time, vec![Event::PointerMoved(at)], &mut draw);
+            out.textures_delta.clear();
+            let field = painted_frame(&out, native.get());
+            assert_eq!((field.fill, field.stroke.color), (t.input, t.input_border), "hover keeps the field role");
+        }
+        ctx.memory_mut(|memory| memory.request_focus(field_id));
+        for time in [0.4, 0.5] {
+            let mut out = frame(&ctx, time, vec![Event::PointerMoved(Pos2::new(600.0, 580.0))], &mut draw);
+            out.textures_delta.clear();
+            if time > 0.4 {
+                let field = painted_frame(&out, native.get());
+                assert_eq!((field.fill, field.stroke.color), (t.input, t.accent), "focused fields use the shared accent border");
+                assert_eq!(control_fill(&out, unframed.get()), None);
+                assert_eq!(control_fill(&out, readonly_rect.get()), None);
+            }
+        }
+    }
+}

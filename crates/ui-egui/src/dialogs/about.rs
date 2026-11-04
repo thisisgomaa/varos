@@ -2,6 +2,7 @@
 
 use crate::VectorcraftApp;
 use crate::theme;
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 
 /// The About window, while `UiState::about` is set.
 pub(super) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
@@ -30,7 +31,7 @@ pub(super) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             });
             ui.data_mut(|d| d.insert_temp(tab_id, tab));
             ui.separator();
-            ui.label(egui::RichText::new(crate::brand::FORK_NOTICE).size(11.0));
+            ui.label(egui::RichText::new(crate::brand::FORK_NOTICE).size(VAROS_UI.control_font));
             match tab {
                 1 => {
                     ui.set_width(660.0);
@@ -53,7 +54,7 @@ fn about_tab(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
         crate::brand::paint_mark(ui, r);
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new(crate::brand::APP_NAME).font(theme::semibold(22.0)));
+            ui.label(egui::RichText::new(crate::brand::APP_NAME).font(theme::semibold(VAROS_UI.about_title_font)));
             ui.label(vectorcraft_format::VAROS_IDENTITY); // Varos: shared build identity.
         });
     });
@@ -62,11 +63,11 @@ fn about_tab(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         egui::RichText::new(
             "Varos, based on VectorCraft by the ArtCraft team. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + VectorCraft.", // Varos: the allowed attribution wording
         )
-        .size(11.0),
+        .size(VAROS_UI.control_font),
     );
     // The GPU the window renders with, for bug reports (Preferences › Performance picks it).
     if let Some(adapter) = &app.graphics_adapter {
         ui.add_space(6.0);
-        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Graphics: {adapter}"), &[("adapter", adapter.as_str())])).size(11.0));
+        ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Graphics: {adapter}"), &[("adapter", adapter.as_str())])).size(VAROS_UI.control_font));
     }
 }

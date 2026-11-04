@@ -1,4 +1,5 @@
 //! Home's simple shell: local files, folder projects, templates and onboarding.
+use crate::varos::theme_components::FOUNDATION as LOOK;
 use crate::{
     VectorcraftApp, icons,
     theme::{self, Tokens},
@@ -163,9 +164,9 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
     let mut cards = Vec::new();
     egui::ScrollArea::vertical().id_salt("varos-home-simple").auto_shrink([false, false]).show(&mut child, |ui| {
         let (name, hour) = identity(ui.ctx());
-        label_row(ui, &data::greeting(hour, &name), 28.0, theme::semibold(20.0), t.text);
+        label_row(ui, &data::greeting(hour, &name), 28.0, theme::semibold(LOOK.home_title_font), t.text);
         ui.add_space(6.0);
-        label_row(ui, tl!("Pick up where you left off, or start something new."), 17.0, egui::FontId::proportional(12.0), t.text_dim);
+        label_row(ui, tl!("Pick up where you left off, or start something new."), 17.0, egui::FontId::proportional(LOOK.panel_body_font), t.text_dim);
         ui.add_space(22.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
@@ -204,12 +205,12 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
     if !message.is_empty() && now - since < 6.0 {
         ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64((6.0 - (now - since)).max(0.0)));
         let toast = Rect::from_min_size(pos2(main.left() + 48.0, main.bottom() - 46.0), vec2((main.width() - 96.0).max(1.0), 32.0));
-        ui.painter().rect_filled(toast, 6.0, t.panel);
+        ui.painter().rect_filled(toast, f32::from(LOOK.box_radius), t.panel);
         text(
             ui,
             toast.shrink2(vec2(10.0, 0.0)),
             &crate::i18n::msg(&app.ui.status),
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(LOOK.control_font),
             t.text_dim,
             Align2::LEFT_CENTER,
         );
@@ -244,7 +245,7 @@ fn top_bar(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
         ui,
         Rect::from_min_size(rect.min + vec2(lead + 30.0, 0.0), vec2(100.0, 40.0)),
         tl!("Varos"),
-        theme::semibold(12.0),
+        theme::semibold(LOOK.panel_body_font),
         t.text,
         Align2::LEFT_CENTER,
     );
@@ -252,10 +253,10 @@ fn top_bar(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
     ui.painter().circle_filled(avatar.center(), 11.0, t.button);
     let (name, _) = identity(ui.ctx());
     let initial = name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
-    text(ui, avatar, &initial, theme::semibold(10.0), t.text, Align2::CENTER_CENTER);
+    text(ui, avatar, &initial, theme::semibold(LOOK.avatar_font), t.text, Align2::CENTER_CENTER);
     ui.interact(avatar, ui.scope_id().with_salt(egui::IdSalt::new("home-avatar")), Sense::hover()).on_hover_text(name);
     let search = Rect::from_min_size(pos2(avatar.left() - 276.0, rect.top() + 8.0), vec2(260.0, 24.0));
-    ui.painter().rect_filled(search, 5.0, t.input);
+    ui.painter().rect_filled(search, f32::from(LOOK.control_radius), t.input);
     icons::paint(ui, "home-search", Rect::from_center_size(pos2(search.left() + 13.0, search.center().y), vec2(13.0, 13.0)), t.text_disabled);
     let old = app.ui.home_view.query.clone();
     let search_response = ui.put(
@@ -263,7 +264,7 @@ fn top_bar(app: &mut VectorcraftApp, ui: &mut Ui, rect: Rect) {
         egui::TextEdit::singleline(&mut app.ui.home_view.query)
             .id(egui::Id::unique("home-search"))
             .hint_text(tl!("Search files and templates"))
-            .font(egui::FontId::proportional(11.0))
+            .font(egui::FontId::proportional(LOOK.control_font))
             .frame(egui::Frame::NONE),
     );
     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -325,7 +326,7 @@ fn nav_row(ui: &mut Ui, rect: Rect, label: &str, icon: &str, active: bool, disab
         })
         .inner;
     if active || r.hovered() {
-        ui.painter().rect_filled(rect, 6.0, t.button);
+        ui.painter().rect_filled(rect, f32::from(LOOK.control_radius), t.button);
     }
     let fg = if disabled { t.text_disabled } else { t.text_dim };
     icons::paint(ui, icon, Rect::from_center_size(pos2(rect.left() + 24.0, rect.center().y), vec2(16.0, 16.0)), fg);
@@ -333,7 +334,7 @@ fn nav_row(ui: &mut Ui, rect: Rect, label: &str, icon: &str, active: bool, disab
         ui,
         Rect::from_min_max(rect.min + vec2(40.0, 0.0), rect.max - vec2(if disabled { 44.0 } else { 8.0 }, 0.0)),
         label,
-        egui::FontId::proportional(11.0),
+        egui::FontId::proportional(LOOK.control_font),
         if disabled { fg } else { t.text },
         Align2::LEFT_CENTER,
     );
@@ -344,12 +345,12 @@ fn nav_row(ui: &mut Ui, rect: Rect, label: &str, icon: &str, active: bool, disab
 }
 fn badge(ui: &Ui, rect: Rect) {
     let t = Tokens::get(ui.ctx());
-    ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
-    text(ui, rect, tl!("later"), egui::FontId::proportional(9.0), t.text_disabled, Align2::CENTER_CENTER);
+    ui.painter().rect_stroke(rect, f32::from(LOOK.inset_radius), Stroke::new(1.0, t.button_border), StrokeKind::Inside);
+    text(ui, rect, tl!("later"), egui::FontId::proportional(LOOK.badge_font), t.text_disabled, Align2::CENTER_CENTER);
 }
 fn action(ui: &mut Ui, label: &str, icon: Option<&str>, primary: bool, disabled: bool) -> Response {
     let t = Tokens::get(ui.ctx());
-    let font = if primary { theme::semibold(12.0) } else { egui::FontId::proportional(12.0) };
+    let font = if primary { theme::semibold(LOOK.panel_body_font) } else { egui::FontId::proportional(LOOK.panel_body_font) };
     let width = ui.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font.clone(), t.text).size().x)
         + 28.0
         + if icon.is_some() { 16.0 } else { 0.0 }
@@ -360,7 +361,7 @@ fn action(ui: &mut Ui, label: &str, icon: Option<&str>, primary: bool, disabled:
             r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
             ui.painter().rect_filled(
                 rect,
-                6.0,
+                f32::from(LOOK.control_radius),
                 if primary {
                     t.text
                 } else if r.hovered() {
@@ -445,12 +446,12 @@ fn label_row(ui: &mut Ui, label: &str, height: f32, font: egui::FontId, color: C
 }
 fn focus(ui: &Ui, rect: Rect, r: &Response) {
     if r.has_focus() {
-        ui.painter().rect_stroke(rect, 6.0, Stroke::new(1.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, f32::from(LOOK.control_radius), Stroke::new(1.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
     }
 }
 fn text_button(ui: &mut Ui, label: &str, arrow: bool) -> Response {
     let t = Tokens::get(ui.ctx());
-    let font = egui::FontId::proportional(11.0);
+    let font = egui::FontId::proportional(LOOK.control_font);
     let width = ui.fonts_mut(|f| f.layout_no_wrap(label.into(), font.clone(), t.text_dim).size().x) + if arrow { 14.0 } else { 0.0 };
     let (rect, r) = ui.allocate_exact_size(vec2(width, 17.0), Sense::click());
     r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
@@ -472,7 +473,7 @@ fn text_button(ui: &mut Ui, label: &str, arrow: bool) -> Response {
 fn heading(ui: &mut Ui, label: &str, right: impl FnOnce(&mut Ui)) {
     let t = Tokens::get(ui.ctx());
     ui.allocate_ui_with_layout(vec2(ui.available_width(), 17.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        ui.label(egui::RichText::new(label).font(theme::semibold(12.0)).color(t.text));
+        ui.label(egui::RichText::new(label).font(theme::semibold(LOOK.panel_body_font)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
     });
     ui.add_space(12.0);
@@ -550,7 +551,7 @@ fn projects(app: &mut VectorcraftApp, ui: &mut Ui, cards: &mut Vec<CardTarget>) 
             })
             .inner;
         if r.hovered() {
-            ui.painter().rect_filled(rect, 6.0, t.button);
+            ui.painter().rect_filled(rect, f32::from(LOOK.control_radius), t.button);
         }
         let fg = if exists { t.text } else { t.text_disabled };
         icons::paint(ui, "home-folder", Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0)), fg);
@@ -558,7 +559,7 @@ fn projects(app: &mut VectorcraftApp, ui: &mut Ui, cards: &mut Vec<CardTarget>) 
             ui,
             Rect::from_min_max(rect.min + vec2(34.0, 0.0), pos2(rect.center().x, rect.bottom())),
             &name,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(LOOK.control_font),
             fg,
             Align2::LEFT_CENTER,
         );
@@ -568,7 +569,7 @@ fn projects(app: &mut VectorcraftApp, ui: &mut Ui, cards: &mut Vec<CardTarget>) 
             ui,
             Rect::from_min_max(pos2(rect.center().x, rect.top()), rect.max - vec2(10.0, 0.0)),
             &detail,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(LOOK.control_font),
             t.text_disabled,
             Align2::RIGHT_CENTER,
         );
@@ -584,7 +585,13 @@ fn projects(app: &mut VectorcraftApp, ui: &mut Ui, cards: &mut Vec<CardTarget>) 
         }
     }
     if empty {
-        label_row(ui, tl!("Add a folder to keep its boards together."), 36.0, egui::FontId::proportional(11.0), Tokens::get(ui.ctx()).text_dim);
+        label_row(
+            ui,
+            tl!("Add a folder to keep its boards together."),
+            36.0,
+            egui::FontId::proportional(LOOK.control_font),
+            Tokens::get(ui.ctx()).text_dim,
+        );
     }
     ui.add_space(34.0);
 }
@@ -606,7 +613,7 @@ struct CardTarget {
 }
 fn file_cards(app: &mut VectorcraftApp, ui: &mut Ui, files: &[File], recent: bool, cards: &mut Vec<CardTarget>) {
     if files.is_empty() {
-        label_row(ui, tl!("No files to show."), 40.0, egui::FontId::proportional(12.0), Tokens::get(ui.ctx()).text_dim);
+        label_row(ui, tl!("No files to show."), 40.0, egui::FontId::proportional(LOOK.panel_body_font), Tokens::get(ui.ctx()).text_dim);
         return;
     }
     let (cols, width) = grid(ui.available_width());
@@ -669,13 +676,13 @@ fn card(
     let (rect, r) = ui.allocate_exact_size(vec2(width, height + 40.0), Sense::click());
     r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), name));
     let thumb = Rect::from_min_size(rect.min, vec2(width, height));
-    ui.painter().rect_filled(thumb, 10.0, if r.hovered() { t.hover } else { t.button });
-    ui.painter().rect_stroke(thumb, 10.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
+    ui.painter().rect_filled(thumb, f32::from(LOOK.card_radius), if r.hovered() { t.hover } else { t.button });
+    ui.painter().rect_stroke(thumb, f32::from(LOOK.card_radius), Stroke::new(1.0, t.border), StrokeKind::Inside);
     let texture = image.and_then(|path| thumbnail(ui.ctx(), path));
     if let Some(texture) = texture {
         let size = texture.size_vec2();
         let fitted = size * ((width - 24.0) / size.x).min((height - 24.0) / size.y);
-        egui::Image::new(&texture).corner_radius(4).paint_at(ui, Rect::from_center_size(thumb.center(), fitted));
+        egui::Image::new(&texture).corner_radius(LOOK.inset_radius).paint_at(ui, Rect::from_center_size(thumb.center(), fitted));
     } else {
         icons::paint(
             ui,
@@ -692,7 +699,7 @@ fn card(
         ui,
         Rect::from_min_max(pos2(rect.left(), thumb.bottom() + 8.0), pos2(rect.right(), thumb.bottom() + 25.0)),
         name,
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(LOOK.panel_body_font),
         t.text,
         Align2::LEFT_CENTER,
     );
@@ -700,12 +707,12 @@ fn card(
         ui,
         Rect::from_min_max(pos2(rect.left(), thumb.bottom() + 25.0), rect.max),
         detail,
-        egui::FontId::proportional(11.0),
+        egui::FontId::proportional(LOOK.control_font),
         t.text_disabled,
         Align2::LEFT_CENTER,
     );
     if r.has_focus() || app.ui.home_view.selected.as_deref() == Some(key) {
-        ui.painter().rect_stroke(thumb, 10.0, Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(thumb, f32::from(LOOK.card_radius), Stroke::new(1.0, t.accent), StrokeKind::Inside);
     }
     if r.clicked() {
         app.ui.home_view.selected = Some(key.into());
@@ -768,13 +775,13 @@ fn tips(app: &mut VectorcraftApp, ui: &mut Ui) {
             (tl!("Write in Arabic"), tl!("The Type tool shapes Arabic natively; Kashida lives in the Character panel.")),
             (tl!("Let an agent help"), tl!("Connect Claude or Codex through Bridge; their work shows in orange on the canvas.")),
         ] {
-            egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(10).inner_margin(14.0).show(ui, |ui| {
+            egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(LOOK.box_radius).inner_margin(14.0).show(ui, |ui| {
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width((width - 30.0).max(1.0));
                     ui.set_min_height(56.0);
-                    ui.label(egui::RichText::new(title).font(theme::semibold(12.0)).color(t.text));
+                    ui.label(egui::RichText::new(title).font(theme::semibold(LOOK.panel_body_font)).color(t.text));
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new(detail).size(11.0).color(t.text_dim));
+                    ui.label(egui::RichText::new(detail).size(LOOK.control_font).color(t.text_dim));
                 });
             });
         }

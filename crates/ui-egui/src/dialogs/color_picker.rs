@@ -13,6 +13,7 @@
 //! commands take), `channel` (`hue`, `saturation`, `brightness`, `red`, `green`, `blue`), `webOnly`
 //! and `swatches`. `stroke`, `artboard`, `keep` and `original` come from the opener.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Rect, Sense, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::cms::{self, Lab};
@@ -263,7 +264,7 @@ pub(super) fn over_recolor(parent: &Dialog, color: Color, row: usize) -> Dialog 
 /// Stable action width in both modes, including translated labels.
 fn button_width(ui: &Ui) -> f32 {
     ["OK", "Cancel", "Color Swatches", "Color Models"].into_iter().fold(110.0_f32, |w, label| {
-        let text = ui.painter().layout_no_wrap(tl!(label).into(), crate::theme::semibold(12.5), Tokens::get(ui.ctx()).text);
+        let text = ui.painter().layout_no_wrap(tl!(label).into(), crate::theme::semibold(VAROS_UI.legacy_control_font), Tokens::get(ui.ctx()).text);
         w.max(text.size().x + 32.0)
     })
 }
@@ -293,7 +294,7 @@ fn header(ui: &mut Ui, title: &str) {
     let painter = ui.painter().with_clip_rect(ui.ctx().content_rect());
     painter.rect_filled(band, egui::CornerRadius { sw: 0, se: 0, ..corners }, t.panel_darker);
     painter.hline(band.x_range(), band.bottom(), egui::Stroke::new(1.0, t.divider));
-    painter.text(band.center(), egui::Align2::CENTER_CENTER, title, crate::theme::semibold(16.0), t.text);
+    painter.text(band.center(), egui::Align2::CENTER_CENTER, title, crate::theme::semibold(VAROS_UI.dialog_title_font), t.text);
     super::modal::drag_band(ui, band.bottom());
 }
 
@@ -561,7 +562,7 @@ fn value_fields(ui: &mut Ui, p: &Picked, channel: Channel) -> (Option<Picked>, O
                 let size = vec2(ui.available_size_before_wrap().x, height);
                 ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add_space(12.0);
-                    ui.label(egui::RichText::new(label).size(12.5).color(t.text));
+                    ui.label(egui::RichText::new(label).size(VAROS_UI.legacy_control_font).color(t.text));
                 });
                 if let Some(nv) = widgets::plain_field_named(ui, ("cp-right", i), Some(label), v as f64, suffix, 0, VALUE_W) {
                     let nv = nv as f32;
@@ -608,7 +609,7 @@ fn swatch_list(app: &VectorcraftApp, ui: &mut Ui, current: &Color, side: f32) ->
                         egui::pos2(chip.right() + 8.0, r.center().y),
                         egui::Align2::LEFT_CENTER,
                         &s.name,
-                        egui::FontId::proportional(12.0),
+                        egui::FontId::proportional(VAROS_UI.panel_body_font),
                         t.text,
                     );
                     if resp.clicked() {

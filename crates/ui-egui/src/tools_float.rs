@@ -8,6 +8,7 @@
 //! agents. Its position is kept with the preferences and in user workspaces, and a position saved
 //! on a bigger window is clamped into this one when drawn.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use egui::{CornerRadius, Id, Pos2, Rect, Stroke, Vec2, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -83,7 +84,13 @@ fn drop_zone(ctx: &egui::Context, at: Pos2) -> Option<Rect> {
 fn highlight(ctx: &egui::Context, zone: Rect) {
     let t = Tokens::get(ctx);
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::unique("tools-float-drop")));
-    painter.rect(zone.shrink(1.0), CornerRadius::same(2), t.accent.gamma_multiply(0.2), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+    painter.rect(
+        zone.shrink(1.0),
+        CornerRadius::same(VAROS_UI.control_radius),
+        t.accent.gamma_multiply(0.2),
+        Stroke::new(2.0, t.accent),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Carry a move on (at the start of a frame, before the panels are drawn): the panel follows the

@@ -9,6 +9,7 @@
 //! Fields: `report` (`script.check`'s result) and `discard` (set it and confirm for Copy Report;
 //! confirming copies the report either way).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 
 use super::DialogSpec;
@@ -146,7 +147,7 @@ fn lines(item: &Value) -> String {
 fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let Some(r) = d.fields.get("report") else { return true };
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(r["name"].as_str().unwrap_or_default()).font(theme::semibold(12.5)).color(t.text_strong));
+    ui.label(egui::RichText::new(r["name"].as_str().unwrap_or_default()).font(theme::semibold(VAROS_UI.legacy_control_font)).color(t.text_strong));
     ui.add_space(4.0);
     match r["kind"].as_str() {
         Some("script") => report(ui, r, &t),
@@ -167,9 +168,9 @@ fn body(_: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
 fn row(ui: &mut egui::Ui, t: &Tokens, text: &str, mono: bool, note: &str) {
     ui.horizontal_wrapped(|ui| {
         let text = egui::RichText::new(text).color(t.text_strong);
-        ui.label(if mono { text.monospace() } else { text.size(12.5) });
+        ui.label(if mono { text.monospace() } else { text.size(VAROS_UI.legacy_control_font) });
         if !note.is_empty() {
-            ui.label(egui::RichText::new(note).size(11.5).color(t.text_dim));
+            ui.label(egui::RichText::new(note).size(VAROS_UI.metadata_font).color(t.text_dim));
         }
     });
 }

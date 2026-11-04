@@ -7,6 +7,7 @@
 //! `ui.colorGuideLimit`) snaps every colour to a swatch library or the document's swatches; Edit or
 //! Apply Colors opens Recolor Artwork with the harmony colours, limited the same way.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Rect, Sense, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::harmony::{Guide, GuideOptions, Harmony, Variation};
@@ -207,7 +208,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         // The library the colours are limited to, centred between the ends.
         let middle = ui.available_width() - 40.0;
         let label = limit.as_deref().unwrap_or_default();
-        ui.add_sized([middle.max(0.0), 16.0], egui::Label::new(egui::RichText::new(label).size(11.0).color(t.text_dim)).truncate());
+        ui.add_sized([middle.max(0.0), 16.0], egui::Label::new(egui::RichText::new(label).size(VAROS_UI.control_font).color(t.text_dim)).truncate());
         widgets::dim_label(ui, right);
     });
     widgets::bottom_bar(ui, |ui| {

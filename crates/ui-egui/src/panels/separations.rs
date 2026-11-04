@@ -3,6 +3,7 @@
 //! colour-management controls behind Edit → Color Settings… / Assign Profile… and View → Proof
 //! Setup (working spaces, intent, black-point compensation, proof target, gamut check).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Sense, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::cms::{self, Intent, ProfileKind};
@@ -51,7 +52,7 @@ fn plates_section(app: &mut VectorcraftApp, ui: &mut Ui) {
                     run(app, "view.separationsPreview", json!({"plates": plates.iter().map(|p| p.name.clone()).collect::<Vec<_>>()}));
                 }
             });
-            ui.label(egui::RichText::new(tl!("CMYK")).size(12.0).color(if on { t.text } else { t.text_dim }));
+            ui.label(egui::RichText::new(tl!("CMYK")).size(VAROS_UI.panel_body_font).color(if on { t.text } else { t.text_dim }));
         });
         for p in &plates {
             ui.horizontal(|ui| {
@@ -66,9 +67,9 @@ fn plates_section(app: &mut VectorcraftApp, ui: &mut Ui) {
                 }
                 let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                 let q = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
-                ui.painter().rect_filled(r, 2.0, egui::Color32::from_rgb(q(p.rgb[0]), q(p.rgb[1]), q(p.rgb[2])));
+                ui.painter().rect_filled(r, f32::from(VAROS_UI.preview_radius), egui::Color32::from_rgb(q(p.rgb[0]), q(p.rgb[1]), q(p.rgb[2])));
                 let label = if p.spot { crate::i18n::fmt(tl!("{name} (spot)"), &[("name", &p.name)]) } else { p.name.clone() };
-                ui.label(egui::RichText::new(label).size(12.0).color(if on { t.text } else { t.text_dim }));
+                ui.label(egui::RichText::new(label).size(VAROS_UI.panel_body_font).color(if on { t.text } else { t.text_dim }));
             });
         }
     });

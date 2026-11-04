@@ -8,6 +8,7 @@
 //! `strokesToOutlines`, `clipComplexRegions`, `antiAlias`, `preserveAlpha`, `preserveOverprints`)
 //! and `preview`.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Map, Value, json};
 use vectorcraft_engine::cmd::{FlattenOptions, FlattenerPreset};
 
@@ -106,7 +107,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         put_options(&mut d.fields, &o);
     }
     if let Err(e) = &current {
-        ui.label(egui::RichText::new(e).color(Tokens::get(ui.ctx()).text_dim).size(11.5));
+        ui.label(egui::RichText::new(e).color(Tokens::get(ui.ctx()).text_dim).size(VAROS_UI.metadata_font));
     }
     // Invalid values keep the last preview.
     let p = params(d, &app.session.prefs.flattener_presets).unwrap_or_else(|_| d.fields.get(form::PREVIEWED).cloned().unwrap_or_default());
@@ -183,7 +184,7 @@ pub(crate) fn options_editor(ui: &mut egui::Ui, id: &str, o: &mut FlattenOptions
     let t = Tokens::get(ui.ctx());
     let before = o.clone();
     let dim = |ui: &mut egui::Ui, s: &str| {
-        ui.label(egui::RichText::new(tl!(s)).color(t.text_dim).size(11.5));
+        ui.label(egui::RichText::new(tl!(s)).color(t.text_dim).size(VAROS_UI.metadata_font));
     };
     ui.add_enabled_ui(enabled, |ui| {
         widgets::dim_label(ui, tl!("Raster/Vector Balance:"));

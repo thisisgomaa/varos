@@ -12,6 +12,7 @@
 //! Hide Options leaves just the proxy and the spectrum (the app keeps it between sessions too).
 //! `ui.colorPanel` picks a mode and shows or hides the options as the panel menu does.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::{Color, GradientKind, Paint};
@@ -513,10 +514,10 @@ fn tint_rows(ui: &mut Ui, tint: &Tint, slider_w: f32, field_w: f32) -> Option<(f
         let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
         widgets::swatch_tile(ui, r, &Paint::solid(tint.base), false, false);
         super::swatches::global_mark(ui, r, tint.spot);
-        ui.label(egui::RichText::new(&tint.swatch).size(12.5).color(t.text));
+        ui.label(egui::RichText::new(&tint.swatch).size(VAROS_UI.legacy_control_font).color(t.text));
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new("T").size(12.5).color(t.text)));
+        ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new("T").size(VAROS_UI.legacy_control_font).color(t.text)));
         let track = |x: f32| to32(&tint.base.tinted(x));
         let percent = (tint.tint * 100.0).round() as f64;
         let shown = widgets::SliderValue::field(percent, 0.0..=100.0, "%", 0);
@@ -632,7 +633,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             let enabled = color.is_some();
             for (i, lbl) in mode.labels().iter().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new(*lbl).size(12.5).color(t.text)));
+                    ui.add_sized(vec2(12.0, 22.0), egui::Label::new(egui::RichText::new(*lbl).size(VAROS_UI.legacy_control_font).color(t.text)));
                     let v = comps.get(i).copied().unwrap_or(0.0);
                     let track = |x: f32| to32(&track_color(mode, &comps, i, x));
                     let grey = |_x: f32| t.input;

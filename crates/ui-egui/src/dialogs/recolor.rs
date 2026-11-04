@@ -21,6 +21,7 @@
 //! `edit`), `rule` (harmony id), `linked`, `preview`. Changing `colors`, a preserve flag or
 //! `limitTo` reduces the rows again.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Rect, Sense, Ui, pos2, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::harmony::{Harmony, move_on_wheel};
@@ -216,7 +217,13 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.horizontal(|ui| {
         let tab = d.str("tab");
         for (id, label) in [("assign", tl!("Assign")), ("edit", tl!("Edit"))] {
-            if ui.selectable_label(tab == id || (id == "assign" && tab != "edit"), egui::RichText::new(label).font(theme::semibold(12.5))).clicked() {
+            if ui
+                .selectable_label(
+                    tab == id || (id == "assign" && tab != "edit"),
+                    egui::RichText::new(label).font(theme::semibold(VAROS_UI.legacy_control_font)),
+                )
+                .clicked()
+            {
                 d.fields.insert("tab".into(), json!(id));
             }
         }
@@ -306,8 +313,8 @@ fn set_preset(app: &VectorcraftApp, d: &mut Dialog, i: usize) {
 fn chip(ui: &Ui, r: Rect, c: Color, dim: bool) {
     let t = Tokens::get(ui.ctx());
     let fill = c32(&c);
-    ui.painter().rect_filled(r, 1.0, if dim { fill.gamma_multiply(0.35) } else { fill });
-    ui.painter().rect_stroke(r, 1.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    ui.painter().rect_filled(r, f32::from(VAROS_UI.preview_radius.saturating_sub(1)), if dim { fill.gamma_multiply(0.35) } else { fill });
+    ui.painter().rect_stroke(r, f32::from(VAROS_UI.preview_radius.saturating_sub(1)), egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
 }
 
 /// The Assign tab. Returns true when the rows changed, and the row whose new colour was
@@ -401,7 +408,10 @@ fn assign_tab(app: &mut VectorcraftApp, ui: &mut Ui, d: &mut Dialog, rows: &mut 
                     }
                 });
                 if sel.contains(&i) {
-                    ui.painter().set(bg, egui::Shape::rect_filled(r.response.rect.expand2(vec2(2.0, 1.0)), 2.0, t.row_selected));
+                    ui.painter().set(
+                        bg,
+                        egui::Shape::rect_filled(r.response.rect.expand2(vec2(2.0, 1.0)), f32::from(VAROS_UI.control_radius), t.row_selected),
+                    );
                 }
             }
         });
@@ -635,7 +645,12 @@ fn edit_tab(ui: &mut Ui, d: &mut Dialog, rows: &mut [Value]) -> bool {
                 let (r, resp) = ui.allocate_exact_size(vec2(28.0, 20.0), Sense::click());
                 chip(ui, r, to_color(&rows[i]).unwrap_or_default(), false);
                 if Some(i) == base {
-                    ui.painter().rect_stroke(r.expand(1.5), 2.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Outside);
+                    ui.painter().rect_stroke(
+                        r.expand(1.5),
+                        f32::from(VAROS_UI.preview_radius),
+                        egui::Stroke::new(1.5, t.accent),
+                        egui::StrokeKind::Outside,
+                    );
                 }
                 if resp.on_hover_text(rows[i]["to"].as_str().unwrap_or_default()).clicked() {
                     d.fields.insert("__sel".into(), json!([i]));

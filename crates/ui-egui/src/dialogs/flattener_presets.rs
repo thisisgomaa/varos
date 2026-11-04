@@ -7,6 +7,7 @@
 //! (setting them on a saved preset saves it; a new `name` renames it once the field isn't being
 //! edited; on a built-in preset they go back).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_engine::cmd::flatten::{PRESET_EXTS, PRESET_FORMAT};
 use vectorcraft_engine::cmd::{FlattenOptions, FlattenerPreset};
@@ -126,7 +127,11 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             }
             if builtin {
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(tl!("Built-in presets don't change: New makes a copy you can edit.")).color(t.text_dim).size(11.5));
+                ui.label(
+                    egui::RichText::new(tl!("Built-in presets don't change: New makes a copy you can edit."))
+                        .color(t.text_dim)
+                        .size(VAROS_UI.metadata_font),
+                );
             }
         });
     });

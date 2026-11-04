@@ -11,6 +11,7 @@
 //! images whose file was modified), `applyToAll`, `path` (the replacement file; picked when empty),
 //! `discard` (Ignore) and `searchFolder` (set it and confirm for Find in Folder… on that folder).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 
 use super::DialogSpec;
@@ -109,9 +110,9 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             ui.add_space(6.0);
             ui.vertical(|ui| {
                 ui.add_space(3.0);
-                ui.label(egui::RichText::new(name).font(theme::semibold(12.0)).color(t.text_strong));
+                ui.label(egui::RichText::new(name).font(theme::semibold(VAROS_UI.panel_body_font)).color(t.text_strong));
                 let path = current["path"].as_str().unwrap_or_default();
-                ui.add(egui::Label::new(egui::RichText::new(path).size(11.5).color(t.text_dim)).truncate()).on_hover_text(path);
+                ui.add(egui::Label::new(egui::RichText::new(path).size(VAROS_UI.metadata_font).color(t.text_dim)).truncate()).on_hover_text(path);
                 ui.add_space(3.0);
             });
         });

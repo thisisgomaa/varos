@@ -5,6 +5,7 @@
 //! Bottom: fill/stroke proxy, colour/gradient/none, drawing modes, screen mode, Edit Toolbar (its
 //! All Tools drawer and the toolbar edits it makes: `edit_toolbar`).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use std::sync::Arc;
 
 use egui::{Color32, CornerRadius, Sense, Stroke, Ui, pos2, vec2};
@@ -231,7 +232,13 @@ pub(crate) fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usiz
                 let cat = tl!(cat);
                 let label =
                     if cols == 1 && cat.chars().count() > 6 { format!("{}...", cat.chars().take(4).collect::<String>()) } else { cat.to_string() };
-                ui.painter().text(r.center() + vec2(0.0, 2.0), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(11.0), t.text);
+                ui.painter().text(
+                    r.center() + vec2(0.0, 2.0),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    egui::FontId::proportional(VAROS_UI.control_font),
+                    t.text,
+                );
             }
             // One row = `cols` slots (a category label always starts a new row; without labels,
             // nothing does).
@@ -258,9 +265,9 @@ pub(crate) fn body_with_layout(app: &mut VectorcraftApp, ui: &mut Ui, cols: usiz
                         .allocate_exact_size(vec2(if shell { 28.0 } else { 36.0 }, if shell { 28.0 } else { PITCH - 1.0 }), Sense::click_and_drag());
                     let well = egui::Rect::from_center_size(rect.center(), if shell { vec2(28.0, 28.0) } else { vec2(30.0, 27.5) });
                     if is_active {
-                        ui.painter().rect_filled(well, CornerRadius::same(6), t.tool_active);
+                        ui.painter().rect_filled(well, CornerRadius::same(VAROS_UI.control_radius), t.tool_active);
                     } else if resp.hovered() {
-                        ui.painter().rect_filled(well, CornerRadius::same(6), t.hover);
+                        ui.painter().rect_filled(well, CornerRadius::same(VAROS_UI.control_radius), t.hover);
                     }
                     let ir = egui::Rect::from_center_size(rect.center(), if shell { vec2(16.0, 16.0) } else { vec2(18.0, 18.0) });
                     icons::paint(
@@ -464,7 +471,7 @@ pub fn control_bar_options(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let opts = app.session.tool_options();
     for (key, label, choices) in MIRROR {
-        ui.label(egui::RichText::new(tl!(label)).size(12.0).color(t.text));
+        ui.label(egui::RichText::new(tl!(label)).size(VAROS_UI.panel_body_font).color(t.text));
         let cur = opts[key].as_str().unwrap_or_default();
         let shown = choices.iter().find(|(v, _)| *v == cur).map_or(cur, |(_, l)| *l);
         let labels: Vec<&str> = choices.iter().map(|(_, l)| *l).collect();
@@ -487,7 +494,7 @@ fn crop_options(app: &mut VectorcraftApp, ui: &mut Ui) {
     let units = app.session.general_unit();
     let c = r.center();
     for (k, lbl, v) in [("x", "X:", c.x), ("y", "Y:", c.y), ("width", "W:", r.width()), ("height", "H:", r.height())] {
-        widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
+        widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(VAROS_UI.panel_body_font).color(t.text_dim));
         if let Some(nv) = widgets::num_field(ui, ("cb-crop", k), Some(v), units, 80.0) {
             let (mut c, mut w, mut h) = (c, r.width(), r.height());
             match k {
@@ -675,7 +682,7 @@ fn flyout_body(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String], floating
             let xr = ui.interact(x, egui::Id::unique(("tool-flyout-close", key)), Sense::click());
             if shell {
                 if xr.hovered() {
-                    ui.painter().rect_filled(x, 3.0, t.hover);
+                    ui.painter().rect_filled(x, f32::from(VAROS_UI.control_radius), t.hover);
                 }
                 icons::paint(ui, "x", egui::Rect::from_center_size(x.center(), vec2(16.0, 16.0)), t.text);
             } else {
@@ -758,7 +765,7 @@ const ROW_END: f32 = 18.0;
 
 /// The name of `tool` in `lang` and its shortcut in brackets, as a flyout row draws them.
 fn row_text(ui: &Ui, lang: crate::i18n::Lang, tool: &ToolInfo, color: Color32) -> RowText {
-    let lay = |s: String| ui.painter().layout_no_wrap(s, egui::FontId::proportional(13.0), color);
+    let lay = |s: String| ui.painter().layout_no_wrap(s, egui::FontId::proportional(VAROS_UI.body_font), color);
     (lay(crate::i18n::tr(lang, tool.label).to_string()), crate::shortcut_editor::tool_shortcut(tool.id).map(|sc| lay(format!("({sc})"))))
 }
 
@@ -787,9 +794,9 @@ fn tool_strip(ui: &mut Ui, t: &Tokens, active: &str, tools: &[String]) -> Option
         let (r, resp) = ui.allocate_exact_size(STRIP_BUTTON, Sense::click());
         let well = r.shrink(1.0);
         if active == tool.id {
-            ui.painter().rect_filled(well, CornerRadius::same(6), t.tool_active);
+            ui.painter().rect_filled(well, CornerRadius::same(VAROS_UI.control_radius), t.tool_active);
         } else if resp.hovered() {
-            ui.painter().rect_filled(well, CornerRadius::same(6), t.hover);
+            ui.painter().rect_filled(well, CornerRadius::same(VAROS_UI.control_radius), t.hover);
         }
         let ir = egui::Rect::from_center_size(r.center(), vec2(18.0, 18.0));
         icons::paint(
@@ -975,7 +982,7 @@ fn floating(app: &mut VectorcraftApp, ctx: &egui::Context) {
 fn puppet_warp_options(app: &mut VectorcraftApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let opts = app.session.tool_options();
-    ui.label(egui::RichText::new(tl!("Expand:")).size(12.0).color(t.text));
+    ui.label(egui::RichText::new(tl!("Expand:")).size(VAROS_UI.panel_body_font).color(t.text));
     let unit = app.session.general_unit();
     if let Some(v) = widgets::num_field(ui, ("cb-tool", "expand"), opts["expand"].as_f64(), unit, 64.0) {
         app.run("tool.setOption", json!({ "key": "expand", "value": v })).ok();

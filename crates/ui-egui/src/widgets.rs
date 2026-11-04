@@ -7,6 +7,7 @@ use vectorcraft_color::{BlendMode, Color, Paint};
 use vectorcraft_doc::Unit;
 
 use crate::theme::{self, Tokens};
+use crate::varos::theme::ACCENT_ON as VAROS_ACCENT_ON; // Varos: shared ink on accent-filled controls.
 use crate::varos::theme_components::FOUNDATION as VAROS_CONTROLS; // Varos: shared control presentation; input remains here.
 use crate::{icons, scrub};
 
@@ -173,7 +174,7 @@ pub(crate) fn primary_button_width(ui: &mut Ui, text: &str, min_width: f32) -> R
 /// Returns its response with the enabled state and screen-reader name preserved.
 fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, min_width: f32) -> Response {
     let t = Tokens::get(ui.ctx());
-    let fg = if enabled { Color32::WHITE } else { t.text_disabled };
+    let fg = if enabled { VAROS_ACCENT_ON } else { t.text_disabled };
     let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(panel_label_size(ui)), fg);
     let w = galley.size().x + 32.0;
     let (rect, resp) =
@@ -1359,7 +1360,7 @@ pub(crate) fn combo_named<R>(
             let button_id = combo_button_id(ui, &id);
             let enter_for_combo = ui.memory(|m| m.has_focus(button_id)) || egui::ComboBox::is_open(ui.ctx(), button_id);
             let response = egui::ComboBox::from_id_salt(HashOnly(&id))
-                .selected_text(egui::RichText::new(current).size(12.0))
+                .selected_text(egui::RichText::new(current).size(VAROS_CONTROLS.panel_body_font))
                 .width(width - 4.0)
                 .height(ui.spacing().combo_height)
                 .show_ui(ui, list);
@@ -1397,7 +1398,7 @@ fn searchable_combo<R>(
     let open = egui::Popup::is_id_open(ui.ctx(), popup);
     let pad = ui.spacing().button_padding;
     let icon = Vec2::splat(ui.spacing().icon_width);
-    let galley = egui::WidgetText::from(egui::RichText::new(current).size(12.0)).into_galley(
+    let galley = egui::WidgetText::from(egui::RichText::new(current).size(VAROS_CONTROLS.panel_body_font)).into_galley(
         ui,
         Some(egui::TextWrapMode::Truncate),
         width - 2.0 * pad.x - ui.spacing().icon_spacing - icon.x,
@@ -1847,11 +1848,11 @@ fn check_row_named(ui: &mut Ui, text: &str, name: &str, value: Option<bool>, ena
     let t = Tokens::get(ui.ctx());
     let (bx, resp, border) = choice_row(ui, text, enabled);
     let checked = value == Some(true);
-    ui.painter().rect_filled(bx, CornerRadius::same(2), if checked && enabled { t.accent_strong } else { t.input });
-    ui.painter().rect_stroke(bx, CornerRadius::same(2), Stroke::new(1.0, border), StrokeKind::Inside);
+    ui.painter().rect_filled(bx, CornerRadius::same(VAROS_CONTROLS.checkbox_radius), if checked && enabled { t.accent_strong } else { t.input });
+    ui.painter().rect_stroke(bx, CornerRadius::same(VAROS_CONTROLS.checkbox_radius), Stroke::new(1.0, border), StrokeKind::Inside);
     match value {
         Some(true) => {
-            let c = if enabled { Color32::WHITE } else { t.text_disabled };
+            let c = if enabled { VAROS_ACCENT_ON } else { t.text_disabled };
             ui.painter().line_segment([bx.left_center() + vec2(3.0, 0.0), bx.center_bottom() + vec2(-1.0, -3.5)], Stroke::new(1.6, c));
             ui.painter().line_segment([bx.center_bottom() + vec2(-1.0, -3.5), bx.right_top() + vec2(-3.0, 3.0)], Stroke::new(1.6, c));
         }
@@ -1886,7 +1887,7 @@ fn radio_row(ui: &mut Ui, text: &str, name: &str, selected: bool, enabled: bool)
     let c = bx.center();
     ui.painter().circle(c, 6.0, if selected && enabled { t.accent_strong } else { t.input }, Stroke::new(1.0, border));
     if selected {
-        ui.painter().circle_filled(c, 2.5, if enabled { Color32::WHITE } else { t.text_disabled });
+        ui.painter().circle_filled(c, 2.5, if enabled { VAROS_ACCENT_ON } else { t.text_disabled });
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, enabled && ui.is_enabled(), selected, name));
     enabled && resp.clicked()
@@ -2266,7 +2267,7 @@ pub fn color_slider_stepped(
     }
     if focused && !ui.data(|d| d.get_temp::<bool>(by_pointer)).unwrap_or(false) {
         let t = Tokens::get(ui.ctx());
-        ui.painter().rect_stroke(resp.rect, 2.0, Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect_stroke(resp.rect, f32::from(VAROS_CONTROLS.control_radius), Stroke::new(1.0, t.accent), StrokeKind::Inside);
     }
     (picked, phase, stepped.filter(|_| picked.is_none()))
 }
@@ -2496,7 +2497,7 @@ pub fn hex_field(ui: &mut Ui, id: impl std::hash::Hash, hex: &str) -> Option<Str
 pub fn hex_field_named(ui: &mut Ui, id: impl std::hash::Hash, name: Option<&str>, hex: &str) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let label = take_previous_label(ui);
-    ui.label(egui::RichText::new("#").size(15.0).color(t.text));
+    ui.label(egui::RichText::new("#").size(VAROS_CONTROLS.heading_font).color(t.text));
     let id = id_with(ui.scope_id(), id);
     let editing = ui.memory(|m| m.has_focus(id));
     // Until the user types into it, the field shows `hex` as it is now, also while it has the
@@ -2921,14 +2922,14 @@ pub fn tab_bar(ui: &mut Ui, tabs: &[&str], current: usize) -> Option<usize> {
         ui.spacing_mut().item_spacing.x = 18.0;
         for (i, tab) in tabs.iter().enumerate() {
             let sel = i == current;
-            let font = if sel { theme::semibold(13.0) } else { egui::FontId::proportional(13.0) };
+            let font = VAROS_CONTROLS.tab_font();
             let galley = ui.painter().layout_no_wrap(tl!(tab).to_string(), font, t.text);
-            let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x, 30.0), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x, VAROS_CONTROLS.dialog_tab_height), Sense::click());
             let color = if sel || resp.hovered() { t.text_strong } else { t.text_dim };
-            ui.painter().galley(pos2(rect.left(), rect.center().y - galley.size().y / 2.0 - 2.0), galley, color);
+            ui.painter().galley(pos2(rect.left(), rect.center().y - galley.size().y / 2.0 - VAROS_CONTROLS.tab_underline), galley, color);
             if sel {
                 ui.painter().rect_filled(
-                    Rect::from_min_max(pos2(rect.left(), rect.bottom() - 2.0), rect.right_bottom()),
+                    Rect::from_min_max(pos2(rect.left(), rect.bottom() - VAROS_CONTROLS.tab_underline), rect.right_bottom()),
                     CornerRadius::same(1),
                     t.accent,
                 );

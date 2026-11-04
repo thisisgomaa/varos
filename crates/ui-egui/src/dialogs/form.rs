@@ -1,6 +1,7 @@
 //! Field widgets shared by the dialogs: labelled text fields, checkboxes, the generic field grid
 //! and the typed parameter editor of the command and effect dialogs.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_doc::Unit;
 use vectorcraft_plugins::{Manifest, Param, ParamSpec};
@@ -177,7 +178,7 @@ fn text_edit_limited_name(ui: &mut egui::Ui, d: &mut Dialog, key: &str, width: f
     let r = egui::Frame::NONE
         .fill(t.input)
         .stroke(egui::Stroke::new(1.0, t.input_border))
-        .corner_radius(egui::CornerRadius::same(3))
+        .corner_radius(egui::CornerRadius::same(VAROS_UI.control_radius))
         .inner_margin(egui::Margin::symmetric(6, 3))
         .show(ui, |ui| {
             crate::theme::strong_selected_text(ui);
@@ -207,7 +208,7 @@ pub(super) fn text_area_named(ui: &mut egui::Ui, d: &mut Dialog, key: &str, name
     let r = egui::Frame::NONE
         .fill(t.input)
         .stroke(egui::Stroke::new(1.0, t.input_border))
-        .corner_radius(egui::CornerRadius::same(3))
+        .corner_radius(egui::CornerRadius::same(VAROS_UI.control_radius))
         .inner_margin(egui::Margin::symmetric(6, 3))
         .show(ui, |ui| {
             crate::theme::strong_selected_text(ui);
@@ -410,7 +411,7 @@ pub(super) fn param_fields(
                         }
                     }
                     other => {
-                        ui.label(egui::RichText::new(other.to_string()).color(t.text_dim).size(11.0));
+                        ui.label(egui::RichText::new(other.to_string()).color(t.text_dim).size(VAROS_UI.control_font));
                     }
                 }
             });
@@ -772,7 +773,7 @@ fn rail_ends(ui: &mut egui::Ui, ends: (&str, &str)) {
 fn rail_ends_w(ui: &mut egui::Ui, width: f32, (left, right): (&str, &str)) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(egui::vec2(width, 14.0), egui::Sense::hover());
-    let font = egui::FontId::proportional(11.0);
+    let font = egui::FontId::proportional(VAROS_UI.control_font);
     ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, left, font.clone(), t.text_dim);
     ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, right, font, t.text_dim);
 }
@@ -878,7 +879,7 @@ pub(super) fn bleed(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Un
         ui.spacing_mut().item_spacing.x = 6.0;
         for (i, side) in ["Top", "Bottom", "Left", "Right"].into_iter().enumerate() {
             ui.vertical(|ui| {
-                let label = ui.label(egui::RichText::new(tl!(side)).size(11.0).color(t.text_dim));
+                let label = ui.label(egui::RichText::new(tl!(side)).size(VAROS_UI.control_font).color(t.text_dim));
                 let v = ui.label_inputs_by(label.id, |ui| crate::widgets::num_field(ui, ("bleed", i), Some(b[i]), unit, width));
                 if let Some(v) = v {
                     changed = Some((i, v.clamp(0.0, vectorcraft_doc::setup::MAX_BLEED)));
@@ -911,7 +912,7 @@ pub(super) fn bleed(ui: &mut egui::Ui, d: &mut Dialog, unit: vectorcraft_doc::Un
 /// A small grey caption above a field (New Document's details column).
 pub(super) fn caption(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(tl!(text)).size(11.0).color(t.text_dim));
+    ui.label(egui::RichText::new(tl!(text)).size(VAROS_UI.control_font).color(t.text_dim));
 }
 
 #[cfg(test)]

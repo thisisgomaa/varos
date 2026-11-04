@@ -9,6 +9,7 @@
 //! The same dialog edits a preset (kind `pdfPreset`, from Edit → PDF Presets): a `name` and
 //! `description` instead of the preset and artboards, and OK saves the preset.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::LazyLock;
 
 use serde_json::{Map, Value, json};
@@ -241,13 +242,13 @@ pub(super) fn set(d: &mut Dialog, path: &str, value: Value) {
 pub(super) fn heading(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.add_space(6.0);
-    ui.label(egui::RichText::new(text).font(theme::semibold(12.5)).color(t.text_strong));
+    ui.label(egui::RichText::new(text).font(theme::semibold(VAROS_UI.legacy_control_font)).color(t.text_strong));
     ui.add_space(2.0);
 }
 
 pub(super) fn note(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(text).size(11.5).color(t.text_dim));
+    ui.label(egui::RichText::new(text).size(VAROS_UI.metadata_font).color(t.text_dim));
 }
 
 /// A labelled row.
@@ -356,7 +357,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         ui.add_space(14.0);
         ui.vertical(|ui| {
             ui.set_width(500.0);
-            ui.label(egui::RichText::new(tl!(section)).font(theme::semibold(14.0)).color(t.text_strong));
+            ui.label(egui::RichText::new(tl!(section)).font(theme::semibold(VAROS_UI.panel_heading_font)).color(t.text_strong));
             egui::ScrollArea::vertical().id_salt(("save-pdf", section)).max_height(360.0).auto_shrink([false, false]).show(ui, |ui| match section {
                 "Compression" => compression(ui, d),
                 "Marks and Bleeds" => marks_and_bleeds(app, ui, d),
@@ -379,11 +380,14 @@ pub(super) fn current_section(d: &Dialog, sections: &[&'static str]) -> &'static
 /// The frame of the section list column, at least as tall as the section content.
 pub(super) fn section_frame(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get(ui.ctx());
-    egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(4)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-        ui.set_width(LIST_WIDTH);
-        ui.set_min_height(380.0);
-        ui.vertical(add);
-    });
+    egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(VAROS_UI.inset_radius)).inner_margin(egui::Margin::same(6)).show(
+        ui,
+        |ui| {
+            ui.set_width(LIST_WIDTH);
+            ui.set_min_height(380.0);
+            ui.vertical(add);
+        },
+    );
 }
 
 /// The section list: clicking a section shows it (`__section`).
@@ -392,7 +396,7 @@ pub(super) fn section_list(ui: &mut egui::Ui, d: &mut Dialog, sections: &[&str],
     ui.spacing_mut().item_spacing.y = 1.0;
     for s in sections {
         let sel = *s == section;
-        let label = egui::RichText::new(tl!(*s)).size(12.5).color(if sel { t.text_strong } else { t.text });
+        let label = egui::RichText::new(tl!(*s)).size(VAROS_UI.legacy_control_font).color(if sel { t.text_strong } else { t.text });
         if ui.add(egui::Button::selectable(sel, label).min_size(egui::vec2(LIST_WIDTH - 12.0, 24.0))).clicked() {
             d.fields.insert("__section".into(), json!(s));
         }

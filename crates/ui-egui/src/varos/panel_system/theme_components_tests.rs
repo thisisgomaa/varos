@@ -32,9 +32,9 @@ fn actual_document_and_panel_tabs_use_the_same_typography_definition() {
     let expected = FOUNDATION.tab_font();
     let t = crate::theme::Tokens::get(&h.ctx);
     let inactive = texts.iter().find(|text| text.galley.text().starts_with("Inactive typography")).expect("inactive document tab");
-    assert!(inactive.galley.job.sections.iter().all(|section| section.format.color == t.text_dim));
+    assert_eq!(inactive.override_text_color, Some(t.text_dim));
     for text in [*document, *panel] {
-        assert!(text.galley.job.sections.iter().all(|section| section.format.color == t.text));
+        assert_eq!(text.override_text_color.unwrap_or(text.fallback_color), t.text);
     }
     for text in [*document, *panel] {
         assert!(!text.galley.job.sections.is_empty());

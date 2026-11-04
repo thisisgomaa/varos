@@ -1,6 +1,7 @@
 //! Stroke panel: weight spinner + presets, cap / corner / align toggles, miter limit, dashed line
 //! with three dash/gap pairs, arrowheads with rendered previews, arrow scale, width profiles.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::{Color, Paint};
@@ -273,7 +274,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.x = 3.0;
         let fw = ((ui.available_width() - 15.0) / 6.0).clamp(28.0, 40.0);
         for lbl in [tl!("dash"), tl!("gap"), tl!("dash"), tl!("gap"), tl!("dash"), tl!("gap")] {
-            ui.add_sized(vec2(fw, 12.0), egui::Label::new(egui::RichText::new(lbl).size(10.5).color(t.text_dim)));
+            ui.add_sized(vec2(fw, 12.0), egui::Label::new(egui::RichText::new(lbl).size(VAROS_UI.status_font).color(t.text_dim)));
         }
     });
     widgets::divider(ui);
@@ -377,8 +378,8 @@ fn arrow_dropdown(ui: &mut Ui, id: &str, cur: Option<Arrowhead>, start: bool) ->
     let t = Tokens::get(ui.ctx());
     let (r, resp) =
         ui.allocate_exact_size(vec2(if ui.stack().iter().any(|s| s.tags().contains("shell-panel")) { 56.0 } else { 64.0 }, 24.0), Sense::click());
-    ui.painter().rect_filled(r, 2, t.input);
-    ui.painter().rect_stroke(r, 2, Stroke::new(1.0, if resp.hovered() { t.text } else { t.input_border }), StrokeKind::Inside);
+    ui.painter().rect_filled(r, VAROS_UI.control_radius, t.input);
+    ui.painter().rect_stroke(r, VAROS_UI.control_radius, Stroke::new(1.0, if resp.hovered() { t.text } else { t.input_border }), StrokeKind::Inside);
     let body = Rect::from_min_max(r.min + vec2(3.0, 0.0), pos2(r.right() - 16.0, r.bottom()));
     paint_arrow(ui, body, cur, start, t.text_strong);
     icons::paint(ui, "chevron-down", Rect::from_center_size(pos2(r.right() - 8.0, r.center().y), vec2(10.0, 10.0)), t.icon);
@@ -399,7 +400,7 @@ fn arrow_dropdown(ui: &mut Ui, id: &str, cur: Option<Arrowhead>, start: bool) ->
                     row.left_center() + vec2(66.0, 0.0),
                     egui::Align2::LEFT_CENTER,
                     tl!(arrow_label(a)),
-                    egui::FontId::proportional(11.5),
+                    egui::FontId::proportional(VAROS_UI.metadata_font),
                     t.text,
                 );
                 if rr.clicked() {
@@ -448,8 +449,8 @@ pub(crate) fn profile_dropdown(app: &VectorcraftApp, ui: &mut Ui, cur: Option<&W
     let t = Tokens::get(ui.ctx());
     let (r, resp) =
         ui.allocate_exact_size(vec2(if ui.stack().iter().any(|s| s.tags().contains("shell-panel")) { 84.0 } else { 100.0 }, 24.0), Sense::click());
-    ui.painter().rect_filled(r, 2, t.input);
-    ui.painter().rect_stroke(r, 2, Stroke::new(1.0, if resp.hovered() { t.text } else { t.input_border }), StrokeKind::Inside);
+    ui.painter().rect_filled(r, VAROS_UI.control_radius, t.input);
+    ui.painter().rect_stroke(r, VAROS_UI.control_radius, Stroke::new(1.0, if resp.hovered() { t.text } else { t.input_border }), StrokeKind::Inside);
     let body = Rect::from_min_max(r.min + vec2(6.0, 5.0), pos2(r.right() - 20.0, r.bottom() - 5.0));
     paint_profile(ui, body, cur.and_then(|p| silhouette(&p.points)), t.text_strong);
     icons::paint(ui, "chevron-down", Rect::from_center_size(pos2(r.right() - 9.0, r.center().y), vec2(10.0, 10.0)), t.icon);
@@ -475,7 +476,7 @@ pub(crate) fn profile_dropdown(app: &VectorcraftApp, ui: &mut Ui, cur: Option<&W
                     egui::Align2::LEFT_CENTER,
                     // A saved profile's name is the user's.
                     super::label_or_name(e.label, e.built_in),
-                    egui::FontId::proportional(11.5),
+                    egui::FontId::proportional(VAROS_UI.metadata_font),
                     t.text,
                 );
                 if rr.clicked() {

@@ -15,6 +15,7 @@
 //! folder) and `discard` (set it and confirm for Find Fonts; confirming without either adds the
 //! chosen files).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -250,7 +251,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
                         ui.add_space(3.0);
                         let (note, color) = crate::find_font::font_note(f);
                         let name = format!("{} {}{note}", f["family"].as_str().unwrap_or_default(), f["style"].as_str().unwrap_or_default());
-                        ui.label(egui::RichText::new(name).font(theme::semibold(12.0)).color(color.unwrap_or(t.text_strong)));
+                        ui.label(egui::RichText::new(name).font(theme::semibold(VAROS_UI.panel_body_font)).color(color.unwrap_or(t.text_strong)));
                         let files = files_for(&found, f);
                         for file in files {
                             let path = file.as_str().unwrap_or_default();
@@ -263,7 +264,8 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
                                     chosen.push(file.clone());
                                 }
                             }
-                            ui.add(egui::Label::new(egui::RichText::new(path).size(11.0).color(t.text_dim)).truncate()).on_hover_text(path);
+                            ui.add(egui::Label::new(egui::RichText::new(path).size(VAROS_UI.control_font).color(t.text_dim)).truncate())
+                                .on_hover_text(path);
                         }
                         // A failed search (a folder it refuses) didn't look: `progress` says why.
                         if files.is_empty() && !state.is_empty() && state != "failed" {

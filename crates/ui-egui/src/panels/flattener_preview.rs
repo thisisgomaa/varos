@@ -7,6 +7,7 @@
 //! The settings live in `UiState::flattener_preview` (`ui.inspect`); `ui.flattenerPreview` sets
 //! them and refreshes.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -254,7 +255,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         widgets::dim_label(ui, &msg);
     }
     if stale {
-        ui.label(egui::RichText::new(tl!("Changed since the last Refresh.")).color(t.text_dim).size(11.5));
+        ui.label(egui::RichText::new(tl!("Changed since the last Refresh.")).color(t.text_dim).size(VAROS_UI.metadata_font));
     }
     if set != app.ui.flattener_preview {
         app.ui.flattener_preview = set;

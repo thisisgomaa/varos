@@ -10,6 +10,7 @@
 //! with its fill and stroke while it is drawn, or as a thin line until the release) and `size`
 //! (points; Blob Brush and Eraser).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Map, Value, json};
 
 use super::document_setup::check;
@@ -143,7 +144,7 @@ fn fidelity(ui: &mut egui::Ui, d: &mut Dialog) {
     let rail = (vectorcraft_tools::draw2::min_fidelity(&d.str("tool")), FIDELITY_MAX);
     let rail_w = label_w(ui);
     let mut new = None;
-    ui.label(egui::RichText::new(tl!("Fidelity:")).size(12.5).color(t.text));
+    ui.label(egui::RichText::new(tl!("Fidelity:")).size(VAROS_UI.legacy_control_font).color(t.text));
     ui.horizontal(|ui| {
         let shown = widgets::SliderValue::field(v, rail.0..=rail.1, "pt", 2).with_step(fidelity_step);
         let (x, _, keyed) =
@@ -163,7 +164,7 @@ fn fidelity(ui: &mut egui::Ui, d: &mut Dialog) {
         ui.add(
             egui::Label::new(
                 egui::RichText::new(tl!("A lower value follows the stroke closely; a higher one gives fewer points and smoother curves."))
-                    .size(11.5)
+                    .size(VAROS_UI.metadata_font)
                     .color(t.text_dim),
             )
             .wrap(),

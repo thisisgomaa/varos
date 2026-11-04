@@ -16,6 +16,7 @@
 //! (`print.presets.save`). The same dialog edits a preset (kind `printPreset`, from Edit → Print
 //! Presets): a `name` instead of the preset and printer, and OK saves the preset.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::{Arc, LazyLock};
 
 use serde_json::{Value, json};
@@ -237,7 +238,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         ui.add_space(14.0);
         ui.vertical(|ui| {
             ui.set_width(500.0);
-            ui.label(egui::RichText::new(tl!(section)).font(theme::semibold(14.0)).color(t.text_strong));
+            ui.label(egui::RichText::new(tl!(section)).font(theme::semibold(VAROS_UI.panel_heading_font)).color(t.text_strong));
             egui::ScrollArea::vertical().id_salt(("print", section)).max_height(360.0).auto_shrink([false, false]).show(ui, |ui| match section {
                 "Marks and Bleed" => super::save_pdf::marks_and_bleeds(app, ui, d),
                 "Output" => output(ui, d, &preview),
@@ -394,7 +395,7 @@ fn current_sheet<'a>(d: &Dialog, pv: &'a Value) -> Option<(usize, usize, &'a Val
 fn page_preview(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, pv: &Result<Value, String>) {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(PREVIEW, egui::Sense::drag());
-    ui.painter().rect_filled(rect, 3.0, t.pasteboard);
+    ui.painter().rect_filled(rect, f32::from(VAROS_UI.control_radius), t.pasteboard);
     let sheet = pv.as_ref().ok().and_then(|v| current_sheet(d, v));
     let Some((index, count, sheet)) = sheet else {
         let text = match pv {
@@ -402,7 +403,7 @@ fn page_preview(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, pv:
             Ok(_) => tl!("Nothing to print"),
             Err(_) => tl!("Can't print these settings: see the Summary"),
         };
-        let font = egui::FontId::proportional(11.0);
+        let font = egui::FontId::proportional(VAROS_UI.control_font);
         let galley = ui.painter().layout(text.into(), font, t.text_dim, rect.width() - 16.0);
         ui.painter().galley(rect.center() - galley.size() / 2.0, galley, t.text_dim);
         return;
@@ -473,7 +474,7 @@ fn page_preview(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, pv:
             d.fields.insert("__sheet".into(), json!(index - 1));
         }
         let text = crate::i18n::fmt(tl!("{page} of {count}"), &[("page", &(index + 1).to_string()), ("count", &count.to_string())]);
-        ui.add_sized([PREVIEW.x - 44.0, 20.0], egui::Label::new(egui::RichText::new(text).size(11.5).color(t.text)));
+        ui.add_sized([PREVIEW.x - 44.0, 20.0], egui::Label::new(egui::RichText::new(text).size(VAROS_UI.metadata_font).color(t.text)));
         if widgets::icon_button_enabled(ui, "chevron-right", tl!("Next page"), false, index + 1 < count, 20.0).clicked() {
             d.fields.insert("__sheet".into(), json!(index + 1));
         }
@@ -498,7 +499,7 @@ fn page_preview(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, pv:
     };
     let paper = format!("{} × {}", unit.number(f64::from(size.x)), unit.format(f64::from(size.y)));
     for line in [what.join(" · "), format!("{paper} · {scale}")] {
-        ui.label(egui::RichText::new(line).size(11.0).color(t.text_dim));
+        ui.label(egui::RichText::new(line).size(VAROS_UI.control_font).color(t.text_dim));
     }
 }
 
@@ -682,7 +683,7 @@ fn output(ui: &mut egui::Ui, d: &mut Dialog, pv: &Result<Value, String>) {
     let t = Tokens::get(ui.ctx());
     egui::Grid::new("print-inks").num_columns(4).spacing([12.0, 4.0]).show(ui, |ui| {
         for h in [tl!("Print"), tl!("Ink"), tl!("Frequency"), tl!("Angle")] {
-            ui.label(egui::RichText::new(h).size(11.5).color(t.text_dim));
+            ui.label(egui::RichText::new(h).size(VAROS_UI.metadata_font).color(t.text_dim));
         }
         ui.end_row();
         for ink in inks {
@@ -727,7 +728,7 @@ fn graphics(ui: &mut egui::Ui, d: &mut Dialog) {
     let auto = get(d, "graphics.autoFlatness").as_bool() == Some(true);
     row(ui, tl!("Flatness:"), |ui| {
         number(ui, d, "graphics.flatness", "", !auto);
-        ui.label(egui::RichText::new(tl!("0.2 (quality) to 100 (speed)")).size(11.5).color(Tokens::get(ui.ctx()).text_dim));
+        ui.label(egui::RichText::new(tl!("0.2 (quality) to 100 (speed)")).size(VAROS_UI.metadata_font).color(Tokens::get(ui.ctx()).text_dim));
     });
     heading(ui, tl!("Fonts"));
     row(ui, tl!("Download:"), |ui| {

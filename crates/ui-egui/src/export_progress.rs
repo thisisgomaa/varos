@@ -9,6 +9,7 @@
 //! It opens after [`DELAY`] so a quick export doesn't flash it, and waits while another dialog is
 //! open (the overwrite question, an options dialog): never two modals at once.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use serde_json::json;
 
 use crate::dialogs::modal;
@@ -75,7 +76,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         if more > 0 {
             ui.add_space(6.0);
             let queued = crate::i18n::tn(more as u64, "{n} more export waiting", "{n} more exports waiting");
-            ui.label(egui::RichText::new(queued).size(11.5).color(t.text_dim));
+            ui.label(egui::RichText::new(queued).size(VAROS_UI.metadata_font).color(t.text_dim));
         }
     });
     let id = match pressed {

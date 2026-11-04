@@ -8,6 +8,7 @@
 //! (Twirl, −180–180°); `complexity` (0–15), `affectAnchors`, `affectIn`, `affectOut` (Scallop,
 //! Crystallize, Wrinkle); `horizontal`, `vertical` (Wrinkle, %); `showBrush`.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Map, Value, json};
 use vectorcraft_tools::distort::liquify::LiquifyKind;
 
@@ -133,7 +134,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     ui.add_space(10.0);
     check(ui, d, "showBrush", tl!("Show Brush Size"));
     let hint = crate::i18n::fmt(tl!("{shortcut} with the tool sizes the brush"), &[("shortcut", crate::menus::pretty_shortcut("Alt+Drag").as_str())]);
-    ui.label(egui::RichText::new(hint).size(11.5).color(Tokens::get(ui.ctx()).text_dim));
+    ui.label(egui::RichText::new(hint).size(VAROS_UI.metadata_font).color(Tokens::get(ui.ctx()).text_dim));
     false
 }
 

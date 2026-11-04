@@ -9,6 +9,7 @@
 //!
 //! Field: `selected` (a preset's name).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_doc::Unit;
 use vectorcraft_engine::cmd::perspgrid::{PRESET_EXTS, PRESET_FORMAT};
@@ -145,7 +146,11 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             });
             if builtin {
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(tl!("Built-in presets don't change: New… starts an editable copy.")).color(t.text_dim).size(11.5));
+                ui.label(
+                    egui::RichText::new(tl!("Built-in presets don't change: New… starts an editable copy."))
+                        .color(t.text_dim)
+                        .size(VAROS_UI.metadata_font),
+                );
             }
         });
     });

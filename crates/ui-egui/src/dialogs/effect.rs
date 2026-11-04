@@ -7,6 +7,7 @@
 //! Choosing an effect that the target already carries first asks ([`EXISTS`]) whether to edit it
 //! or add another one.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Map, Value, json};
 
 use vectorcraft_color::Color;
@@ -655,7 +656,7 @@ fn curve_graph(ui: &mut egui::Ui, d: &mut Dialog) {
     ui.data_mut(|m| m.insert_temp(held, grabbed));
     // The graph: quarter grid, the identity line, the curve and its points.
     let painter = ui.painter_at(rect.expand(4.0));
-    painter.rect_filled(rect, 2.0, t.input);
+    painter.rect_filled(rect, f32::from(VAROS_UI.preview_radius), t.input);
     let faint = egui::Stroke::new(1.0, t.input_border);
     for k in 1..4 {
         let f = k as f32 / 4.0;
@@ -669,7 +670,7 @@ fn curve_graph(ui: &mut egui::Ui, d: &mut Dialog) {
         let fill = if Some(i) == grabbed { t.accent } else { t.panel };
         painter.circle(screen(*q), 4.0, fill, egui::Stroke::new(1.5, t.text));
     }
-    painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
+    painter.rect_stroke(rect, f32::from(VAROS_UI.preview_radius), egui::Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
     if changed {
         let text: Vec<String> = pts.iter().map(|(x, y)| format!("{},{}", (x * 255.0).round(), (y * 255.0).round())).collect();
         d.fields.insert("points".into(), json!(text.join(" ")));

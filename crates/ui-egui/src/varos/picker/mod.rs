@@ -932,8 +932,11 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
     };
     let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(position).movable(false).fade_in(false);
     let t = Tokens::get(ctx);
-    let frame =
-        if shell { egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(10) } else { egui::Frame::NONE.fill(t.panel) };
+    let frame = if shell {
+        egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)).corner_radius(crate::varos::theme_components::FOUNDATION.box_radius)
+    } else {
+        egui::Frame::NONE.fill(t.panel)
+    };
     let mut decision: Option<bool> = None;
     let body = |app: &mut VectorcraftApp, ui: &mut Ui, decision: &mut Option<bool>| {
         ui.set_width(W);
@@ -961,7 +964,7 @@ pub(crate) fn popover(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 grip.left_center() + vec2(8.0, 0.0),
                 egui::Align2::LEFT_CENTER,
                 tl!("Color"),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font),
                 t.text_dim,
             );
             crate::icons::paint(ui, "x", close_rect.shrink(2.0), t.text_dim);

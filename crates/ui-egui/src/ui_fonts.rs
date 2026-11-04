@@ -8,6 +8,7 @@
 //! no font loading or memory. On the web, which has no system fonts, such characters stay
 //! missing-glyph boxes (Japanese too, unless built with craft-fonts).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -103,7 +104,7 @@ impl UiFonts {
         }
         chars.sort_unstable();
         chars.dedup();
-        let font = FontId::new(13.0, FontFamily::Proportional);
+        let font = FontId::new(VAROS_UI.body_font, FontFamily::Proportional);
         let missing: Vec<char> = ctx.fonts_mut(|f| chars.iter().copied().filter(|c| !f.has_glyph(&font, *c)).collect());
         self.seen.extend(chars);
         missing
@@ -161,7 +162,7 @@ mod tests {
     }
 
     fn has_glyph(ctx: &egui::Context, c: char) -> bool {
-        ctx.fonts_mut(|f| f.has_glyph(&FontId::new(13.0, FontFamily::Proportional), c))
+        ctx.fonts_mut(|f| f.has_glyph(&FontId::new(VAROS_UI.body_font, FontFamily::Proportional), c))
     }
 
     #[test]
@@ -191,7 +192,7 @@ mod tests {
             let stack = ctx.fonts(|f| f.definitions().families.get(&family).cloned().unwrap_or_default());
             assert!(stack.last().is_some_and(|n| n.starts_with("craft-fonts ")), "{family:?}: craft-fonts last: {stack:?}");
             for c in text.chars() {
-                assert!(ctx.fonts_mut(|f| f.has_glyph(&FontId::new(13.0, family.clone()), c)), "{family:?} draws {c}");
+                assert!(ctx.fonts_mut(|f| f.has_glyph(&FontId::new(VAROS_UI.body_font, family.clone()), c)), "{family:?} draws {c}");
             }
         }
         // The UI prefers BIZ UDPGothic.

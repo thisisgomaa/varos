@@ -7,6 +7,7 @@
 //! back brings it back, and Reset <name> returns to the workspace as saved. New Workspace… with
 //! the name of a user workspace saves the current layout as it.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
@@ -550,7 +551,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     d.fields.insert("name".into(), json!(name));
                 }
             });
-            ui.label(egui::RichText::new(tl!("Saves the current bars, toolbar and panel layout.")).color(t.text_dim).size(11.0));
+            ui.label(egui::RichText::new(tl!("Saves the current bars, toolbar and panel layout.")).color(t.text_dim).size(VAROS_UI.control_font));
         }
         ui.add_space(16.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

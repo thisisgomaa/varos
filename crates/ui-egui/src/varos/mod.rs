@@ -193,3 +193,6 @@ mod tests_pages;
 
 #[cfg(test)]
 mod tests_control_foundation;
+
+#[cfg(test)]
+mod tests_style_contract;

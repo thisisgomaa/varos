@@ -3,6 +3,7 @@
 //! editing data (save), and a read-only view of the code. OK remembers the choices for next time and runs the export or save command with
 //! them as `svg: {…}`.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared code-field typography.
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -297,7 +298,7 @@ fn code_view(app: &VectorcraftApp, ui: &mut egui::Ui, d: &Dialog) {
         egui::ScrollArea::both().max_height(260.0).max_width(520.0).auto_shrink([false, true]).show(ui, |ui| {
             ui.add(
                 egui::TextEdit::multiline(&mut code.as_str())
-                    .font(theme::mono(11.5))
+                    .font(theme::mono(VAROS_UI.metadata_font))
                     .text_color(t.text)
                     .frame(egui::Frame::NONE)
                     .desired_width(f32::INFINITY)

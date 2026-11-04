@@ -14,6 +14,7 @@
 //! Browser opens the HTML page (`file.saveForWeb.browser`). The previews are what Save writes:
 //! [`webexport::preview_image`], decoded back, cached until the art or a setting changes.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -518,8 +519,14 @@ fn preview_area(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, set
     }
     match settings {
         Err(e) => {
-            ui.painter().rect_filled(area, 2.0, t.pasteboard);
-            ui.painter().text(area.center(), egui::Align2::CENTER_CENTER, format!("⚠ {e}"), egui::FontId::proportional(12.5), t.text);
+            ui.painter().rect_filled(area, f32::from(VAROS_UI.preview_radius), t.pasteboard);
+            ui.painter().text(
+                area.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("⚠ {e}"),
+                egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                t.text,
+            );
         }
         Ok(s) => {
             let alts = alternates(s);
@@ -630,7 +637,7 @@ fn draw_pane(
     let image = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.max.y - CAPTION_H));
     let p = ui.painter().with_clip_rect(image);
     p.rect_filled(image, 0.0, t.pasteboard);
-    let font = egui::FontId::proportional(11.5);
+    let font = egui::FontId::proportional(VAROS_UI.metadata_font);
     let (first, second, third) = match shot {
         Err(e) => {
             p.text(image.center(), egui::Align2::CENTER_CENTER, format!("⚠ {e}"), font.clone(), t.text);

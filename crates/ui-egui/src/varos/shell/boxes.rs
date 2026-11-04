@@ -4,6 +4,8 @@
 //! from ([`super::drag`]) and double-clicked to collapse its box to its tab row; a double-click on
 //! the tab row's empty space maximizes the box (and restores the layout).
 
+use crate::varos::theme_components::FOUNDATION as LOOK;
+
 use egui::{Align, CornerRadius, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use super::Hit;
@@ -15,23 +17,21 @@ use crate::theme::Tokens;
 
 /// The tab row's height.
 pub(crate) const HEADER: f32 = super::tree::ROW;
-pub(crate) const FLOAT_HEADER: f32 = 32.0;
+pub(crate) const FLOAT_HEADER: f32 = LOOK.floating_header_height;
 /// A box's corner radius.
-pub(crate) const RADIUS: u8 = 10;
-/// A tab pill's height (a capsule: its radius is half of it).
-pub(crate) const PILL_H: f32 = 24.0;
+pub(crate) const RADIUS: u8 = LOOK.box_radius;
+/// A tab's logical height, shared with the production panel tabs.
+pub(crate) const PILL_H: f32 = LOOK.tab_height;
 /// Room left and right of a tab's label inside its pill.
-const PILL_PAD: f32 = 10.0;
+const PILL_PAD: f32 = LOOK.tab_padding;
 /// Between two pills.
 const PILL_GAP: f32 = 2.0;
 /// Between the tab row's ends and the box's edges.
 const PAD: f32 = 6.0;
-/// Tab labels' size.
-const LABEL: f32 = 11.0;
 /// The ≡ button.
 const MENU: Vec2 = vec2(20.0, 24.0);
 /// Controls' corner radius (the ≡ button's hover well).
-const CONTROL_RADIUS: u8 = 3;
+const CONTROL_RADIUS: u8 = LOOK.control_radius;
 
 /// What a tab row did this frame.
 pub(crate) struct TabRow {
@@ -76,15 +76,14 @@ fn ellipsize(painter: &egui::Painter, text: &str, font: egui::FontId, color: egu
     best
 }
 
-/// The pills of `tabs` (labels) in `row` with tab `active` in front (semibold, so wider), and
+/// The tabs (labels) in `row` with `active` in front, and
 /// each label's galley; narrower than their labels when they don't all fit.
-fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> Vec<(Rect, std::sync::Arc<egui::Galley>)> {
+fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row: Rect, _t: &Tokens) -> Vec<(Rect, std::sync::Arc<egui::Galley>)> {
     let mut galleys: Vec<_> = tabs
         .iter()
-        .enumerate()
-        .map(|(i, (_, label))| {
-            let font = if i == active { crate::theme::semibold(LABEL) } else { egui::FontId::proportional(LABEL) };
-            painter.layout_no_wrap(label.clone(), font, t.text)
+        .map(|(_, label)| {
+            let font = LOOK.tab_font();
+            painter.layout_no_wrap(label.clone(), font, egui::Color32::PLACEHOLDER)
         })
         .collect();
     let mut widths: Vec<f32> = galleys.iter().map(|g| g.size().x + 2.0 * PILL_PAD).collect();
@@ -108,8 +107,8 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
     }
     if overflow && active < widths.len() && !visible[active] && room > 8.0 {
         let text_w = (room - 2.0 * PILL_PAD).max(4.0);
-        let font = crate::theme::semibold(LABEL);
-        galleys[active] = ellipsize(painter, &tabs[active].1, font, t.text, text_w);
+        let font = LOOK.tab_font();
+        galleys[active] = ellipsize(painter, &tabs[active].1, font, egui::Color32::PLACEHOLDER, text_w);
         widths[active] = (galleys[active].size().x + 2.0 * PILL_PAD).min(room);
         visible[active] = true;
     }
@@ -134,8 +133,7 @@ fn pills(painter: &egui::Painter, tabs: &[(String, String)], active: usize, row:
         .collect()
 }
 
-/// Draw a tab row in `row`: `tabs` (panel id, label) as capsule pills from the left, the front one
-/// lit (a brighter fill, semibold text). Tabs that do not fit move to the overflow menu;
+/// Draw a tab row in `row`: `tabs` (panel id, label) share the common tab surface and font. Tabs that do not fit move to the overflow menu;
 /// an oversized active label is ellipsized. A click switches at once: the clicked pill is painted in front on the very
 /// frame of the click. Tabs are dragged and double-clicked by these same pills.
 pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usize, row: Rect, t: &Tokens) -> TabRow {
@@ -182,21 +180,13 @@ pub(crate) fn tab_row(ui: &mut egui::Ui, tabs: &[(String, String)], active: usiz
     // … and the row is painted with the front tab that input leaves.
     let front_tab = clicked.unwrap_or(active);
     let after = if clicked.is_some() { pills(&painter, tabs, front_tab, row, t) } else { before };
-    let capsule = CornerRadius::same(6);
     for (i, ((pill, galley), response)) in after.iter().zip(&responses).enumerate() {
         if !pill.is_positive() {
             continue;
         }
         let front = i == front_tab;
-        let text = if front {
-            painter.rect_filled(*pill, capsule, t.button);
-            t.text_strong
-        } else if response.hovered() {
-            painter.rect_filled(*pill, capsule, t.hover);
-            t.text
-        } else {
-            t.text_dim
-        };
+        LOOK.tab_surface(&painter, *pill, t, front, response.hovered());
+        let text = LOOK.tab_ink(t, front, response.hovered());
         let at = pos2(pill.left() + PILL_PAD.min(pill.width() / 2.0), pill.center().y - galley.size().y / 2.0);
         let clip = pill.shrink2(vec2(4.0, 0.0)).intersect(painter.clip_rect());
         painter.with_clip_rect(clip).galley(at, galley.clone(), text);
@@ -520,5 +510,39 @@ fn panel_contents(app: &mut VectorcraftApp, ui: &mut egui::Ui, id: &str, width: 
         && (app.ui.varos_shell.owns(id) || crate::varos::panel_system::active_layout(&app.ui).is_some_and(|layout| layout.owner(id).is_some()))
     {
         app.ui.varos_shell.views.insert(id.to_string(), view);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod shared_tab_tests {
+    use super::*;
+
+    #[test]
+    fn older_box_tabs_share_font_and_active_inactive_ink() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        crate::theme::apply(&ctx, crate::theme::Brightness::Dark);
+        let t = Tokens::get(&ctx);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let row = Rect::from_min_size(ui.cursor().min, vec2(400.0, FLOAT_HEADER));
+            let tabs = vec![("layers".to_owned(), "Layers".to_owned()), ("properties".to_owned(), "الخصائص".to_owned())];
+            let response = tab_row(ui, &tabs, 0, row, &t);
+            assert!(response.tabs.iter().all(Rect::is_positive));
+        });
+        out.textures_delta.clear();
+        for (label, color) in [("Layers", t.text), ("الخصائص", t.text_dim)] {
+            let text = out
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => Some(text),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("the actual {label} tab was painted"));
+            assert_eq!(text.fallback_color, color);
+            assert!(text.galley.job.sections.iter().all(|section| section.format.font_id == LOOK.tab_font()));
+            assert!(text.galley.job.sections.iter().all(|section| section.format.color == egui::Color32::PLACEHOLDER));
+        }
     }
 }

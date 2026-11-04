@@ -4,6 +4,7 @@
 //! Alt-click applies it and clears overrides. The style of the selection is highlighted, with a
 //! "+" when the text overrides some of its attributes.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Sense, Ui, vec2};
 use serde_json::{Map, Value, json};
 use vectorcraft_engine::cmd::textstyles;
@@ -102,7 +103,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui, kind: Kind) {
             // are user data, brackets or not.
             let shown = super::label_or_name(name, *name == normal);
             let label = if overridden { format!("{shown}+") } else { shown.to_string() };
-            ui.painter().text(r.left_center() + vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.5), t.text);
+            ui.painter().text(
+                r.left_center() + vec2(8.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                t.text,
+            );
             if resp.clicked() {
                 clicked = Some((name.clone(), ui.input(|i| i.modifiers.alt)));
             }

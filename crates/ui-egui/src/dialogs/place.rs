@@ -8,6 +8,7 @@
 //! file; on the desktop the lines are read off the UI thread and are empty until they are read,
 //! [`crate::place::fill_lines`]).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 
 use super::DialogSpec;
@@ -56,11 +57,11 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
                     ui.add_space(6.0);
                     ui.vertical(|ui| {
                         ui.add_space(3.0);
-                        let label = ui.label(egui::RichText::new(name).font(theme::semibold(12.0)).color(t.text_strong));
+                        let label = ui.label(egui::RichText::new(name).font(theme::semibold(VAROS_UI.panel_body_font)).color(t.text_strong));
                         if let Some(p) = path {
                             label.on_hover_text(p);
                         }
-                        ui.label(egui::RichText::new(info[i].as_str().unwrap_or_default()).size(11.5).color(t.text_dim));
+                        ui.label(egui::RichText::new(info[i].as_str().unwrap_or_default()).size(VAROS_UI.metadata_font).color(t.text_dim));
                         ui.add_space(3.0);
                     });
                 });

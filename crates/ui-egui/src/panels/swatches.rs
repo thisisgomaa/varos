@@ -5,6 +5,7 @@
 //! proxy's paint command with the object's id) and onto the Gradient panel's ramp; a Fill/Stroke
 //! proxy or the Gradient panel's thumbnail dropped on the panel becomes a swatch (`swatch.new`).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::Arc;
 
 use egui::{Color32, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -902,7 +903,13 @@ pub(crate) fn list_row(ui: &mut Ui, id: egui::Id, view: View, selected: bool) ->
 /// A list row's name, right of its `chip`.
 pub(crate) fn list_row_name(ui: &Ui, r: Rect, chip: Rect, name: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.painter().text(pos2(chip.right() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(12.0), t.text);
+    ui.painter().text(
+        pos2(chip.right() + 8.0, r.center().y),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(VAROS_UI.panel_body_font),
+        t.text,
+    );
 }
 
 /// The white corner of a global colour's tile; a spot colour has a dot in it.

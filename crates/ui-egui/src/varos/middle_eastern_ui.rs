@@ -149,7 +149,12 @@ pub(crate) fn group_head(ui: &mut Ui, folded: &mut bool, out: &mut Vec<Drawn>) -
     job.append(
         &name.to_uppercase(),
         0.0,
-        egui::TextFormat { font_id: FontId::proportional(10.0), color: colour, extra_letter_spacing: 0.6, ..Default::default() },
+        egui::TextFormat {
+            font_id: FontId::proportional(crate::varos::theme_components::FOUNDATION.avatar_font),
+            color: colour,
+            extra_letter_spacing: 0.6,
+            ..Default::default()
+        },
     );
     let galley = ui.painter().layout_job(job);
     let p = ui.painter();
@@ -367,7 +372,13 @@ pub(crate) fn number_field(ui: &mut Ui, id: &str, tip: &str, value: Option<f64>,
     ui.interact(rect, ui.scope_id().with((id, "tip")), Sense::hover()).on_hover_text(tip).on_disabled_hover_text(tip);
     if value.is_none() && !ui.memory(|m| m.has_focus(focus_id)) {
         let ink = if ui.is_enabled() { t.text } else { t.text_disabled };
-        ui.painter().text(rect.right_center() - vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, "–", FontId::proportional(11.5), ink);
+        ui.painter().text(
+            rect.right_center() - vec2(6.0, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            "–",
+            FontId::proportional(crate::varos::theme_components::FOUNDATION.metadata_font),
+            ink,
+        );
     }
     (rect, r.inner)
 }
@@ -710,7 +721,7 @@ fn digits_dropdown(ui: &mut Ui, current: Option<Digits>, out: &mut Vec<Drawn>) -
 /// digits run left to right in Arabic too, but egui shapes a run of Arabic-Indic digits as
 /// right-to-left Arabic and would show ٤٥٦ as ٦٥٤, so each non-ASCII digit is laid out alone.
 fn paint_digits(p: &egui::Painter, left: Pos2, digits: &str, colour: Color32) -> f32 {
-    let font = FontId::proportional(12.5);
+    let font = FontId::proportional(crate::varos::theme_components::FOUNDATION.legacy_control_font);
     let parts: Vec<String> = if digits.is_ascii() { vec![digits.to_string()] } else { digits.chars().map(String::from).collect() };
     let mut x = left.x;
     for part in parts {

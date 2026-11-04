@@ -6,6 +6,7 @@
 //!
 //! Field: `selected` (a preset's name).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_engine::cmd::fileio::pdf;
 use vectorcraft_engine::cmd::pdfcmds::PRESET_FORMAT;
@@ -122,7 +123,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
 /// What sets the preset apart: its settings that differ from the app default, and the notes on
 /// what Save PDF can't honour or apply yet.
 fn details(ui: &mut egui::Ui, t: &Tokens, preset: &vectorcraft_pdf::PdfPreset, builtin: bool) {
-    let dim = |ui: &mut egui::Ui, text: &str| ui.label(egui::RichText::new(tl!(text)).color(t.text_dim).size(11.5));
+    let dim = |ui: &mut egui::Ui, text: &str| ui.label(egui::RichText::new(tl!(text)).color(t.text_dim).size(VAROS_UI.metadata_font));
     widgets::dim_label(ui, &crate::i18n::fmt(tl!("Differences from {preset}:"), &[("preset", pdf::DEFAULT_PRESET)]));
     let base = vectorcraft_pdf::builtin_preset(pdf::DEFAULT_PRESET).map(|p| p.settings).unwrap_or_default();
     let mut changed = pdf::changes(&preset.settings, &base);

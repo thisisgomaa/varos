@@ -1,6 +1,7 @@
 //! Actions panel menu › Batch…: play the selected action on every file in a
 //! folder, or on every data set of the open document (`action.batch`).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 
 use super::{DialogSpec, form};
@@ -57,7 +58,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         });
         form::check(ui, d, "includeSubdirs", "Include All Subdirectories");
     } else {
-        ui.label(egui::RichText::new(tl!("Uses every data set of the open document.")).size(11.5).color(t.text_dim));
+        ui.label(egui::RichText::new(tl!("Uses every data set of the open document.")).size(VAROS_UI.metadata_font).color(t.text_dim));
     }
     ui.add_space(8.0);
 

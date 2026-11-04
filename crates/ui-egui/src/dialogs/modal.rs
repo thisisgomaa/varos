@@ -4,6 +4,7 @@
 //! the session, and the window never leaves the screen. Rows too many for the screen's height
 //! scroll inside it ([`scrolled_rows`]), so its heading and buttons stay in view.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Id, Rect, Vec2};
 
 use crate::theme::{self, Tokens};
@@ -46,7 +47,7 @@ pub(crate) fn backdrop() -> egui::LayerId {
 pub(crate) fn heading(ui: &mut egui::Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     // Not selectable: a drag on it moves the window instead of selecting its text.
-    let r = ui.add(egui::Label::new(egui::RichText::new(text).font(theme::semibold(16.0)).color(t.text)).selectable(false));
+    let r = ui.add(egui::Label::new(egui::RichText::new(text).font(theme::semibold(VAROS_UI.dialog_title_font)).color(t.text)).selectable(false));
     drag_band(ui, r.rect.bottom());
 }
 

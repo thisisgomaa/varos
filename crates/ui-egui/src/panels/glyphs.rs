@@ -2,6 +2,7 @@
 //! outlines. Double-click inserts the character at the Type tool's caret (or appends it to the
 //! selected text objects).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::collections::HashMap;
 
 use egui::{Color32, Sense, Stroke, StrokeKind, Ui, vec2};
@@ -208,7 +209,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                 for &(c, gid) in chars.iter().skip(r * cols).take(cols) {
                     let (rect, resp) = ui.allocate_exact_size(vec2(cell, cell), Sense::click());
                     if resp.hovered() {
-                        ui.painter().rect_filled(rect, 2, t.hover);
+                        ui.painter().rect_filled(rect, VAROS_UI.control_radius, t.hover);
                         ui.ctx().data_mut(|d| d.insert_temp(hover_id, (c, gid)));
                     }
                     ui.painter().rect_stroke(rect.shrink(0.5), 0, egui::Stroke::new(0.5, t.border), egui::StrokeKind::Inside);
@@ -234,7 +235,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             ),
             None => crate::i18n::tn(chars.len() as u64, "{n} glyph", "{n} glyphs"),
         })
-        .size(11.0)
+        .size(VAROS_UI.control_font)
         .color(t.text_dim),
     );
     ui.horizontal(|ui| {
@@ -276,11 +277,11 @@ fn zoom_button(ui: &mut Ui, id: &str, label: &str, tip: &str, enabled: bool) -> 
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let resp = ui.interact(rect, ui.scope_id().with(("gl-zoom", id)), sense);
     let bg = if enabled && resp.hovered() { t.hover } else { Color32::TRANSPARENT };
-    ui.painter().rect_filled(rect, 2, bg);
+    ui.painter().rect_filled(rect, VAROS_UI.control_radius, bg);
     let border = if enabled { t.button_border } else { t.border };
-    ui.painter().rect_stroke(rect.shrink(0.5), 2, Stroke::new(1.0, border), StrokeKind::Inside);
+    ui.painter().rect_stroke(rect.shrink(0.5), VAROS_UI.control_radius, Stroke::new(1.0, border), StrokeKind::Inside);
     let color = if enabled { t.text_strong } else { t.text_disabled };
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), color);
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(VAROS_UI.panel_heading_font), color);
     resp.on_hover_text(tl!(tip)).clicked() && enabled
 }
 

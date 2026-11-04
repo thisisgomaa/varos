@@ -7,6 +7,7 @@
 //! `#rrggbb`), `template`, `locked`, `visible`, `printable`, `preview`, `dimImages` and
 //! `dimPercent`. OK runs `layer.setProps`, `layer.new` or `layer.newSublayer`.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_doc::{LAYER_COLORS, LayerColor, Node, NodeId, NodeKind};
 
@@ -128,8 +129,13 @@ fn color_dropdown(ui: &mut egui::Ui, shown: &str) -> Option<usize> {
             let chip = egui::IdSalt::new(("layer-color-chip", i));
             let r = egui::Button::selectable(name == shown, (egui::Atom::custom(chip, CHIP), tl!(name))).atom_ui(ui);
             if let (Some(rect), Some([cr, cg, cb])) = (r.rect(chip), rgb) {
-                ui.painter().rect_filled(rect, 1.0, egui::Color32::from_rgb(cr, cg, cb));
-                ui.painter().rect_stroke(rect, 1.0, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
+                ui.painter().rect_filled(rect, f32::from(VAROS_UI.preview_radius.saturating_sub(1)), egui::Color32::from_rgb(cr, cg, cb));
+                ui.painter().rect_stroke(
+                    rect,
+                    f32::from(VAROS_UI.preview_radius.saturating_sub(1)),
+                    egui::Stroke::new(1.0, border),
+                    egui::StrokeKind::Inside,
+                );
             }
             if r.response.clicked() {
                 chosen = Some(i);

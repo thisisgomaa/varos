@@ -13,6 +13,7 @@
 //! Each toolbar (Basic, Advanced) keeps its own edits in `UiState::toolbar_edits`, saved with the
 //! preferences; `toolbar.addTool`, `toolbar.removeTool` and `toolbar.reset` make them.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI presentation; behavior stays local.
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -301,7 +302,7 @@ pub(crate) fn toolbar_drop(app: &mut VectorcraftApp, ui: &Ui, slots: &[(usize, R
         let line = Stroke::new(2.0, t.accent);
         match (place, cols == 1) {
             (Place::Group, _) => {
-                ui.painter().rect_stroke(r.shrink(1.0), 2.0, line, StrokeKind::Inside);
+                ui.painter().rect_stroke(r.shrink(1.0), f32::from(VAROS_UI.control_radius), line, StrokeKind::Inside);
             }
             (Place::Before, true) => {
                 ui.painter().hline(r.x_range(), r.top(), line);
@@ -440,7 +441,7 @@ pub(crate) fn drawer(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.set_width(width);
             // All Tools, and the drawer's flyout menu: Reset, and the Basic or Advanced toolbar.
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(tl!("All Tools")).size(13.0).color(t.text_strong));
+                ui.label(egui::RichText::new(tl!("All Tools")).size(VAROS_UI.body_font).color(t.text_strong));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, menu) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
                     icons::paint(ui, "menu", r.shrink(1.0), if menu.hovered() { t.text_strong } else { t.text_dim });
@@ -469,11 +470,11 @@ pub(crate) fn drawer(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 let inner = ui.available_width() - 10.0;
                 for (cat, gs) in groups() {
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new(format!("{}:", tl!(cat))).size(12.0).color(t.text_strong));
+                    ui.label(egui::RichText::new(format!("{}:", tl!(cat))).size(VAROS_UI.panel_body_font).color(t.text_strong));
                     ui.add_space(4.0);
                     for g in gs {
                         // A flyout group: its tools framed together, as one toolbar button holds them.
-                        egui::Frame::NONE.stroke(Stroke::new(1.0, t.divider)).corner_radius(2.0).show(ui, |ui| {
+                        egui::Frame::NONE.stroke(Stroke::new(1.0, t.divider)).corner_radius(VAROS_UI.control_radius).show(ui, |ui| {
                             ui.set_width(inner);
                             for tool in g.iter() {
                                 if row(ui, &t, tool, tool.id == active, in_toolbar.contains(tool.id)) {
@@ -498,7 +499,7 @@ pub(crate) fn drawer(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.add_space(4.0);
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(tl!("Show:")).size(12.0).color(t.text));
+                ui.label(egui::RichText::new(tl!("Show:")).size(VAROS_UI.panel_body_font).color(t.text));
                 ui.add_space(4.0);
                 for (name, label, icon) in crate::state::ToolbarShow::CONTROLS {
                     if show_button(ui, &t, name, label, icon, app.ui.toolbar_show.get(name)) {
@@ -555,9 +556,9 @@ fn show_button(ui: &mut Ui, t: &Tokens, name: &str, label: &str, icon: &str, on:
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, tl!(label)));
     let p = ui.painter();
     if on {
-        p.rect_filled(r, 3.0, t.tool_active);
+        p.rect_filled(r, f32::from(VAROS_UI.control_radius), t.tool_active);
     } else if resp.hovered() {
-        p.rect_filled(r, 3.0, t.hover);
+        p.rect_filled(r, f32::from(VAROS_UI.control_radius), t.hover);
     }
     let ink = if on { t.text_strong } else { t.icon };
     let c = r.center();
@@ -605,9 +606,9 @@ fn row(ui: &mut Ui, t: &Tokens, tool: &'static ToolInfo, on: bool, dimmed: bool)
     }
     let fill = rect.shrink(1.0);
     if on {
-        ui.painter().rect_filled(fill, 2.0, t.selection);
+        ui.painter().rect_filled(fill, f32::from(VAROS_UI.control_radius), t.selection);
     } else if resp.hovered() {
-        ui.painter().rect_filled(fill, 2.0, t.hover);
+        ui.painter().rect_filled(fill, f32::from(VAROS_UI.control_radius), t.hover);
     }
     // The active tool's row is lit, dimmed or not.
     let color = if on {
@@ -635,7 +636,7 @@ fn row(ui: &mut Ui, t: &Tokens, tool: &'static ToolInfo, on: bool, dimmed: bool)
         } else {
             t.text_dim
         };
-        let g = painter.layout_no_wrap(k.to_string(), egui::FontId::proportional(11.5), keys);
+        let g = painter.layout_no_wrap(k.to_string(), egui::FontId::proportional(VAROS_UI.metadata_font), keys);
         let w = g.size().x;
         painter.galley(pos2(rect.right() - 10.0 - w, rect.center().y - g.size().y / 2.0), g, keys);
         w + 12.0
@@ -645,7 +646,7 @@ fn row(ui: &mut Ui, t: &Tokens, tool: &'static ToolInfo, on: bool, dimmed: bool)
         text_at,
         egui::Align2::LEFT_CENTER,
         tl!(tool.label),
-        egui::FontId::proportional(12.5),
+        egui::FontId::proportional(VAROS_UI.legacy_control_font),
         color,
     );
     resp.on_hover_text(crate::toolbar::tip(tool)).clicked()
@@ -658,7 +659,7 @@ fn ghost(ctx: &egui::Context, t: &Tokens) {
     let r = Rect::from_min_size(at + vec2(8.0, 8.0), vec2(GHOST, GHOST));
     egui::Area::new(egui::Id::unique("tool-drag-ghost")).order(egui::Order::Tooltip).fixed_pos(r.min).interactable(false).show(ctx, |ui| {
         let (r, _) = ui.allocate_exact_size(r.size(), Sense::hover());
-        ui.painter().rect(r, 3.0, t.panel, Stroke::new(1.0, t.accent), StrokeKind::Inside);
+        ui.painter().rect(r, f32::from(VAROS_UI.control_radius), t.panel, Stroke::new(1.0, t.accent), StrokeKind::Inside);
         icons::paint(
             ui,
             // Varos: distinct tool variants.

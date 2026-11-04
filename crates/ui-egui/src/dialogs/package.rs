@@ -8,6 +8,7 @@
 //! package folder (`file.showPackage`). On the desktop with Background Export on, the package is
 //! collected and written on the background thread ([`crate::background`]) after the dialog closes.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -96,7 +97,7 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
         }
     }
     ui.add_space(6.0);
-    ui.label(egui::RichText::new(tl!("Fonts whose licence doesn't allow embedding are not copied.")).size(11.5).color(t.text_dim));
+    ui.label(egui::RichText::new(tl!("Fonts whose licence doesn't allow embedding are not copied.")).size(VAROS_UI.metadata_font).color(t.text_dim));
     false
 }
 

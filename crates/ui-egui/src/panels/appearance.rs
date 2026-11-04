@@ -11,6 +11,7 @@
 //! (dropped on its row) or onto the object; Alt copies instead. Cmd-click and Shift-click select
 //! several fills/strokes for Duplicate and Delete.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::OnceLock;
 
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -216,7 +217,13 @@ fn chevron(ui: &mut Ui, r: Rect, id: impl std::hash::Hash + std::fmt::Debug, ope
 
 fn text(ui: &Ui, pos: egui::Pos2, s: &str, strong: bool) {
     let t = Tokens::get(ui.ctx());
-    ui.painter().text(pos, egui::Align2::LEFT_CENTER, s, egui::FontId::proportional(12.5), if strong { t.text_strong } else { t.text });
+    ui.painter().text(
+        pos,
+        egui::Align2::LEFT_CENTER,
+        s,
+        egui::FontId::proportional(VAROS_UI.legacy_control_font),
+        if strong { t.text_strong } else { t.text },
+    );
 }
 
 fn chip(ui: &Ui, r: Rect, p: &Paint) {
@@ -230,7 +237,7 @@ fn chip(ui: &Ui, r: Rect, p: &Paint) {
 /// A dotted-underline link drawn at `pos`; returns clicked.
 fn link(ui: &mut Ui, pos: egui::Pos2, id: impl std::hash::Hash + std::fmt::Debug, s: &str) -> bool {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(s.to_string(), egui::FontId::proportional(12.5), t.text_strong);
+    let galley = ui.painter().layout_no_wrap(s.to_string(), egui::FontId::proportional(VAROS_UI.legacy_control_font), t.text_strong);
     let r = Rect::from_min_size(pos2(pos.x, pos.y - galley.size().y / 2.0), galley.size());
     let resp = ui.interact(r, ui.scope_id().with(id), Sense::click());
     ui.painter().galley(r.min, galley, t.text_strong);
@@ -654,7 +661,7 @@ fn stroke_notes(ui: &Ui, r: Rect, st: &vectorcraft_doc::StrokeLayer) {
     let notes: Vec<&str> = st.brush.as_deref().into_iter().chain(dashed).collect();
     let mut x = r.left();
     if !notes.is_empty() {
-        let g = painter.layout_no_wrap(notes.join(", "), egui::FontId::proportional(11.5), t.text_dim);
+        let g = painter.layout_no_wrap(notes.join(", "), egui::FontId::proportional(VAROS_UI.metadata_font), t.text_dim);
         x += g.size().x + 6.0;
         painter.galley(pos2(r.left(), r.center().y - g.size().y / 2.0), g, t.text_dim);
     }
@@ -758,8 +765,10 @@ fn effect_editor(app: &mut VectorcraftApp, ui: &mut Ui, item: Option<usize>, k: 
             let ui_keys = manifest.and_then(|m| m.param(key)).map(|p| &p.ui);
             ui.horizontal(|ui| {
                 let label = ui_keys.and_then(|u| u.label.clone()).unwrap_or_else(|| param_label(key, built_in));
-                let label_node =
-                    ui.add_sized(vec2(84.0, 22.0), egui::Label::new(egui::RichText::new(label.as_str()).size(11.5).color(t.text)).truncate());
+                let label_node = ui.add_sized(
+                    vec2(84.0, 22.0),
+                    egui::Label::new(egui::RichText::new(label.as_str()).size(VAROS_UI.metadata_font).color(t.text)).truncate(),
+                );
                 let label_node = if let Some(help) = ui_keys.and_then(|u| u.help.as_deref()) { label_node.on_hover_text(help) } else { label_node };
                 // The row's actual label node names its fields, including a plug-in's plain text
                 // and number fields (egui 0.37's strict a11y gate).

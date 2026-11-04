@@ -3,6 +3,7 @@
 //! images, repeat objects), for the whole document or the selection only. The flyout picks one category (or all)
 //! and saves the text report (`docInfo.save`, the report File → Package writes too).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::Ui;
 use serde_json::{Value, json};
 
@@ -23,10 +24,10 @@ struct Cache {
 pub(crate) fn row(ui: &mut Ui, label: &str, value: String) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).size(12.0).color(t.text_dim));
+        ui.label(egui::RichText::new(label).size(VAROS_UI.panel_body_font).color(t.text_dim));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Long values (paths) are cut to the panel's width; hovering shows them whole.
-            ui.add(egui::Label::new(egui::RichText::new(value).size(12.0).color(t.text)).truncate());
+            ui.add(egui::Label::new(egui::RichText::new(value).size(VAROS_UI.panel_body_font).color(t.text)).truncate());
         });
     });
 }

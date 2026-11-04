@@ -10,6 +10,7 @@
 //! Everything runs through the `links.*` commands (`links.editOriginal` and `links.reveal` are UI
 //! commands: they hand the file to the system).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Sense, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_doc::NodeId;
@@ -241,7 +242,7 @@ fn badge(ui: &Ui, r: egui::Rect, status: &str) {
     let t = Tokens::get(ui.ctx());
     let c = r.center();
     let p = ui.painter();
-    let font = theme::semibold(10.0);
+    let font = theme::semibold(VAROS_UI.avatar_font);
     match status {
         "missing" => {
             p.circle_filled(c, 6.5, t.error);
@@ -356,7 +357,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                 );
                 let mut text_right = right - 4.0;
                 if let Some(page) = r["page"].as_u64() {
-                    let g = ui.painter().layout_no_wrap(format!("{page}"), egui::FontId::proportional(11.5), t.text_dim);
+                    let g = ui.painter().layout_no_wrap(format!("{page}"), egui::FontId::proportional(VAROS_UI.metadata_font), t.text_dim);
                     text_right -= g.size().x;
                     ui.painter().galley(egui::pos2(text_right, rect.center().y - g.size().y / 2.0), g, t.text_dim);
                     text_right -= 6.0;
@@ -367,7 +368,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                     egui::pos2(x, rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     name,
-                    egui::FontId::proportional(12.5),
+                    egui::FontId::proportional(VAROS_UI.legacy_control_font),
                     t.text,
                 );
                 let resp = resp.on_hover_text(status_tip(r));

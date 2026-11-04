@@ -1,5 +1,6 @@
 //! History panel: the document's states; click one to go back (or forward) to it.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Sense, Ui, vec2};
 use serde_json::json;
 
@@ -74,7 +75,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                     crate::varos::agents::history_icon(agents.get(i), if *future { t.text_disabled } else { t.icon }), // Varos
                 );
                 let col = if *future { t.text_disabled } else { t.text };
-                ui.painter().text(r.left_center() + vec2(30.0, 0.0), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.5), col);
+                ui.painter().text(
+                    r.left_center() + vec2(30.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                    col,
+                );
                 crate::varos::agents::paint_history_agent(ui, r, agents.get(i)); // Varos
                 if resp.clicked() && i != current {
                     steps = Some(steps_to(current, i));

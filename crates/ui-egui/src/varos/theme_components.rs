@@ -10,6 +10,7 @@ pub(crate) struct Foundation {
     pub document_tab_height: f32,
     pub tab_radius: u8,
     pub tab_padding: f32,
+    pub compact_tab_padding: f32,
     pub panel_body_font: f32,
     pub panel_heading_font: f32,
     pub control_radius: u8,
@@ -23,6 +24,28 @@ pub(crate) struct Foundation {
     pub button_padding: egui::Vec2,
     pub field_margin: i8,
     pub box_radius: u8,
+    pub ruler_font: f32,
+    pub welcome_title_font: f32,
+    pub about_title_font: f32,
+    pub chip_radius: u8,
+    pub preview_radius: u8,
+    pub checkbox_radius: u8,
+    pub card_radius: u8,
+    pub inset_radius: u8,
+    pub home_title_font: f32,
+    pub badge_font: f32,
+    pub avatar_font: f32,
+    pub body_font: f32,
+    pub heading_font: f32,
+    pub dialog_title_font: f32,
+    pub metadata_font: f32,
+    pub status_font: f32,
+    pub brand_font: f32,
+    pub dialog_tab_height: f32,
+    pub tab_underline: f32,
+    pub floating_header_height: f32,
+    pub floating_title_height: f32,
+    pub panel_title_height: f32,
 }
 pub(crate) const FOUNDATION: Foundation = Foundation {
     tab_font: 12.0,
@@ -30,6 +53,7 @@ pub(crate) const FOUNDATION: Foundation = Foundation {
     document_tab_height: 28.0,
     tab_radius: 0,
     tab_padding: 10.0,
+    compact_tab_padding: 6.0,
     panel_body_font: 12.0,
     panel_heading_font: 14.0,
     control_radius: 3,
@@ -43,6 +67,28 @@ pub(crate) const FOUNDATION: Foundation = Foundation {
     button_padding: egui::vec2(6.0, 2.0),
     field_margin: 4,
     box_radius: 8,
+    ruler_font: 9.5,
+    welcome_title_font: 26.0,
+    about_title_font: 22.0,
+    chip_radius: 11,
+    preview_radius: 2,
+    checkbox_radius: 2,
+    card_radius: 10,
+    inset_radius: 4,
+    home_title_font: 20.0,
+    badge_font: 9.0,
+    avatar_font: 10.0,
+    body_font: 13.0,
+    heading_font: 15.0,
+    dialog_title_font: 16.0,
+    metadata_font: 11.5,
+    status_font: 10.5,
+    brand_font: 13.5,
+    dialog_tab_height: 30.0,
+    tab_underline: 2.0,
+    floating_header_height: 32.0,
+    floating_title_height: 18.0,
+    panel_title_height: 20.0,
 };
 impl Foundation {
     /// Standard egui controls and custom painters share these defaults. Compact/editor roles
@@ -78,14 +124,11 @@ impl Foundation {
             p.line_segment([pos2(rect.left(), rect.bottom() - 0.5), pos2(rect.right(), rect.bottom() - 0.5)], Stroke::new(1.0, t.border));
         }
     }
+    pub fn tab_ink(&self, t: &Tokens, active: bool, hovered: bool) -> egui::Color32 {
+        if active || hovered { t.text } else { t.text_dim }
+    }
     pub fn tab_label(&self, p: &Painter, rect: Rect, label: &str, t: &Tokens, active: bool, hovered: bool) {
-        p.text(
-            pos2(rect.left() + self.tab_padding, rect.center().y),
-            Align2::LEFT_CENTER,
-            label,
-            self.tab_font(),
-            if active || hovered { t.text } else { t.text_dim },
-        );
+        p.text(pos2(rect.left() + self.tab_padding, rect.center().y), Align2::LEFT_CENTER, label, self.tab_font(), self.tab_ink(t, active, hovered));
     }
 }
 

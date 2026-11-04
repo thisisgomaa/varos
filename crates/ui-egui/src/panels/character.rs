@@ -2,6 +2,7 @@
 //! scale, baseline shift, character rotation and the All Caps, Small Caps, Superscript, Subscript,
 //! Underline and Strikethrough toggles.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::sync::{Mutex, OnceLock};
 
 use egui::{Key, Ui, vec2};
@@ -503,8 +504,9 @@ pub(crate) fn route_type_input(app: &mut VectorcraftApp, ctx: &egui::Context) {
 fn cell(ui: &mut Ui, label: &str, tip: &str, add: impl FnOnce(&mut Ui)) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
-        let l =
-            ui.add_sized(vec2(22.0, 24.0), egui::Label::new(egui::RichText::new(label).size(11.5).strong().color(t.text))).on_hover_text(tl!(tip));
+        let l = ui
+            .add_sized(vec2(22.0, 24.0), egui::Label::new(egui::RichText::new(label).size(VAROS_UI.metadata_font).strong().color(t.text)))
+            .on_hover_text(tl!(tip));
         crate::scrub::note_label(ui, l.rect);
         // The visible label names the value field beside it, also in a grid cell that draws more
         // than one widget (egui 0.37's strict accessibility check).
@@ -667,7 +669,7 @@ fn axes_cmd(app: &mut VectorcraftApp, axes: Value, phase: widgets::Live) {
 pub(crate) fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
     let Some((s, _)) = text_style(app) else { return };
     let link = ui
-        .link(egui::RichText::new(tl!("Character:")).size(12.0).color(Tokens::get(ui.ctx()).text).underline())
+        .link(egui::RichText::new(tl!("Character:")).size(VAROS_UI.panel_body_font).color(Tokens::get(ui.ctx()).text).underline())
         .on_hover_text(tl!("Character options"));
     widgets::popover(&link, link.clicked(), |ui| {
         ui.set_width(260.0);
@@ -735,9 +737,9 @@ fn style_toggle(ui: &mut Ui, g: Glyph, tip: &str, on: bool) -> bool {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(30.0, 26.0), egui::Sense::click());
     if on {
-        ui.painter().rect_filled(r, 3, t.tool_active);
+        ui.painter().rect_filled(r, VAROS_UI.control_radius, t.tool_active);
     } else if resp.hovered() {
-        ui.painter().rect_filled(r, 3, t.hover);
+        ui.painter().rect_filled(r, VAROS_UI.control_radius, t.hover);
     }
     let col = t.text_strong;
     let big = egui::FontId::proportional(15.0);

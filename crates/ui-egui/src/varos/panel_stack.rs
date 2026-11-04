@@ -34,6 +34,8 @@
 //! Iconic Panels makes pop-outs transient: with it on, the column goes back to upstream's
 //! one-flyout-at-a-time behaviour, as with `keep_open` off.
 
+use crate::varos::theme_components::FOUNDATION as LOOK;
+
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
@@ -64,14 +66,14 @@ const MIN_TALL: f32 = 120.0;
 const ICON_COL: f32 = crate::panel_docking::ICON_WIDTH;
 const DOCK_WIDTH: f32 = crate::panel_docking::COLUMN_WIDTH;
 /// A card's header (its tabs, × and ≡), as the kit's card (`panel-kit.html` §5).
-const HEADER: f32 = 32.0;
+const HEADER: f32 = LOOK.floating_header_height;
 /// A tab's height, and the room left and right of the header's contents.
-const TAB_H: f32 = 24.0;
+const TAB_H: f32 = LOOK.tab_height;
 const PAD: f32 = 4.0;
 /// A header button (× and ≡).
 const BUTTON: Vec2 = vec2(20.0, 24.0);
 /// A card's corners.
-const RADIUS: u8 = 8;
+const RADIUS: u8 = LOOK.box_radius;
 /// The least size a card is drawn at.
 const MIN_W: f32 = 220.0;
 const MIN_H: f32 = HEADER + 48.0;
@@ -83,8 +85,6 @@ const FOOT: f32 = 6.0;
 /// Points the pointer travels from its press before a let-go drops the card on anything (a click
 /// on a header never groups or docks a card).
 const TRAVEL: f32 = 4.0;
-/// The tab label's size.
-const LABEL: f32 = 11.0;
 /// Frames a card Varos placed is drawn unseen: the first measures it and places it at its real size,
 /// the second lets contents that settle a frame late (a panel's second layout) fit it again.
 const UNSEEN: u8 = 2;
@@ -1377,7 +1377,13 @@ fn target(app: &VectorcraftApp, ctx: &egui::Context, first: &str, at: Pos2) -> O
 fn preview(ctx: &egui::Context, zone: Rect) {
     let t = crate::theme::Tokens::get(ctx);
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("varos-card-drop")));
-    painter.rect(zone.shrink(1.0), CornerRadius::same(3), t.accent.gamma_multiply(0.15), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+    painter.rect(
+        zone.shrink(1.0),
+        CornerRadius::same(LOOK.control_radius),
+        t.accent.gamma_multiply(0.15),
+        Stroke::new(1.5, t.accent),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// The card led by `first` was let go at `at`: group it, dock it, close it, or leave it there.
@@ -1538,28 +1544,23 @@ fn card(
             // tabs lie on top and have their own drag (a tab moves the card or leaves it).
             let _ = ui.interact(Rect::from_min_max(head.min, pos2(close.left() - 1.0, head.bottom())), id.with("header"), Sense::drag());
             // Tabs from the left, as wide as their labels, narrower when they don't all fit.
-            let font = egui::FontId::proportional(LABEL);
-            let galleys: Vec<_> = labels.iter().map(|l| painter.layout_no_wrap(l.clone(), font.clone(), t.text)).collect();
+            let font = LOOK.tab_font();
+            let galleys: Vec<_> = labels.iter().map(|l| painter.layout_no_wrap(l.clone(), font.clone(), egui::Color32::PLACEHOLDER)).collect();
             let room = (close.left() - 2.0 - head.left() - PAD).max(0.0);
-            let wanted: f32 = galleys.iter().map(|g| g.size().x + 12.0).sum();
+            let wanted: f32 = galleys.iter().map(|g| g.size().x + 2.0 * LOOK.compact_tab_padding).sum();
             let scale = if wanted > room { room / wanted.max(1.0) } else { 1.0 };
             let mut x = head.left() + PAD;
             for (i, (panel, galley)) in panels.iter().zip(&galleys).enumerate() {
-                let tab = Rect::from_min_size(pos2(x, head.center().y - TAB_H / 2.0), vec2(((galley.size().x + 12.0) * scale).floor(), TAB_H));
+                let tab = Rect::from_min_size(
+                    pos2(x, head.center().y - TAB_H / 2.0),
+                    vec2(((galley.size().x + 2.0 * LOOK.compact_tab_padding) * scale).floor(), TAB_H),
+                );
                 x = tab.right() + 2.0;
                 let response = ui.interact(tab, tab_id(panel), Sense::click_and_drag());
                 let front = i == active;
-                // The tab in front is lit as the kit's toggles: a dark well, bright text, no azure.
-                let text = if front {
-                    painter.rect(tab, CornerRadius::same(3), t.input, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-                    t.text_strong
-                } else if response.hovered() {
-                    painter.rect_filled(tab, CornerRadius::same(3), t.hover);
-                    t.text
-                } else {
-                    t.text_dim
-                };
-                let at = pos2(tab.left() + 6.0, tab.center().y - galley.size().y / 2.0);
+                LOOK.tab_surface(&painter, tab, t, front, response.hovered());
+                let text = LOOK.tab_ink(t, front, response.hovered());
+                let at = pos2(tab.left() + LOOK.compact_tab_padding, tab.center().y - galley.size().y / 2.0);
                 painter.with_clip_rect(tab.shrink2(vec2(3.0, 0.0)).intersect(painter.clip_rect())).galley(at, galley.clone(), text);
                 if response.clicked() && !front {
                     asks.push(Ask::Activate(panel.clone()));
@@ -1568,7 +1569,7 @@ fn card(
             // × closes the card; ≡ is upstream's panel menu.
             let response = ui.interact(close, id.with("close"), Sense::click());
             if response.hovered() {
-                painter.rect_filled(close, CornerRadius::same(3), t.hover);
+                painter.rect_filled(close, CornerRadius::same(LOOK.control_radius), t.hover);
             }
             crate::icons::paint(
                 ui,
@@ -1623,7 +1624,7 @@ pub(crate) fn paint_icon_well(app: &VectorcraftApp, painter: &egui::Painter, rec
         return color;
     }
     let t = crate::theme::Tokens::get(painter.ctx());
-    painter.rect(rect.expand(5.0), CornerRadius::same(3), t.input, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    painter.rect(rect.expand(5.0), CornerRadius::same(LOOK.control_radius), t.input, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     t.text_strong
 }
 

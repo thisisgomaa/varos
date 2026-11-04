@@ -18,6 +18,7 @@
 //! toggle (Points or Lines: how the Gradient tool adds points) and the selected point's colour
 //! (edited in the Color panel), opacity and spread, with Delete Point.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::gradient::{
@@ -497,7 +498,13 @@ fn thumbnail(app: &mut VectorcraftApp, ui: &mut Ui, g: &GradientPaint, is_grad: 
             let chip = Rect::from_min_size(row.left_center() + vec2(4.0, -8.0), vec2(16.0, 16.0));
             widgets::gradient_chip(ui, chip, grad);
             ui.painter().rect_stroke(chip, 0.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
-            ui.painter().text(chip.right_center() + vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(12.5), t.text);
+            ui.painter().text(
+                chip.right_center() + vec2(8.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(VAROS_UI.legacy_control_font),
+                t.text,
+            );
             if resp.clicked() {
                 chosen = Some(name.clone());
             }

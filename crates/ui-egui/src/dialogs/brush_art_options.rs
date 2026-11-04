@@ -16,6 +16,7 @@
 //! Pattern: `scale`, `spacing` (%), `fit` (`stretch` | `addSpace` | `approximate`), `flipAlong`,
 //! `flipAcross`, `__tiles` (slot → preview key, for the tiles the brush has).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -347,11 +348,16 @@ fn arrow_button(ui: &mut egui::Ui, dir: Direction, selected: bool, tip: &str) ->
     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 24.0), Sense::click());
     let p = ui.painter();
     if selected {
-        p.rect_filled(r, 3.0, t.row_selected);
+        p.rect_filled(r, f32::from(VAROS_UI.control_radius), t.row_selected);
     } else if resp.hovered() {
-        p.rect_filled(r, 3.0, t.hover);
+        p.rect_filled(r, f32::from(VAROS_UI.control_radius), t.hover);
     }
-    p.rect_stroke(r, 3.0, Stroke::new(1.0, if selected { t.accent } else { t.input_border }), egui::StrokeKind::Inside);
+    p.rect_stroke(
+        r,
+        f32::from(VAROS_UI.control_radius),
+        Stroke::new(1.0, if selected { t.accent } else { t.input_border }),
+        egui::StrokeKind::Inside,
+    );
     let u = match dir {
         Direction::LeftToRight => vec2(1.0, 0.0),
         Direction::RightToLeft => vec2(-1.0, 0.0),
@@ -406,14 +412,14 @@ fn tiles(ui: &mut egui::Ui, d: &Dialog) {
                             r.center(),
                             egui::Align2::CENTER_CENTER,
                             tl!("None"),
-                            egui::FontId::proportional(11.5),
+                            egui::FontId::proportional(VAROS_UI.metadata_font),
                             Color32::from_gray(140),
                         );
                     }
                 }
                 ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.input_border), egui::StrokeKind::Inside);
                 resp.on_hover_text(name);
-                ui.add_sized(vec2(76.0, 14.0), egui::Label::new(egui::RichText::new(name).size(10.5).color(t.text_dim)).truncate());
+                ui.add_sized(vec2(76.0, 14.0), egui::Label::new(egui::RichText::new(name).size(VAROS_UI.status_font).color(t.text_dim)).truncate());
             });
         }
     });

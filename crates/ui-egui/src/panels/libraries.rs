@@ -18,6 +18,7 @@
 //! The buttons beside the library picker show the items as icons (colour chips and graphic tiles,
 //! the default) or in a list, one row each with its name (a colour's hex value too).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::collections::HashMap;
 
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui, vec2};
@@ -145,7 +146,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         ui.vertical_centered(|ui| {
             icons::icon(ui, "library", 40.0, t.text_dim);
             ui.add_space(8.0);
-            ui.label(egui::RichText::new(tl!("Local Libraries")).size(14.0).color(t.text));
+            ui.label(egui::RichText::new(tl!("Local Libraries")).size(VAROS_UI.panel_heading_font).color(t.text));
             widgets::dim_label(ui, tl!("Keep graphics, colors and text styles here to use them in any document. Libraries are stored on this machine — no account required."));
             ui.add_space(8.0);
             if ui.button(tl!("Create New Library")).clicked() {
@@ -241,7 +242,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                         header.rect.right_center() - vec2(6.0, 0.0),
                         egui::Align2::RIGHT_CENTER,
                         n.to_string(),
-                        egui::FontId::proportional(11.5),
+                        egui::FontId::proportional(VAROS_UI.metadata_font),
                         t.text_dim,
                     );
                     if header.clicked() && !searching {
@@ -262,7 +263,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                         if n == 0 {
                             ui.label(
                                 egui::RichText::new(tl!("Drag an item here, or right-click one, to put it in this group."))
-                                    .size(11.5)
+                                    .size(VAROS_UI.metadata_font)
                                     .color(t.text_dim),
                             );
                             ui.add_space(6.0);
@@ -549,12 +550,12 @@ fn kind_param(kind: ItemKind) -> &'static str {
 fn no_group_strip(ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    ui.painter().rect_stroke(r, 3.0, Stroke::new(1.0, t.border), StrokeKind::Inside);
+    ui.painter().rect_stroke(r, f32::from(VAROS_UI.control_radius), Stroke::new(1.0, t.border), StrokeKind::Inside);
     ui.painter().text(
         r.center(),
         egui::Align2::CENTER_CENTER,
         tl!("Drop here to take it out of its group"),
-        egui::FontId::proportional(11.5),
+        egui::FontId::proportional(VAROS_UI.metadata_font),
         t.text_dim,
     );
     ui.add_space(6.0);
@@ -594,7 +595,7 @@ fn section_drop(ui: &Ui, items: &Items, grab: &Grab, sections: &[(Option<usize>,
             if items.group_of(*kind, item) == *group {
                 return;
             }
-            ui.painter().rect_stroke(r, 3.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+            ui.painter().rect_stroke(r, f32::from(VAROS_UI.control_radius), Stroke::new(1.5, t.accent), StrokeKind::Inside);
             if released && take() {
                 let mut p = json!({ "kind": kind_param(*kind), "item": item });
                 if let Some(g) = group.as_ref().and_then(name) {
@@ -630,7 +631,7 @@ fn list_row(ui: &Ui, r: Rect, resp: &egui::Response, name: &str, detail: Option<
         painter.rect_filled(r, 0.0, t.hover);
     }
     let left = if r.height() > ROW { LIST_TILE + 10.0 } else { 24.0 };
-    let font = egui::FontId::proportional(12.5);
+    let font = egui::FontId::proportional(VAROS_UI.legacy_control_font);
     let name = painter.text(r.left_center() + vec2(left, 0.0), egui::Align2::LEFT_CENTER, name, font.clone(), t.text);
     if let Some(d) = detail {
         let d = painter.layout_no_wrap(d.to_string(), font, t.text_dim);
@@ -644,7 +645,7 @@ fn list_row(ui: &Ui, r: Rect, resp: &egui::Response, name: &str, detail: Option<
 /// A section heading in the list.
 fn heading(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(text).size(11.5).color(t.text_dim));
+    ui.label(egui::RichText::new(text).size(VAROS_UI.metadata_font).color(t.text_dim));
     ui.add_space(2.0);
 }
 

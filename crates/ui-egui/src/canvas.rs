@@ -1,6 +1,7 @@
 //! The document canvas: rendering, rulers, navigation, pointer routing to tools and on-canvas
 //! selection visuals (bounding box, anchors, handles, smart-guide style labels).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: canvas chrome consumes shared typography and surfaces.
 use egui::emath::GuiRounding as _;
 use egui::{Color32, CornerRadius, Pos2, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use serde_json::json;
@@ -1588,7 +1589,7 @@ fn scroll_bars(app: &mut VectorcraftApp, ui: &Ui, rect: egui::Rect, outer: egui:
             egui::Rect::from_min_size(pos2(track.left(), track.top() + at), vec2(track.width(), size)).shrink2(vec2(3.0, 1.0))
         };
         let hot = drag.is_some() || hover.is_some_and(|p| thumb.contains(p));
-        painter.rect_filled(thumb, CornerRadius::same(3), if hot { t.text_dim } else { t.text_disabled });
+        painter.rect_filled(thumb, CornerRadius::same(VAROS_UI.control_radius), if hot { t.text_dim } else { t.text_disabled });
     }
     let Some(vm) = app.view_mut() else { return };
     if let Some(c) = center {
@@ -2164,7 +2165,7 @@ fn rulers(ui: &Ui, full: egui::Rect, xf: &Xf, hover: Option<Point>, scale: Ruler
     // Crosshair in the origin box.
     p.line_segment([corner.center() - vec2(4.0, 0.0), corner.center() + vec2(4.0, 0.0)], Stroke::new(1.0, t.ruler_tick));
     p.line_segment([corner.center() - vec2(0.0, 4.0), corner.center() + vec2(0.0, 4.0)], Stroke::new(1.0, t.ruler_tick));
-    let font = egui::FontId::proportional(9.5);
+    let font = egui::FontId::proportional(VAROS_UI.ruler_font);
     // Each ruler measures along its own edge, in the canvas's coordinates turned with the view
     // (#826): at 0° the top one reads x and the left one y. `draw` gets each tick's distance
     // (screen points) from `from` along the ruler, its length, and the label of a labelled one.
@@ -2805,7 +2806,7 @@ fn slice_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf) {
         if prefs.show_slice_numbers
             && let Some(tl) = q.first()
         {
-            let font = egui::FontId::proportional(9.0);
+            let font = egui::FontId::proportional(VAROS_UI.badge_font);
             let galley = p.layout_no_wrap(format!("{:02}", a.number), font, Color32::WHITE);
             let badge = egui::Rect::from_min_size(*tl + vec2(1.0, 1.0), galley.size() + vec2(6.0, 2.0));
             p.rect_filled(badge, CornerRadius::ZERO, if auto { dim } else { line });
@@ -2829,7 +2830,7 @@ fn print_tiling_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf) {
             pages
         }
     };
-    let font = egui::FontId::proportional(10.0);
+    let font = egui::FontId::proportional(VAROS_UI.avatar_font);
     let ring = |r: [f64; 4]| {
         let q = xf.quad(Rect::new(r[0], r[1], r[2], r[3]));
         q.iter().chain(q.first()).copied().collect::<Vec<Pos2>>()
@@ -2938,7 +2939,7 @@ fn rotate_view_dial(p: &egui::Painter, c: Pos2, rotation: f64, t: &Tokens) {
     }
     p.line_segment([c, c + dir(rotation as f32) * DIAL_RADIUS], Stroke::new(2.0, t.accent));
     p.circle_filled(c, 2.5, t.accent);
-    p.text(c + vec2(0.0, 8.0), egui::Align2::CENTER_TOP, format!("{rotation:.0}°"), egui::FontId::proportional(11.0), t.text);
+    p.text(c + vec2(0.0, 8.0), egui::Align2::CENTER_TOP, format!("{rotation:.0}°"), egui::FontId::proportional(VAROS_UI.control_font), t.text);
 }
 
 fn selection_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf, curve_points_from_tool: bool) {
@@ -3191,7 +3192,7 @@ fn canvas_name_galley(painter: &egui::Painter, corner: Pos2, width: f32, name: &
     if !width.is_finite() || width < MIN_LABELLED_ARTBOARD {
         return None;
     }
-    let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), egui::FontId::proportional(11.0), color);
+    let mut job = egui::text::LayoutJob::simple_singleline(name.to_owned(), egui::FontId::proportional(VAROS_UI.control_font), color);
     job.wrap = egui::text::TextWrapping { max_width: width, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
     let galley = painter.layout_job(job);
     let at = corner - vec2(0.0, 4.0 + galley.size().y);
@@ -3248,7 +3249,8 @@ fn tool_name_rect(painter: &egui::Painter, xf: &Xf, rect: Rect, index: usize, na
     let z = xf.zoom.max(1e-9);
     let anchor = Point::new(rect.x0 - 8.0 / z, rect.y0 - 4.0 / z);
     let sp = xf.to_screen(anchor) + vec2(8.0, -14.0);
-    let galley = painter.layout(format!("{:02} - {name}", index + 1), egui::FontId::proportional(11.0), Color32::WHITE, f32::INFINITY);
+    let galley =
+        painter.layout(format!("{:02} - {name}", index + 1), egui::FontId::proportional(VAROS_UI.control_font), Color32::WHITE, f32::INFINITY);
     egui::Rect::from_min_size(sp, galley.size()).expand(2.0)
 }
 
@@ -3333,7 +3335,7 @@ fn artboard_name_editor(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
         rect,
         egui::TextEdit::singleline(&mut edit.text)
             .id(name_edit_id().with("field"))
-            .font(egui::FontId::proportional(11.0))
+            .font(egui::FontId::proportional(VAROS_UI.control_font))
             // Keep the original inset so theme button padding cannot move the canvas label.
             .margin(egui::Margin::symmetric(4, 2)),
     );
@@ -3409,7 +3411,7 @@ fn draw_overlays(p: &egui::Painter, xf: &Xf, overlays: &[Overlay], t: &Tokens, l
                     sp,
                     egui::Align2::LEFT_TOP,
                     crate::panels::label_or_name(text, !names_an_artboard(text)),
-                    egui::FontId::proportional(11.0),
+                    egui::FontId::proportional(VAROS_UI.control_font),
                     c32(*color),
                 );
             }
@@ -3419,9 +3421,9 @@ fn draw_overlays(p: &egui::Painter, xf: &Xf, overlays: &[Overlay], t: &Tokens, l
             }
             Overlay::Measure { p: pt, text } => {
                 let sp = xf.to_screen(*pt) + vec2(14.0, 14.0);
-                let galley = p.layout(text.clone(), egui::FontId::proportional(11.0), Color32::WHITE, 200.0);
+                let galley = p.layout(text.clone(), egui::FontId::proportional(VAROS_UI.control_font), Color32::WHITE, 200.0);
                 let r = egui::Rect::from_min_size(sp, galley.size() + vec2(12.0, 8.0));
-                p.rect_filled(r, CornerRadius::same(3), t.measure_bg);
+                p.rect_filled(r, CornerRadius::same(VAROS_UI.control_radius), t.measure_bg);
                 p.galley(sp + vec2(6.0, 4.0), galley, Color32::WHITE);
             }
             Overlay::Distance { a, b, text, color } => distance_guide(p, xf.to_screen(*a), xf.to_screen(*b), text, c32(*color)),
@@ -3460,9 +3462,9 @@ fn distance_guide(p: &egui::Painter, a: Pos2, b: Pos2, text: &str, color: Color3
     }
     let luma = 0.299 * f32::from(color.r()) + 0.587 * f32::from(color.g()) + 0.114 * f32::from(color.b());
     let ink = if luma > 150.0 { Color32::BLACK } else { Color32::WHITE };
-    let galley = p.layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), ink);
+    let galley = p.layout_no_wrap(text.to_owned(), egui::FontId::proportional(VAROS_UI.control_font), ink);
     let r = egui::Rect::from_center_size(a + along / 2.0, galley.size() + vec2(8.0, 4.0));
-    p.rect_filled(r, CornerRadius::same(3), color);
+    p.rect_filled(r, CornerRadius::same(VAROS_UI.control_radius), color);
     p.galley(r.min + vec2(4.0, 2.0), galley, ink);
 }
 
@@ -3497,10 +3499,10 @@ fn home_content(app: &mut VectorcraftApp, ui: &mut Ui) {
         let (mark, _) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::hover());
         crate::brand::paint_mark(ui, mark);
         ui.add_space(8.0);
-        ui.label(egui::RichText::new(tl!("Welcome to VectorCraft")).font(theme::semibold(26.0)).color(t.text));
+        ui.label(egui::RichText::new(tl!("Welcome to VectorCraft")).font(theme::semibold(VAROS_UI.welcome_title_font)).color(t.text));
     });
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(tl!("Vector illustration — fast, open, scriptable.")).size(14.0).color(t.text_dim));
+    ui.label(egui::RichText::new(tl!("Vector illustration — fast, open, scriptable.")).size(VAROS_UI.panel_heading_font).color(t.text_dim));
     ui.add_space(22.0);
     ui.horizontal(|ui| {
         if widgets::primary_button(ui, tl!("New file")).clicked() {
@@ -3513,7 +3515,7 @@ fn home_content(app: &mut VectorcraftApp, ui: &mut Ui) {
     });
     recent(app, ui);
     ui.add_space(28.0);
-    ui.label(egui::RichText::new(tl!("Quickly start a new file")).font(theme::semibold(14.0)).color(t.text));
+    ui.label(egui::RichText::new(tl!("Quickly start a new file")).font(theme::semibold(VAROS_UI.panel_heading_font)).color(t.text));
     ui.add_space(10.0);
     // A few of New Document's presets (`file.newPresets`), as its cards.
     let presets = ["Letter", "A4", "Web 1920×1080", "Phone 390×844", "Postcard", "Social Square Post 1080×1080"];
@@ -3539,7 +3541,7 @@ fn recent(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     let t = Tokens::get(ui.ctx());
     ui.add_space(28.0);
-    ui.label(egui::RichText::new(tl!("Recent Files")).font(theme::semibold(14.0)).color(t.text));
+    ui.label(egui::RichText::new(tl!("Recent Files")).font(theme::semibold(VAROS_UI.panel_heading_font)).color(t.text));
     ui.add_space(8.0);
     for path in files {
         if recent_row(ui, &path).clicked() {
@@ -3562,12 +3564,12 @@ fn recent_row(ui: &mut Ui, path: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         if resp.hovered() {
-            ui.painter().rect_filled(rect, CornerRadius::same(4), t.hover);
+            ui.painter().rect_filled(rect, CornerRadius::same(VAROS_UI.control_radius), t.hover);
         }
         let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + PAD + ICON / 2.0, rect.center().y), vec2(ICON, ICON));
         crate::icons::paint(ui, "history", icon, t.icon);
         let x = icon.right() + 8.0;
-        let name_galley = egui::WidgetText::from(egui::RichText::new(&name).size(13.0).color(t.accent)).into_galley(
+        let name_galley = egui::WidgetText::from(egui::RichText::new(&name).size(VAROS_UI.body_font).color(t.accent)).into_galley(
             ui,
             Some(egui::TextWrapMode::Truncate),
             (rect.right() - PAD - x).max(0.0),
@@ -3577,7 +3579,7 @@ fn recent_row(ui: &mut Ui, path: &str) -> egui::Response {
         ui.painter().galley(egui::pos2(x, rect.center().y - name_galley.size().y / 2.0), name_galley, t.accent);
         let room = rect.right() - PAD - folder_x;
         if room > 0.0 && !folder.is_empty() {
-            let folder_galley = egui::WidgetText::from(egui::RichText::new(&folder).size(12.0).color(t.text_dim)).into_galley(
+            let folder_galley = egui::WidgetText::from(egui::RichText::new(&folder).size(VAROS_UI.panel_body_font).color(t.text_dim)).into_galley(
                 ui,
                 Some(egui::TextWrapMode::Truncate),
                 room,
@@ -3866,7 +3868,11 @@ fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     let (g, grip) = ui.allocate_exact_size(vec2(4.0, 28.0), Sense::drag());
                     let active = grip.hovered() || grip.dragged();
-                    ui.painter().rect_filled(g.shrink2(vec2(0.5, 4.0)), CornerRadius::same(2), if active { t.text_dim } else { t.button_border });
+                    ui.painter().rect_filled(
+                        g.shrink2(vec2(0.5, 4.0)),
+                        CornerRadius::same(VAROS_UI.control_radius),
+                        if active { t.text_dim } else { t.button_border },
+                    );
                     if grip.dragged() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                         moved = grip.drag_delta();
@@ -3874,12 +3880,17 @@ fn task_bar(app: &mut VectorcraftApp, ui: &mut Ui, xf: &Xf) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                     }
                     for (label, icon, cmd, params) in &items {
-                        let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(13.0), t.text_strong);
+                        let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(VAROS_UI.body_font), t.text_strong);
                         let (r, resp) = ui.allocate_exact_size(vec2(galley.size().x + 38.0, 30.0), Sense::click());
                         if resp.hovered() {
-                            ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
+                            ui.painter().rect_filled(r, CornerRadius::same(VAROS_UI.control_radius), t.hover);
                         }
-                        ui.painter().rect_stroke(r, CornerRadius::same(3), Stroke::new(1.0, t.button_border), StrokeKind::Inside);
+                        ui.painter().rect_stroke(
+                            r,
+                            CornerRadius::same(VAROS_UI.control_radius),
+                            Stroke::new(1.0, t.button_border),
+                            StrokeKind::Inside,
+                        );
                         crate::icons::paint(ui, icon, egui::Rect::from_min_size(r.min + vec2(8.0, 7.0), vec2(16.0, 16.0)), t.icon);
                         ui.painter().galley(pos2(r.left() + 30.0, r.center().y - galley.size().y / 2.0), galley, t.text_strong);
                         if resp.clicked() {

@@ -6,6 +6,7 @@
 //!
 //! Field: `selected` (a preset's name).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use serde_json::{Value, json};
 use vectorcraft_engine::cmd::printpresets::{DEFAULT_PRESET, PRESET_EXTS, PRESET_FORMAT, changes};
 
@@ -101,13 +102,15 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
             changed.sort_by_key(|c| section_of(c["option"].as_str().unwrap_or_default()).0);
             egui::ScrollArea::vertical().id_salt("print-preset-details").max_height(200.0).show(ui, |ui| {
                 if changed.is_empty() {
-                    ui.label(egui::RichText::new(tl!("None.")).color(t.text_dim).size(11.5));
+                    ui.label(egui::RichText::new(tl!("None.")).color(t.text_dim).size(VAROS_UI.metadata_font));
                 }
                 option_rows(ui, &changed, option_label);
             });
             if builtin {
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new(tl!("[Default] is protected: New… starts an editable copy.")).color(t.text_dim).size(11.5));
+                ui.label(
+                    egui::RichText::new(tl!("[Default] is protected: New… starts an editable copy.")).color(t.text_dim).size(VAROS_UI.metadata_font),
+                );
             }
         });
     });

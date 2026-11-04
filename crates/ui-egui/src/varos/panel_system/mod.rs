@@ -1214,7 +1214,7 @@ fn render_flyout(
         .show(ctx, |ui| {
             ui.set_min_size(geo.rect.size());
             ui.set_clip_rect(region.intersect(geo.rect));
-            ui.painter().rect_filled(geo.rect, 3, Tokens::get(ctx).panel);
+            ui.painter().rect_filled(geo.rect, crate::varos::theme_components::FOUNDATION.box_radius, Tokens::get(ctx).panel);
             for g in &geo.groups {
                 let mut request = None;
                 render_group(app, ui, &temporary, drag_rect, g, false, hits, &mut request, actions, flyout);
@@ -1230,7 +1230,12 @@ fn render_flyout(
                     *flyout = None;
                 }
             }
-            ui.painter().rect_stroke(geo.rect, 3, Stroke::new(1.0, Tokens::get(ctx).border), StrokeKind::Inside);
+            ui.painter().rect_stroke(
+                geo.rect,
+                crate::varos::theme_components::FOUNDATION.box_radius,
+                Stroke::new(1.0, Tokens::get(ctx).border),
+                StrokeKind::Inside,
+            );
         });
 }
 

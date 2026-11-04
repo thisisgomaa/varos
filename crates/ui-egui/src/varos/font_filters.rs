@@ -1,4 +1,5 @@
 //! Varos: concept A, Script first. State is owned by the upstream menu, so choices survive closing.
+use crate::varos::theme_components::FOUNDATION as LOOK;
 use std::sync::Arc;
 
 use egui::{Ui, vec2};
@@ -77,13 +78,13 @@ fn header_families<R>(ctx: &egui::Context, db: &FontDb, read: impl FnOnce(&mut H
     })
 }
 
-const CHIP_HEIGHT: f32 = 24.0;
+const CHIP_HEIGHT: f32 = LOOK.control_height;
 const SHAPED_HEIGHT: f32 = 18.0;
 // Reserve the same shaped-name slot before/after rendering, failure, or texture reset.
 const STYLE_NAME_WIDTH: f32 = 52.0;
 
 fn chip(ui: &mut Ui, on: bool, text: &str) -> egui::Response {
-    ui.selectable_label(on, egui::RichText::new(text).size(11.0))
+    ui.selectable_label(on, egui::RichText::new(text).size(LOOK.control_font))
 }
 
 /// Search retains upstream's field ID, focus, query storage and keyboard handling.
@@ -95,17 +96,19 @@ pub(crate) fn search(ui: &mut Ui, field: egui::Id, arabic: &mut ArabicMenu, samp
         }
         // Leave the compact language switch room even when translations grow.
         let auto = tl!("Auto");
-        let auto_width = ui.painter().layout_no_wrap(auto.into(), egui::FontId::proportional(11.0), Tokens::get(ui.ctx()).text).size().x + 16.0;
+        let auto_width =
+            ui.painter().layout_no_wrap(auto.into(), egui::FontId::proportional(LOOK.control_font), Tokens::get(ui.ctx()).text).size().x + 16.0;
         let db = FontDb::global();
         let has_arabic = header_families(ui.ctx(), db, |cache| cache.has_arabic());
         let glyph_width = if has_arabic {
             32.0
         } else {
-            ui.painter().layout_no_wrap(tl!("Arabic").into(), egui::FontId::proportional(11.0), Tokens::get(ui.ctx()).text).size().x + 12.0
+            ui.painter().layout_no_wrap(tl!("Arabic").into(), egui::FontId::proportional(LOOK.control_font), Tokens::get(ui.ctx()).text).size().x
+                + 12.0
         };
         let width = (ui.available_width() - auto_width - glyph_width - 40.0).max(40.0);
         let query = ui
-            .allocate_ui_with_layout(vec2(width, 28.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            .allocate_ui_with_layout(vec2(width, LOOK.dialog_button_height), egui::Layout::top_down(egui::Align::Min), |ui| {
                 widgets::search_field(ui, field, tl!("Search"))
             })
             .inner;
@@ -136,7 +139,9 @@ pub(crate) fn filters(ui: &mut Ui, script: &mut usize, class: &mut Option<FontCl
     let available = ui.available_width();
     let widths: Vec<f32> = labels
         .iter()
-        .map(|(_, label)| ui.painter().layout_no_wrap((*label).into(), egui::FontId::proportional(11.0), Tokens::get(ui.ctx()).text).size().x + 12.0)
+        .map(|(_, label)| {
+            ui.painter().layout_no_wrap((*label).into(), egui::FontId::proportional(LOOK.control_font), Tokens::get(ui.ctx()).text).size().x + 12.0
+        })
         .collect();
     let total: f32 = widths.iter().sum();
     ui.horizontal(|ui| {
@@ -144,8 +149,8 @@ pub(crate) fn filters(ui: &mut Ui, script: &mut usize, class: &mut Option<FontCl
         for ((value, label), width) in labels.into_iter().zip(widths) {
             if ui
                 .add_sized(
-                    vec2(width + (available - total).max(0.0) / 5.0, 24.0),
-                    egui::Button::selectable(*script == value, egui::RichText::new(label).size(11.0)),
+                    vec2(width + (available - total).max(0.0) / 5.0, LOOK.control_height),
+                    egui::Button::selectable(*script == value, egui::RichText::new(label).size(LOOK.control_font)),
                 )
                 .clicked()
             {
@@ -187,7 +192,10 @@ fn styles(ui: &mut Ui, arabic: &mut ArabicMenu) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
         if ui
-            .add(egui::Button::selectable(arabic.style.is_none(), egui::RichText::new(tl!("All Arabic")).size(11.0)).min_size(vec2(0.0, CHIP_HEIGHT)))
+            .add(
+                egui::Button::selectable(arabic.style.is_none(), egui::RichText::new(tl!("All Arabic")).size(LOOK.control_font))
+                    .min_size(vec2(0.0, CHIP_HEIGHT)),
+            )
             .clicked()
         {
             arabic.style = None;
@@ -252,7 +260,7 @@ fn paint_shaped_chip(
     texture: Option<egui::TextureHandle>,
 ) -> egui::Response {
     let tint = if on { ui.visuals().selection.stroke.color } else { Tokens::get(ui.ctx()).text };
-    let label = ui.painter().layout_no_wrap(fallback.into(), egui::FontId::proportional(11.0), tint);
+    let label = ui.painter().layout_no_wrap(fallback.into(), egui::FontId::proportional(LOOK.control_font), tint);
     let show_label = style.is_some() || !has_family;
     let width = if style.is_some() {
         label.size().x + 6.0 + STYLE_NAME_WIDTH + 12.0

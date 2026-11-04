@@ -5,6 +5,7 @@
 //! for Delete Brush and Duplicate Brush. Brush libraries open in library panels
 //! ([`BrushLibraries`]).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -307,7 +308,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                         r.left_center() + vec2(pw + 10.0, 0.0),
                         egui::Align2::LEFT_CENTER,
                         name,
-                        egui::FontId::proportional(12.5),
+                        egui::FontId::proportional(VAROS_UI.legacy_control_font),
                         t.text,
                     );
                 }

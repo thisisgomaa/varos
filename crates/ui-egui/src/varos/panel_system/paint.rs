@@ -1,5 +1,7 @@
 //! Shared approved chrome. Rendering does not change layout or input.
 
+use crate::varos::theme_components::FOUNDATION as LOOK;
+
 use egui::{Align2, CornerRadius, FontId, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 
 use super::{
@@ -31,7 +33,7 @@ pub(super) fn frame(ui: &Ui, rect: Rect, docked: bool, title_height: f32) {
 pub(super) fn control(ui: &Ui, rect: Rect, name: &str, hovered: bool) {
     let t = Tokens::get(ui.ctx());
     if hovered {
-        ui.painter().rect_filled(rect, CornerRadius::same(2), t.hover);
+        ui.painter().rect_filled(rect, CornerRadius::same(LOOK.control_radius), t.hover);
     }
     icons::paint(ui, name, Rect::from_center_size(rect.center(), Vec2::splat(CONTROL)), if hovered { t.text } else { t.text_dim });
 }
@@ -40,16 +42,15 @@ pub(super) fn control(ui: &Ui, rect: Rect, name: &str, hovered: bool) {
 pub(super) fn tab(ui: &Ui, rect: Rect, label: &str, active: bool, hovered: bool) {
     let t = Tokens::get(ui.ctx());
     let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    let look = &crate::varos::theme_components::FOUNDATION;
-    look.tab_surface(&p, rect, &t, active, hovered);
-    look.tab_label(&p, rect, label, &t, active, hovered);
+    LOOK.tab_surface(&p, rect, &t, active, hovered);
+    LOOK.tab_label(&p, rect, label, &t, active, hovered);
 }
 
 /// One compact panel row, with an unchanged glyph size when its name becomes visible.
 pub(super) fn icon_row(ui: &Ui, rect: Rect, panel: &str, with_name: bool, active: bool, hovered: bool) {
     let t = Tokens::get(ui.ctx());
     let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    p.rect_filled(rect, CornerRadius::same(3), if hovered { t.hover } else { t.panel });
+    p.rect_filled(rect, CornerRadius::same(LOOK.control_radius), if hovered { t.hover } else { t.panel });
     let center = if with_name { pos2(rect.left() + metrics::ROW_PAD + ICON * 0.5, rect.center().y) } else { rect.center() };
     let tint = if active || hovered { t.text } else { t.text_dim };
     match registry::get(panel).map(|spec| spec.icon) {
@@ -82,7 +83,7 @@ pub(super) fn label(panel: &str) -> &'static str {
 
 /// The font a tab's label is painted (and measured) in.
 fn tab_font() -> FontId {
-    crate::varos::theme_components::FOUNDATION.tab_font()
+    LOOK.tab_font()
 }
 
 /// Every tab width `layout` needs: each panel's localized label measured in the tab font, plus

@@ -1,9 +1,10 @@
 //! Shared logical sizes for panel chrome and its hosted tool controls.
 //! Existing application zoom scales these points; no separate density setting is introduced.
+use crate::varos::theme_components::FOUNDATION as LOOK;
 
-pub(crate) const TITLE: f32 = 20.0;
+pub(crate) const TITLE: f32 = LOOK.panel_title_height;
 // Match tab height to the application's standard 24-point controls.
-pub(crate) const TABS: f32 = crate::varos::theme_components::FOUNDATION.tab_height;
+pub(crate) const TABS: f32 = LOOK.tab_height;
 pub(crate) const ICON: f32 = TOOL_ICON;
 pub(crate) const CONTROL: f32 = 14.0;
 pub(crate) const FOOT: f32 = 6.0;
@@ -14,17 +15,17 @@ pub(crate) const COMPACT: f32 = 44.0;
 /// A compact column at least this wide shows panel names beside their icons.
 pub(crate) const NAMES_MIN_WIDTH: f32 = 72.0;
 
-pub(crate) const FONT: f32 = crate::varos::theme_components::FOUNDATION.panel_body_font;
-pub(crate) const TAB_PAD: f32 = crate::varos::theme_components::FOUNDATION.tab_padding;
+pub(crate) const FONT: f32 = LOOK.panel_body_font;
+pub(crate) const TAB_PAD: f32 = LOOK.tab_padding;
 /// A tab's width: its measured label plus padding, kept between these.
 pub(crate) const TAB_MIN_WIDTH: f32 = 62.0;
 pub(crate) const TAB_MAX_WIDTH: f32 = 180.0;
 pub(crate) const ROW_PAD: f32 = 8.0;
 pub(crate) const ICON_LABEL_GAP: f32 = 10.0;
-pub(crate) const FRAME_RADIUS: u8 = 6;
+pub(crate) const FRAME_RADIUS: u8 = LOOK.box_radius;
 pub(crate) const BORDER: f32 = 1.0;
 /// One header control slot (panel menu, tab overflow, flyout close) at the right of a group header.
-pub(crate) const HEADER_CONTROL: f32 = 24.0;
+pub(crate) const HEADER_CONTROL: f32 = LOOK.control_height;
 /// The accent line that marks a drop target.
 pub(crate) const DROP_LINE: f32 = 2.0;
 

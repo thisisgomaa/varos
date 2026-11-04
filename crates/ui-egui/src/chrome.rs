@@ -1,5 +1,6 @@
 //! Window chrome: application bar (menus), Control bar, document tabs, status bar.
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -85,7 +86,7 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 // Built-in workspace names translate; the user's own stay as typed.
                 let ws_name =
                     if crate::workspaces::is_builtin(&app.ui.workspace) { tl!(&app.ui.workspace).to_string() } else { app.ui.workspace.clone() };
-                let ws = ui.painter().layout_no_wrap(ws_name, egui::FontId::proportional(12.0), t.text);
+                let ws = ui.painter().layout_no_wrap(ws_name, egui::FontId::proportional(VAROS_UI.panel_body_font), t.text);
                 let ws_w = (ws.size().x + 36.0).clamp(112.0, 190.0);
                 let gap = ui.spacing().item_spacing.x;
                 // The search icon, as in PhotoCraft: shown while a minimal switcher fits beside it.
@@ -98,7 +99,7 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 // the Varos shell on, its own row of workspace tabs takes its place.
                 if !crate::varos::shell::enabled(app) {
                     let (wr, wresp) = ui.allocate_exact_size(vec2(ws_w, WIDGET_H), Sense::click());
-                    ui.painter().rect_filled(wr, CornerRadius::same(4), if wresp.hovered() { t.hover } else { t.panel });
+                    ui.painter().rect_filled(wr, CornerRadius::same(VAROS_UI.control_radius), if wresp.hovered() { t.hover } else { t.panel });
                     ui.painter().with_clip_rect(wr.shrink2(vec2(4.0, 0.0))).galley(wr.left_center() + vec2(10.0, -ws.size().y / 2.0), ws, t.text);
                     icons::paint(ui, "chevron-down", egui::Rect::from_center_size(wr.right_center() - vec2(12.0, 0.0), vec2(12.0, 12.0)), t.text_dim);
                     let wresp = wresp.on_hover_text(tl!("Switch workspace"));
@@ -126,7 +127,7 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         }
                     }
                     let name = app.session.active().map(|d| format!("{}{}", if d.is_dirty() { "• " } else { "" }, d.title())).unwrap_or_default();
-                    let title = ui.painter().layout_no_wrap(name, egui::FontId::proportional(12.0), t.text);
+                    let title = ui.painter().layout_no_wrap(name, egui::FontId::proportional(VAROS_UI.panel_body_font), t.text);
                     let title_rect = egui::Rect::from_center_size(full.center(), title.size());
                     if title_rect.left() >= menus_end + 8.0 && title_rect.right() <= ui.min_rect().left() - 8.0 {
                         ui.painter().galley(title_rect.min, title, t.text);
@@ -135,7 +136,7 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     }
                 }
                 if !shell && app.services.native_menu.is_some() {
-                    let title = ui.painter().layout_no_wrap(crate::brand::APP_NAME.into(), egui::FontId::proportional(13.5), t.text);
+                    let title = ui.painter().layout_no_wrap(crate::brand::APP_NAME.into(), egui::FontId::proportional(VAROS_UI.brand_font), t.text);
                     let title_rect = egui::Rect::from_center_size(full.center(), title.size());
                     // Keep the title centered only while the interactive groups leave room for it.
                     if title_rect.left() >= menus_end + 8.0 && title_rect.right() <= ui.min_rect().left() - 8.0 {
@@ -240,7 +241,7 @@ pub fn anchor_buttons(app: &mut VectorcraftApp, ui: &mut Ui, controls: AnchorCon
     };
     for (label, buttons) in groups.into_iter().take(shown) {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(label).size(12.0).color(t.text));
+            ui.label(egui::RichText::new(label).size(VAROS_UI.panel_body_font).color(t.text));
             for &(icon, tip, id, to) in buttons {
                 if widgets::icon_button(ui, icon, tip, false, 24.0).clicked() {
                     run = Some((id, to.map_or_else(|| json!({}), |to| json!({ "to": to }))));
@@ -265,9 +266,9 @@ fn snapping_menu(app: &mut VectorcraftApp, ui: &mut Ui) {
     // Varos: a link label as the bar's other menus ("Stroke:", "Opacity:"), not a framed button.
     let t = Tokens::get(ui.ctx());
     let resp = if crate::varos::shell::enabled(app) {
-        ui.button(egui::RichText::new(tl!("Snapping")).size(11.0).color(t.text_dim))
+        ui.button(egui::RichText::new(tl!("Snapping")).size(VAROS_UI.control_font).color(t.text_dim))
     } else {
-        ui.link(egui::RichText::new(tl!("Snapping")).size(12.0).color(t.text).underline())
+        ui.link(egui::RichText::new(tl!("Snapping")).size(VAROS_UI.panel_body_font).color(t.text).underline())
     };
     egui::Popup::menu(&resp).show(|ui| snapping_options(app, ui));
 }
@@ -549,7 +550,7 @@ pub fn isolation_bar(app: &mut VectorcraftApp, ui: &mut Ui, area: egui::Rect) {
             bar.left_center() + vec2(30.0, 0.0),
             egui::Align2::LEFT_CENTER,
             crumbs.join("  ›  "),
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(VAROS_UI.panel_body_font),
             t.text,
         );
         let mut pattern_cmd = None;
@@ -560,9 +561,9 @@ pub fn isolation_bar(app: &mut VectorcraftApp, ui: &mut Ui, area: egui::Rect) {
                 let w = 12.0 + 7.0 * label.len() as f32;
                 let r = egui::Rect::from_min_max(egui::pos2(x - w, bar.top() + 3.0), egui::pos2(x, bar.bottom() - 3.0));
                 let resp = ui.interact(r, ui.scope_id().with(("pat-bar", cmd)), Sense::click());
-                ui.painter().rect_filled(r, 3.0, if resp.hovered() { t.hover } else { t.panel });
-                ui.painter().rect_stroke(r, 3.0, Stroke::new(1.0, t.button_border), egui::StrokeKind::Inside);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(12.0), t.text);
+                ui.painter().rect_filled(r, f32::from(VAROS_UI.control_radius), if resp.hovered() { t.hover } else { t.panel });
+                ui.painter().rect_stroke(r, f32::from(VAROS_UI.control_radius), Stroke::new(1.0, t.button_border), egui::StrokeKind::Inside);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(VAROS_UI.panel_body_font), t.text);
                 if resp.clicked() {
                     pattern_cmd = Some(cmd);
                 }
@@ -604,7 +605,7 @@ fn artboard_list(app: &VectorcraftApp, ui: &mut Ui, cur: usize) -> Option<usize>
         ui.set_max_width(FIELD_W);
         ui.name_inputs(tl!("Artboard"), |ui| {
             egui::ComboBox::from_id_salt("artboard-list")
-                .selected_text(egui::RichText::new(shown).size(11.5))
+                .selected_text(egui::RichText::new(shown).size(VAROS_UI.metadata_font))
                 .width(FIELD_W)
                 .wrap_mode(egui::TextWrapMode::Truncate)
                 .height(height)
@@ -619,7 +620,11 @@ fn artboard_list(app: &VectorcraftApp, ui: &mut Ui, cur: usize) -> Option<usize>
                         area = area.vertical_scroll_offset((cur as f32 * ROW_H - (height - ROW_H) * 0.5).max(0.0));
                     }
                     // Every number ends where the widest one ends.
-                    let numbers = ui.painter().layout_no_wrap(boards.len().to_string(), egui::FontId::proportional(12.0), t.text_dim).size().x;
+                    let numbers = ui
+                        .painter()
+                        .layout_no_wrap(boards.len().to_string(), egui::FontId::proportional(VAROS_UI.panel_body_font), t.text_dim)
+                        .size()
+                        .x;
                     let width = ui.available_width().max(LIST_W);
                     let mut chosen = None;
                     ui.spacing_mut().item_spacing.y = 0.0;
@@ -637,11 +642,11 @@ fn artboard_list(app: &VectorcraftApp, ui: &mut Ui, cur: usize) -> Option<usize>
                                 egui::pos2(number_end, r.center().y),
                                 egui::Align2::RIGHT_CENTER,
                                 (i + 1).to_string(),
-                                egui::FontId::proportional(12.0),
+                                egui::FontId::proportional(VAROS_UI.panel_body_font),
                                 t.text_dim,
                             );
                             let name_start = number_end + 10.0;
-                            let name = egui::WidgetText::from(egui::RichText::new(&board.name).size(12.5)).into_galley(
+                            let name = egui::WidgetText::from(egui::RichText::new(&board.name).size(VAROS_UI.legacy_control_font)).into_galley(
                                 ui,
                                 Some(egui::TextWrapMode::Truncate),
                                 r.right() - 8.0 - name_start,
@@ -679,7 +684,7 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let shown = crate::state::zoom_display_percent(zoom, print);
                 ui.name_inputs(tl!("Zoom"), |ui| {
                     egui::ComboBox::from_id_salt("zoom-combo")
-                        .selected_text(egui::RichText::new(zoom_label(zoom, print)).size(11.5))
+                        .selected_text(egui::RichText::new(zoom_label(zoom, print)).size(VAROS_UI.metadata_font))
                         .width(76.0)
                         .show_ui(ui, |ui| {
                             for z in ZOOM_STOPS.iter().rev() {
@@ -702,7 +707,7 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let rot = app.view().map(|v| v.rotation).unwrap_or(0.0);
                 ui.name_inputs(tl!("Rotation"), |ui| {
                     egui::ComboBox::from_id_salt("rot-combo")
-                        .selected_text(egui::RichText::new(format!("{rot:.0}°")).size(11.5))
+                        .selected_text(egui::RichText::new(format!("{rot:.0}°")).size(VAROS_UI.metadata_font))
                         .width(52.0)
                         .show_ui(ui, |ui| {
                             for (label, a) in ROTATE_VIEW_ANGLES {
@@ -727,7 +732,7 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 // Varos shell: the page and artboard readout ("Page 2 of 3 · Artboard 1 / 4") between
                 // the arrows, in place of the artboard list.
                 if let Some(text) = crate::varos::shell::enabled(app).then(|| crate::varos::pages::status(app)).flatten() {
-                    ui.label(egui::RichText::new(text).size(11.0).color(t.text_dim));
+                    ui.label(egui::RichText::new(text).size(VAROS_UI.control_font).color(t.text_dim));
                 } else if let Some(i) = artboard_list(app, ui, cur) {
                     go = Some(json!(i));
                 }
@@ -749,7 +754,7 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         if crate::i18n::current() == crate::i18n::Lang::EN { shown.trim_end_matches(" Tool") } else { shown }
                     })
                     .unwrap_or("");
-                ui.label(egui::RichText::new(tool).size(11.5).color(t.text_dim));
+                ui.label(egui::RichText::new(tool).size(VAROS_UI.metadata_font).color(t.text_dim));
                 status_readouts(app, ui, &t);
             });
         });
@@ -772,8 +777,8 @@ fn status_readout_widths(ui: &Ui, lang: crate::i18n::Lang, unit: vectorcraft_doc
         return cached;
     }
     // Text layout also accesses egui state, so measure outside the ui.data lock.
-    let mono = theme::mono(10.5);
-    let proportional = egui::FontId::proportional(10.5);
+    let mono = theme::mono(VAROS_UI.status_font);
+    let proportional = egui::FontId::proportional(VAROS_UI.status_font);
     let render = crate::i18n::tr_ctx(lang, "diagnostics", "render");
     let ui_name = crate::i18n::tr_ctx(lang, "diagnostics", "ui");
     let measure = |text, font: &egui::FontId| ui.painter().layout_no_wrap(text, font.clone(), t.text).size().x.ceil() + 4.0;
@@ -794,8 +799,8 @@ fn status_readout_widths(ui: &Ui, lang: crate::i18n::Lang, unit: vectorcraft_doc
 /// Child UIs requested with a desired width can shrink to their contents; these rectangles cannot.
 fn status_readouts(app: &VectorcraftApp, ui: &mut Ui, t: &Tokens) {
     const MESSAGE_MIN: f32 = 180.0;
-    let mono = theme::mono(10.5);
-    let proportional = egui::FontId::proportional(10.5);
+    let mono = theme::mono(VAROS_UI.status_font);
+    let proportional = egui::FontId::proportional(VAROS_UI.status_font);
     let unit = app.session.general_unit();
     let lang = crate::i18n::current();
     let render = crate::i18n::tr_ctx(lang, "diagnostics", "render");
@@ -874,7 +879,7 @@ fn status_readouts(app: &VectorcraftApp, ui: &mut Ui, t: &Tokens) {
     }
     if !message.is_empty() {
         let rect = egui::Rect::from_min_max(egui::pos2((area.left() + 18.0).min(right), area.top()), egui::pos2(right, area.bottom()));
-        status_field(ui, "message", rect, message, egui::FontId::proportional(11.0), t.text);
+        status_field(ui, "message", rect, message, egui::FontId::proportional(VAROS_UI.control_font), t.text);
     }
 }
 
@@ -1137,7 +1142,7 @@ pub fn hint_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
             ui.horizontal_centered(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                 ui.painter().circle_stroke(r.center(), 7.0, Stroke::new(1.2, t.text));
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "?", theme::semibold(11.0), t.text);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "?", theme::semibold(VAROS_UI.control_font), t.text);
                 ui.add_space(6.0);
                 let mut job = egui::text::LayoutJob::default();
                 let segments = if let Some(d) = app.ui.dialog.as_ref().filter(|d| crate::dialogs::revolve_gizmo::active(d)) {
@@ -1148,7 +1153,8 @@ pub fn hint_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     hint_segments(hint)
                 };
                 for (txt, bold) in segments {
-                    let font = if bold { theme::semibold(12.5) } else { egui::FontId::proportional(12.5) };
+                    let font =
+                        if bold { theme::semibold(VAROS_UI.legacy_control_font) } else { egui::FontId::proportional(VAROS_UI.legacy_control_font) };
                     job.append(&txt, 0.0, egui::TextFormat { font_id: font, color: if bold { t.text_strong } else { t.text }, ..Default::default() });
                 }
                 ui.label(job);
@@ -2764,7 +2770,8 @@ fn simple_app_bar_right(app: &mut VectorcraftApp, ui: &mut Ui) {
         app.ui.palette_open = !app.ui.palette_open;
         app.ui.palette_query.clear();
     }
-    ui.add_enabled(false, egui::Button::new(egui::RichText::new(tl!("Share")).size(11.0))).on_disabled_hover_text(tl!("Sharing comes later"));
+    ui.add_enabled(false, egui::Button::new(egui::RichText::new(tl!("Share")).size(VAROS_UI.control_font)))
+        .on_disabled_hover_text(tl!("Sharing comes later"));
     widgets::icon_button(ui, "plus", tl!("Sharing comes later"), false, 22.0);
     if !app.agents.registry.is_empty() {
         let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
@@ -2774,7 +2781,7 @@ fn simple_app_bar_right(app: &mut VectorcraftApp, ui: &mut Ui) {
     let initial = std::env::var("USER").ok().and_then(|n| n.chars().next()).unwrap_or('U').to_uppercase().to_string();
     let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
     ui.painter().circle_filled(r.center(), 11.0, t.hover);
-    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, initial, theme::semibold(10.0), t.text);
+    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, initial, theme::semibold(VAROS_UI.avatar_font), t.text);
 }
 
 pub(crate) fn control_panel(app: &mut VectorcraftApp, ui: &mut Ui) {
@@ -2823,7 +2830,7 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui, hosting: c
         }
         _ => tl!(crate::panels::appearance::object_label(app)),
     };
-    ui.label(egui::RichText::new(label).font(theme::semibold(12.0)).color(t.text));
+    ui.label(egui::RichText::new(label).font(theme::semibold(VAROS_UI.panel_body_font)).color(t.text));
     // With the Artboard tool in use, the bar shows the active artboard's controls in place
     // of the object controls.
     if crate::panels::artboards::control_bar(app, ui) {
@@ -2908,7 +2915,7 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui, hosting: c
             if k == "height" {
                 crate::panels::transform::constrain_link(app, ui);
             }
-            widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
+            widgets::field_label(ui, egui::RichText::new(tl!(lbl)).size(VAROS_UI.panel_body_font).color(t.text_dim));
             let (id, shown) = (("cb", k), Some(v - offset));
             let set = if matches!(k, "width" | "height") {
                 widgets::size_field(ui, id, shown, units, layout.transform_field_width) // Varos
@@ -2928,8 +2935,8 @@ pub(crate) fn control_contents(app: &mut VectorcraftApp, ui: &mut Ui, hosting: c
 
 pub(crate) fn control_link(app: &VectorcraftApp, ui: &mut Ui, label: &str, color: egui::Color32) -> egui::Response {
     if crate::varos::shell::enabled(app) {
-        ui.add(egui::Label::new(egui::RichText::new(label).size(11.0).color(color)).sense(Sense::click()))
+        ui.add(egui::Label::new(egui::RichText::new(label).size(VAROS_UI.control_font).color(color)).sense(Sense::click()))
     } else {
-        ui.link(egui::RichText::new(label).size(12.0).color(color).underline())
+        ui.link(egui::RichText::new(label).size(VAROS_UI.panel_body_font).color(color).underline())
     }
 }

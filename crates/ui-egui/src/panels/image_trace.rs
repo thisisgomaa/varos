@@ -9,6 +9,7 @@
 //! The public documentation of the panel describes Preview as showing the result of the current
 //! settings (<https://web.archive.org/web/20250831090623/https://helpx.adobe.com/illustrator/using/image-trace.html>).
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::Ui;
 use serde_json::{Value, json};
 use vectorcraft_doc::{Node, NodeId, NodeKind, TraceView};
@@ -305,7 +306,7 @@ fn trace(app: &mut VectorcraftApp, st: &mut TraceUi) {
 fn slider(ui: &mut Ui, label: &str, v: &mut f64, range: std::ops::RangeInclusive<f64>, suffix: &str) -> (bool, bool) {
     let mut out = (false, false);
     ui.horizontal(|ui| {
-        ui.add_sized([74.0, 22.0], egui::Label::new(egui::RichText::new(tl!(label)).size(12.0)));
+        ui.add_sized([74.0, 22.0], egui::Label::new(egui::RichText::new(tl!(label)).size(VAROS_UI.panel_body_font)));
         // The theme's widget fill matches the panel, which would hide the rail.
         let t = crate::theme::Tokens::get(ui.ctx());
         ui.visuals_mut().widgets.inactive.bg_fill = t.input_border;

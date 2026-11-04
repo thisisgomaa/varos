@@ -47,6 +47,7 @@ pub mod transform;
 pub mod transparency;
 pub mod variables;
 
+use crate::varos::theme_components::FOUNDATION as VAROS_UI; // Varos: shared UI typography and geometry.
 use egui::{Rect, Sense, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::{BlendMode, Color, Paint};
@@ -528,8 +529,8 @@ pub(crate) fn empty_state(ui: &mut Ui, icon: &str, title: &str, body: &str) {
     ui.vertical_centered(|ui| {
         icons::icon(ui, icon, 28.0, t.text_disabled);
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(tl!(title)).size(12.5).color(t.text));
-        ui.label(egui::RichText::new(tl!(body)).size(11.5).color(t.text_dim));
+        ui.label(egui::RichText::new(tl!(title)).size(VAROS_UI.legacy_control_font).color(t.text));
+        ui.label(egui::RichText::new(tl!(body)).size(VAROS_UI.metadata_font).color(t.text_dim));
     });
     ui.add_space(12.0);
 }
