@@ -914,6 +914,7 @@ fn render_host(
             }
         }
         if geo.groups.iter().any(|g| g.mode == Mode::Full)
+            && !geometry::fills_side_dock(host)
             && !control
             && geometry::height_bounds(host, rect.width(), view.tabs).1 > geometry::height_bounds(host, rect.width(), view.tabs).0 + 0.5
         {
@@ -1259,3 +1260,6 @@ mod sizing_tests;
 
 #[cfg(test)]
 mod theme_components_tests;
+
+#[cfg(test)]
+mod side_dock_fill_tests;

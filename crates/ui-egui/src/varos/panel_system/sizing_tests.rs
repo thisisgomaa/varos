@@ -282,3 +282,84 @@ fn active_tab_width_minimum_also_applies_to_reexpanded_independent_columns() {
     h.action(Action::Activate { panel: "properties".into() });
     assert!(body(&h, "properties").width() >= 298.0, "active Properties keeps its minimum in a projected full column");
 }
+
+#[test]
+fn side_docked_lists_fill_the_workspace_and_follow_window_height() {
+    for panel in ["layers", "properties", "libraries"] {
+        let mut h = side_fixture(panel);
+        let host = h.host_id(panel);
+        h.action(Action::Move { source: Source::Host(host), target: Target::Dock { edge: Edge::Right } });
+        h.settle();
+        h.measure_workspace();
+        near(h.host_rect(panel).bottom(), h.workspace.bottom());
+        assert!(!h.has_hit(&format!("resize-bottom:{host}")));
+        h.screen.y -= 150.0;
+        h.settle();
+        h.measure_workspace();
+        near(h.host_rect(panel).bottom(), h.workspace.bottom());
+        near(body(&h, panel).bottom(), footer(&h, panel).top());
+    }
+}
+
+#[test]
+fn side_dock_tab_switch_restores_fixed_content_and_list_fill_without_rewriting_sizes() {
+    let mut h = side_fixture("layers");
+    let host = h.host_id("layers");
+    let group = h.group_id("layers");
+    h.action(Action::Move { source: Source::Panel("align".into()), target: Target::Merge { group, index: 1 } });
+    h.action(Action::Move { source: Source::Host(host), target: Target::Dock { edge: Edge::Left } });
+    h.action(Action::Activate { panel: "layers".into() });
+    h.settle();
+    near(h.host_rect("layers").bottom(), h.workspace.bottom());
+    let saved = h.layout().owner("layers").unwrap().expanded;
+    h.action(Action::Activate { panel: "align".into() });
+    h.settle();
+    assert!(h.host_rect("align").bottom() < h.workspace.bottom() - 100.0);
+    h.action(Action::Activate { panel: "layers".into() });
+    h.settle();
+    near(h.host_rect("layers").bottom(), h.workspace.bottom());
+    assert_eq!(h.layout().owner("layers").unwrap().expanded, saved);
+}
+
+#[test]
+#[ignore = "optional headless capture; set VAROS_SIDE_DOCK_CAPTURE"]
+fn capture_side_dock_bottom_alignment() {
+    let Some(path) = std::env::var_os("VAROS_SIDE_DOCK_CAPTURE") else { return };
+    let mut h = side_fixture("layers");
+    let host = h.host_id("layers");
+    h.action(Action::Move { source: Source::Host(host), target: Target::Dock { edge: Edge::Right } });
+    h.settle();
+    let pixels = super::ui_tests::software_capture(&mut h.app, 1600, 1000);
+    image::save_buffer(path, &pixels, 1600, 1000, image::ColorType::Rgba8).unwrap();
+}
+
+#[test]
+fn full_scrolling_column_keeps_filling_beside_a_collapsed_column() {
+    let mut h = side_fixture("layers");
+    let group = h.group_id("layers");
+    h.action(Action::Move { source: Source::Panel("swatches".into()), target: Target::Split { group, edge: Edge::Right } });
+    let swatches = h.group_id("swatches");
+    h.action(Action::SetColumnMode { group: swatches, mode: Mode::Icons });
+    let host = h.host_id("layers");
+    h.action(Action::Move { source: Source::Host(host), target: Target::Dock { edge: Edge::Right } });
+    h.settle();
+    near(h.host_rect("layers").bottom(), h.workspace.bottom());
+    near(footer(&h, "layers").bottom(), h.host_rect("layers").bottom());
+    h.action(Action::SetColumnMode { group: swatches, mode: Mode::Full });
+    h.settle();
+    near(h.host_rect("layers").bottom(), h.workspace.bottom());
+}
+
+fn side_fixture(panel: &str) -> Harness {
+    let mut h = isolated(panel, 400.0);
+    let mut layout = h.layout().clone();
+    for host in &mut layout.hosts {
+        if model::groups(&host.root).iter().any(|g| g.panels.iter().any(|p| p == "tools" || p == "control")) {
+            host.hidden = false;
+        }
+    }
+    h.app.ui.varos_panel_review.as_mut().unwrap().layout = layout;
+    h.settle();
+    h.measure_workspace();
+    h
+}

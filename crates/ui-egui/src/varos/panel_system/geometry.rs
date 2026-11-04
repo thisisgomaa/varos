@@ -133,6 +133,7 @@ pub fn arrange(layout: &Layout, region: Rect, tabs: &Measurements) -> (Vec<HostR
                 }
             }
             let desired_height = if has_overrides(host) { visible_size(host, tabs)[1] } else { host.expanded[1] };
+            let desired_height = if fills_side_dock(host) { rect.height() } else { desired_height };
             let height = fitted_height(host, rect.width(), desired_height, tabs).min(rect.height()).max(1.0);
             if matches!(edge, Edge::Left | Edge::Right) && host.mode == Mode::Full && !has_tools(&host.root) {
                 rect.max.y = rect.top() + height;
@@ -149,6 +150,17 @@ pub fn arrange(layout: &Layout, region: Rect, tabs: &Measurements) -> (Vec<HostR
     let mut hosts: Vec<HostRect> = hosts;
     hosts.sort_by_key(|h| layout.host(h.id).is_some_and(|h| h.dock.is_none()));
     (hosts, board)
+}
+
+/// Lists/editors in a side dock own the available column height; floating palettes retain
+/// their saved extents. Fixed-control tabs continue to fit their measured content.
+pub(super) fn fills_side_dock(host: &Host) -> bool {
+    matches!(host.dock, Some(Edge::Left | Edge::Right))
+        && host.mode == Mode::Full
+        && !has_tools(&host.root)
+        && super::model::groups(&host.root).iter().any(|g| {
+            super::model::presentation(host, g).mode == Mode::Full && super::registry::get(&g.active).is_some_and(|spec| spec.scrolls_itself)
+        })
 }
 
 fn compact_height(host: &Host) -> f32 {
