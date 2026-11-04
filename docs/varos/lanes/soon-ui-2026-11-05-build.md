@@ -1,0 +1,3 @@
+# Build 20261105.1 — Soon surfaces + CMYK + MCP board refs
+
+Release build from clean pushed HEAD `2f766ff3d` (`VAROS_PRODUCT_VERSION=0.20.2-panels.6 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=4 cargo build --locked -j 4 --release -p vectorcraft -p vectorcraft-cli`, 5m 13s). Installed while the app was closed; all five bundle files match the manifest, deep/strict codesign verified. Build 20261104.7 retained for rollback under `dist/soon-ui-2026-11-05/rollback/`; settings untouched; app not launched. Contains: picker CMYK fix (`7ba5e44ac`), MCP board-ref fix (`d8b420361`), Soon surfaces (`2f766ff3d`). Owner hand test pending.
