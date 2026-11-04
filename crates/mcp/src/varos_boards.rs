@@ -161,7 +161,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
     if page.is_some() && !b.board_scoped() {
         return ToolResult::error("page targets require a board-scoped Varos connection; use page.switch in headless sessions");
     }
-    let board = match boards::unqualify(&mut args, board.as_deref()) {
+    let board = match boards::unqualify_tool(&mut args, board.as_deref(), name) {
         Ok(board) => board,
         Err(e) => return ToolResult::error(format!("{name}: {e}")),
     };
@@ -334,6 +334,10 @@ mod tests {
                 "engine.commands" => Ok(json!([])),
                 _ if board.is_none() => Err(error(BOARD_REQUIRED, "name it")),
                 "document.inspect" => Ok(json!({"layers": [{"id": 3, "children": [{"id": 4, "parent": 3}]}], "selection": [4]})),
+                "engine.execute" if matches!(params["command"].as_str(), Some("paint.setFill" | "paint.setStroke" | "stroke.set")) => {
+                    Ok(json!({"objects": 2}))
+                }
+                "engine.execute" if params["command"] == "command.batch" => Ok(json!({"results":[{"id":9}]})),
                 _ => Ok(json!({"id": 9})),
             }
         }
@@ -361,6 +365,195 @@ mod tests {
 
     fn json_of(r: &ToolResult) -> Value {
         serde_json::from_str(r.content[0]["text"].as_str().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn board_refs_set_paint_keeps_its_object_count_numeric() {
+        let mut b = fake();
+        let a = boards::board_id(1);
+        let result = call_tool(&mut b, "set_paint", &json!({"board": a, "fill": "#ff0000", "strokeWidth": 2, "ids": [4, 5]}));
+        assert!(!result.is_error, "{result:?}");
+        let value = json_of(&result);
+        assert_eq!(value["objects"], 2);
+        assert_eq!(value["applied"]["strokeWidth"], 2.0);
+        assert_eq!(value["varos"]["board"], a);
+    }
+
+    #[test]
+    fn board_refs_headless_add_text_preserves_reference_looking_content() {
+        let mut s = Server::new(Box::new(crate::Headless::with_document()));
+        let line = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "add_text", "arguments": {"text": "abcdef12-1:9", "x": 0, "y": 40}
+        }});
+        let reply: Value = serde_json::from_str(&s.handle_line(&line.to_string()).unwrap()).unwrap();
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        let made: Value = serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        let line = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "command_run", "arguments": {"id": "document.node", "params": {"id": made["id"], "summary": true}}
+        }});
+        let reply: Value = serde_json::from_str(&s.handle_line(&line.to_string()).unwrap()).unwrap();
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        let node: Value = serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(node["text"], "abcdef12-1:9", "{node}");
+    }
+
+    #[test]
+    fn board_refs_board_call_preserves_names_from_another_board() {
+        let mut b = fake();
+        let r = call_tool(
+            &mut b,
+            "command_run",
+            &json!({"board": "abcdef12-1", "id": "object.setProps", "params": {
+                "ids": ["abcdef12-1:9"], "name": "abcdef12-2:9"
+            }}),
+        );
+        assert!(!r.is_error, "{r:?}");
+        assert_eq!(b.seen[0].1["params"], json!({"ids": [9], "name": "abcdef12-2:9"}));
+    }
+
+    #[test]
+    fn board_refs_command_context_preserves_literals_and_decodes_declared_ids() {
+        let reference = json!("abcdef12-1:9");
+        let list = json!(["abcdef12-1:9"]);
+        for (command, key, value, expected) in [
+            ("document.node", "id", reference.clone(), json!(9)),
+            ("select.set", "ids", list.clone(), json!([9])),
+            ("layer.newSublayer", "parent", reference.clone(), json!(9)),
+            ("node.move", "parent", reference.clone(), json!(9)),
+            ("layer.move", "target", reference.clone(), json!(9)),
+            ("appearance.transfer", "source", reference.clone(), json!(9)),
+            ("appearance.transfer", "target", reference.clone(), json!(9)),
+            ("appearance.copyFrom", "source", reference.clone(), json!(9)),
+            ("guide.add", "layer", reference.clone(), json!(9)),
+            ("livePaint.fill", "group", reference.clone(), json!(9)),
+            ("object.intertwine.arrange", "member", reference.clone(), json!(9)),
+            ("text.createInPath", "path", reference.clone(), json!(9)),
+            ("object.objectsOnPath.attach", "path", reference.clone(), json!(9)),
+            ("text.thread.add", "from", reference.clone(), json!(9)),
+            ("text.thread.add", "to", reference.clone(), json!(9)),
+            ("object.slice.select", "slices", list.clone(), json!([9])),
+            ("document.exportForScreens", "layers", list.clone(), json!([9])),
+            ("document.exportForScreens", "assets", list.clone(), json!([9])),
+            ("assets.remove", "assets", list, json!([9])),
+            ("assets.rename", "asset", reference, json!(9)),
+            ("path.freehand", "extend", json!({"id":"abcdef12-1:9","end":"last"}), json!({"id":9,"end":"last"})),
+            ("path.freehand", "connect", json!({"id":"abcdef12-1:9"}), json!({"id":9})),
+            ("path.freehand", "redraw", json!({"id":"abcdef12-1:9"}), json!({"id":9})),
+            ("select.anchorsMany", "items", json!([{"id":"abcdef12-1:9","anchors":[[0,1]]}]), json!([{"id":9,"anchors":[[0,1]]}])),
+            (
+                "dimension.create",
+                "source",
+                json!({"kind":"segment","edge":{"node":"abcdef12-1:9","subpath":0,"segment":1}}),
+                json!({"kind":"segment","edge":{"node":9,"subpath":0,"segment":1}}),
+            ),
+        ] {
+            assert!(vectorcraft_engine::find_command(command).is_some(), "audit must name a real command: {command}");
+            let mut b = fake();
+            let mut params = json!({"name":"abcdef12-2:9", "text":"abcdef12-3:9"});
+            params[key] = value;
+            let r = call_tool(&mut b, "command_run", &json!({"id":command,"params":params}));
+            assert!(!r.is_error, "{command}: {r:?}");
+            params[key] = expected;
+            assert_eq!(b.seen[0].1["params"], params, "{command}");
+            assert_eq!(b.seen[0].2, Some(json!({"board":"abcdef12-1"})), "{command}");
+        }
+    }
+
+    #[test]
+    fn board_refs_overloaded_fields_and_opaque_params_stay_literal() {
+        for (command, params) in [
+            ("document.open", json!({"path":"abcdef12-2:9"})),
+            ("swatch.editGroup", json!({"group":"abcdef12-2:9", "rename":"abcdef12-3:9"})),
+            ("graphicStyle.rename", json!({"from":"abcdef12-2:9", "to":"abcdef12-3:9"})),
+            ("plugin.info", json!({"id":"abcdef12-2:9"})),
+            ("plugin.remove", json!({"id":"abcdef12-2:9"})),
+            ("plugin.run", json!({"id":"abcdef12-2:9", "group":"abcdef12-3:9", "params":{"id":"abcdef12-4:9","ids":["abcdef12-5:9"]}})),
+            ("effect.apply", json!({"id":"abcdef12-2:9", "params":{"id":"abcdef12-3:9"}})),
+            ("appearance.addEffect", json!({"id":"abcdef12-2:9", "params":{"ids":["abcdef12-3:9"]}})),
+            ("effect.setParams", json!({"params":{"id":"abcdef12-2:9"}})),
+        ] {
+            assert!(vectorcraft_engine::find_command(command).is_some(), "audit must name a real command: {command}");
+            let mut b = fake();
+            let r = call_tool(&mut b, "command_run", &json!({"board":"abcdef12-1","id":command,"params":params}));
+            assert!(!r.is_error, "{command}: {r:?}");
+            assert_eq!(b.seen[0].1["params"], params, "{command}");
+        }
+        for tool in ["open_file", "add_text"] {
+            let mut b = fake();
+            let path = if tool == "open_file" { "abcdef12-2:9" } else { "abcdef12-1:9" };
+            let r = call_tool(&mut b, tool, &json!({"board":"abcdef12-1","path":path,"text":"abcdef12-3:9"}));
+            assert!(!r.is_error, "{tool}: {r:?}");
+            if tool == "open_file" {
+                assert!(b.seen[0].1["path"].as_str().unwrap().ends_with(path));
+            } else {
+                assert_eq!(b.seen[0].1["params"]["path"], 9);
+                assert_eq!(b.seen[0].1["params"]["text"], "abcdef12-3:9");
+            }
+        }
+    }
+
+    #[test]
+    fn board_refs_batches_keep_labels_and_reject_mixed_boards_before_dispatch() {
+        let mut b = fake();
+        let r = call_tool(
+            &mut b,
+            "command_batch",
+            &json!({"atomic":true,"label":"abcdef12-2:9", "steps":[
+                {"id":"object.setProps","params":{"ids":["abcdef12-1:9"],"name":"abcdef12-3:9"}}
+            ]}),
+        );
+        assert!(!r.is_error, "{r:?}");
+        assert_eq!(b.seen[0].1["params"]["label"], "abcdef12-2:9");
+        assert!(b.seen.iter().any(|(_, p, _)| p["params"] == json!({"ids":[9],"name":"abcdef12-3:9"})));
+        for command in ["command.batch", "action.batch"] {
+            b.seen.clear();
+            let params = json!({"label":"abcdef12-2:9","commands":[
+                {"command":"text.thread.add","params":{"from":"abcdef12-1:9","to":"abcdef12-1:10","text":"abcdef12-3:9"}}
+            ]});
+            let r = call_tool(&mut b, "run_command", &json!({"command":command,"params":params}));
+            assert!(!r.is_error, "{r:?}");
+            assert_eq!(b.seen[0].1["params"]["commands"][0]["params"], json!({"from":9,"to":10,"text":"abcdef12-3:9"}));
+        }
+        b.seen.clear();
+        let r = call_tool(
+            &mut b,
+            "command_batch",
+            &json!({"steps":[
+                {"id":"text.thread.add","params":{"from":"abcdef12-1:9","to":"abcdef12-2:10"}}
+            ]}),
+        );
+        assert!(r.is_error && r.content[0]["text"].as_str().unwrap().contains("wrong_board"), "{r:?}");
+        assert!(b.seen.is_empty());
+    }
+
+    #[test]
+    fn board_refs_full_paint_params_keep_selectors_and_literal_swatch_names() {
+        for tool in ["set_paint", "draw_shape", "draw_path", "command_batch"] {
+            let mut b = fake();
+            let mut args = json!({
+                "fill":{"swatch":"abcdef12-2:9","id":"abcdef12-1:9"},
+                "stroke":{"color":"#000000","ids":["abcdef12-1:10"]}
+            });
+            match tool {
+                "draw_shape" => args["shape"] = json!("rectangle"),
+                "draw_path" => args["d"] = json!("M0 0 L10 10"),
+                "command_batch" => {
+                    args["shape"] = json!("rectangle");
+                    args = json!({"steps":[{"id":"draw_shape","params":args}]});
+                }
+                _ => {}
+            }
+            let r = call_tool(&mut b, tool, &args);
+            assert!(!r.is_error, "{tool}: {r:?}");
+            assert!(b.seen.iter().all(|(_, _, t)| t == &Some(json!({"board":"abcdef12-1"}))));
+            let commands: Vec<Value> =
+                b.seen.iter().flat_map(|(_, p, _)| p["params"]["commands"].as_array().cloned().unwrap_or_else(|| vec![p.clone()])).collect();
+            let fill = commands.iter().find(|p| p["command"] == "paint.setFill").unwrap();
+            assert_eq!(fill["params"]["id"], 9);
+            assert_eq!(fill["params"]["swatch"], "abcdef12-2:9");
+            let stroke = commands.iter().find(|p| p["command"] == "paint.setStroke").unwrap();
+            assert_eq!(stroke["params"]["ids"], json!([10]));
+        }
     }
 
     #[test]

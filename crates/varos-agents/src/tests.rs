@@ -792,6 +792,58 @@ mod boards {
     }
 
     #[test]
+    fn board_refs_preserve_scalar_counts_and_qualify_id_lists() {
+        let a = "abcdef12-1";
+        let mut value = json!({
+            "objects": 2, "selected": 2, "id": 9, "ids": [9, 10],
+            "nested": [{"objects": [9, {"id": 10, "name": "abcdef12-1:9", "objects": 3}]},
+                {"selected": [9, {"id": 10, "selected": true}]}],
+            "stats": {"objects": {"paths": 2, "textObjects": 1}},
+            "style": {"selected": "abcdef12-1:9"}, "empty": {"objects": [], "selected": null}
+        });
+        qualify(&mut value, a);
+        assert_eq!(
+            value,
+            json!({
+                "objects": 2, "selected": 2, "id": "abcdef12-1:9", "ids": ["abcdef12-1:9", "abcdef12-1:10"],
+                "nested": [{"objects": ["abcdef12-1:9", {"id": "abcdef12-1:10", "name": "abcdef12-1:9", "objects": 3}]},
+                    {"selected": ["abcdef12-1:9", {"id": "abcdef12-1:10", "selected": true}]}],
+                "stats": {"objects": {"paths": 2, "textObjects": 1}},
+                "style": {"selected": "abcdef12-1:9"}, "empty": {"objects": [], "selected": null}
+            })
+        );
+    }
+
+    #[test]
+    fn board_refs_leave_authored_strings_literal() {
+        let original = json!({"text": "abcdef12-1:9", "name": "abcdef12-2:9",
+            "label": "abcdef12-3:9", "nested": {"insert": "abcdef12-4:9"},
+            "labels": ["abcdef12-5:9"], "objects": "abcdef12-6:9", "selected": "abcdef12-7:9"});
+        for board in [None, Some("abcdef12-1")] {
+            let mut value = original.clone();
+            assert_eq!(unqualify(&mut value, board), Ok(board.map(str::to_string)));
+            assert_eq!(value, original);
+        }
+    }
+
+    #[test]
+    fn board_refs_decode_only_id_leaves_in_nested_lists() {
+        let mut value = json!({"steps": [{"params": {
+            "ids": ["abcdef12-1:9", 10], "objects": [{"id": "abcdef12-1:11", "text": "abcdef12-2:12"}],
+            "selected": ["abcdef12-1:12", {"id": "abcdef12-1:13", "name": "abcdef12-3:13"}],
+            "selection": ["abcdef12-1:14"], "parent": "abcdef12-1:15"
+        }}]});
+        assert_eq!(unqualify(&mut value, None), Ok(Some("abcdef12-1".into())));
+        assert_eq!(
+            value,
+            json!({"steps": [{"params": {
+                "ids": [9, 10], "objects": [{"id": 11, "text": "abcdef12-2:12"}],
+                "selected": [12, {"id": 13, "name": "abcdef12-3:13"}], "selection": [14], "parent": 15
+            }}]})
+        );
+    }
+
+    #[test]
     fn object_ids_carry_their_board_and_refuse_another() {
         let (a, b) = (board_id(1), board_id(2));
         let mut reply = json!({"id": 42, "ids": [1, 2], "created": [5], "layers": [{"id": 3, "name": "L", "children": [{"id": 4, "parent": 3}]}],

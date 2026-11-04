@@ -24,6 +24,9 @@ use std::sync::{Arc, OnceLock};
 use serde_json::Value;
 use vectorcraft_doc::Document;
 
+mod requests;
+pub use requests::unqualify_tool;
+
 /// The contract agents discover through `capabilities`.
 pub const API: &str = "varos-boards/1";
 
@@ -143,8 +146,9 @@ pub fn parse_object_ref(s: &str) -> Option<(&str, u64)> {
 
 /// Keys whose numbers (or arrays of numbers) are object ids in what commands answer: the node
 /// ids of `document.inspect` (`id`, `parent`, the ancestors in `path`, `selection`), the ids
-/// creation commands answer (`id`, `ids`, `created`, `objects`). Artboard ids under `id` are
-/// qualified too: they are per board as well, and [`unqualify`] turns any reference back.
+/// creation commands answer (`id`, `ids`, `created`, `objects`). `objects` and `selected`
+/// carry ids only as lists: their scalars can be counts, point indexes, booleans or names.
+/// Artboard ids under `id` are qualified too: they are per board as well.
 pub const ID_KEYS: &[&str] = &["id", "ids", "created", "parent", "path", "selection", "objects", "selected"];
 
 /// Turn the object ids in `v` (numbers under [`ID_KEYS`]) into references of `board`.
@@ -152,7 +156,7 @@ pub fn qualify(v: &mut Value, board: &str) {
     match v {
         Value::Object(map) => {
             for (k, child) in map.iter_mut() {
-                if ID_KEYS.contains(&k.as_str()) {
+                if id_field(k, child) {
                     qualify_numbers(child, board);
                 }
                 qualify(child, board);
@@ -161,6 +165,10 @@ pub fn qualify(v: &mut Value, board: &str) {
         Value::Array(items) => items.iter_mut().for_each(|item| qualify(item, board)),
         _ => {}
     }
+}
+
+fn id_field(key: &str, value: &Value) -> bool {
+    ID_KEYS.contains(&key) && (!matches!(key, "objects" | "selected") || value.is_array())
 }
 
 fn qualify_numbers(v: &mut Value, board: &str) {
@@ -179,18 +187,20 @@ fn qualify_numbers(v: &mut Value, board: &str) {
     }
 }
 
-/// Turn every object reference in `v` back into the plain id the commands take. With `board`
-/// given, a reference of another board is refused as [`WRONG_BOARD`]. Without, every reference
-/// must name the same board, which is returned (the board the arguments imply).
+/// Decode references only at id leaves of a reference record (the fields of [`ID_KEYS`], plus
+/// `target`/`targets`). Other strings, including strings in arrays, are literal. With `board`
+/// given, a reference of another board is refused as [`WRONG_BOARD`]. Otherwise references
+/// imply one board. MCP requests use [`unqualify_tool`] to disambiguate overloaded fields such
+/// as a file `path` versus a text path id, and to leave arbitrary authored parameter maps alone.
 pub fn unqualify(v: &mut Value, board: Option<&str>) -> Result<Option<String>, String> {
     let mut named: Option<String> = board.map(str::to_string);
-    walk_refs(v, &mut named, board.is_some())?;
+    walk_refs(v, &mut named, board.is_some(), false)?;
     Ok(named)
 }
 
-fn walk_refs(v: &mut Value, named: &mut Option<String>, given: bool) -> Result<(), String> {
+fn walk_refs(v: &mut Value, named: &mut Option<String>, given: bool, is_id: bool) -> Result<(), String> {
     match v {
-        Value::String(s) => {
+        Value::String(s) if is_id => {
             if let Some((b, id)) = parse_object_ref(s) {
                 match named.as_deref() {
                     Some(n) if n != b => {
@@ -209,12 +219,13 @@ fn walk_refs(v: &mut Value, named: &mut Option<String>, given: bool) -> Result<(
         }
         Value::Array(items) => {
             for item in items {
-                walk_refs(item, named, given)?;
+                walk_refs(item, named, given, is_id)?;
             }
         }
         Value::Object(map) => {
-            for (_, child) in map.iter_mut() {
-                walk_refs(child, named, given)?;
+            for (key, child) in map.iter_mut() {
+                let is_id = id_field(key, child) || matches!(key.as_str(), "target" | "targets");
+                walk_refs(child, named, given, is_id)?;
             }
         }
         _ => {}
