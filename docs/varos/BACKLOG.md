@@ -1,11 +1,47 @@
 # Varos fork: backlog
 
 Ordered. Owner feedback comes first. Each item has one acceptance line; an item is closed only when
-its acceptance is met and recorded in `STATE.md`. Updated 2026-11-02; older dated entries below retain their original context.
+its acceptance is met and recorded in `STATE.md`. Updated 2026-11-04; older dated entries below retain their original context.
 
 Tags: **[done, owner to look]** = built, local gates green, waiting for the owner's eye in the real
 window. Same meaning as **provisional (awaits owner)** in `STATE.md`. GitHub CI has never run on this
 project; "gates green" always means the local commands in `AGENTS.md`.
+
+## Owner follow-up — side-docked scrolling panels, 2026-11-04
+
+Layers/Properties must fill the available side column and keep their bottom strip attached.
+Build 20261104.4 accepted by owner; closed. [Evidence](lanes/side-dock-fill-2026-11-04.md).
+
+## Shared UI foundation — owner authorized 2026-11-04
+
+Owner expanded to all remaining UI migration, galleries and source guard; external theme packages
+remain deferred. Core migration closed: owner accepted build 20261104.6 and Claude approved the aggregate after usage reset. [Full evidence](lanes/ui-unification-full-2026-11-04.md).
+
+Stage 2 authorized: unify shared buttons/fields, specialized agent implementation and Fable review;
+preserve prior work. Accepted by the owner in combined build 20261104.6. [Evidence](lanes/design-controls-stage2-2026-11-04.md).
+
+First slice: shared defaults plus production panel/document tabs; preserve input, reorder, close,
+shortcuts and preceding sizing/picker changes. Accepted by the owner in combined build 20261104.6.
+[Scope and evidence](lanes/design-foundation-stage1-2026-11-04.md).
+
+## Current owner priority — 2026-11-04
+
+**Panel footer and content sizing / Color layout: accepted by the owner on 2026-11-04.** The owner reported
+that resize strips were disconnected from content and panels grew without a useful flexible
+region, or could not shrink. The local patch gives fixed controls intrinsic sizing, flexible
+previews/lists the surplus, and groups a shared painted/interactive footer. It also corrects
+Color insets, alignment and empty recents. Local build 20261104.1 is installed with a rollback
+copy of 20261102.20; the owner has accepted the layout. See [local evidence](lanes/panel-sizing-2026-11-04.md).
+
+**Acceptance:** in the native window, Color/Gradient resize only their preview, list panels resize
+their viewport, fixed panels stop at content, and every footer stays attached. Minimums, mixed
+stacks, tab switches, collapse/expand and existing workspaces must feel right. The owner confirmed the result on 2026-11-04; this layout item is closed.
+
+**New follow-up:** the Color wheel's header eyedropper must leave the shell palette visible
+through tool activation and canvas sampling until explicitly dismissed. The local fix preserves
+the shell palette and finishes pending edits without absorbing the sample into its undo group.
+Headless frame tests verify sampling, position, undo separation and explicit close; native
+acceptance is still pending. See [follow-up evidence](lanes/eyedropper-palette-2026-11-04.md).
 
 ## Summary — 2026-11-02
 
