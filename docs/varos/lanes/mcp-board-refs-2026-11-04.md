@@ -156,3 +156,8 @@ other reply fields. New tools/commands introducing object-reference fields requi
 entry in the request policy and regression coverage. No native acceptance, release build,
 workspace test suite or full `cargo xtask ci` is claimed; the requested crate tests and workspace
 Clippy gate are recorded individually.
+
+
+## Moderator re-run (outside the sandbox)
+
+`cargo test --locked -j 4 -p varos-agents -p vectorcraft-mcp -p vectorcraft-engine --no-fail-fast -- --test-threads=4`: 3,840 passed, 0 failed (the 24 sandbox-denied listener/sysctl tests pass on the host). Workspace Clippy `-D warnings` and fmt pass. Committed as `d8b420361`.
