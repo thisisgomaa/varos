@@ -186,6 +186,10 @@ fn every_mode_round_trips_edges_greys_and_colours() {
             [0., 1., 0.],
             [1., 0., 0.],
         ] {
+            // CMYK goes through the working CMYK profile: only colours inside its gamut come back.
+            if mode == Mode::Cmyk && Color::rgb(c[0], c[1], c[2]).out_of_gamut() {
+                continue;
+            }
             let out = sliders::rgb(mode, sliders::values(mode, c));
             assert!(c.iter().zip(out).all(|(a, b)| (a - b).abs() <= 1.5 / 255.), "{mode:?}: {c:?} -> {out:?}");
         }
@@ -196,14 +200,18 @@ fn every_mode_round_trips_edges_greys_and_colours() {
     assert_eq!(sliders::values_for(&st, Mode::Hsb)[0].round(), 180.0);
     sliders::adopt_channel(&mut st, Mode::Web, 0, 80.0);
     assert!((st.rgb()[0] - 102.0 / 255.0).abs() < 1e-4);
-    // The CMYK and Lab sliders are naive (not colour managed): pure black is K 100, and an edit
-    // writes sRGB.
+    // The CMYK sliders are colour managed: black shows its working CMYK inks, and an edit writes
+    // CMYK, shown through the colour settings. Lab is naive and writes sRGB.
     let st = State { hsva: [0.0, 0.0, 0.0, 1.0], ..Default::default() };
-    assert_eq!(sliders::values_for(&st, Mode::Cmyk), [0.0, 0.0, 0.0, 100.0]);
+    assert_eq!(sliders::values_for(&st, Mode::Cmyk), sliders::inks(&Color::BLACK));
     let mut st = State::default();
+    let mut inks = sliders::inks(&Color::rgb(1.0, 0.0, 0.0));
     sliders::adopt_channel(&mut st, Mode::Cmyk, 3, 50.0);
+    inks[3] = 50.0;
+    assert_eq!(st.out_color(), sliders::cmyk(inks));
+    assert!(same(st.rgb(), sliders::cmyk(inks).to_rgb()), "{:?}", st.rgb());
+    sliders::adopt_channel(&mut st, Mode::Lab, 0, 40.0);
     assert!(matches!(st.out_color(), Color::Rgb { .. }));
-    assert!(same(st.rgb(), [0.5, 0.0, 0.0]), "{:?}", st.rgb());
 }
 
 #[test]
@@ -537,6 +545,139 @@ fn the_sliders_tab_drags_a_channel_in_one_step_and_types_a_value() {
     frame(&ctx, &mut app, vec![]);
     assert_eq!(fill_hex(&app), "#0066cc");
     assert_eq!(undo_len(&app), undo + 2);
+}
+
+// ---------- CMYK sliders write CMYK (2026-11-04) ----------
+
+fn fill_color(app: &VectorcraftApp) -> Color {
+    crate::panels::current_paints(app).0.color().expect("a solid fill")
+}
+
+/// Sliders tab, CMYK mode, two frames drawn.
+fn cmyk_sliders(ctx: &egui::Context, app: &mut VectorcraftApp) {
+    app.ui.varos_picker.tab = Tab::Sliders;
+    app.ui.varos_picker.mode = Mode::Cmyk;
+    frame(ctx, app, vec![]);
+    frame(ctx, app, vec![]);
+}
+
+/// Channel `i`'s track: its left end and its centre line.
+fn track(ctx: &egui::Context, i: usize) -> (f32, f32) {
+    let o = picker_rect(ctx).min + vec2(0.0, HEADER_H);
+    (o.x + PAD + 18.0, o.y + sliders::HEADER_H + i as f32 * sliders::ROW_H + sliders::ROW_H / 2.0)
+}
+
+/// Channel `i`'s value field rect.
+fn value_field(ctx: &egui::Context, i: usize) -> Rect {
+    let o = picker_rect(ctx).min + vec2(0.0, HEADER_H);
+    let (left, y) = track(ctx, i);
+    Rect::from_min_max(pos2(left + sliders::SLIDER_W + PAD, y - sliders::ROW_H / 2.0), pos2(o.x + W - PAD, y + sliders::ROW_H / 2.0))
+}
+
+/// The four CMYK fields' texts.
+fn cmyk_fields(ctx: &egui::Context, app: &mut VectorcraftApp) -> Vec<String> {
+    let texts = frame(ctx, app, vec![]);
+    (0..4)
+        .map(|i| {
+            let r = value_field(ctx, i);
+            texts.iter().find(|(_, p)| r.contains(*p)).map(|(t, _)| t.clone()).unwrap_or_else(|| panic!("field {i}: {texts:?}"))
+        })
+        .collect()
+}
+
+fn type_channel(ctx: &egui::Context, app: &mut VectorcraftApp, i: usize, text: &str) {
+    let key = |k, modifiers| Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers };
+    click(ctx, app, value_field(ctx, i).center());
+    frame(ctx, app, vec![key(egui::Key::A, Modifiers::COMMAND), Event::Text(text.into())]);
+    frame(ctx, app, vec![key(egui::Key::Enter, Modifiers::NONE)]);
+    frame(ctx, app, vec![]);
+}
+
+/// The working CMYK inks (%) of `c`, as upstream's colour management gives them.
+fn managed_inks(c: &Color) -> [f32; 4] {
+    c.to_cmyk_managed(vectorcraft_color::cms::active().settings().intent).map(|v| v * 100.0)
+}
+
+#[test]
+fn typed_cmyk_values_are_stored_as_cmyk_exactly() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    cmyk_sliders(&ctx, &mut app);
+    let undo = undo_len(&app);
+    for (i, v) in ["12.5", "0", "100", "0"].into_iter().enumerate() {
+        type_channel(&ctx, &mut app, i, v);
+    }
+    assert_eq!(fill_color(&app), Color::cmyk(0.125, 0.0, 1.0, 0.0), "the inks typed, as CMYK");
+    // One step per value that changed: #3366cc's working CMYK has K 0 already.
+    assert_eq!(undo_len(&app), undo + 3);
+    assert_eq!(cmyk_fields(&ctx, &mut app), ["12.5", "0", "100", "0"], "a tenth of a percent shows");
+    // The same value again writes nothing; half a percent more is a change.
+    type_channel(&ctx, &mut app, 0, "12.5");
+    assert_eq!(undo_len(&app), undo + 3);
+    type_channel(&ctx, &mut app, 0, "13");
+    assert_eq!(fill_color(&app), Color::cmyk(0.13, 0.0, 1.0, 0.0));
+    assert_eq!(undo_len(&app), undo + 4);
+}
+
+#[test]
+fn dragging_the_k_slider_writes_cmyk_in_one_step() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    cmyk_sliders(&ctx, &mut app);
+    let before = managed_inks(&fill_color(&app));
+    let undo = undo_len(&app);
+    let (left, y) = track(&ctx, 3);
+    drag(&ctx, &mut app, pos2(left + 10.0, y), &[pos2(left + 70.0, y), pos2(left + sliders::SLIDER_W, y)]);
+    assert_eq!(undo_len(&app), undo + 1);
+    let Color::Cmyk { c, m, y, k } = fill_color(&app) else { panic!("CMYK written: {:?}", fill_color(&app)) };
+    assert_eq!(k, 1.0, "K at its maximum");
+    for (got, want) in [c, m, y].into_iter().zip(before) {
+        assert!((got * 100.0 - want).abs() < 1e-3, "C, M and Y hold: {got} vs {want}");
+    }
+}
+
+#[test]
+fn an_rgb_fill_shows_its_managed_cmyk_and_a_channel_edit_makes_it_cmyk() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    cmyk_sliders(&ctx, &mut app);
+    let rgb = fill_color(&app);
+    assert!(matches!(rgb, Color::Rgb { .. }));
+    let undo = undo_len(&app);
+    let inks = managed_inks(&rgb);
+    let shown: Vec<String> = inks.iter().map(|v| format!("{:.1}", v).trim_end_matches('0').trim_end_matches('.').to_string()).collect();
+    assert_eq!(cmyk_fields(&ctx, &mut app), shown, "the working CMYK conversion of {rgb:?}: {inks:?}");
+    assert_eq!(undo_len(&app), undo, "showing it writes nothing");
+    type_channel(&ctx, &mut app, 2, "5");
+    let Color::Cmyk { c, m, y, k } = fill_color(&app) else { panic!("CMYK written: {:?}", fill_color(&app)) };
+    assert_eq!(y, 0.05);
+    for (got, want) in [c, m, k].into_iter().zip([inks[0], inks[1], inks[3]]) {
+        assert!((got * 100.0 - want).abs() < 1e-3, "the other inks hold: {got} vs {want}");
+    }
+    assert_eq!(undo_len(&app), undo + 1);
+}
+
+#[test]
+fn a_spot_colour_shows_its_inks_and_is_not_converted_without_an_edit() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    app.run("swatch.new", json!({"name": "Ink", "color": {"c": 0, "m": 60, "y": 90, "k": 0}, "spot": true})).unwrap();
+    app.run("paint.setFill", json!({"swatch": "Ink", "tint": 100})).unwrap();
+    let linked = |app: &VectorcraftApp| matches!(crate::panels::current_paints(app).0, Paint::Solid { swatch: Some(ref s), .. } if s == "Ink");
+    assert!(linked(&app));
+    cmyk_sliders(&ctx, &mut app);
+    let undo = undo_len(&app);
+    assert_eq!(cmyk_fields(&ctx, &mut app), ["0", "60", "90", "0"], "the spot's own inks");
+    // Pressing a knob without moving it writes nothing: the spot stays linked.
+    let (left, y) = track(&ctx, 3);
+    click(&ctx, &mut app, pos2(left, y));
+    assert_eq!(undo_len(&app), undo);
+    assert!(linked(&app), "still the spot");
+    assert_eq!(fill_color(&app), Color::cmyk(0.0, 0.6, 0.9, 0.0));
+    // An explicit edit makes it a CMYK process colour (as Classic's CMYK mode converts a tint).
+    type_channel(&ctx, &mut app, 3, "10");
+    assert_eq!(fill_color(&app), Color::cmyk(0.0, 0.6, 0.9, 0.1));
+    assert_eq!(undo_len(&app), undo + 1);
 }
 
 #[test]

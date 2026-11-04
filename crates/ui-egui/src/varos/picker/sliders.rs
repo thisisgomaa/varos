@@ -1,16 +1,24 @@
 // Varos colour picker v3 — ported from thisisgomaa/varos (MIT OR Apache-2.0).
 //! The Sliders tab: a mode menu (HSB · HSL · RGB · CMYK · Lab · Web) and the hex field on the left,
 //! the Fill/Stroke cluster on the right, then one row per channel: its letter, a track showing the
-//! colours that channel reaches at the current values, a knob and an editable value. The maths are
-//! the old Varos picker's: CMYK is naive subtractive sRGB and Lab is sRGB/XYZ D65, neither colour
-//! managed (the colours written are sRGB). Panel menu › Classic keeps upstream's colour-managed
-//! CMYK sliders, which write CMYK.
+//! colours that channel reaches at the current values, a knob and an editable value.
+//!
+//! CMYK is colour managed and writes CMYK, as upstream's Classic CMYK sliders do: the sliders show
+//! a CMYK colour's own inks (a spot or global colour's too) and any other colour's separation in
+//! the working CMYK space ([`Color::to_cmyk_managed`], as upstream's Color Picker dialog shows it;
+//! Classic seeds an RGB colour with the profile-free [`Color::to_cmyk`]). An edit writes the CMYK
+//! colour Classic's [`classic::from_components`] builds, typed values exactly, and the tracks and
+//! the shown colour go through the active colour settings ([`Color::to_rgb`]). A spot colour is
+//! written only by an edit, which makes it a CMYK process colour (as Classic's CMYK mode does).
+//! HSB, HSL, RGB and Web write RGB. Lab is still the old Varos picker's sRGB/XYZ D65 maths, not
+//! colour managed, and writes RGB.
 
 use egui::{Mesh, Pos2, Rect, Sense, Stroke, Ui, vec2};
 use serde::{Deserialize, Serialize};
 use vectorcraft_color::Color;
 
 use super::{Action, Gesture, PAD, State, View, hsv_to_rgb, rgb_to_hsv, same};
+use crate::panels::color as classic;
 use crate::theme::Tokens;
 use crate::varos::theme_components::FOUNDATION;
 
@@ -52,7 +60,7 @@ pub(crate) fn channels(mode: Mode) -> &'static [(&'static str, f32, f32)] {
     }
 }
 
-/// The channel values of sRGB colour `c` in `mode`.
+/// The channel values of sRGB colour `c` in `mode` (CMYK: its working CMYK inks).
 pub(crate) fn values(mode: Mode, c: [f32; 3]) -> [f32; 4] {
     let [h, s, v] = rgb_to_hsv(c);
     match mode {
@@ -63,10 +71,7 @@ pub(crate) fn values(mode: Mode, c: [f32; 3]) -> [f32; 4] {
             [h * 360., if d > 0. { (v - l) / d * 100. } else { 0. }, l * 100., 0.]
         }
         Mode::Rgb | Mode::Web => [c[0] * 255., c[1] * 255., c[2] * 255., 0.],
-        Mode::Cmyk => {
-            let k = 1. - v;
-            if v == 0. { [0., 0., 0., 100.] } else { [(1. - c[0] - k) / v * 100., (1. - c[1] - k) / v * 100., (1. - c[2] - k) / v * 100., k * 100.] }
-        }
+        Mode::Cmyk => inks(&Color::rgb(c[0], c[1], c[2])),
         Mode::Lab => {
             let lin = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
             let [r, g, b] = [lin(c[0]), lin(c[1]), lin(c[2])];
@@ -79,7 +84,7 @@ pub(crate) fn values(mode: Mode, c: [f32; 3]) -> [f32; 4] {
     }
 }
 
-/// The sRGB colour of channel values `v` in `mode`.
+/// The sRGB colour of channel values `v` in `mode` (CMYK: the inks shown through the colour settings).
 pub(crate) fn rgb(mode: Mode, v: [f32; 4]) -> [f32; 3] {
     let c = match mode {
         Mode::Hsb => hsv_to_rgb(v[0] / 360., v[1] / 100., v[2] / 100.),
@@ -89,7 +94,7 @@ pub(crate) fn rgb(mode: Mode, v: [f32; 4]) -> [f32; 3] {
             hsv_to_rgb(v[0] / 360., if b > 0. { 2. * (1. - l / b) } else { 0. }, b)
         }
         Mode::Rgb | Mode::Web => [v[0] / 255., v[1] / 255., v[2] / 255.],
-        Mode::Cmyk => [(1. - v[0] / 100.) * (1. - v[3] / 100.), (1. - v[1] / 100.) * (1. - v[3] / 100.), (1. - v[2] / 100.) * (1. - v[3] / 100.)],
+        Mode::Cmyk => cmyk(v).to_rgb(),
         Mode::Lab => {
             let y = (v[0] + 16.) / 116.;
             let x = y + v[1] / 500.;
@@ -107,13 +112,23 @@ pub(crate) fn rgb(mode: Mode, v: [f32; 4]) -> [f32; 3] {
     c.map(|x| x.clamp(0., 1.))
 }
 
+/// The CMYK inks (%) of `c`: a CMYK colour's own, any other through the working CMYK profile.
+pub(crate) fn inks(c: &Color) -> [f32; 4] {
+    c.to_cmyk_managed(vectorcraft_color::cms::active().settings().intent).map(|v| v * 100.)
+}
+
+/// The CMYK colour of inks `v` (%), built as the Classic sliders build it.
+pub(crate) fn cmyk(v: [f32; 4]) -> Color {
+    classic::from_components(classic::Mode::Cmyk, &v)
+}
+
 /// Web snaps each channel to the six web-safe levels.
 fn snap(mode: Mode, value: f32) -> f32 {
     if mode == Mode::Web { (value / 51.0).round() * 51.0 } else { value }
 }
 
 /// The values the sliders show: kept while the colour is the one they made (a hue survives S = 0),
-/// else computed from the colour.
+/// in CMYK the inks of the colour held (exact for a CMYK colour), else computed from the colour.
 pub(crate) fn values_for(st: &State, mode: Mode) -> [f32; 4] {
     let now = st.rgb();
     if let Some((m, c, v)) = st.channels
@@ -121,6 +136,11 @@ pub(crate) fn values_for(st: &State, mode: Mode) -> [f32; 4] {
         && same(c, now)
     {
         return v;
+    }
+    if mode == Mode::Cmyk
+        && let Some(c) = st.shown()
+    {
+        return inks(&c);
     }
     let mut v = values(mode, now);
     if mode == Mode::Hsb {
@@ -133,11 +153,15 @@ pub(crate) fn values_for(st: &State, mode: Mode) -> [f32; 4] {
     v
 }
 
-/// Set channel `i` to `value`: the colour follows, the other channels hold.
+/// Set channel `i` to `value`: the colour follows, the other channels hold. In CMYK the picker then
+/// holds the CMYK colour to write ([`State::out_color`]).
 pub(crate) fn adopt_channel(st: &mut State, mode: Mode, i: usize, value: f32) {
     let mut v = values_for(st, mode);
     v[i] = snap(mode, value);
     st.adopt_rgb(rgb(mode, v));
+    if mode == Mode::Cmyk {
+        st.held = Some(cmyk(v));
+    }
     if matches!(mode, Mode::Hsb | Mode::Hsl) {
         st.hsva[0] = (v[0] / 360.).rem_euclid(1.0);
     }
@@ -245,6 +269,9 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, prefs: &
         let knob = egui::pos2(track.left() + (values[index] - lo) / (hi - lo) * track.width(), track.center().y);
         ui.painter().circle(knob, KNOB_R, egui::Color32::WHITE, Stroke::new(1.0, egui::Color32::BLACK));
         let field = Rect::from_min_max(egui::pos2(track.right() + PAD, row.top()), row.max);
+        // CMYK shows a tenth of a percent, so a typed 12.5 reads back as it is stored.
+        let places = if mode == Mode::Cmyk { 1 } else { 0 };
+        let scale = 10f32.powi(places as i32);
         let typed = ui
             .scope_builder(egui::UiBuilder::new().max_rect(field).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
                 super::control_corners(ui, |ui| {
@@ -252,9 +279,9 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, prefs: &
                         ui,
                         ("varos-picker-value", index),
                         Some(label),
-                        values[index].round() as f64,
+                        ((values[index] * scale).round() / scale) as f64,
                         "",
-                        0,
+                        places,
                         field.width(),
                     )
                 })

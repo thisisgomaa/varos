@@ -179,6 +179,10 @@ pub(crate) struct State {
     alpha_sent: Option<f32>,
     /// The values the sliders show while the colour is the one they made.
     pub(crate) channels: Option<(Mode, [f32; 3], [f32; 4])>,
+    /// The colour the picker shows, in its own model: the one read, or the CMYK colour the CMYK
+    /// sliders made. The CMYK sliders show its inks, and a CMYK colour is written as it is, while
+    /// the picker still shows it.
+    pub(crate) held: Option<Color>,
     /// The picker's colour and alpha when the gesture began: a change is measured from them when
     /// nothing was read (a mixed selection, None).
     start_rgb: [f32; 3],
@@ -202,6 +206,7 @@ impl Default for State {
             sent: None,
             alpha_sent: None,
             channels: None,
+            held: None,
             start_rgb: [1.0, 0.0, 0.0],
             start_alpha: 1.0,
             origin: None,
@@ -230,6 +235,7 @@ impl State {
     /// Take sRGB colour `c`, keeping the hue of a grey.
     pub(crate) fn adopt_rgb(&mut self, c: [f32; 3]) {
         self.channels = None;
+        self.held = None;
         let [h, s, v] = rgb_to_hsv(c);
         if s > 0.001 {
             self.hsva[0] = h;
@@ -238,8 +244,16 @@ impl State {
         self.hsva[2] = v;
     }
 
-    /// The colour to write (sRGB).
+    /// The colour held, while the picker still shows it (a wheel move leaves it behind).
+    pub(crate) fn shown(&self) -> Option<Color> {
+        self.held.filter(|c| same(c.to_rgb(), self.rgb()))
+    }
+
+    /// The colour to write: a CMYK colour held while it is shown, else sRGB.
     pub(crate) fn out_color(&self) -> Color {
+        if let Some(c @ Color::Cmyk { .. }) = self.shown() {
+            return c;
+        }
         let [r, g, b] = self.rgb();
         Color::rgb(r, g, b)
     }
@@ -257,6 +271,12 @@ impl State {
             && (retarget || !same(c, self.rgb()))
         {
             self.adopt_rgb(c);
+        }
+        // The colour read is held as it is (the CMYK sliders show its inks); another colour that
+        // looks the same drops the CMYK values the sliders made.
+        if v.color != self.held {
+            self.channels = self.channels.filter(|ch| ch.0 != Mode::Cmyk);
+            self.held = v.color;
         }
         if retarget || v.alpha.is_none_or(|a| (a - self.hsva[3]).abs() > SAME) {
             self.hsva[3] = v.alpha.unwrap_or(1.0);
@@ -694,10 +714,12 @@ fn finish_instance(app: &mut VectorcraftApp, ctx: &egui::Context, sid: egui::Id)
     ctx.data_mut(|d| d.insert_temp(sid, st));
 }
 
-/// Write colour `c` to the target as one step, unless it is the colour there already.
+/// Write colour `c` to the target as one step, unless it is the colour there already (CMYK: the
+/// same inks exactly, so a typed half percent is written).
 fn set_color(app: &mut VectorcraftApp, st: &mut State, v: &View, c: Color, adopt: bool) {
     let rgb = c.to_rgb();
-    let unchanged = !v.mixed && v.color.is_some_and(|now| same(now.to_rgb(), rgb));
+    let cmyk = matches!(c, Color::Cmyk { .. });
+    let unchanged = !v.mixed && v.color.is_some_and(|now| if cmyk { now == c } else { same(now.to_rgb(), rgb) });
     if adopt {
         st.adopt_rgb(rgb);
     }
