@@ -14,7 +14,12 @@ fn content_height_id() -> egui::Id {
 /// The side Color panel's body: the sliders, with their measured content height recorded.
 pub(crate) fn side(app: &mut VectorcraftApp, ui: &mut Ui) {
     let top = ui.cursor().top();
-    crate::panels::color::show(app, ui);
+    ui.scope_builder(egui::UiBuilder::new().ui_stack_info(egui::UiStackInfo::default().with_tag("varos-side-color")), |ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+            crate::panels::color::show(app, ui);
+        });
+    });
     let height = ui.cursor().top() - top - ui.spacing().item_spacing.y;
     if height.is_finite() && height > 0.0 {
         let previous = content_height(ui.ctx());
@@ -42,13 +47,48 @@ pub(crate) fn stop_editor(app: &mut VectorcraftApp, ui: &mut Ui) {
 
 /// The side panel's Recent Colors strip (compact chips, then a divider) unless the user hid it;
 /// the colour clicked, for the panel to apply.
-pub(crate) fn recent(app: &VectorcraftApp, ui: &mut Ui) -> Option<Color> {
+pub(crate) fn recent_before(app: &VectorcraftApp, ui: &mut Ui) -> Option<Color> {
+    if is_side(ui) {
+        return None;
+    }
     if app.ui.color_hide_recent {
         return None;
     }
     let picked = crate::panels::recent_colors_chips(app, ui, true);
     crate::widgets::divider(ui);
     picked
+}
+
+fn is_side(ui: &Ui) -> bool {
+    ui.stack().iter().any(|node| node.tags().contains("varos-side-color"))
+}
+
+/// Secondary colours follow the editing controls. The first colour recorded during a spectrum
+/// drag can reveal this strip without moving the spectrum under the pointer.
+pub(crate) fn recent_after(app: &VectorcraftApp, ui: &mut Ui) -> Option<Color> {
+    if !is_side(ui) || app.ui.color_hide_recent || app.session.recent_colors.is_empty() {
+        return None;
+    }
+    ui.add_space(4.0);
+    crate::panels::recent_colors_chips(app, ui, true)
+}
+
+/// Keep the proxy and the first channel on the same top edge, independent of channel count.
+pub(crate) fn channel_row<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    if is_side(ui) { ui.horizontal_top(contents) } else { ui.horizontal(contents) }
+}
+
+/// Warning chips are 16 points tall, including the invisible placeholders that keep the ramp
+/// stable. They must not inherit the taller input-field minimum from the surrounding panel.
+pub(crate) fn warning_row<R>(ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    if is_side(ui) {
+        ui.scope(|ui| {
+            ui.spacing_mut().interact_size.y = 16.0;
+            ui.horizontal(contents).inner
+        })
+    } else {
+        ui.horizontal(contents)
+    }
 }
 
 /// The panel menu's Show Recent Colors item.

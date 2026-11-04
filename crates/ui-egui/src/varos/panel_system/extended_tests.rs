@@ -654,7 +654,10 @@ fn tab_rects_follow_the_supplied_measured_widths() {
     let group = layout.group_of("layers").unwrap().id;
     apply(&mut layout, Action::Move { source: Source::Panel("swatches".into()), target: Target::Merge { group, index: 1 } });
     let region = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
-    let widths = super::super::geometry::TabWidths([("layers".to_string(), 97.0), ("swatches".to_string(), 131.0)].into_iter().collect());
+    let widths = super::super::geometry::Measurements {
+        tabs: [("layers".to_string(), 97.0), ("swatches".to_string(), 131.0)].into_iter().collect(),
+        ..Default::default()
+    };
     let measured = super::super::geometry::measure(&layout, region, &widths);
     let tabs = &measured.iter().flat_map(|h| &h.groups).find(|g| g.id == group).unwrap().tabs;
     let widths: Vec<_> = tabs.iter().map(|(panel, rect)| (panel.as_str(), rect.width())).collect();

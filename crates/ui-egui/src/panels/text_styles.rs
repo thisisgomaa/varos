@@ -86,7 +86,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui, kind: Kind) {
     let cur_name = cur.as_ref().map(|(n, _)| n.clone().unwrap_or_else(|| normal.clone()));
     let mut clicked: Option<(String, bool)> = None;
     let mut sel: Option<String> = pstate(ui.ctx(), kind.key());
-    widgets::list_box(ui, |ui| {
+    // Varos: resize the style list while its controls stay fixed.
+    crate::varos::panel_system::sizing::list_contents(ui, |ui| {
         for (name, attrs, _) in &all {
             let is_cur = cur_name.as_deref() == Some(name.as_str());
             // Overrides: an attribute the style sets that the selection doesn't match.

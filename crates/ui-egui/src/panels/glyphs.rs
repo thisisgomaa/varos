@@ -199,7 +199,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let px = (cell * ui.ctx().pixels_per_point()).round().clamp(8.0, 256.0) as u32;
     let list_h = (ui.available_height() - 64.0).max(cell * 3.0);
     let hover_id = egui::Id::unique("gl-hover");
-    egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).show_rows(ui, cell, rows, |ui, range| {
+    // Varos: list viewport follows the workspace panel size.
+    let area = crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical().auto_shrink([false, false]), list_h);
+    area.show_rows(ui, cell, rows, |ui, range| {
         for r in range {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 0.0);

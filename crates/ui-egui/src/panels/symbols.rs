@@ -156,7 +156,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let list: bool = pstate(ui.ctx(), "sym-list");
     let sel = current(app);
     let mut clicked: Option<(String, bool)> = None;
-    let list_rect = widgets::list_box(ui, |ui| {
+    // Varos: the list viewport owns the surplus height and clips long libraries.
+    let list_rect = crate::varos::panel_system::sizing::list_box(ui, |ui| {
         ui.set_min_height(110.0);
         ui.set_width(ui.available_width());
         if names.is_empty() {

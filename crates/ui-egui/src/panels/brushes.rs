@@ -263,7 +263,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let mut clicked: Option<(String, egui::Modifiers)> = None;
     let mut options: Option<String> = None;
     let mut moved: Option<Value> = None;
-    let list_rect = widgets::list_box(ui, |ui| {
+    // Varos: the list viewport owns the surplus height and clips long libraries.
+    let list_rect = crate::varos::panel_system::sizing::list_box(ui, |ui| {
         ui.set_min_height(110.0);
         ui.set_width(ui.available_width());
         if list.is_empty() {

@@ -283,7 +283,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let sel = selected(&ctx, st);
     let mut ev = Events::default();
     widgets::list_box(ui, |ui| {
-        let out = egui::ScrollArea::vertical().id_salt("asset-export-scroll").max_height(270.0).auto_shrink([false, true]).show(ui, |ui| {
+        // Varos: list viewport follows the workspace panel size.
+        let out = crate::varos::panel_system::sizing::scroll(
+            ui,
+            egui::ScrollArea::vertical().id_salt("asset-export-scroll").auto_shrink([false, true]),
+            270.0,
+        )
+        .show(ui, |ui| {
             ui.set_min_height(110.0);
             ui.set_width(ui.available_width());
             if st.doc.assets.is_empty() {

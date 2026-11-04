@@ -36,7 +36,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         .enumerate()
         .map(|(i, p)| (i, p.id.clone(), p.name.clone(), p.doc.doc.artboards.len(), i == project.active_page()))
         .collect();
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    super::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical(), f32::INFINITY).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for (index, id, name, count, active) in &rows {
             ui.push_id((uid, id), |ui| {

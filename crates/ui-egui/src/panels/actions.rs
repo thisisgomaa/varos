@@ -91,7 +91,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
     }
     let mut current = app.ui.action_set;
     let mut play_req = None;
-    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+    // Varos: list viewport follows the workspace panel size.
+    crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical(), 260.0).show(ui, |ui| {
         for (si, set) in app.ui.action_sets.iter().enumerate() {
             let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::click());
             if current == Some(si) && selected.is_none() {

@@ -408,7 +408,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let list_rect = widgets::list_box(ui, |ui| {
         ui.set_min_height(110.0);
         ui.spacing_mut().item_spacing.y = 0.0;
-        let scrolled = egui::ScrollArea::vertical().id_salt("ab-scroll").max_height(220.0).show(ui, |ui| {
+        // Varos: list viewport follows the workspace panel size.
+        let scrolled = crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical().id_salt("ab-scroll"), 220.0).show(ui, |ui| {
             for (i, name) in abs.iter().enumerate() {
                 let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click_and_drag());
                 if resp.drag_started() {

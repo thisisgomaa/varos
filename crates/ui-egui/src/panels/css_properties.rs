@@ -112,7 +112,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let all = !selected && pstate::<bool>(&ctx, ALL);
     let Some(shown) = shown(app, ui, &opts, all) else { return };
     widgets::list_box(ui, |ui| {
-        egui::ScrollArea::both().id_salt("css-properties-scroll").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
+        // Varos: resize the code viewport inside the panel.
+        let area = egui::ScrollArea::both().id_salt("css-properties-scroll").auto_shrink([false, true]);
+        crate::varos::panel_system::sizing::scroll(ui, area, 300.0).show(ui, |ui| {
             ui.set_min_height(120.0);
             match &shown.job {
                 Some(job) => {

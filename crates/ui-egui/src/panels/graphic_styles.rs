@@ -466,7 +466,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let view: View = pstate(ui.ctx(), "gs-view");
     let mut ev = Events::default();
     widgets::list_box(ui, |ui| {
-        let out = egui::ScrollArea::vertical().id_salt("gs-scroll").max_height(220.0).show(ui, |ui| {
+        // Varos: list viewport follows the workspace panel size.
+        let out = crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical().id_salt("gs-scroll"), 220.0).show(ui, |ui| {
             ui.set_min_height(120.0);
             ui.set_width(ui.available_width());
             if doc.graphic_styles.is_empty() {

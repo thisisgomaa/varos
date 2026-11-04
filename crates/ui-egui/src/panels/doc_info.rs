@@ -56,7 +56,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             row(ui, page["page_name"].as_str().unwrap_or("Page"), format!("{} artboards · {} objects", page["artboards"], page["objects"]));
         }
     }
-    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+    // Varos: list viewport follows the workspace panel size.
+    crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical(), 420.0).show(ui, |ui| {
         let sections = i["sections"].as_array().map_or(&[][..], Vec::as_slice);
         let shown = sections.iter().filter(|s| category.is_empty() || s["id"] == category.as_str());
         for (n, s) in shown.enumerate() {

@@ -207,23 +207,6 @@ fn column_mut(node: &mut Node, group: u64) -> Option<&mut Node> {
     }
 }
 
-/// Project retained full widths without scaling the expanded neighbour of a compact column.
-pub fn displayed_width(host: &Host, node: &Node, saved: [f32; 2]) -> f32 {
-    if !has_horizontal(node) {
-        let mode = groups(node).first().map(|g| presentation(host, g));
-        return mode.filter(|p| p.mode != Mode::Full).map_or(saved[0], |p| (p.compact_width - HOST_CHROME[0]).max(1.0));
-    }
-    match node {
-        Node::Group(_) => saved[0],
-        Node::Split { axis, ratio, first, second, .. } => {
-            let (a, b) = partition(saved, *axis, *ratio);
-            let a = displayed_width(host, first, a);
-            let b = displayed_width(host, second, b);
-            if *axis == Axis::Horizontal { a + b + SPLIT_GAP } else { a.max(b) }
-        }
-    }
-}
-
 fn resize_column(node: &mut Node, group: u64, size: [f32; 2], width: f32) -> [f32; 2] {
     if !groups(node).iter().any(|g| g.id == group) {
         return size;
@@ -876,12 +859,7 @@ impl Layout {
                     return Err("Control uses its dedicated width policy".into());
                 }
                 if mode == Mode::Full {
-                    let minimum = groups(column)
-                        .iter()
-                        .flat_map(|g| g.panels.iter())
-                        .filter_map(|p| registry::get(p))
-                        .map(|s| s.min_size[0])
-                        .fold(1.0, f32::max);
+                    let minimum = groups(column).iter().filter_map(|g| registry::get(&g.active)).map(|s| s.min_size[0]).fold(1.0, f32::max);
                     h.expanded = expanded_size(resize_column(&mut h.root, *group, content_size(h.expanded), width.max(minimum) - HOST_CHROME[0]));
                 } else {
                     let compact_width = width.clamp(44.0, 320.0);

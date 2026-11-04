@@ -313,7 +313,9 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     widgets::list_box(ui, |ui| {
         ui.set_min_height(110.0);
         ui.set_width(ui.available_width());
+        // Varos: an empty list remains a resizable viewport.
         if rows.is_empty() {
+            ui.set_min_height(crate::varos::panel_system::sizing::stretch(ui, 110.0));
             let detail = if o.show == "all" {
                 tl!("File › Place… brings in an image, linked or embedded.")
             } else {
@@ -322,7 +324,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             super::empty_state(ui, "link", tl!("No images"), detail);
             return;
         }
-        egui::ScrollArea::vertical().max_height(260.0).auto_shrink([false, true]).show(ui, |ui| {
+        // Varos: list viewport follows the workspace panel size.
+        crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical().auto_shrink([false, true]), 260.0).show(ui, |ui| {
             let h = o.thumb.max(16.0) + 6.0;
             for r in rows {
                 let Some(id) = r["id"].as_u64() else { continue };

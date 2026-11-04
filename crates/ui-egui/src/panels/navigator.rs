@@ -216,7 +216,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let busy = st.interaction.is_some() || app.session.tool_busy();
     let region = CACHE.with(|c| c.borrow_mut().region(&doc, uid, revision, artboard_only, busy));
     let w = ui.available_width();
-    let h = (w * 0.72).clamp(100.0, 200.0);
+    // Varos: resize the preview, keeping the zoom controls fixed.
+    let h = crate::varos::panel_system::sizing::stretch(ui, (w * 0.72).clamp(100.0, 200.0));
     let (thumb, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click_and_drag());
     ui.painter().rect_filled(thumb, 0.0, t.pasteboard);
     let ppp = ui.ctx().pixels_per_point();

@@ -3,7 +3,7 @@
 use egui::{Align2, CornerRadius, FontId, Rect, Stroke, StrokeKind, Ui, Vec2, pos2};
 
 use super::{
-    geometry::TabWidths,
+    geometry::Measurements,
     metrics,
     registry::{self, PanelIcon},
 };
@@ -106,7 +106,7 @@ fn tab_font() -> FontId {
 
 /// Every tab width `layout` needs: each panel's localized label measured in the tab font, plus
 /// its padding on both sides, so the model lays the tabs out from real text in any language.
-pub(super) fn tab_widths(ctx: &egui::Context, layout: &super::model::Layout) -> TabWidths {
+pub(super) fn measurements(ctx: &egui::Context, layout: &super::model::Layout) -> Measurements {
     let panels = layout.hosts.iter().flat_map(|host| super::model::groups(&host.root)).flat_map(|group| group.panels.iter());
     let widths = panels
         .map(|panel| {
@@ -114,5 +114,5 @@ pub(super) fn tab_widths(ctx: &egui::Context, layout: &super::model::Layout) -> 
             (panel.clone(), (text.ceil() + 2.0 * metrics::TAB_PAD + 2.0 * metrics::BORDER).clamp(metrics::TAB_MIN_WIDTH, metrics::TAB_MAX_WIDTH))
         })
         .collect();
-    TabWidths(widths)
+    Measurements { tabs: widths, bodies: super::sizing::snapshot(ctx) }
 }

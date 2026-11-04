@@ -154,8 +154,8 @@ impl Harness {
     }
 
     /// The tab widths the last frame measured from the drawn labels.
-    pub fn tabs(&self) -> &geometry::TabWidths {
-        &self.state().tab_widths
+    pub fn tabs(&self) -> &geometry::Measurements {
+        &self.state().measurements
     }
 
     pub fn hit(&self, name: &str) -> Rect {

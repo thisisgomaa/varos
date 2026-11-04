@@ -711,7 +711,8 @@ fn body(app: &mut VectorcraftApp, ui: &mut Ui, salt: &'static str) {
     let mut ev = TileEvents::default();
     widgets::list_box(ui, |ui| {
         let max_height = if view == View::LargeThumb { 200.0 } else { 150.0 };
-        let out = egui::ScrollArea::vertical().id_salt("swatch-scroll").max_height(max_height).show(ui, |ui| {
+        // Varos: list viewport follows the workspace panel size.
+        let out = crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical().id_salt("swatch-scroll"), max_height).show(ui, |ui| {
             ui.set_width(ui.available_width());
             if view.is_list() {
                 for e in &items {

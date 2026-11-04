@@ -10,15 +10,18 @@ use super::metrics::{DROP_LINE, HEADER_CONTROL, TAB_MAX_WIDTH, TAB_MIN_WIDTH};
 const COMPACT_ROW_INSET: f32 = 3.0;
 use egui::{Rect, pos2, vec2};
 
-/// Every tab's width, from its measured, localized label. The presenter measures them with the UI
-/// fonts (`paint::tab_widths`); the model only reads them and never estimates text. A panel
-/// that was not measured (a layout checked without fonts) gets the narrowest tab.
+/// One transient snapshot for geometry, paint and hit testing: measured localized tabs and
+/// width-specific intrinsic body sizes. Unmeasured tabs use the narrowest tab; unmeasured bodies
+/// use catalogue minima until a real frame measures their controls and optional flexible region.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct TabWidths(pub(super) std::collections::BTreeMap<String, f32>);
+pub struct Measurements {
+    pub(super) tabs: std::collections::BTreeMap<String, f32>,
+    pub(super) bodies: super::sizing::BodySizes,
+}
 
-impl TabWidths {
+impl Measurements {
     fn width(&self, panel: &str) -> f32 {
-        self.0.get(panel).copied().unwrap_or(TAB_MIN_WIDTH).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
+        self.tabs.get(panel).copied().unwrap_or(TAB_MIN_WIDTH).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
     }
 }
 
@@ -26,7 +29,7 @@ impl TabWidths {
 /// compact column's flyout, whose group headers also keep a close button.
 #[derive(Clone, Copy)]
 struct Chrome<'a> {
-    tabs: &'a TabWidths,
+    tabs: &'a Measurements,
     flyout: bool,
 }
 
@@ -39,6 +42,8 @@ pub struct GroupRect {
     pub tabs: Vec<(String, Rect)>,
     pub overflow: Vec<String>,
     pub body: Rect,
+    /// Painted bottom strip; the body stops exactly at its top.
+    pub footer: Rect,
     /// The strip that drags the group: a compact group's top strip, a special bar's top strip, or
     /// a full group's header between its last tab and its controls.
     pub grip: Rect,
@@ -72,12 +77,12 @@ pub struct HostRect {
     pub dividers: Vec<DividerRect>,
 }
 
-pub fn measure(layout: &Layout, region: Rect, tabs: &TabWidths) -> Vec<HostRect> {
+pub fn measure(layout: &Layout, region: Rect, tabs: &Measurements) -> Vec<HostRect> {
     arrange(layout, region, tabs).0
 }
 
 /// Docked hosts reserve space; floating hosts always use the entire workspace coordinate system.
-pub fn arrange(layout: &Layout, region: Rect, tabs: &TabWidths) -> (Vec<HostRect>, Rect) {
+pub fn arrange(layout: &Layout, region: Rect, tabs: &Measurements) -> (Vec<HostRect>, Rect) {
     let chrome = Chrome { tabs, flyout: false };
     let mut board = region;
     let mut docks = std::collections::BTreeMap::new();
@@ -89,7 +94,7 @@ pub fn arrange(layout: &Layout, region: Rect, tabs: &TabWidths) -> (Vec<HostRect
             let mut rect = board;
             if matches!(edge, Edge::Left | Edge::Right) {
                 let wanted = if has_overrides(host) {
-                    visible_size(host)[0]
+                    visible_size(host, chrome.tabs)[0]
                 } else if host.mode == Mode::Full {
                     let minimum = if has_tools(&host.root) {
                         tools_minimum_width(&host.root, host.expanded[0] - HOST_CHROME[0]) + HOST_CHROME[0]
@@ -110,13 +115,14 @@ pub fn arrange(layout: &Layout, region: Rect, tabs: &TabWidths) -> (Vec<HostRect
                 }
             } else {
                 let wanted = if has_overrides(host) {
-                    visible_size(host)[1] - if host.dock.is_some() { paint::FOOT } else { 0.0 }
+                    visible_size(host, chrome.tabs)[1]
                 } else if host.mode == Mode::Full {
                     let fitted = if is_control(host) { Some(control_height(host)) } else { None };
                     fitted.unwrap_or_else(|| host.expanded[1].max(minimum_height(&host.root)) - docked_bar_trim(host))
                 } else {
                     compact_height(host)
                 };
+                let wanted = fitted_height(host, rect.width(), wanted, tabs);
                 let height = wanted.min((board.height() - 120.0).max(24.0)).min(board.height()).max(0.0);
                 if edge == Edge::Top {
                     rect.max.y = rect.top() + height;
@@ -125,6 +131,11 @@ pub fn arrange(layout: &Layout, region: Rect, tabs: &TabWidths) -> (Vec<HostRect
                     rect.min.y = rect.bottom() - height;
                     board.max.y = rect.top();
                 }
+            }
+            let desired_height = if has_overrides(host) { visible_size(host, tabs)[1] } else { host.expanded[1] };
+            let height = fitted_height(host, rect.width(), desired_height, tabs).min(rect.height()).max(1.0);
+            if matches!(edge, Edge::Left | Edge::Right) && host.mode == Mode::Full && !has_tools(&host.root) {
+                rect.max.y = rect.top() + height;
             }
             docks.insert(host.id, rect);
         }
@@ -172,6 +183,7 @@ fn push_compact(groups: &[&Group], rect: Rect, column: u64, mode: Mode, out: &mu
             tabs,
             overflow: Vec::new(),
             body: Rect::NOTHING,
+            footer: Rect::NOTHING,
             grip,
             menu: None,
             close: None,
@@ -205,10 +217,10 @@ pub fn control_grip(rect: Rect) -> Rect {
 pub fn footer(host: &Host) -> f32 {
     if is_control(host) {
         super::metrics::BORDER
-    } else if host.dock.is_some() {
-        0.0
-    } else {
+    } else if host.dock.is_none() && has_tools(&host.root) {
         paint::FOOT
+    } else {
+        0.0
     }
 }
 
@@ -225,19 +237,19 @@ pub fn docked_bar_trim(host: &Host) -> f32 {
     if host.mode == Mode::Full && standalone_docked_bar(host) { paint::TABS + paint::FOOT } else { 0.0 }
 }
 
-pub fn measure_host(host: &Host, region: Rect, tabs: &TabWidths) -> HostRect {
+pub fn measure_host(host: &Host, region: Rect, tabs: &Measurements) -> HostRect {
     place_host(host, region, Chrome { tabs, flyout: false })
 }
 
 /// [`measure_host`] for a compact column's flyout (a temporary full host): its group headers also
 /// keep the flyout's close button, and its tabs are measured with that reserve.
-pub fn measure_flyout(host: &Host, region: Rect, tabs: &TabWidths) -> HostRect {
+pub fn measure_flyout(host: &Host, region: Rect, tabs: &Measurements) -> HostRect {
     place_host(host, region, Chrome { tabs, flyout: true })
 }
 
 fn place_host(host: &Host, region: Rect, chrome: Chrome) -> HostRect {
     let height = if has_overrides(host) && !is_control(host) {
-        visible_size(host)[1]
+        visible_size(host, chrome.tabs)[1]
     } else if is_control(host) {
         control_height(host)
     } else if host.mode == Mode::Full {
@@ -246,13 +258,20 @@ fn place_host(host: &Host, region: Rect, chrome: Chrome) -> HostRect {
         compact_height(host)
     };
     let width = if has_overrides(host) {
-        visible_size(host)[0]
+        visible_size(host, chrome.tabs)[0]
     } else if host.mode == Mode::Full {
         host.expanded[0]
     } else {
         host.compact_width
     };
-    let size = vec2(width.min(region.width()).max(1.0), height.min(region.height()).max(1.0));
+    let width = if host.mode == Mode::Full && !has_overrides(host) && !has_tools(&host.root) && !is_control(host) {
+        width.max(minimum_width(&host.root))
+    } else {
+        width
+    };
+    let width = width.min(region.width()).max(1.0);
+    let height = fitted_height(host, width, height, chrome.tabs);
+    let size = vec2(width, height.min(region.height()).max(1.0));
     let min = region.min + vec2(host.position[0], host.position[1]);
     let min = pos2(
         min.x.clamp(region.left(), (region.right() - size.x).max(region.left())),
@@ -261,15 +280,23 @@ fn place_host(host: &Host, region: Rect, chrome: Chrome) -> HostRect {
     in_rect(host, Rect::from_min_size(min, size), chrome)
 }
 
+// The model's persisted chrome budget predates per-group footers. Project saved height into
+// this presenter's actual host chrome once, so collapse/expand cannot lose six points each time.
+fn saved_content(host: &Host) -> [f32; 2] {
+    let mut size = content_size(host.expanded);
+    size[1] = (host.expanded[1] - title_height(host) - footer(host)).max(1.0);
+    size
+}
+
 fn in_rect(host: &Host, rect: Rect, chrome: Chrome) -> HostRect {
     let control = is_control(host);
     let inset = if control { vec2(1.0 + super::metrics::CONTROL_GRIP, 1.0) } else { vec2(1.0, title_height(host)) };
     let inner = Rect::from_min_max(rect.min + inset, rect.max - vec2(1.0, footer(host)));
     let mut out = HostRect { id: host.id, rect, groups: Vec::new(), columns: Vec::new(), dividers: Vec::new() };
     if has_overrides(host) {
-        column_tree(host, &host.root, inner, content_size(host.expanded), chrome, &mut out);
+        column_tree(host, &host.root, inner, saved_content(host), chrome, &mut out);
     } else if host.mode == Mode::Full {
-        tree(&host.root, inner, content_size(host.expanded), chrome, &mut out.groups, &mut out.dividers);
+        tree(&host.root, inner, saved_content(host), chrome, &mut out.groups, &mut out.dividers);
     } else {
         let groups = super::model::groups(&host.root);
         let column = groups.first().map_or(0, |g| g.id);
@@ -309,6 +336,7 @@ fn in_rect(host: &Host, rect: Rect, chrome: Chrome) -> HostRect {
                 group.tabs.clear();
                 group.overflow.clear();
                 group.body = group.rect;
+                group.footer = Rect::NOTHING;
                 if matches!(host.root, Node::Split { .. }) {
                     group.body.min.y = (group.body.top() + paint::GRIP).min(group.body.bottom());
                 }
@@ -324,26 +352,54 @@ fn has_overrides(host: &Host) -> bool {
     super::model::groups(&host.root).iter().any(|g| g.presentation.is_some())
 }
 
-fn projected_height(host: &Host, node: &Node, saved: [f32; 2]) -> f32 {
+/// Expanded columns honour their active tab's minimum even when a presentation override keeps
+/// a neighbouring column compact. The remembered width remains available to narrower tabs.
+fn projected_width(host: &Host, node: &Node, saved: [f32; 2]) -> f32 {
+    if !super::model::has_horizontal(node) {
+        let mode = super::model::groups(node).first().map(|g| super::model::presentation(host, g));
+        return mode.filter(|p| p.mode != Mode::Full).map_or(saved[0].max(content_min(node)[0]), |p| (p.compact_width - HOST_CHROME[0]).max(1.0));
+    }
+    match node {
+        Node::Group(_) => saved[0],
+        Node::Split { axis, ratio, first, second, .. } => {
+            let (a, b) = partition(saved, *axis, *ratio);
+            let a = projected_width(host, first, a);
+            let b = projected_width(host, second, b);
+            if *axis == Axis::Horizontal { a + b + super::model::SPLIT_GAP } else { a.max(b) }
+        }
+    }
+}
+
+fn projected_height(host: &Host, node: &Node, saved: [f32; 2], measurements: &Measurements) -> f32 {
     if !super::model::has_horizontal(node) {
         let groups = super::model::groups(node);
         let mode = groups.first().map_or(host.mode, |g| super::model::presentation(host, g).mode);
-        return if mode == Mode::Full { saved[1] } else { groups.iter().map(|g| compact_group_height(g)).sum() };
+        return if mode == Mode::Full && !has_tools(node) && !super::model::standalone_control(node) {
+            let (min, max) = vertical_bounds(node, projected_width(host, node, saved), measurements);
+            saved[1].clamp(min, max)
+        } else if mode == Mode::Full {
+            saved[1]
+        } else {
+            groups.iter().map(|g| compact_group_height(g)).sum()
+        };
     }
     match node {
         Node::Group(_) => saved[1],
         Node::Split { axis, ratio, first, second, .. } => {
             let (a, b) = partition(saved, *axis, *ratio);
-            let a = projected_height(host, first, a);
-            let b = projected_height(host, second, b);
+            let a = projected_height(host, first, a, measurements);
+            let b = projected_height(host, second, b, measurements);
             if *axis == Axis::Horizontal { a.max(b) } else { a + b + super::model::SPLIT_GAP }
         }
     }
 }
 
-fn visible_size(host: &Host) -> [f32; 2] {
-    let saved = content_size(host.expanded);
-    [super::model::displayed_width(host, &host.root, saved) + HOST_CHROME[0], projected_height(host, &host.root, saved) + paint::TITLE + paint::FOOT]
+fn visible_size(host: &Host, measurements: &Measurements) -> [f32; 2] {
+    let saved = saved_content(host);
+    [
+        projected_width(host, &host.root, saved) + HOST_CHROME[0],
+        projected_height(host, &host.root, saved, measurements) + title_height(host) + footer(host),
+    ]
 }
 
 fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut HostRect) {
@@ -386,8 +442,8 @@ fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], chrome: Ch
         let d = if *axis == Axis::Horizontal { 0 } else { 1 };
         let (sa, sb) = partition(saved, *axis, *ratio);
         let available = (if d == 0 { rect.width() } else { rect.height() } - super::model::SPLIT_GAP).max(0.0);
-        let desired_a = if d == 0 { super::model::displayed_width(host, first, sa) } else { projected_height(host, first, sa) };
-        let desired_b = if d == 0 { super::model::displayed_width(host, second, sb) } else { projected_height(host, second, sb) };
+        let desired_a = if d == 0 { projected_width(host, first, sa) } else { projected_height(host, first, sa, chrome.tabs) };
+        let desired_b = if d == 0 { projected_width(host, second, sb) } else { projected_height(host, second, sb, chrome.tabs) };
         let first_compact = super::model::groups(first).iter().all(|g| super::model::presentation(host, g).mode != Mode::Full);
         let second_compact = super::model::groups(second).iter().all(|g| super::model::presentation(host, g).mode != Mode::Full);
         let extent = if d == 0 && second_compact && !first_compact {
@@ -420,6 +476,10 @@ fn column_tree(host: &Host, node: &Node, rect: Rect, saved: [f32; 2], chrome: Ch
 fn tree(node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut Vec<GroupRect>, dividers: &mut Vec<DividerRect>) {
     match node {
         Node::Group(group) => {
+            let mut rect = rect;
+            let (_, maximum) = vertical_bounds(node, rect.width(), chrome.tabs);
+            rect.max.y = rect.top() + rect.height().min(maximum);
+            let footer = Rect::from_min_max(pos2(rect.left(), (rect.bottom() - paint::FOOT).max(rect.top())), rect.max);
             let tab_width = |panel: &str| chrome.tabs.width(panel);
             // The header's controls keep their slots, right to left: the panel menu, a flyout's
             // close button and, with several tabs, the drag strip, which the tab overflow menu
@@ -460,7 +520,8 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut Vec<
                 rect,
                 tabs,
                 overflow: if overflowed { group.panels.clone() } else { Vec::new() },
-                body: Rect::from_min_max(rect.min + vec2(0.0, paint::TABS), rect.max),
+                body: Rect::from_min_max(rect.min + vec2(0.0, paint::TABS), footer.min + vec2(rect.width(), 0.0)),
+                footer,
                 grip,
                 menu: Some(slot(1.0)),
                 close: chrome.flyout.then(|| slot(2.0)),
@@ -471,8 +532,10 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut Vec<
             let dimension = if *axis == Axis::Horizontal { 0 } else { 1 };
             let total = if dimension == 0 { rect.width() } else { rect.height() };
             let available = (total - super::model::SPLIT_GAP).max(1.0);
-            let a_min = content_min(first)[dimension];
-            let b_min = content_min(second)[dimension];
+            let a_bounds = vertical_bounds(first, rect.width(), chrome.tabs);
+            let b_bounds = vertical_bounds(second, rect.width(), chrome.tabs);
+            let a_min = if dimension == 1 { a_bounds.0 } else { content_min(first)[0] };
+            let b_min = if dimension == 1 { b_bounds.0 } else { content_min(second)[0] };
             let tools_split = *axis == Axis::Horizontal && has_tools(node);
             let (saved_a, saved_b) = partition(saved, *axis, *ratio);
             let (min_ratio, max_ratio, actual) = if tools_split {
@@ -496,8 +559,9 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut Vec<
                 };
                 (lower / available, upper / available, extent / available)
             } else {
-                let min = (a_min / available).clamp(0.05, 0.95);
-                let max = (1.0 - b_min / available).clamp(0.05, 0.95);
+                let min =
+                    (if dimension == 1 && b_bounds.1.is_finite() { a_min.max(available - b_bounds.1) } else { a_min } / available).clamp(0.0, 1.0);
+                let max = (if dimension == 1 { a_bounds.1.min(available - b_min) / available } else { 1.0 - b_min / available }).clamp(0.0, 1.0);
                 let actual = if min <= max { ratio.clamp(min, max) } else { (a_min / (a_min + b_min)).clamp(0.05, 0.95) };
                 (min, max, actual)
             };
@@ -517,6 +581,16 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut Vec<
                 divider.min.y = y;
                 divider.max.y = b.min.y;
             }
+            // At a stacked seam the upper group's bottom strip IS the divider. One painted
+            // rectangle owns both the footer and its resize hit, with no second disconnected bar.
+            tree(first, a, saved_a, chrome, out, dividers);
+            if *axis == Axis::Vertical {
+                for group in out.iter_mut().filter(|g| g.footer.is_positive() && (g.rect.bottom() - a.bottom()).abs() < 0.5 && g.rect.intersects(a)) {
+                    divider.min.y = divider.top().min(group.footer.top());
+                    group.footer.max.y = b.top();
+                    group.rect.max.y = b.top();
+                }
+            }
             dividers.push(DividerRect {
                 id: *id,
                 axis: *axis,
@@ -525,7 +599,6 @@ fn tree(node: &Node, rect: Rect, saved: [f32; 2], chrome: Chrome, out: &mut Vec<
                 min_ratio: if min_ratio <= max_ratio { min_ratio } else { 0.05 },
                 max_ratio: if min_ratio <= max_ratio { max_ratio } else { 0.95 },
             });
-            tree(first, a, saved_a, chrome, out, dividers);
             tree(second, b, saved_b, chrome, out, dividers);
         }
     }
@@ -541,24 +614,63 @@ pub fn edge_line(rect: Rect, edge: Edge) -> Rect {
 }
 fn content_min(node: &Node) -> [f32; 2] {
     match node {
-        Node::Group(g) => g
-            .panels
-            .iter()
-            .filter_map(|p| registry::get(p))
-            .fold([1.0, 1.0], |a, s| [(s.min_size[0] - HOST_CHROME[0]).max(a[0]), (s.min_size[1] - HOST_CHROME[1]).max(a[1])]),
-        Node::Split { axis, ratio, first, second, .. } => {
+        Node::Group(g) => {
+            registry::get(&g.active).map_or([1.0, 1.0], |s| [(s.min_size[0] - HOST_CHROME[0]).max(1.0), (s.min_size[1] - HOST_CHROME[1]).max(1.0)])
+        }
+        Node::Split { axis, first, second, .. } => {
             let a = content_min(first);
             let b = content_min(second);
             let mut size = [a[0].max(b[0]), a[1].max(b[1])];
             let d = if *axis == Axis::Horizontal { 0 } else { 1 };
-            size[d] = if has_tools(node) {
-                a[d] + b[d] + super::model::SPLIT_GAP
-            } else {
-                (a[d] / ratio.max(0.05)).max(b[d] / (1.0 - ratio).max(0.05)) + super::model::SPLIT_GAP
-            };
+            size[d] = a[d] + b[d] + super::model::SPLIT_GAP;
             size
         }
     }
+}
+
+/// Group-space bounds from this frame's active bodies. Unmeasured panels keep their legacy
+/// minimum until a real frame supplies a width-specific measurement.
+pub(super) fn vertical_bounds(node: &Node, width: f32, measurements: &Measurements) -> (f32, f32) {
+    match node {
+        Node::Group(g) => {
+            let Some(size) = super::sizing::measured(&measurements.bodies, &g.active, width) else {
+                return (content_min(node)[1], f32::INFINITY);
+            };
+            let minimum = size.minimum + paint::TABS + paint::FOOT;
+            (minimum, if size.stretches { f32::INFINITY } else { minimum })
+        }
+        Node::Split { axis, ratio, first, second, .. } => {
+            let (a_width, b_width) = if *axis == Axis::Horizontal {
+                let available = (width - super::model::SPLIT_GAP).max(1.0);
+                let min = content_min(first)[0] / available;
+                let max = 1.0 - content_min(second)[0] / available;
+                let actual = if min <= max { ratio.clamp(min, max) } else { *ratio };
+                (available * actual, available * (1.0 - actual))
+            } else {
+                (width, width)
+            };
+            let a = vertical_bounds(first, a_width, measurements);
+            let b = vertical_bounds(second, b_width, measurements);
+            if *axis == Axis::Vertical {
+                (a.0 + b.0 + super::model::SPLIT_GAP, a.1 + b.1 + super::model::SPLIT_GAP)
+            } else {
+                (a.0.max(b.0), a.1.max(b.1))
+            }
+        }
+    }
+}
+
+pub(super) fn height_bounds(host: &Host, width: f32, measurements: &Measurements) -> (f32, f32) {
+    let (min, max) = vertical_bounds(&host.root, (width - 2.0).max(1.0), measurements);
+    let chrome = title_height(host) + footer(host);
+    (min + chrome, max + chrome)
+}
+fn fitted_height(host: &Host, width: f32, height: f32, measurements: &Measurements) -> f32 {
+    if host.mode != Mode::Full || has_overrides(host) || is_control(host) || has_tools(&host.root) {
+        return height;
+    }
+    let (min, max) = height_bounds(host, width, measurements);
+    height.clamp(min, max)
 }
 /// A dock must reserve the selected Tools width as well as ordinary body minima.
 fn tools_minimum_width(node: &Node, saved_width: f32) -> f32 {

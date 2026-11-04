@@ -600,8 +600,10 @@ fn open_popover(app: &mut VectorcraftApp, i: usize, at: Pos2) {
 fn ramp(app: &mut VectorcraftApp, ui: &mut Ui, g: &Gradient, is_grad: bool) {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    let (area, area_resp) = ui.allocate_exact_size(vec2(w, 50.0), Sense::hover());
-    let bar = Rect::from_min_size(area.min + vec2(8.0, 10.0), vec2(w - 16.0, 18.0));
+    // Varos: only the ramp consumes the panel workspace's surplus height.
+    let height = crate::varos::panel_system::sizing::stretch(ui, 50.0);
+    let (area, area_resp) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
+    let bar = Rect::from_min_size(area.min + vec2(8.0, 10.0), vec2(w - 16.0, height - 32.0));
     // Checkerboard under the ramp (opacity).
     let cell = 6.0;
     let mut y = bar.top();

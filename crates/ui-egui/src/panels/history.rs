@@ -57,7 +57,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     let mut steps: Option<i64> = None;
     crate::widgets::list_box(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        egui::ScrollArea::vertical().id_salt("hist").max_height(260.0).stick_to_bottom(true).show(ui, |ui| {
+        // Varos: list viewport follows the workspace panel size.
+        crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical().id_salt("hist"), 260.0).stick_to_bottom(true).show(ui, |ui| {
             for (i, (label, future)) in rows.iter().enumerate() {
                 let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
                 if i == current {

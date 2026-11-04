@@ -642,7 +642,8 @@ fn body<K: LibraryKind>(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
     };
     widgets::list_box(ui, |ui| {
         let max_height = if view == View::LargeThumb { 280.0 } else { 220.0 };
-        egui::ScrollArea::vertical().id_salt(key(&panel, "scroll")).max_height(max_height).show(ui, |ui| {
+        // Varos: list viewport follows the workspace panel size.
+        crate::varos::panel_system::sizing::scroll(ui, egui::ScrollArea::vertical().id_salt(key(&panel, "scroll")), max_height).show(ui, |ui| {
             ui.set_width(ui.available_width());
             if rows.is_empty() {
                 widgets::dim_label(ui, if query.trim().is_empty() { tl!("This library is empty.") } else { tl!("No matches.") });

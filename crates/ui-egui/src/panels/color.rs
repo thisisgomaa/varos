@@ -211,7 +211,8 @@ pub(crate) const GAMUT_WARNING: (&str, &str) = ("dc-gamut", "Out of Gamut Warnin
 /// A warning icon with the corrected colour beside it. Returns true when the colour is clicked.
 pub(crate) fn warning_chip(ui: &mut Ui, (icon, warning): (&str, &str), fix: &Color) -> bool {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal(|ui| {
+    crate::varos::color_panel::warning_row(ui, |ui| {
+        // Varos: compact, stable side-panel warning slots.
         ui.spacing_mut().item_spacing.x = 3.0;
         icons::icon(ui, icon, 16.0, t.icon).on_hover_text(tl!(warning));
         let (r, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
@@ -538,7 +539,9 @@ enum SpectrumHit {
 }
 
 /// The spectrum ramp: hue across, white to full colour to black down (a grey ramp in Grayscale).
-fn spectrum(ui: &mut Ui, mode: Mode, size: egui::Vec2) -> Option<SpectrumHit> {
+fn spectrum(ui: &mut Ui, mode: Mode, mut size: egui::Vec2) -> Option<SpectrumHit> {
+    // Varos: the spectrum is the side panel's flexible region.
+    size.y = crate::varos::panel_system::sizing::stretch(ui, size.y);
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(size, Sense::hover());
     let resp = ui.interact(r, ui.scope_id().with("color-spectrum"), Sense::click_and_drag());
@@ -582,7 +585,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         (Some(c), _) => components(mode, &c),
         (None, _) => vec![0.0; mode.labels().len()],
     };
-    let recent = crate::varos::color_panel::recent(app, ui); // Varos: the side panel's strip can be hidden
+    let recent = crate::varos::color_panel::recent_before(app, ui); // Varos: side-panel recents follow the spectrum
     // An edit of the active colour with its displayed components (`new`), or a colour clicked with
     // Alt held for the inactive proxy (`behind`).
     let mut new: Option<(Color, Live, Vec<f32>)> = None;
@@ -592,7 +595,8 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     // RGB and Grayscale.
     let (shows_gamut, shows_web) = (matches!(mode, Mode::Rgb | Mode::Hsb), !matches!(mode, Mode::WebSafe | Mode::Grayscale));
     let gamut = color.filter(|_| shows_gamut).and_then(|c| gamut_fix(app, ui.ctx(), "color-gamut", &c));
-    ui.horizontal(|ui| {
+    crate::varos::color_panel::channel_row(ui, |ui| {
+        // Varos: the side panel aligns the proxy with the first channel.
         // Left column: proxy, out-of-gamut and out-of-web warnings.
         ui.vertical(|ui| {
             ui.set_width(44.0);
@@ -702,6 +706,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         Some(SpectrumHit::Pick(c, phase)) => pick(c, phase, &mut new),
         Some(SpectrumHit::Cycle) => set_mode(app, &tgt, mode.next()),
         None => {}
+    }
+    // Varos: revealing recent colours cannot move the spectrum during its first drag.
+    if let Some(c) = crate::varos::color_panel::recent_after(app, ui) {
+        pick(c, Live::Released, &mut new);
     }
     if let Some((c, phase)) = behind {
         apply(app, &tgt, c, phase, true);

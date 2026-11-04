@@ -87,12 +87,12 @@ impl Harness {
             assert!(corners.iter().all(|radius| *radius == egui::CornerRadius::ZERO), "docked outer surfaces are square: {corners:?}");
             let measured = geometry::arrange(self.layout(), self.workspace, self.tabs()).0;
             let host = measured.iter().find(|candidate| candidate.id == host).unwrap();
-            let bottom = host.groups.iter().map(|group| group.body.bottom()).fold(f32::NEG_INFINITY, f32::max);
-            assert!(
-                (host.rect.bottom() - bottom).abs() <= 1.1,
-                "docked body meets its bottom edge without the floating footer: {bottom} / {}",
-                host.rect.bottom()
-            );
+            let bottom = host
+                .groups
+                .iter()
+                .map(|group| if group.footer.is_positive() { group.footer.bottom() } else { group.body.bottom() })
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!((host.rect.bottom() - bottom).abs() <= 1.1, "docked content/footer meets its bottom edge: {bottom} / {}", host.rect.bottom());
         } else {
             assert!(corners.iter().any(|radius| *radius != egui::CornerRadius::ZERO), "a detached host restores its floating frame");
         }

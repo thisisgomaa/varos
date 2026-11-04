@@ -11,6 +11,7 @@ pub mod model;
 mod paint;
 pub(crate) mod presenter;
 mod registry;
+pub(crate) mod sizing;
 pub(crate) mod tools_host;
 pub(crate) mod workspace;
 
@@ -20,7 +21,7 @@ pub(crate) use presenter::Presenter;
 
 use crate::{VectorcraftApp, theme::Tokens};
 use egui::{CursorIcon, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
-use geometry::{GroupRect, HostRect, TabWidths};
+use geometry::{GroupRect, HostRect, Measurements};
 use model::{Action, Edge, Host, Layout, Mode, Source, Target};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -45,10 +46,10 @@ pub struct State {
     /// owns the drag of the handle that began it until [`State::sync_drag`] ends it.
     #[serde(skip)]
     drag_orphaned: bool,
-    /// Every tab's width from its measured, localized label, refreshed each frame the workspace
-    /// draws ([`paint::tab_widths`]); the geometry lays tabs out from it.
+    /// Localized tab widths and intrinsic body sizes for the shared geometry snapshot.
+    /// Pointer edits freeze it; width resizing refreshes it as wrapping changes.
     #[serde(skip)]
-    tab_widths: TabWidths,
+    measurements: Measurements,
 }
 
 impl Default for State {
@@ -63,7 +64,7 @@ impl Default for State {
             flyout: None,
             hits: Vec::new(),
             drag_orphaned: false,
-            tab_widths: TabWidths::default(),
+            measurements: Measurements::default(),
         }
     }
 }
@@ -312,7 +313,11 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     // the saved workspace arrangements.
     let Some(s) = app.ui.varos_panel_review.as_mut() else { return };
     // Tabs are laid out from their labels measured in this frame's fonts and language.
-    s.tab_widths = paint::tab_widths(&ctx, &s.layout);
+    if (s.gesture.is_none() && !ctx.input(|i| i.pointer.any_down()))
+        || s.gesture.as_ref().is_some_and(|g| matches!(g.kind, GestureKind::Resize { .. } | GestureKind::ColumnWidth { .. }))
+    {
+        s.measurements = paint::measurements(&ctx, &s.layout);
+    }
     if cancelled {
         s.cancel_transient();
     }
@@ -323,7 +328,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
         let keep = if gesture.before != s.layout {
             false
         } else if let Some(p) = pointer {
-            gesture_frame(&s.layout, gesture, p, region, released, &s.tab_widths).is_some_and(|frame| {
+            gesture_frame(&s.layout, gesture, p, region, released, &s.measurements).is_some_and(|frame| {
                 preview = Some(frame.preview);
                 drop_line = frame.drop_line;
                 commit = frame.commit;
@@ -365,7 +370,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
     }
     let Some(s) = app.ui.varos_panel_review.as_ref() else { return };
     let layout = s.layout.clone();
-    let tabs = s.tab_widths.clone();
+    let tabs = s.measurements.clone();
     let shown = preview.as_ref().unwrap_or(&layout);
     // The canvas and panel chrome must use the same preview layout. Keeping the
     // committed dock reservation while its panel is visibly floating leaves an
@@ -424,6 +429,15 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
                     vec2(press.x - if *left { rect.left() } else { rect.right() }, 0.0)
                 }
                 GestureKind::Height { top, .. } => vec2(0.0, press.y - if *top { rect.top() } else { rect.bottom() }),
+                GestureKind::Divider { split, axis, .. } => {
+                    measured.iter().flat_map(|h| &h.dividers).find(|d| d.id == *split).map_or(Vec2::ZERO, |d| {
+                        if *axis == model::Axis::Horizontal {
+                            vec2(press.x - d.rect.left(), 0.0)
+                        } else {
+                            vec2(0.0, press.y - (d.rect.bottom() - model::SPLIT_GAP))
+                        }
+                    })
+                }
                 _ => press - rect.min,
             };
             let mut geometry = geometry::measure(&s.layout, region, &tabs);
@@ -474,7 +488,7 @@ fn draw(app: &mut VectorcraftApp, ui: &mut egui::Ui, region: Rect) {
 struct View<'a> {
     layout: &'a Layout,
     dragging: bool,
-    tabs: &'a TabWidths,
+    tabs: &'a Measurements,
 }
 
 /// One frame of a layout gesture: the layout to show and, on a release over a valid target, the
@@ -501,7 +515,7 @@ fn move_actions(layout: &Layout, source: &Source, target: Target, from_flyout: b
 }
 
 /// `None` cancels the gesture: its preview no longer applies to `layout`.
-fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, released: bool, tabs: &TabWidths) -> Option<GestureFrame> {
+fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, released: bool, tabs: &Measurements) -> Option<GestureFrame> {
     let commit_actions = |actions: &Vec<Action>| released.then(|| Ok(actions.clone()));
     match &gesture.kind {
         GestureKind::Move(source) => {
@@ -528,7 +542,7 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
             let r = gesture.origin;
             let trim = layout.host(*host).map_or(0.0, geometry::docked_bar_trim);
             let minimum = layout.host(*host).map_or(180.0, |h| {
-                let minimum = geometry::minimum_height(&h.root);
+                let minimum = geometry::height_bounds(h, r.width(), tabs).0;
                 if standalone_kind(h) == Some(registry::PanelKind::Tools) { minimum.max(h.expanded[0]) } else { minimum }
             }) - trim;
             let bottom =
@@ -548,9 +562,9 @@ fn gesture_frame(layout: &Layout, gesture: &Gesture, p: Pos2, region: Rect, rele
         GestureKind::Divider { split, axis, min, max } => {
             let r = gesture.origin;
             let ratio = if *axis == model::Axis::Horizontal {
-                (p.x - r.left()) / (r.width() - model::SPLIT_GAP).max(1.0)
+                (p.x - gesture.grab.x - r.left()) / (r.width() - model::SPLIT_GAP).max(1.0)
             } else {
-                (p.y - r.top()) / (r.height() - model::SPLIT_GAP).max(1.0)
+                (p.y - gesture.grab.y - r.top()) / (r.height() - model::SPLIT_GAP).max(1.0)
             };
             let actions = vec![Action::SplitRatio { split: *split, ratio: ratio.clamp(*min, *max) }];
             Some(GestureFrame { preview: layout.applied(&actions).ok()?, drop_line: None, commit: commit_actions(&actions) })
@@ -857,7 +871,9 @@ fn render_host(
         ui.set_clip_rect(clip);
         for divider in &geo.dividers {
             let cursor = if divider.axis == model::Axis::Horizontal { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical };
-            let response = ui.interact(divider.rect, id.with(("divider", divider.id)), Sense::drag()).on_hover_cursor(cursor);
+            let resizable = divider.max_ratio - divider.min_ratio > 0.0001;
+            let response = ui.interact(divider.rect, id.with(("divider", divider.id)), if resizable { Sense::drag() } else { Sense::hover() });
+            let response = if resizable { response.on_hover_cursor(cursor) } else { response };
             let t = Tokens::get(ctx);
             ui.painter().rect_filled(divider.rect, 0, t.panel_darker);
             let color = if response.hovered() || response.dragged() { t.accent } else { t.border };
@@ -897,18 +913,38 @@ fn render_host(
                 }
             }
         }
-        if geo.groups.iter().any(|g| g.mode == Mode::Full) && !matches!(host.dock, Some(Edge::Left | Edge::Right)) && !control {
+        if geo.groups.iter().any(|g| g.mode == Mode::Full)
+            && !control
+            && geometry::height_bounds(host, rect.width(), view.tabs).1 > geometry::height_bounds(host, rect.width(), view.tabs).0 + 0.5
+        {
             for top in [false, true] {
-                if matches!(host.dock, Some(Edge::Top)) && top || matches!(host.dock, Some(Edge::Bottom)) && !top {
+                if matches!(host.dock, Some(Edge::Top | Edge::Left | Edge::Right)) && top || matches!(host.dock, Some(Edge::Bottom)) && !top {
                     continue;
                 }
-                let y = if top { rect.top() } else { rect.bottom() - 4.0 };
-                let edge = Rect::from_min_size(pos2(rect.left() + 22.0, y), vec2((rect.width() - 44.0).max(1.0), 4.0));
-                let response =
-                    ui.interact(edge, id.with(if top { "top" } else { "bottom" }), Sense::drag()).on_hover_cursor(CursorIcon::ResizeVertical);
-                hits.push((format!("resize-{}:{}", if top { "top" } else { "bottom" }, host.id), edge));
-                if response.drag_started() && !view.dragging {
-                    *pending = Some((GestureKind::Height { host: host.id, top }, rect, false));
+                let edges: Vec<Rect> = if top || model::has_tools(&host.root) {
+                    let y = if top { rect.top() } else { rect.bottom() - paint::FOOT };
+                    vec![Rect::from_min_size(pos2(rect.left() + 22.0, y), vec2((rect.width() - 44.0).max(1.0), if top { 4.0 } else { paint::FOOT }))]
+                } else {
+                    geo.groups
+                        .iter()
+                        .filter(|g| g.footer.is_positive() && (g.footer.bottom() - rect.bottom()).abs() < 0.5)
+                        .filter_map(|g| {
+                            let column = model::column_node(&host.root, g.id)?;
+                            let flexible = model::groups(column)
+                                .iter()
+                                .any(|active| sizing::measured(&view.tabs.bodies, &active.active, g.body.width()).is_none_or(|size| size.stretches));
+                            flexible.then_some(g.footer.shrink2(vec2(2.0, 0.0)))
+                        })
+                        .collect()
+                };
+                for (index, edge) in edges.into_iter().enumerate() {
+                    let response = ui
+                        .interact(edge, id.with((if top { "top" } else { "bottom" }, index)), Sense::drag())
+                        .on_hover_cursor(CursorIcon::ResizeVertical);
+                    hits.push((format!("resize-{}:{}", if top { "top" } else { "bottom" }, host.id), edge));
+                    if response.drag_started() && !view.dragging {
+                        *pending = Some((GestureKind::Height { host: host.id, top }, rect, false));
+                    }
                 }
             }
         }
@@ -1071,26 +1107,40 @@ fn render_group(
     if full && geo.body.is_positive() {
         body(app, ui, &group.active, geo.body);
     }
+    if full && geo.footer.is_positive() {
+        ui.painter().rect_filled(geo.footer, 0, t.panel_darker);
+        ui.painter().hline(geo.footer.x_range(), geo.footer.top(), Stroke::new(1.0, t.divider));
+        hits.push((format!("group-footer:{}", group.id), geo.footer));
+        hits.push((format!("group-body:{}", group.id), geo.body));
+    }
     ui.painter().hline(geo.rect.x_range(), geo.rect.bottom() - 0.5, Stroke::new(1.0, t.divider));
 }
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, panel: &str, rect: Rect) {
+    let sizes = app.ui.varos_panel_review.as_ref().map(|s| s.measurements.bodies.clone()).unwrap_or_default();
     ui.scope_builder(
         egui::UiBuilder::new().scope_id(Id::unique(("panel-review-content", panel))).max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)),
         |ui| {
             ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-            ui.set_min_size(rect.size());
             ui.set_max_size(rect.size());
             if content::show(app, ui, panel, rect) {
                 return;
             }
             if registry::get(panel).is_some_and(|spec| spec.scrolls_itself) {
-                super::shell::boxes::panel_body(app, ui, panel, rect.width(), (rect.height() - 18.0).max(0.0));
+                sizing::own_scroll(ui.ctx(), panel, rect.width());
+                // The Properties adapter adds 12 points to its legacy 20-point body margin.
+                let margin = if super::shell::persist::is_properties(panel) { 20.0 } else { 16.0 };
+                super::shell::boxes::panel_body(app, ui, panel, rect.width(), (rect.height() - margin).max(0.0));
             } else {
-                crate::widgets::panel_scroll(
+                egui::ScrollArea::vertical().id_salt(("panel-review-scroll", panel)).max_height(rect.height()).auto_shrink([false, true]).show(
                     ui,
-                    egui::ScrollArea::vertical().id_salt(("panel-review-scroll", panel)).max_height(rect.height()).auto_shrink([false, false]),
-                    |ui| super::shell::boxes::panel_body(app, ui, panel, rect.width() - 4.0, (rect.height() - 18.0).max(0.0)),
+                    |ui| {
+                        // Preserve the body's exact width while the host's overlay scrollbar is visible.
+                        let content_rect = Rect::from_min_size(ui.cursor().min, rect.size());
+                        sizing::show(ui, panel, content_rect, &sizes, |ui| {
+                            super::shell::boxes::panel_body(app, ui, panel, rect.width(), (rect.height() - 16.0).max(0.0));
+                        });
+                    },
                 );
             }
         },
@@ -1124,7 +1174,11 @@ fn render_flyout(
     let width = remembered[0].max(240.0).min(region.width());
     // A body that fits its content (the side Color panel's sliders/spectrum) ignores an older
     // remembered size; the others open at their remembered expanded height.
-    let preferred_height = match content::fitted_height(ctx, &g.active) {
+    let preferred_height = match sizing::measured(&view.tabs.bodies, &g.active, width - 2.0)
+        .filter(|s| !s.stretches || registry::get(&g.active).is_some_and(|spec| spec.fits_content))
+        .map(|s| s.minimum)
+        .or_else(|| content::fitted_height(ctx, &g.active))
+    {
         Some(content) => content + paint::TITLE + paint::TABS + paint::FOOT,
         None => remembered[1].max(180.0),
     };
@@ -1199,3 +1253,6 @@ mod color_flyout_tests;
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod sizing_tests;
