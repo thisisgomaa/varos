@@ -26,7 +26,7 @@ pub(crate) fn panel_min_width(id: &str) -> f32 {
     let kind = id.split_once('@').map(|(kind, _)| kind).unwrap_or(id);
     match kind {
         "color" => 240.0,
-        "properties" | "character" | "paragraph" => 300.0,
+        "ai" | "properties" | "character" | "paragraph" => 300.0,
         "layers" => 200.0,
         _ => 180.0,
     }

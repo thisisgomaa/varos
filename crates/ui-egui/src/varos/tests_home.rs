@@ -164,7 +164,7 @@ fn disabled_sharing_does_nothing_and_explains_why() {
         assert!(node.accesskit_node().is_disabled());
         node.hover();
         h.run_steps(4);
-        assert!(texts(&h).iter().any(|s| s == "Sharing comes later"), "{:?}", texts(&h));
+        assert!(texts(&h).iter().any(|s| s == &crate::varos::soon::hover(label)), "{:?}", texts(&h));
         // Send physical input even though accessibility correctly marks the widget disabled.
         h.get_by_role_and_label(egui::accesskit::Role::Button, label).click();
         h.run_steps(3);
@@ -320,7 +320,7 @@ fn greeting_uses_local_hour_boundaries_and_catalogs_cover_home() {
         assert_eq!(data::greeting(hour, "Sam"), format!("Good {expected}, Sam"));
     }
     let ar = crate::i18n::Lang::from_code("ar").unwrap();
-    assert_eq!(crate::i18n::tr(ar, "Sharing comes later"), "ستتوفر المشاركة لاحقًا");
+    assert_eq!(crate::i18n::tr(ar, "Shared with me"), "تمت مشاركتها معي");
 }
 
 #[test]

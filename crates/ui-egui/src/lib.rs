@@ -775,7 +775,11 @@ impl VectorcraftApp {
             ui
         };
         #[cfg(not(test))]
-        let ui = UiState { brightness: theme::Brightness::Dark, ..Default::default() }; // Varos: fresh UI default.
+        let ui = {
+            let mut ui = UiState { brightness: theme::Brightness::Dark, ..Default::default() };
+            varos::ai::initialize_fresh(&mut ui); // Varos: fresh right dock; the host restores saved preferences afterward.
+            ui
+        };
         Self {
             session,
             ui,

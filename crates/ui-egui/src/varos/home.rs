@@ -339,14 +339,12 @@ fn nav_row(ui: &mut Ui, rect: Rect, label: &str, icon: &str, active: bool, disab
         Align2::LEFT_CENTER,
     );
     if disabled {
-        badge(ui, Rect::from_center_size(pos2(rect.right() - 28.0, rect.center().y), vec2(30.0, 16.0)));
+        badge(ui, Rect::from_center_size(pos2(rect.right() - 28.0, rect.center().y), LOOK.soon_tag_size));
     }
-    r.on_disabled_hover_text(tl!("Sharing comes later"))
+    r.on_disabled_hover_text(super::soon::hover("Shared with me"))
 }
 fn badge(ui: &Ui, rect: Rect) {
-    let t = Tokens::get(ui.ctx());
-    ui.painter().rect_stroke(rect, f32::from(LOOK.inset_radius), Stroke::new(1.0, t.button_border), StrokeKind::Inside);
-    text(ui, rect, tl!("later"), egui::FontId::proportional(LOOK.badge_font), t.text_disabled, Align2::CENTER_CENTER);
+    super::soon::tag(ui, rect);
 }
 fn action(ui: &mut Ui, label: &str, icon: Option<&str>, primary: bool, disabled: bool) -> Response {
     let t = Tokens::get(ui.ctx());
@@ -393,13 +391,13 @@ fn action(ui: &mut Ui, label: &str, icon: Option<&str>, primary: bool, disabled:
                 Align2::LEFT_CENTER,
             );
             if disabled {
-                badge(ui, Rect::from_center_size(pos2(rect.right() - 29.0, rect.center().y), vec2(30.0, 16.0)));
+                badge(ui, Rect::from_center_size(pos2(rect.right() - 29.0, rect.center().y), LOOK.soon_tag_size));
             }
             focus(ui, rect, &r);
             r
         })
         .inner;
-    r.on_disabled_hover_text(tl!("Sharing comes later"))
+    r.on_disabled_hover_text(super::soon::hover("Join with a code"))
 }
 
 fn text(ui: &Ui, rect: Rect, label: &str, font: egui::FontId, color: Color32, align: Align2) {
@@ -744,15 +742,22 @@ fn templates(app: &mut VectorcraftApp, ui: &mut Ui, cards: &mut Vec<CardTarget>)
     let query = app.ui.home_view.query.trim().to_lowercase();
     let choices: Vec<_> = choices.into_iter().filter(|(name, ..)| name.to_lowercase().contains(&query)).collect();
     let (cols, width) = grid(ui.available_width());
-    for row in choices.chunks(cols) {
+    let soon_cards = ["Box templates", "Brand guide template"];
+    let soon_cards: Vec<_> = soon_cards.into_iter().filter(|name| name.to_lowercase().contains(&query)).collect();
+    let total = choices.len() + soon_cards.len();
+    for start in (0..total).step_by(cols) {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 14.0;
-            for (name, size, params, aspect) in row {
-                let key = format!("template:{name}");
-                let (rect, r) = card(app, ui, &key, name, size, width, None, Some(*aspect));
-                cards.push(CardTarget { key, rect, command: "file.new", params: params.clone() });
-                if r.clicked() {
-                    run(app, "file.new", params.clone());
+            for index in start..(start + cols).min(total) {
+                if let Some((name, size, params, aspect)) = choices.get(index) {
+                    let key = format!("template:{name}");
+                    let (rect, r) = card(app, ui, &key, name, size, width, None, Some(*aspect));
+                    cards.push(CardTarget { key, rect, command: "file.new", params: params.clone() });
+                    if r.clicked() {
+                        run(app, "file.new", params.clone());
+                    }
+                } else if let Some(label) = soon_cards.get(index - choices.len()) {
+                    super::soon::template_card(ui, label, width);
                 }
             }
         });

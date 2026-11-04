@@ -168,12 +168,14 @@ pub fn from_tree(app: &VectorcraftApp, tree: &[(&'static str, Vec<menus::Item>)]
             .map(|e| match e {
                 Entry::Sep => Node::Separator,
                 Entry::Header(h) => Node::Header(h.to_string()),
-                Entry::Sub(label, children) => Node::Submenu { label: label.to_string(), children: level(app, children) },
+                Entry::Sub(label, children) => {
+                    Node::Submenu { label: crate::varos::soon::native_submenu_label(label, children), children: level(app, children) }
+                } // Varos: Soon submenu mirror.
                 Entry::Item(row) => Node::Item(Item {
                     command: row.command.map(|(id, _)| id),
                     params: row.command.map_or(Value::Null, |(_, p)| p.clone()),
                     source: row.source,
-                    label: row.label.into_owned(),
+                    label: crate::varos::soon::native_row_label(&row), // Varos: native disabled Soon mirror.
                     shortcut: row.shortcut,
                     enabled: row.enabled,
                     checked: row.checked,
@@ -413,6 +415,7 @@ fn native_item(app: &VectorcraftApp, label: &'static str, command: &'static str,
 fn settings_pages(preferences: &Item, lang: Lang) -> Vec<Node> {
     vectorcraft_engine::cmd::prefscmds::PREF_CATEGORIES
         .iter()
+        .chain([&"AI"]) // Varos: the last Preferences page is also reachable from native Settings.
         .enumerate()
         .map(|(i, page)| {
             Node::Item(Item {
@@ -620,4 +623,9 @@ fn state_hash(app: &VectorcraftApp, input: Option<u64>) -> u64 {
     (crate::i18n::current().code(), menus::plugin_revision()).hash(&mut h);
     crate::shortcut_editor::GENERATION.load(std::sync::atomic::Ordering::Relaxed).hash(&mut h);
     h.finish()
+}
+
+/// Varos: roadmap copy for the platform menu adapter (presentation, never a command).
+pub fn soon_tooltip(node: &Node) -> Option<String> {
+    crate::varos::soon::native_tooltip(node)
 }

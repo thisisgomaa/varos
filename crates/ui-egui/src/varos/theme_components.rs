@@ -5,6 +5,18 @@ use egui::{Align2, FontId, Painter, Rect, Stroke, pos2};
 /// Compile-time baseline for the first migration. Runtime theme loading is a later stage.
 /// Measurements and painting must consume the same definition.
 pub(crate) struct Foundation {
+    pub soon_tag_size: egui::Vec2,
+    pub soon_gap: f32,
+    pub soon_icon: f32,
+    pub soon_row_height: f32,
+    pub soon_stroke: f32,
+    pub soon_chat_height: f32,
+    pub soon_rail_width: f32,
+    pub soon_note_padding: egui::Vec2,
+    pub soon_chat_padding: i8,
+    pub soon_section_height: f32,
+    pub soon_status_dot: f32,
+    pub soon_submenu_min_width: f32,
     pub tab_font: f32,
     pub tab_height: f32,
     pub document_tab_height: f32,
@@ -48,6 +60,18 @@ pub(crate) struct Foundation {
     pub panel_title_height: f32,
 }
 pub(crate) const FOUNDATION: Foundation = Foundation {
+    soon_tag_size: egui::vec2(30.0, 16.0),
+    soon_gap: 6.0,
+    soon_icon: 16.0,
+    soon_row_height: 28.0,
+    soon_stroke: 1.0,
+    soon_chat_height: 118.0,
+    soon_rail_width: 36.0,
+    soon_note_padding: egui::vec2(9.0, 8.0),
+    soon_chat_padding: 8,
+    soon_section_height: 34.0,
+    soon_status_dot: 7.0,
+    soon_submenu_min_width: 200.0,
     tab_font: 12.0,
     tab_height: 24.0,
     document_tab_height: 28.0,

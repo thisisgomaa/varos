@@ -157,6 +157,7 @@ impl MacMenu {
             old.remove_for_nsapp();
         }
         menu.init_for_nsapp();
+        super::varos_soon_menu::decorate(bar); // Varos: decorate the installed AppKit tree, not muda's unattached copies.
         // Only once the menu is the app's: muda looks the submenus up in the installed main menu.
         for (role, sub) in special {
             match role {

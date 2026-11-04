@@ -203,7 +203,7 @@ pub(crate) fn migrate_1_to_2(mut v: Value) -> Value {
         o.insert("version".into(), json!(2));
         if !o.contains_key("strip") {
             let tree = o.get("tree").and_then(|t| Node::deserialize(t).ok()).map_or_else(Node::default_layout, |t| t.sanitized(&known));
-            o.insert("strip".into(), serde_json::to_value(super::strip::Strip::default_for(&tree)).unwrap_or(Value::Null));
+            o.insert("strip".into(), serde_json::to_value(super::strip::Strip::legacy_default_for(&tree)).unwrap_or(Value::Null));
         }
     }
     v
@@ -307,7 +307,8 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
     let readable = matches!(version, Some(1..=7));
     let tree =
         readable.then(|| v.get("tree").and_then(|t| Node::deserialize(t).ok())).flatten().map_or_else(Node::default_layout, |t| t.sanitized(&known));
-    let strip = v.get("strip").and_then(|s| super::strip::Strip::deserialize(s).ok()).unwrap_or_else(|| super::strip::Strip::default_for(&tree));
+    let strip =
+        v.get("strip").and_then(|s| super::strip::Strip::deserialize(s).ok()).unwrap_or_else(|| super::strip::Strip::legacy_default_for(&tree));
     // Each float, floating strip, view and workspace reads alone: one that doesn't read is dropped,
     // not the rest.
     let list = |key: &str| if readable { v.get(key).and_then(Value::as_array).cloned().unwrap_or_default() } else { Vec::new() };
@@ -351,6 +352,13 @@ pub(crate) fn from_value(v: &Value) -> VarosShell {
     // Stage-2 state keeps its own strip arrangement rules (see `Strip::sanitize_owned`).
     shell.sanitize(matches!(version, Some(1 | 2)) || !readable);
     shell.sanitize_workspaces();
+    shell
+}
+
+/// Defaults for a historical preferences file with no shell key.
+pub(crate) fn historical_default() -> VarosShell {
+    let mut shell = VarosShell::default();
+    shell.strip.remove("ai");
     shell
 }
 
@@ -1028,7 +1036,7 @@ mod tests {
         let ui: crate::state::UiState = serde_json::from_value(json!({"varos_shell": {"enabled": true}})).unwrap();
         assert!(ui.varos_shell.enabled, "the switch is kept without a layout");
         let ui: crate::state::UiState = serde_json::from_value(json!({})).unwrap();
-        assert_eq!(ui.varos_shell, VarosShell::default());
+        assert_eq!(ui.varos_shell, historical_default());
     }
 
     const V1: &str = include_str!("fixtures/v1.json");
@@ -1075,7 +1083,8 @@ mod tests {
         assert_eq!(v2["version"], json!(2));
         let strip = super::super::strip::Strip::deserialize(&v2["strip"]).unwrap();
         let tree = Node::deserialize(&v1["tree"]).unwrap();
-        assert_eq!(strip, super::super::strip::Strip::default_for(&tree), "the panels no box has");
+        assert_eq!(strip, super::super::strip::Strip::legacy_default_for(&tree), "the original panels no box has");
+        assert!(strip.group("ai").is_none());
         assert_eq!(v2["tree"], v1["tree"], "the boxes as they were");
         let v3 = migrate_2_to_3(v2.clone());
         assert_eq!((v3["version"].clone(), v3["floats"].clone(), v3["float_strips"].clone()), (json!(3), json!([]), json!([])));

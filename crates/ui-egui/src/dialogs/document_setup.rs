@@ -45,7 +45,8 @@ fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
 
 fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     let tab = TABS.iter().position(|t| *t == d.str("tab")).unwrap_or(0);
-    if let Some(i) = widgets::tab_bar(ui, &TABS, tab) {
+    if let Some(i) = crate::varos::soon::document_tabs(ui, &TABS, tab) {
+        // Varos: inert fourth tab.
         d.fields.insert("tab".into(), json!(TABS[i]));
     }
     ui.add_space(12.0);

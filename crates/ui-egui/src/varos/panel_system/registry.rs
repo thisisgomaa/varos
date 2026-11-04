@@ -36,6 +36,7 @@ pub(super) struct PanelSpec<'a> {
 
 /// Varos sizes for the panels whose bodies need more than the standard 260 x 360 (min 240 x 180).
 const SIZES: &[(&str, [f32; 2], [f32; 2])] = &[
+    ("ai", [320.0, 600.0], [300.0, 180.0]),
     ("properties", [300.0, 420.0], [300.0, 180.0]),
     ("layers", [300.0, 380.0], [240.0, 180.0]),
     ("libraries", [300.0, 420.0], [240.0, 180.0]),

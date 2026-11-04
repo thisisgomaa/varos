@@ -871,7 +871,7 @@ fn strip_defaults_migrate_and_ownership_moves() {
     let mut shell = shell::persist::from_value(&json!({"version":1,"enabled":true,"tree":tree}));
     assert_eq!(shell.version, shell::persist::VERSION);
     let mut expected: Vec<_> =
-        crate::state::ICON_PANEL_GROUPS.iter().flat_map(|g| g.iter()).filter(|p| tree.find_tab(p).is_none()).copied().collect();
+        crate::state::ICON_PANEL_GROUPS.iter().flat_map(|g| g.iter()).filter(|p| **p != "ai" && tree.find_tab(p).is_none()).copied().collect();
     expected.push("control");
     assert_eq!(shell.strip.groups.iter().flat_map(|g| g.panels.iter().map(String::as_str)).collect::<Vec<_>>(), expected);
     assert!(shell.add_tab(3, "stroke"));
@@ -1102,6 +1102,10 @@ fn sanitize_removes_gaps_and_restores_missing_default_owners() {
     strip.sanitize(&tree);
     assert!(strip.groups.iter().all(|g| !g.panels.is_empty()));
     for p in crate::state::ICON_PANEL_GROUPS.iter().flat_map(|g| g.iter()) {
+        if *p == "ai" {
+            assert!(strip.group(p).is_none(), "Soon must not backfill AI into a saved strip");
+            continue;
+        }
         assert!(tree.find_tab(p).is_some() || strip.group(p).is_some(), "{p}");
     }
 }
@@ -3823,4 +3827,47 @@ fn capture_panel_behavior_followup() {
     h.settle();
     let pixels = capture(&mut h.app, 1440, 900);
     image::save_buffer(path, &pixels, 1440, 900, image::ColorType::Rgba8).unwrap();
+}
+
+#[test]
+fn fresh_ai_dock_has_a_stable_strip_mirror_without_saved_owner_changes() {
+    let mut h = Harness::new();
+    h.shell(true);
+    crate::varos::ai::initialize_fresh(&mut h.app.ui);
+    h.settle();
+    let before = h.app.ui.varos_shell.clone();
+    h.settle();
+    assert_eq!(h.app.ui.varos_shell, before, "drawing the mirror never rewrites saved owners");
+    let mirror = h.ctx.read_response(egui::Id::unique("varos-ai-strip")).unwrap();
+    assert!(mirror.enabled());
+    assert!(h.app.ui.varos_shell.tree.find_tab("ai").is_some());
+    let at = mirror.rect.center();
+    h.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+    h.time += 0.05;
+    h.app.begin_host_iteration();
+    let mut passes = 0;
+    let mut out = h.ctx.run_ui(
+        egui::RawInput {
+            time: Some(h.time),
+            events: vec![button(at, false)],
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, h.screen)),
+            focused: true,
+            ..Default::default()
+        },
+        |ui| {
+            h.app.tick(ui.ctx());
+            h.app.ui(ui);
+            passes += 1;
+            if passes == 1 {
+                ui.ctx().request_discard("exercise AI mirror click replay");
+            }
+        },
+    );
+    out.textures_delta.clear();
+    assert!(passes >= 2);
+    h.settle();
+    assert!(h.app.ui.varos_shell.tree.find_tab("ai").is_none());
+    assert!(h.app.ui.varos_shell.open.is_none(), "one release closes once even after a discarded pass");
+    h.click(mirror.rect.center());
+    assert_eq!(h.app.ui.varos_shell.open.as_deref(), Some("ai"));
 }

@@ -336,7 +336,8 @@ pub(crate) fn from_legacy(f: &Fields<'_>) -> Option<(Layout<String>, Hidden)> {
     let tabs: Vec<String> = DockTab::ALL.iter().map(|t| t.info().0.to_string()).filter(|id| f.icons.contains(id)).collect();
     icon_groups.extend(take_group(&mut placed, &tabs, 0));
     for row in ICON_PANEL_GROUPS {
-        let row: Vec<String> = row.iter().map(|id| id.to_string()).collect();
+        // Varos: historical layouts never acquire a new AI panel unless they saved it explicitly.
+        let row: Vec<String> = row.iter().filter(|id| crate::varos::ai::legacy_panel(id, f.icons.contains(**id))).map(|id| id.to_string()).collect();
         icon_groups.extend(take_group(&mut placed, &row, 0));
     }
     let dropped: Vec<String> = ICON_PANELS.iter().map(|e| e.0).filter(|id| !in_rows(id) && f.icons.contains(*id)).map(String::from).collect();

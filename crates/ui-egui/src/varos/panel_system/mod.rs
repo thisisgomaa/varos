@@ -56,7 +56,16 @@ impl Default for State {
     /// The production default: the Design workspace.
     fn default() -> Self {
         Self {
-            layout: Layout::new_workspace(),
+            layout: {
+                let mut layout = Layout::new_workspace();
+                if let Some(id) = layout.owner("ai").map(|host| host.id)
+                    && let Some(host) = layout.hosts.iter_mut().find(|host| host.id == id)
+                {
+                    host.hidden = false;
+                    host.dock = Some(Edge::Right);
+                }
+                layout
+            },
             workspaces: Default::default(),
             hidden: None,
             compact_offsets: Default::default(),
@@ -70,6 +79,15 @@ impl Default for State {
 }
 
 impl State {
+    /// Called only for a newly initialized workspace, after its starter preset was selected.
+    pub fn initialize_ai(&mut self) {
+        if let Some(host) =
+            self.layout.hosts.iter_mut().find(|host| model::groups(&host.root).iter().any(|group| group.panels.iter().any(|id| id == "ai")))
+        {
+            host.hidden = false;
+            host.dock = Some(Edge::Right);
+        }
+    }
     /// Drop every in-progress interaction (gesture, open flyout, hit record) and keep the layout.
     pub(crate) fn cancel_transient(&mut self) {
         self.cancel_gesture();
@@ -277,6 +295,8 @@ pub fn frame(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             super::shell::boxes::board(app, ui, region, false);
             return;
         }
+        let region =
+            if app.ui.varos_panel_review.as_ref().is_none_or(|state| state.hidden.is_none()) { super::ai::strip(app, ui, region) } else { region };
         draw(app, ui, region);
         content::popovers(app, ui.ctx(), region);
         // A panel requested while this frame drew (a Control bar link) shows on the next frame.
@@ -1257,6 +1277,8 @@ mod drag_paint_tests;
 #[cfg(test)]
 mod color_flyout_tests;
 
+#[cfg(test)]
+mod soon_tests;
 #[cfg(test)]
 mod test_support;
 

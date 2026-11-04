@@ -19,8 +19,10 @@ pub(crate) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let mut open = true;
     let screen = ctx.content_rect();
     let body_height = (screen.height() - 160.0).clamp(80.0, 430.0);
+    let categories: Vec<_> = PREF_CATEGORIES.iter().copied().chain(["AI"]).collect();
+    let categories = categories.as_slice();
     let cat = d.str(CATEGORY);
-    let cat = PREF_CATEGORIES.iter().find(|c| **c == cat).copied().unwrap_or(PREF_CATEGORIES[0]);
+    let cat = categories.iter().find(|c| **c == cat).copied().unwrap_or(categories[0]);
     egui::Window::new(tl!("Preferences"))
         .id(egui::Id::unique("dialog-preferences"))
         .order(egui::Order::Foreground)
@@ -46,7 +48,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                             // need their own vertical column rather than one very wide row.
                             ui.vertical(|ui| {
                                 ui.spacing_mut().item_spacing.y = 1.0;
-                                for c in PREF_CATEGORIES {
+                                for c in categories {
                                     let sel = *c == cat;
                                     let text =
                                         egui::RichText::new(tl!(*c)).size(LOOK.legacy_control_font).color(if sel { t.text_strong } else { t.text });
@@ -67,7 +69,11 @@ pub(crate) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     egui::ScrollArea::vertical().id_salt(("prefs", cat)).max_height((body_height - 30.0).max(50.0)).auto_shrink([false, false]).show(
                         ui,
                         |ui| {
-                            crate::prefs_dialog::category_fields(ui, &mut d, cat);
+                            if cat == "AI" {
+                                crate::varos::soon::settings(ui);
+                            } else {
+                                crate::prefs_dialog::category_fields(ui, &mut d, cat);
+                            }
                         },
                     );
                 });
@@ -93,12 +99,12 @@ pub(crate) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                         cancel = true;
                     }
                     ui.add_space(16.0);
-                    let i = PREF_CATEGORIES.iter().position(|c| *c == cat).unwrap_or(0);
-                    if ui.add_enabled(i + 1 < PREF_CATEGORIES.len(), egui::Button::new(tl!("Next"))).clicked() {
-                        d.set(CATEGORY, json!(PREF_CATEGORIES[i + 1]));
+                    let i = categories.iter().position(|c| *c == cat).unwrap_or(0);
+                    if ui.add_enabled(i + 1 < categories.len(), egui::Button::new(tl!("Next"))).clicked() {
+                        d.set(CATEGORY, json!(categories[i + 1]));
                     }
                     if ui.add_enabled(i > 0, egui::Button::new(tl!("Previous"))).clicked() {
-                        d.set(CATEGORY, json!(PREF_CATEGORIES[i - 1]));
+                        d.set(CATEGORY, json!(categories[i - 1]));
                     }
                 });
             });

@@ -53,6 +53,8 @@ mod printing;
 #[cfg(all(windows, not(target_vendor = "win7")))]
 mod system_fonts;
 mod tablet;
+#[cfg(target_os = "macos")]
+mod varos_soon_menu; // Varos: native Soon presentation.
 mod window;
 mod window_frame;
 mod windows_stylus;
@@ -1176,6 +1178,10 @@ fn main() -> std::process::ExitCode {
                     // Existing saved arrangements always win over the starter preset.
                     if fresh_panel_workspace && let Err(error) = app.run("window.workspace", serde_json::json!({"name":"Studio"})) {
                         app.status(error);
+                    }
+                    // Varos: the starter preset must not hide AI; saved workspaces are untouched.
+                    if fresh_panel_workspace && let Some(state) = app.ui.varos_panel_review.as_mut() {
+                        state.initialize_ai();
                     }
                 }
                 // The first frame is due from now (`gpu::watch_first_frame`).

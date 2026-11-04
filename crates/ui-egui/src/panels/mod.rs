@@ -141,6 +141,7 @@ pub(crate) fn selection_len(app: &VectorcraftApp) -> usize {
 
 pub fn show_icon_panel(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
     match id {
+        "ai" => crate::varos::ai::show(app, ui), // Varos: planned surfaces and existing tool mirrors.
         "pages" => crate::varos::pages::show(app, ui),
         "swatches" => swatches::show(app, ui),
         "color" => crate::varos::color_panel::side(app, ui), // Varos: measures its contents

@@ -109,6 +109,8 @@ impl Harness {
 #[test]
 fn tools_header_floats_redocks_right_and_escape_preserves_the_committed_layout() {
     let mut h = Harness::workspace();
+    // Isolate the Tools edge under test from the new fresh-workspace AI right dock.
+    h.action(Action::Hide { host: h.host_id("ai") });
     let id = h.host_id("tools");
     assert_eq!(h.layout().host(id).unwrap().dock, Some(Edge::Left));
     assert!(!h.has_hit("tab:tools"), "standalone docked Tools does not repeat its name in a tab band");
@@ -485,7 +487,7 @@ fn a_tall_compact_block_scrolls_to_the_last_panel_without_reparenting() {
         let index = h.layout().group(group).unwrap().panels.len();
         h.action(Action::Move { source: Source::Panel(panel.into()), target: Target::Merge { group, index } });
     }
-    assert_eq!(h.layout().group(group).unwrap().panels.len(), 43, "only regular panels share the compact group");
+    assert_eq!(h.layout().group(group).unwrap().panels.len(), crate::state::all_panels().count(), "only regular panels share the compact group");
     let host = h.host_id("layers");
     h.action(Action::SetMode { host, mode: Mode::Icons });
     let rect = h.host_rect("layers");

@@ -566,6 +566,8 @@ pub fn menu(app: &mut VectorcraftApp, ui: &mut Ui) {
         crate::menus::invoke(app, "links.reveal", json!({}));
     }
     ui.separator();
+    crate::varos::soon::menu_item(ui, "Copy placed images into the project folder"); // Varos
+    ui.separator();
     for (id, label) in SHOW {
         if menu_item(ui, tl!(label), true, o.show == id) {
             set_options(ui.ctx(), |o| o.show = id);

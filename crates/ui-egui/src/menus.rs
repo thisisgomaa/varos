@@ -2712,7 +2712,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
 
 pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
     let panel = |label: &'static str, id: &'static str| cp(label, "window.panel", json!({ "panel": id, "toggle": true }));
-    vec![
+    crate::varos::soon::menus(vec![
+        // Varos: inert roadmap entries, no new commands.
         (
             // The application menu: About only. The in-window bar never shows it (File
             // is first there, as in Illustrator); on macOS `native_menu::mac_layout` composes the
@@ -3375,7 +3376,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                 c("About Varos", "help.about"),
             ],
         ),
-    ]
+    ])
 }
 
 /// Object → Transform (also in the canvas context menu).
@@ -3674,7 +3675,7 @@ fn menu_body(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], clicked: &
 
 /// `items` as menu buttons; with `checks`, items that can be on or off show a check mark (or the
 /// room for one).
-fn render_items(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], checks: bool, clicked: &mut Option<(String, Value)>) {
+pub(crate) fn render_items(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], checks: bool, clicked: &mut Option<(String, Value)>) {
     let t = Tokens::get(ui.ctx());
     for e in items.iter().filter_map(|it| entry(app, it)) {
         match e {
@@ -3683,6 +3684,10 @@ fn render_items(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], checks:
             }
             Entry::Header(h) => {
                 ui.label(egui::RichText::new(h).size(VAROS_UI.control_font).color(t.text_dim));
+            }
+            Entry::Sub("Dieline", children) => {
+                // Varos: hover-only inert submenu.
+                crate::varos::soon::submenu(ui, children);
             }
             Entry::Sub(label, children) => {
                 ui.menu_button(label, |ui| {
@@ -3700,6 +3705,11 @@ fn render_items(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], checks:
 /// One menu item: its label (with a check mark, or the room for one, under `checks`), its shortcut,
 /// and Type › Font's samples.
 fn render_row(app: &VectorcraftApp, ui: &mut egui::Ui, row: &Row, checks: bool, clicked: &mut Option<(String, Value)>) {
+    // Varos: roadmap rows have neither a command nor a keyboard shortcut.
+    if row.command.is_none() && crate::varos::soon::get(row.source).is_some() {
+        crate::varos::soon::menu_item(ui, row.source);
+        return;
+    }
     let sc = row.shortcut.map(pretty_shortcut).unwrap_or_default();
     let Some((id, p)) = row.command else {
         ui.add_enabled_ui(false, |ui| {

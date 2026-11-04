@@ -89,6 +89,12 @@ impl Strip {
     pub fn group(&self, panel: &str) -> Option<usize> {
         self.groups.iter().position(|g| g.panels.iter().any(|p| p == panel))
     }
+    /// Reconstruct an older saved strip without adding the newly introduced AI owner.
+    pub fn legacy_default_for(tree: &Node) -> Self {
+        let mut strip = Self::default_for(tree);
+        strip.remove("ai");
+        strip
+    }
     pub fn remove(&mut self, panel: &str) {
         for g in &mut self.groups {
             g.panels.retain(|p| p != panel);
@@ -130,7 +136,7 @@ impl Strip {
         if !legacy {
             self.groups.retain(|g| !g.panels.is_empty());
             for group in Self::default_for(tree).groups {
-                let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
+                let panels: Vec<_> = group.panels.into_iter().filter(|p| p != "ai" && !elsewhere(p) && seen.insert(p.clone())).collect();
                 if !panels.is_empty() {
                     self.groups.push(Group { panels, temporary: false, width: 240.0, height: 360.0 });
                 }
@@ -156,7 +162,7 @@ impl Strip {
             self.append(&p);
         }
         for group in Self::default_for(tree).groups {
-            let panels: Vec<_> = group.panels.into_iter().filter(|p| !elsewhere(p) && seen.insert(p.clone())).collect();
+            let panels: Vec<_> = group.panels.into_iter().filter(|p| p != "ai" && !elsewhere(p) && seen.insert(p.clone())).collect();
             if !panels.is_empty() {
                 self.groups.push(Group { panels, temporary: false, width: 240.0, height: 360.0 });
             }
@@ -280,12 +286,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     } else {
         Rect::from_min_max(pos2(board.right() - width, board.top()), board.max)
     };
-    if app.ui.varos_shell.strip.groups.is_empty() {
-        // Keep an invisible edge target so panels can be docked back after the rail is detached.
-        let x = if left { board.left() } else { board.right() - 8.0 };
-        hits.push((Hit::Strip, Rect::from_min_size(pos2(x, board.top()), vec2(8.0, board.height()))));
-        return board;
-    }
+    // The AI navigation mirror exists independently of saved owners, including an empty strip.
     let rail_response = ui.interact(rail, ui.scope_id().with("strip-drag"), Sense::drag());
     if rail_response.drag_started() {
         drag::begin(app, ui.ctx(), Item::BoardStrip, rail);
@@ -341,6 +342,7 @@ pub(crate) fn show(app: &mut VectorcraftApp, ui: &mut egui::Ui, board: Rect, hit
     let mut icons = Vec::new();
     // Icons and grips are dragged; the column scrolls by wheel and bar only (egui drags it on touch).
     egui::ScrollArea::vertical().id_salt("shell-strip-scroll").auto_shrink([false, false]).show(&mut child, |ui| {
+        crate::varos::ai::legacy_strip_mirror(app, ui, width);
         column(app, ui, StripRef::Board, &groups, width, rail, hits, &mut tops, &mut icons);
     });
     let tools_width = if app.ui.toolbar && app.ui.varos_shell.tools_pos.is_none() {
@@ -400,6 +402,10 @@ pub(crate) fn column(
             }
         }
         for panel in &g.panels {
+            // AI has one stable navigation mirror above the groups; its saved owner stays here.
+            if matches!(sref, StripRef::Board) && panel == "ai" {
+                continue;
+            }
             let (row, _) = ui.allocate_exact_size(vec2(width, ICON_ROW), Sense::hover());
             let rect = Rect::from_center_size(row.center(), vec2((width - 12.0).max(1.0), 28.0));
             let r = ui.interact(rect, ui.scope_id().with(panel), Sense::click_and_drag());

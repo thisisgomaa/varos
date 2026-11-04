@@ -110,10 +110,10 @@ fn settings_lists_every_preferences_page() {
     let mut app = app(true);
     let bar = bar(&app);
     let pages = items(submenu(&bar.menus[0].children, "Settings"));
-    assert_eq!(pages.len(), PREF_CATEGORIES.len());
+    assert_eq!(pages.len(), PREF_CATEGORIES.len() + 1); // Varos: AI is the last page.
     assert_eq!((pages[0].label.as_str(), pages[0].shortcut), ("General…", Some("Cmd+K")));
     assert!(pages[1..].iter().all(|it| it.shortcut.is_none()));
-    for (it, page) in pages.iter().zip(PREF_CATEGORIES) {
+    for (it, page) in pages.iter().zip(PREF_CATEGORIES.iter().chain([&"AI"])) {
         assert_eq!((it.command, &it.params, it.label.clone()), (Some("edit.preferences"), &json!({"category": page}), format!("{page}…")));
     }
     let units = pages.iter().find(|it| it.source == "Units").unwrap();
@@ -174,7 +174,7 @@ fn every_in_window_item_is_in_the_mac_menu_bar_once() {
     for (key, n) in &a {
         let m = b.get(key).copied().unwrap_or(0);
         let want = match key.0.as_str() {
-            "edit.preferences" => PREF_CATEGORIES.len(),
+            "edit.preferences" => PREF_CATEGORIES.len() + 1, // Varos: AI page.
             c if moved.contains(&c) => 1,
             _ => *n,
         };

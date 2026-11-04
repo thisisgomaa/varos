@@ -153,6 +153,7 @@ pub fn rail_panel(id: &str) -> Option<(&'static str, &'static str, &'static str)
 
 /// Panels that live as collapsed icons in the dock (Essentials Classic).
 pub const ICON_PANELS: &[(&str, &str, &str)] = &[
+    ("ai", "AI", "sparkles"), // Varos: licensed bundled icon for the AI panel.
     ("pages", "Pages", "file"),
     ("color", "Color", "palette"),
     ("colorGuide", "Color Guide", "dc-color-guide"),
@@ -201,6 +202,7 @@ pub const ICON_PANELS: &[(&str, &str, &str)] = &[
 /// no group can be opened from the Window menu and `window.panel`, but never appears as an
 /// icon. A panel that belongs in the column needs a row here as well as its entry above.
 pub const ICON_PANEL_GROUPS: &[&[&str]] = &[
+    &["ai"], // Varos: the AI panel is reachable in the right strip.
     &["color", "colorGuide"],
     &["swatches", "brushes", "symbols", "patternOptions"],
     &["stroke", "gradient", "transparency"],
@@ -621,7 +623,8 @@ pub struct UiState {
     pub varos_picker_defaults: Option<vectorcraft_tools::PaintDefaults>,
     /// Varos: Preferences › Varos shell (new) and the shell's box layout (`crate::varos::shell`),
     /// saved apart from [`Self::docking`]; a missing or malformed value reads as the defaults.
-    #[serde(default, deserialize_with = "crate::varos::shell::persist::lenient")]
+    // Varos: omitted legacy shell data must not backfill newly introduced panel owners.
+    #[serde(default = "crate::varos::shell::persist::historical_default", deserialize_with = "crate::varos::shell::persist::lenient")]
     pub varos_shell: crate::varos::shell::persist::VarosShell,
     /// Unified panel workspace, stored independently from legacy layouts.
     #[serde(default, deserialize_with = "crate::varos::panel_system::load")]

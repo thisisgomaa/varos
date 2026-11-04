@@ -42,7 +42,7 @@ pub(crate) fn current_fields(app: &VectorcraftApp) -> Map<String, Value> {
 
 pub fn open(app: &mut VectorcraftApp, category: Option<&str>) {
     let mut fields = current_fields(app);
-    let cat = category.and_then(|c| PREF_CATEGORIES.iter().find(|x| x.eq_ignore_ascii_case(c))).copied().unwrap_or(PREF_CATEGORIES[0]);
+    let cat = category.and_then(|c| PREF_CATEGORIES.iter().chain([&"AI"]).find(|x| x.eq_ignore_ascii_case(c))).copied().unwrap_or(PREF_CATEGORIES[0]); // Varos: AI last page.
     fields.insert("__category".into(), json!(cat));
     app.ui.dialog = Some(Dialog { kind: "preferences".into(), fields });
     crate::varos::preferences::begin(app); // Varos: Apply's draft

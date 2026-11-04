@@ -99,6 +99,7 @@ fn settings_section(app: &mut VectorcraftApp, ui: &mut Ui) {
             run(app, "edit.colorSettings", json!({"cmyk": n}));
         }
     });
+    crate::varos::soon::press_condition(ui); // Varos: under CMYK, before Intent.
     ui.horizontal(|ui| {
         ui.label(tl!("Intent:"));
         let labels: Vec<&str> = Intent::ALL.iter().map(|i| i.label()).collect();

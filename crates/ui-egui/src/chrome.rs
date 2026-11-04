@@ -2770,9 +2770,8 @@ fn simple_app_bar_right(app: &mut VectorcraftApp, ui: &mut Ui) {
         app.ui.palette_open = !app.ui.palette_open;
         app.ui.palette_query.clear();
     }
-    ui.add_enabled(false, egui::Button::new(egui::RichText::new(tl!("Share")).size(VAROS_UI.control_font)))
-        .on_disabled_hover_text(tl!("Sharing comes later"));
-    widgets::icon_button(ui, "plus", tl!("Sharing comes later"), false, 22.0);
+    crate::varos::soon::button(ui, "Share"); // Varos: one inert Soon component.
+    widgets::icon_button(ui, "plus", &crate::varos::soon::hover("Share"), false, 22.0); // Varos: same sharing wording.
     if !app.agents.registry.is_empty() {
         let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
         ui.painter().circle_filled(r.center(), 11.0, crate::varos::theme::AGENT);
