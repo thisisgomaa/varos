@@ -117,9 +117,9 @@ pub(crate) struct Rows {
 }
 
 /// Height of a row; of its controls; corner radius of a control.
-const ROW: f32 = 24.0;
-const FIELD: f32 = 20.0;
-const RADIUS: u8 = 3;
+const ROW: f32 = crate::varos::theme_components::FOUNDATION.control_height;
+const FIELD: f32 = crate::varos::theme_components::FOUNDATION.compact_field_height;
+const RADIUS: u8 = crate::varos::theme_components::FOUNDATION.control_radius;
 
 /// The Middle Eastern groups folded, kept with the UI state (`ui.json`) as the other panel choices
 /// are ([`crate::state::UiState::varos_me_folded`]).
@@ -211,7 +211,7 @@ pub(crate) fn segments(ui: &mut Ui, choices: &[Choice<'_>], width: f32, out: &mu
             Color32::TRANSPARENT
         };
         let p = ui.painter();
-        p.rect_filled(r, 2, fill);
+        p.rect_filled(r, RADIUS.saturating_sub(1), fill);
         if c.ghost {
             dashed_rect(p, r.shrink(3.0), Stroke::new(1.0, t.text_disabled));
         }
@@ -222,7 +222,8 @@ pub(crate) fn segments(ui: &mut Ui, choices: &[Choice<'_>], width: f32, out: &mu
         } else {
             t.text_dim
         };
-        let galley = (!c.label.is_empty()).then(|| p.layout_no_wrap(c.label.to_string(), FontId::proportional(11.0), ink));
+        let galley = (!c.label.is_empty())
+            .then(|| p.layout_no_wrap(c.label.to_string(), FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font), ink));
         let gap = if galley.is_some() { 5.0 } else { 0.0 };
         let total = c.icon_size.x + gap + galley.as_ref().map_or(0.0, |g| g.size().x);
         let left = r.center().x - total / 2.0;
@@ -269,8 +270,10 @@ pub(crate) fn toggle(
     let galley = (!label.is_empty()).then(|| {
         let room = (max_width - 2.0 * PAD - 16.0 - GAP).max(12.0);
         // Uncoloured (placeholder) text: it takes the toggle's ink when painted.
-        let mut job =
-            egui::text::LayoutJob::single_section(label.to_string(), egui::TextFormat::simple(FontId::proportional(11.0), Color32::PLACEHOLDER));
+        let mut job = egui::text::LayoutJob::single_section(
+            label.to_string(),
+            egui::TextFormat::simple(FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font), Color32::PLACEHOLDER),
+        );
         job.wrap = egui::text::TextWrapping { max_width: room, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
         ui.painter().layout_job(job)
     });
@@ -567,7 +570,11 @@ pub(crate) fn character_rows(app: &mut VectorcraftApp, ui: &mut Ui, s: &CharStyl
         let as_letters = tl!("As letters");
         let room = (ui.available_width() - 24.0 - 2.0 - 4.0).max(0.0);
         let label_w = {
-            let g = ui.painter().layout_no_wrap(as_letters.to_string(), FontId::proportional(11.0), Color32::PLACEHOLDER);
+            let g = ui.painter().layout_no_wrap(
+                as_letters.to_string(),
+                FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font),
+                Color32::PLACEHOLDER,
+            );
             (2.0 * 5.0 + 16.0 + 4.0 + g.size().x).min(room)
         };
         ui.add_space((ui.available_width() - 24.0 - 2.0 - label_w).max(0.0));
@@ -614,7 +621,7 @@ pub(crate) fn character_rows(app: &mut VectorcraftApp, ui: &mut Ui, s: &CharStyl
             colour_well(app, ui, &shown, mixed, &mut rows.controls);
             let hex = if mixed { "–".to_string() } else { hex_digits(&shown) };
             let ink = if ui.is_enabled() { t.text_dim } else { t.text_disabled };
-            ui.label(egui::RichText::new(hex).font(FontId::monospace(11.0)).color(ink));
+            ui.label(egui::RichText::new(hex).font(FontId::monospace(crate::varos::theme_components::FOUNDATION.control_font)).color(ink));
             let presets_w = 4.0 * 14.0 + 3.0 * 4.0 + 2.0;
             ui.add_space((ui.available_width() - presets_w).max(0.0));
             let current = shared.filter(|_| !h.hidden).map(|c| hex_digits(&c));
@@ -646,7 +653,7 @@ fn digits_dropdown(ui: &mut Ui, current: Option<Digits>, out: &mut Vec<Drawn>) -
     let (glyphs, name) = now.map_or(("–", ""), |c| (c.2, c.1));
     let mut x = rect.left() + 6.0;
     x += paint_digits(p, pos2(x, rect.center().y), glyphs, t.text) + 6.0;
-    let n = p.layout_no_wrap(name.to_string(), FontId::proportional(11.0), t.text_dim);
+    let n = p.layout_no_wrap(name.to_string(), FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font), t.text_dim);
     p.galley(pos2(x, rect.center().y - n.size().y / 2.0), n, t.text_dim);
     chevron(p, pos2(rect.right() - 8.0, rect.center().y), t.text_dim);
     let tip = match now {
@@ -671,11 +678,23 @@ fn digits_dropdown(ui: &mut Ui, current: Option<Digits>, out: &mut Vec<Drawn>) -
                     p.rect_filled(r, RADIUS, t.hover);
                 }
                 if current == Some(d) {
-                    p.text(pos2(r.left() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, "✓", FontId::proportional(11.0), t.text);
+                    p.text(
+                        pos2(r.left() + 8.0, r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "✓",
+                        FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font),
+                        t.text,
+                    );
                 }
                 let ink = if d == Digits::Default { t.text_dim } else { t.text };
                 paint_digits(p, pos2(r.left() + 24.0, r.center().y), glyphs, ink);
-                p.text(pos2(r.left() + 60.0, r.center().y), egui::Align2::LEFT_CENTER, name, FontId::proportional(11.0), t.text);
+                p.text(
+                    pos2(r.left() + 60.0, r.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    name,
+                    FontId::proportional(crate::varos::theme_components::FOUNDATION.control_font),
+                    t.text,
+                );
                 row.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, current == Some(d), name));
                 out.push(Drawn { key: row_key(key), rect: r, tip: name.into(), lit: current == Some(d), ..Default::default() });
                 if row.clicked() {
@@ -805,25 +824,10 @@ pub(crate) fn escape_popover(app: &mut VectorcraftApp, ctx: &egui::Context) -> b
     true
 }
 
-/// Draw `add` with the boxes it paints at upstream's 5 pt field corners given the Varos 3 pt
-/// control corners instead (owner rule), leaving upstream's widget code as it is.
+/// Shared widgets now resolve their corners from the foundation before painting.
+/// Keep this adapter transparent so callers retain their existing input and focus ownership.
 fn control_corners<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let layer = ui.layer_id();
-    let start = ui.ctx().graphics_mut(|g| g.entry(layer).next_idx());
-    let r = add(ui);
-    ui.ctx().graphics_mut(|g| {
-        let list = g.entry(layer);
-        for i in start.0..list.next_idx().0 {
-            list.mutate_shape(egui::layers::ShapeIdx(i), |c| {
-                if let egui::Shape::Rect(rect) = &mut c.shape
-                    && rect.corner_radius == egui::CornerRadius::same(5)
-                {
-                    rect.corner_radius = egui::CornerRadius::same(RADIUS);
-                }
-            });
-        }
-    });
-    r
+    add(ui)
 }
 
 /// The harakat colour well showing `shown` (`mixed`: the harakat differ): a click opens a popover

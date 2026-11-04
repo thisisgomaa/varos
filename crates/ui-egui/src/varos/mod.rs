@@ -190,3 +190,6 @@ mod production_brand_tests {
 pub mod pages;
 #[cfg(test)]
 mod tests_pages;
+
+#[cfg(test)]
+mod tests_control_foundation;

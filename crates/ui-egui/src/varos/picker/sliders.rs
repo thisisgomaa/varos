@@ -12,9 +12,10 @@ use vectorcraft_color::Color;
 
 use super::{Action, Gesture, PAD, State, View, hsv_to_rgb, rgb_to_hsv, same};
 use crate::theme::Tokens;
+use crate::varos::theme_components::FOUNDATION;
 
 pub(crate) const HEADER_H: f32 = 72.0;
-pub(crate) const ROW_H: f32 = 24.0;
+pub(crate) const ROW_H: f32 = FOUNDATION.control_height;
 const LABEL_W: f32 = 18.0;
 pub(crate) const SLIDER_W: f32 = 140.0;
 pub(crate) const TRACK_H: f32 = 8.0;
@@ -226,7 +227,7 @@ pub(super) fn show(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, prefs: &
     super::cluster::show(ui, origin - vec2(0.0, CLUSTER_LIFT), v, acts);
     for (index, &(label, lo, hi)) in channels(mode).iter().enumerate() {
         let row = Rect::from_min_size(origin + vec2(PAD, HEADER_H + index as f32 * ROW_H), vec2(super::W - PAD * 2.0, ROW_H));
-        ui.painter().text(row.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::monospace(11.0), t.text_dim);
+        ui.painter().text(row.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::monospace(FOUNDATION.control_font), t.text_dim);
         let track = Rect::from_min_size(egui::pos2(row.left() + LABEL_W, row.center().y - TRACK_H / 2.0), vec2(SLIDER_W, TRACK_H));
         let hit = ui.interact(track.expand(KNOB_R), ui.scope_id().with(("varos-picker-channel", index)), Sense::click_and_drag());
         // The release frame's own movement counts too (`drag_stopped`), for this channel's gesture.

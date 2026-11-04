@@ -85,11 +85,11 @@ pub(crate) const W: f32 = 240.0;
 pub(crate) const HEADER_H: f32 = 32.0;
 pub(crate) const PAD: f32 = 8.0;
 pub(crate) const TAB_W: f32 = 26.0;
-pub(crate) const TAB_H: f32 = 24.0;
+pub(crate) const TAB_H: f32 = crate::varos::theme_components::FOUNDATION.control_height;
 pub(crate) const TAB_GAP: f32 = 4.0;
 const GLYPH: f32 = 16.0;
 /// Varos control corners.
-pub(crate) const CTRL_R: u8 = 3;
+pub(crate) const CTRL_R: u8 = crate::varos::theme_components::FOUNDATION.control_radius;
 /// A change smaller than half an 8-bit step is no change: nothing is written for it.
 const SAME: f32 = 0.5 / 255.0;
 /// The panel the picker is the body of.
@@ -530,25 +530,10 @@ pub(crate) fn chip(ui: &Ui, r: Rect, c: Option<&Color>, hovered: bool) {
     ui.painter().rect_stroke(r, CTRL_R, Stroke::new(1.0, if hovered { t.text } else { t.border }), egui::StrokeKind::Inside);
 }
 
-/// Draw `add` with the boxes it paints at upstream's 5 pt field corners given the Varos 3 pt
-/// control corners instead, leaving upstream's widget code as it is.
+/// Shared widgets now resolve their corners from the foundation before painting.
+/// Keep this adapter transparent so callers retain their existing input and focus ownership.
 pub(crate) fn control_corners<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let layer = ui.layer_id();
-    let start = ui.ctx().graphics_mut(|g| g.entry(layer).next_idx());
-    let r = add(ui);
-    ui.ctx().graphics_mut(|g| {
-        let list = g.entry(layer);
-        for i in start.0..list.next_idx().0 {
-            list.mutate_shape(egui::layers::ShapeIdx(i), |c| {
-                if let egui::Shape::Rect(rect) = &mut c.shape
-                    && rect.corner_radius == egui::CornerRadius::same(5)
-                {
-                    rect.corner_radius = egui::CornerRadius::same(CTRL_R);
-                }
-            });
-        }
-    });
-    r
+    add(ui)
 }
 
 /// Apply the frame's actions, then the gesture: a change previews (beginning the live interaction

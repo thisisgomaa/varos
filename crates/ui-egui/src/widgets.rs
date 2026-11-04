@@ -7,6 +7,7 @@ use vectorcraft_color::{BlendMode, Color, Paint};
 use vectorcraft_doc::Unit;
 
 use crate::theme::{self, Tokens};
+use crate::varos::theme_components::FOUNDATION as VAROS_CONTROLS; // Varos: shared control presentation; input remains here.
 use crate::{icons, scrub};
 
 /// A widget id salt that needs only [`std::hash::Hash`]. egui 0.37's [`egui::AsIdSalt`] also
@@ -53,7 +54,7 @@ pub fn paint_icon_button(ui: &mut Ui, resp: Response, icon: &str, tip: &str, sel
     } else {
         Color32::TRANSPARENT
     };
-    ui.painter().rect_filled(rect, CornerRadius::same(5), bg);
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), bg);
     let pad = (size * 0.2).round();
     icons::paint(ui, icon, rect.shrink(pad), if selected { t.text_strong } else { t.icon });
     resp.widget_info(|| icon_button_info(ui.is_enabled(), selected, tl!(tip)));
@@ -62,15 +63,15 @@ pub fn paint_icon_button(ui: &mut Ui, resp: Response, icon: &str, tip: &str, sel
 
 /// Shell panel labels use the compact scale; legacy widgets keep their exact font size.
 fn panel_label_size(ui: &Ui) -> f32 {
-    if ui.stack().iter().any(|node| node.tags().contains("shell-panel")) { 11.0 } else { 12.5 }
+    if ui.stack().iter().any(|node| node.tags().contains("shell-panel")) { VAROS_CONTROLS.control_font } else { VAROS_CONTROLS.legacy_control_font }
 }
 
 /// Small flat text button (Quick Actions style).
 pub fn flat_button(ui: &mut Ui, text: &str, width: f32) -> Response {
     let t = Tokens::get(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, VAROS_CONTROLS.control_height), Sense::click());
     let rect = rect.shrink2(vec2(0.0, 0.5));
-    ui.painter().rect_filled(rect, CornerRadius::same(5), t.button);
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), t.button);
     flat_fill(ui, rect, &resp);
     ui.painter().with_clip_rect(rect).text(
         rect.center(),
@@ -88,9 +89,9 @@ pub fn flat_button_fit(ui: &mut Ui, text: &str, min_width: f32) -> Response {
     let t = Tokens::get(ui.ctx());
     let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), egui::FontId::proportional(panel_label_size(ui)), t.text_strong);
     let width = (galley.size().x + 24.0).max(min_width);
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, VAROS_CONTROLS.control_height), Sense::click());
     let rect = rect.shrink2(vec2(0.0, 0.5));
-    ui.painter().rect_filled(rect, CornerRadius::same(5), t.button);
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), t.button);
     flat_fill(ui, rect, &resp);
     ui.painter().with_clip_rect(rect).text(
         rect.center(),
@@ -116,14 +117,14 @@ pub fn split_button(ui: &mut Ui, text: &str, width: f32) -> (Response, Response)
 /// (none when empty).
 pub fn split_button_named(ui: &mut Ui, text: &str, arrow_tip: &str, width: f32) -> (Response, Response) {
     let t = Tokens::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, VAROS_CONTROLS.control_height), Sense::hover());
     let rect = rect.shrink2(vec2(0.0, 0.5));
     let split = rect.right() - SPLIT_ARROW;
     let main_rect = Rect::from_min_max(rect.min, pos2(split, rect.bottom()));
     let arrow_rect = Rect::from_min_max(pos2(split, rect.top()), rect.max);
     let main = ui.interact(main_rect, ui.scope_id().with((text, "split")), Sense::click());
     let arrow = ui.interact(arrow_rect, ui.scope_id().with((text, "split-arrow")), Sense::click());
-    ui.painter().rect_filled(rect, CornerRadius::same(5), t.button);
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), t.button);
     flat_fill(ui, main_rect, &main);
     flat_fill(ui, arrow_rect, &arrow);
     ui.painter().vline(split, rect.y_range().shrink(5.0), Stroke::new(1.0, t.panel));
@@ -147,9 +148,9 @@ pub fn split_button_named(ui: &mut Ui, text: &str, arrow_tip: &str, width: f32) 
 fn flat_fill(ui: &Ui, rect: Rect, resp: &Response) {
     let t = Tokens::get(ui.ctx());
     if resp.is_pointer_button_down_on() {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), t.tool_active);
+        ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), t.tool_active);
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), t.hover);
+        ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), t.hover);
     }
 }
 
@@ -175,15 +176,21 @@ fn primary_button_sized(ui: &mut Ui, text: &str, enabled: bool, min_width: f32) 
     let fg = if enabled { Color32::WHITE } else { t.text_disabled };
     let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(panel_label_size(ui)), fg);
     let w = galley.size().x + 32.0;
-    let (rect, resp) = ui.allocate_exact_size(vec2(w.max(min_width), 28.0), if enabled { Sense::click() } else { Sense::hover() });
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(w.max(min_width), VAROS_CONTROLS.dialog_button_height), if enabled { Sense::click() } else { Sense::hover() });
     let bg = match (enabled, resp.hovered()) {
         (false, _) => t.input,
         (true, true) => t.accent,
         (true, false) => t.accent_strong,
     };
-    ui.painter().rect_filled(rect, CornerRadius::same(6), bg);
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), bg);
     if !enabled {
-        ui.painter().rect_stroke(rect, CornerRadius::same(6), egui::Stroke::new(1.0, t.button_border), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(VAROS_CONTROLS.control_radius),
+            egui::Stroke::new(1.0, t.button_border),
+            egui::StrokeKind::Inside,
+        );
     }
     ui.painter().galley(rect.center() - galley.size() / 2.0, galley, fg);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled && ui.is_enabled(), tl!(text)));
@@ -200,8 +207,8 @@ pub(crate) fn secondary_button_width(ui: &mut Ui, text: &str, min_width: f32) ->
     let t = Tokens::get(ui.ctx());
     let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(panel_label_size(ui)), t.text);
     let w = galley.size().x + 32.0;
-    let (rect, resp) = ui.allocate_exact_size(vec2(w.max(min_width), 28.0), Sense::click());
-    ui.painter().rect_filled(rect, CornerRadius::same(6), if resp.hovered() { t.hover } else { t.button });
+    let (rect, resp) = ui.allocate_exact_size(vec2(w.max(min_width), VAROS_CONTROLS.dialog_button_height), Sense::click());
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), if resp.hovered() { t.hover } else { t.button });
     ui.painter().galley(rect.center() - galley.size() / 2.0, galley, t.text);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tl!(text)));
     resp
@@ -227,7 +234,7 @@ pub fn section_toggle_name(ui: &mut Ui, text: &str, open: bool) -> Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
     if resp.hovered() {
-        ui.painter().rect_filled(rect, 3.0, t.hover);
+        ui.painter().rect_filled(rect, f32::from(VAROS_CONTROLS.control_radius), t.hover);
     }
     let chevron = Rect::from_center_size(pos2(rect.left() + 8.0, rect.center().y), vec2(12.0, 12.0));
     icons::paint(ui, if open { "chevron-down" } else { "chevron-right" }, chevron, if resp.hovered() { t.text_strong } else { t.icon });
@@ -778,13 +785,19 @@ fn recessed_text(
     // centred in it: a frame around the text came out a point taller and stood out next to
     // spinners and dropdowns (#900).
     let simple = ui.stack().iter().any(|node| node.tags().contains("shell-panel"));
-    let height = if simple { 24.0 } else { 26.0 } + 16.0 * (rows.max(1) - 1) as f32;
+    let height = if simple { VAROS_CONTROLS.control_height } else { 26.0 } + 16.0 * (rows.max(1) - 1) as f32;
     let layout = if rows > 1 { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Center) };
     let (rect, resp) = ui
         .allocate_ui_with_layout(vec2(width, height), layout, |ui| {
             ui.set_min_size(vec2(width, height));
             let rect = ui.max_rect();
-            ui.painter().rect(rect, 5.0, t.input, Stroke::new(1.0, if editing { t.accent } else { t.input_border }), StrokeKind::Inside);
+            ui.painter().rect(
+                rect,
+                VAROS_CONTROLS.control_radius,
+                t.input,
+                Stroke::new(1.0, if editing { t.accent } else { t.input_border }),
+                StrokeKind::Inside,
+            );
             let margin = egui::Margin { left: 7, right: 7, top: if rows > 1 { 4 } else { 0 }, bottom: 0 };
             let resp = egui::Frame::NONE
                 .inner_margin(margin)
@@ -796,7 +809,7 @@ fn recessed_text(
                             .frame(egui::Frame::NONE)
                             .margin(egui::Margin::ZERO)
                             .desired_width(width - 14.0)
-                            .font(egui::FontId::proportional(if simple { 11.0 } else { 12.5 }))
+                            .font(egui::FontId::proportional(panel_label_size(ui)))
                             .text_color(t.text_strong),
                     )
                 })
@@ -1338,7 +1351,7 @@ pub(crate) fn combo_named<R>(
     egui::Frame::NONE
         .fill(t.input)
         .stroke(Stroke::new(1.0, t.input_border))
-        .corner_radius(CornerRadius::same(3))
+        .corner_radius(CornerRadius::same(VAROS_CONTROLS.control_radius))
         .show(ui, |ui| {
             if searchable {
                 return searchable_combo(ui, id_with(ui.scope_id(), id), label, name, current, width - 4.0, list);
@@ -1612,7 +1625,7 @@ pub fn opacity_blend(
             }
         });
         let (r, resp) = ui.allocate_exact_size(vec2(18.0, 26.0), if enabled { Sense::click() } else { Sense::hover() });
-        ui.painter().rect_stroke(r, 2, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
+        ui.painter().rect_stroke(r, VAROS_CONTROLS.control_radius, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
         icons::paint(ui, "chevron-right", r.shrink2(vec2(3.0, 7.0)), if enabled { t.icon } else { t.text_disabled });
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled && ui.is_enabled(), tl!("Opacity")));
         egui::Popup::menu(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
@@ -2032,8 +2045,13 @@ fn spin_generic(
         // The spinner, the field and the chevron share their borders: one box in three parts.
         ui.spacing_mut().item_spacing.x = -1.0;
         let (sr, sresp) = ui.allocate_exact_size(vec2(16.0, h), Sense::click());
-        ui.painter().rect_filled(sr, CornerRadius { nw: 2, sw: 2, ne: 0, se: 0 }, t.input);
-        ui.painter().rect_stroke(sr, CornerRadius { nw: 2, sw: 2, ne: 0, se: 0 }, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
+        ui.painter().rect_filled(sr, CornerRadius { nw: VAROS_CONTROLS.control_radius, sw: VAROS_CONTROLS.control_radius, ne: 0, se: 0 }, t.input);
+        ui.painter().rect_stroke(
+            sr,
+            CornerRadius { nw: VAROS_CONTROLS.control_radius, sw: VAROS_CONTROLS.control_radius, ne: 0, se: 0 },
+            Stroke::new(1.0, t.input_border),
+            StrokeKind::Inside,
+        );
         let up = Rect::from_min_max(sr.min, pos2(sr.right(), sr.center().y));
         let down = Rect::from_min_max(pos2(sr.left(), sr.center().y), sr.max);
         let hover = sresp.hover_pos();
@@ -2495,7 +2513,7 @@ pub fn hex_field_named(ui: &mut Ui, id: impl std::hash::Hash, name: Option<&str>
     let resp = egui::Frame::NONE
         .fill(t.input)
         .stroke(Stroke::new(1.0, if editing { t.accent } else { t.input_border }))
-        .corner_radius(5)
+        .corner_radius(VAROS_CONTROLS.control_radius)
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
             // As tall as the other fields (26 points with the margin), whatever the font's line
@@ -2542,7 +2560,7 @@ pub fn search_field(ui: &mut Ui, id: egui::Id, hint: &str) -> String {
     egui::Frame::NONE
         .fill(t.input)
         .stroke(Stroke::new(1.0, t.input_border))
-        .corner_radius(egui::CornerRadius::same(2))
+        .corner_radius(egui::CornerRadius::same(VAROS_CONTROLS.control_radius))
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.add(
@@ -2626,7 +2644,7 @@ pub fn opt_field_named(ui: &mut Ui, id: impl std::hash::Hash, name: Option<&str>
     let framed = egui::Frame::NONE
         .fill(t.input)
         .stroke(Stroke::new(1.0, if editing { t.accent } else { t.input_border }))
-        .corner_radius(CornerRadius::same(2))
+        .corner_radius(CornerRadius::same(VAROS_CONTROLS.control_radius))
         .inner_margin(egui::Margin::symmetric(4, 4))
         .show(ui, |ui| {
             ui.add(
@@ -2930,7 +2948,7 @@ pub fn orientation_button(ui: &mut Ui, landscape: bool, selected: bool, tip: &st
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
     if resp.hovered() && !selected {
-        ui.painter().rect_filled(rect, CornerRadius::same(3), t.hover);
+        ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), t.hover);
     }
     let size = if landscape { vec2(16.0, 12.0) } else { vec2(12.0, 16.0) };
     let page = Rect::from_center_size(rect.center(), size);
@@ -2961,7 +2979,7 @@ pub fn layout_button(ui: &mut Ui, tiles: &[(u8, u8)], selected: bool, tip: &str)
     } else {
         Color32::TRANSPARENT
     };
-    ui.painter().rect_filled(rect, CornerRadius::same(3), bg);
+    ui.painter().rect_filled(rect, CornerRadius::same(VAROS_CONTROLS.control_radius), bg);
     let color = if !enabled {
         t.text_disabled
     } else if selected {
@@ -3012,8 +3030,13 @@ pub fn region_texture(
 fn chevron_cell(ui: &mut Ui, h: f32) -> Response {
     let t = Tokens::get(ui.ctx());
     let (dr, dresp) = ui.allocate_exact_size(vec2(20.0, h), Sense::click());
-    ui.painter().rect_filled(dr, CornerRadius { nw: 0, sw: 0, ne: 2, se: 2 }, t.input);
-    ui.painter().rect_stroke(dr, CornerRadius { nw: 0, sw: 0, ne: 2, se: 2 }, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
+    ui.painter().rect_filled(dr, CornerRadius { nw: 0, sw: 0, ne: VAROS_CONTROLS.control_radius, se: VAROS_CONTROLS.control_radius }, t.input);
+    ui.painter().rect_stroke(
+        dr,
+        CornerRadius { nw: 0, sw: 0, ne: VAROS_CONTROLS.control_radius, se: VAROS_CONTROLS.control_radius },
+        Stroke::new(1.0, t.input_border),
+        StrokeKind::Inside,
+    );
     let c = if !ui.is_enabled() {
         t.text_disabled
     } else if dresp.hovered() {

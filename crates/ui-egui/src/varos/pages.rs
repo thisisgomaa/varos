@@ -20,7 +20,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             ui.strong("Pages");
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if crate::widgets::icon_button(ui, "plus", "Add page", false, 24.0).clicked() {
+            if crate::widgets::icon_button(ui, "plus", "Add page", false, super::theme_components::FOUNDATION.control_height).clicked() {
                 run(app, "page.add", json!({}));
             }
         });
@@ -41,8 +41,10 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         for (index, id, name, count, active) in &rows {
             ui.push_id((uid, id), |ui| {
                 if editing.page == *id {
-                    let response =
-                        ui.add_sized(vec2(ui.available_width(), 28.0), egui::TextEdit::singleline(&mut editing.name).hint_text("Page name"));
+                    let response = ui.add_sized(
+                        vec2(ui.available_width(), super::theme_components::FOUNDATION.dialog_button_height),
+                        egui::TextEdit::singleline(&mut editing.name).hint_text("Page name"),
+                    );
                     if editing.focus {
                         response.request_focus();
                         editing.focus = false;
@@ -68,7 +70,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                             .frame_when_inactive(*active)
                             .sense(Sense::click_and_drag());
                         let button = if *active { button.fill(t.accent.gamma_multiply(0.22)) } else { button };
-                        ui.add_sized(vec2(ui.available_width(), 28.0), button)
+                        ui.add_sized(vec2(ui.available_width(), super::theme_components::FOUNDATION.dialog_button_height), button)
                     })
                     .inner;
                 if response.clicked() {

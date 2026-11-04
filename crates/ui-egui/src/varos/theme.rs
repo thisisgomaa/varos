@@ -345,14 +345,16 @@ pub fn apply(ctx: &egui::Context, b: Brightness) {
     // Keep upstream density and named typography roles; change only the visual system.
     ctx.global_style_mut(|s| {
         s.spacing.item_spacing = egui::vec2(6.0, 5.0);
-        s.spacing.button_padding = egui::vec2(6.0, 2.0);
-        s.spacing.interact_size = egui::vec2(24.0, 24.0);
+        crate::varos::theme_components::FOUNDATION.control_spacing(&mut s.spacing);
         s.spacing.menu_margin = egui::Margin::same(6);
         s.spacing.slider_width = 120.0;
         s.text_styles = [
             (egui::TextStyle::Small, egui::FontId::proportional(11.0)),
             (egui::TextStyle::Body, egui::FontId::proportional(13.0)),
-            (egui::TextStyle::Button, egui::FontId::new(13.0, FontFamily::Name("ui-medium".into()))),
+            (
+                egui::TextStyle::Button,
+                egui::FontId::new(crate::varos::theme_components::FOUNDATION.button_font, FontFamily::Name("ui-medium".into())),
+            ),
             (egui::TextStyle::Heading, crate::theme::semibold(15.0)),
             (egui::TextStyle::Monospace, crate::theme::mono(11.5)),
         ]

@@ -11,9 +11,17 @@ pub(crate) struct Foundation {
     pub tab_radius: u8,
     pub tab_padding: f32,
     pub panel_body_font: f32,
-    pub panel_button_font: f32,
     pub panel_heading_font: f32,
     pub control_radius: u8,
+    pub control_height: f32,
+    pub dialog_button_height: f32,
+    pub compact_field_height: f32,
+    pub control_font: f32,
+    pub legacy_control_font: f32,
+    pub button_font: f32,
+    pub code_field_font: f32,
+    pub button_padding: egui::Vec2,
+    pub field_margin: i8,
     pub box_radius: u8,
 }
 pub(crate) const FOUNDATION: Foundation = Foundation {
@@ -23,19 +31,34 @@ pub(crate) const FOUNDATION: Foundation = Foundation {
     tab_radius: 0,
     tab_padding: 10.0,
     panel_body_font: 12.0,
-    panel_button_font: 11.0,
     panel_heading_font: 14.0,
     control_radius: 3,
+    control_height: 24.0,
+    dialog_button_height: 28.0,
+    compact_field_height: 20.0,
+    control_font: 11.0,
+    legacy_control_font: 12.5,
+    button_font: 13.0,
+    code_field_font: 12.0,
+    button_padding: egui::vec2(6.0, 2.0),
+    field_margin: 4,
     box_radius: 8,
 };
 impl Foundation {
+    /// Standard egui controls and custom painters share these defaults. Compact/editor roles
+    /// keep their explicit dimensions; widget IDs and event handling belong to callers.
+    pub fn control_spacing(&self, spacing: &mut egui::style::Spacing) {
+        spacing.button_padding = self.button_padding;
+        spacing.interact_size = egui::Vec2::splat(self.control_height);
+    }
+
     pub fn tab_font(&self) -> FontId {
         theme::semibold(self.tab_font)
     }
     pub fn panel_text(&self, ui: &mut egui::Ui) {
         let style = ui.style_mut();
         style.text_styles.insert(egui::TextStyle::Body, FontId::proportional(self.panel_body_font));
-        style.text_styles.insert(egui::TextStyle::Button, FontId::new(self.panel_button_font, egui::FontFamily::Name("ui-medium".into())));
+        style.text_styles.insert(egui::TextStyle::Button, FontId::new(self.control_font, egui::FontFamily::Name("ui-medium".into())));
     }
     /// Visuals only: no interaction allocation or keyboard/focus side effects.
     pub fn tab_surface(&self, p: &Painter, rect: Rect, t: &Tokens, active: bool, hovered: bool) {

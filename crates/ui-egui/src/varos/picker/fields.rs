@@ -9,6 +9,7 @@ use vectorcraft_color::Color;
 
 use super::{Action, CTRL_R, Gesture, PAD, State, View};
 use crate::theme::Tokens;
+use crate::varos::theme_components::FOUNDATION;
 
 pub(crate) const ROW_H: f32 = 33.0;
 const HEX_W: f32 = 56.0;
@@ -53,7 +54,7 @@ fn text_field(ui: &mut Ui, id: egui::Id, label: egui::Id, shown: &str, width: f3
         .fill(t.input)
         .stroke(Stroke::new(1.0, if focused { t.accent } else { t.input_border }))
         .corner_radius(CTRL_R)
-        .inner_margin(egui::Margin::symmetric(4, 4))
+        .inner_margin(egui::Margin::same(FOUNDATION.field_margin))
         .show(ui, |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut buf)
@@ -61,7 +62,7 @@ fn text_field(ui: &mut Ui, id: egui::Id, label: egui::Id, shown: &str, width: f3
                     .frame(egui::Frame::NONE)
                     .desired_width(width)
                     .char_limit(9)
-                    .font(egui::FontId::monospace(12.0))
+                    .font(egui::FontId::monospace(FOUNDATION.code_field_font))
                     .text_color(t.text_strong)
                     .hint_text(hint),
             )
@@ -81,7 +82,7 @@ pub(super) fn hex(ui: &mut Ui, st: &mut State, v: &View, acts: &mut Vec<Action>)
     let shown = if v.mixed { String::new() } else { hex_digits(st.rgb()) };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        let label = ui.label(egui::RichText::new("#").font(egui::FontId::monospace(12.0)).color(t.text_dim)).id;
+        let label = ui.label(egui::RichText::new("#").font(egui::FontId::monospace(FOUNDATION.code_field_font)).color(t.text_dim)).id;
         let id = ui.scope_id().with("varos-picker-hex");
         if let Some(typed) = text_field(ui, id, label, &shown, HEX_W, if v.mixed { "?" } else { "" })
             && let Some((c, alpha)) = parse_hex(&typed)
@@ -103,7 +104,7 @@ pub(super) fn hex(ui: &mut Ui, st: &mut State, v: &View, acts: &mut Vec<Action>)
 fn alpha_slider(ui: &mut Ui, st: &mut State, v: &View, width: f32) {
     let t = Tokens::get(ui.ctx());
     let enabled = v.alpha.is_some();
-    let (r, resp) = ui.allocate_exact_size(vec2(width, 24.0), if enabled { Sense::click_and_drag() } else { Sense::hover() });
+    let (r, resp) = ui.allocate_exact_size(vec2(width, FOUNDATION.control_height), if enabled { Sense::click_and_drag() } else { Sense::hover() });
     let track = Rect::from_center_size(r.center(), vec2(r.width() - super::sliders::KNOB_R * 2.0, super::sliders::TRACK_H));
     checker(&ui.painter_at(track), track, t.text_disabled, t.text_dim);
     let c = st.rgb();
@@ -154,7 +155,7 @@ pub(super) fn row(ui: &mut Ui, origin: Pos2, st: &mut State, v: &View, sliders: 
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         if sliders {
-            ui.label(egui::RichText::new("A").font(egui::FontId::monospace(11.0)).color(t.text_dim));
+            ui.label(egui::RichText::new("A").font(egui::FontId::monospace(FOUNDATION.control_font)).color(t.text_dim));
             alpha_slider(ui, st, v, super::sliders::SLIDER_W + super::sliders::KNOB_R * 2.0);
         } else {
             hex(ui, st, v, acts);
