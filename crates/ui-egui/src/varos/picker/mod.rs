@@ -589,7 +589,16 @@ fn settle(app: &mut VectorcraftApp, ctx: &egui::Context, st: &mut State, v: &Vie
                 let _ = app.run("paint.none", json!({}));
             }
             Action::Eyedropper => {
-                close(app);
+                // Finish the local state (temporarily removed from egui memory) before the
+                // stored gestures, then seal our edits without dismissing the shell palette.
+                finish(app, st);
+                finish_pending(app, ctx);
+                if crate::varos::shell::enabled(app) {
+                    end_picker_group(app, false);
+                } else {
+                    // The classic picker has a modal backdrop: dismiss it to permit sampling.
+                    close(app);
+                }
                 app.select_tool("eyedropper");
             }
             Action::Gradient => {

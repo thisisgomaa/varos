@@ -965,7 +965,7 @@ fn every_popover_close_ends_the_undo_group_and_cancel_reverts_only_picker_edits(
     assert!(group_open(&h.app), "opening the popover begins a group");
     picker_fill(&mut h.app, "#111111");
     picker_fill(&mut h.app, "#222222");
-    // Eyedropper, Edit Gradient and the stop eyedropper all call `close`.
+    // Explicit dismissal commits the picker edits and ends its owned group.
     close(&mut h.app);
     h.frame(vec![]);
     assert!(h.app.ui.varos_picker_anchor.is_none());
@@ -973,7 +973,7 @@ fn every_popover_close_ends_the_undo_group_and_cancel_reverts_only_picker_edits(
     assert_eq!(fill_hex(&h.app), "#222222");
     h.app.run("paint.setFill", json!({"color": "#778899"})).unwrap();
     h.app.run("edit.undo", json!({})).unwrap();
-    assert_eq!(fill_hex(&h.app), "#222222", "the edit after an eyedropper close is its own step");
+    assert_eq!(fill_hex(&h.app), "#222222", "the edit after an explicit close is its own step");
     h.app.run("edit.undo", json!({})).unwrap();
     assert_eq!(fill_hex(&h.app), original, "the picker edits were one step");
 
@@ -1636,4 +1636,104 @@ fn color_drawer_respects_the_host_clip_and_remains_accessible_by_scrolling() {
     render(&mut app, 260.0, 240.0, vec![Event::PointerMoved(at), button(at, true)]);
     render(&mut app, 260.0, 240.0, vec![button(at, false)]);
     assert_eq!(app.ui.varos_picker.drawer_tab, DrawerTab::Document, "the scrolled drawer still works");
+}
+
+#[test]
+fn header_eyedropper_samples_canvas_without_dismissing_either_shell_palette() {
+    for presenter in 0..3 {
+        let shell = presenter != 0;
+        let mut h = Harness::new(shell);
+        if presenter == 2 {
+            h.app.run("ui.panelReview", json!({"enabled":true})).unwrap();
+        }
+        let selected = h.app.session.active().unwrap().selection.objects.clone();
+        let ids: Vec<_> = selected.iter().map(|id| id.0).collect();
+        h.app.run("shape.rectangle", json!({"x":120,"y":110,"width":40,"height":40})).unwrap();
+        h.app.run("paint.setFill", json!({"color":"#e64523"})).unwrap();
+        h.app.run("select.set", json!({"ids":ids})).unwrap();
+        for _ in 0..5 {
+            h.frame(vec![]);
+        }
+        let original = fill_hex(&h.app);
+        let fill = h.well(false);
+        h.click(fill.left_top() + vec2(3.0, 3.0));
+        picker_fill(&mut h.app, "#112233");
+        h.frame(vec![]);
+        let anchor = h.app.ui.varos_picker_anchor;
+        let palette = popover_area(&h);
+        let r = picker_rect(&h.ctx);
+        let eye = r.min + vec2(W - PAD - TAB_W / 2.0, HEADER_H / 2.0);
+        h.click(eye);
+        assert_eq!(h.app.session.tool_id(), "eyedropper");
+        assert!(!h.app.session.in_interaction());
+        if shell {
+            assert_eq!(h.app.ui.varos_picker_anchor, anchor, "selecting the tool keeps its palette");
+            assert_eq!(popover_area(&h), palette, "the palette does not move or resize");
+        } else {
+            assert!(h.app.ui.varos_picker_anchor.is_none(), "classic modal backdrop must release the canvas");
+        }
+        let xf = crate::canvas::Xf::new(h.app.canvas_rect.unwrap(), h.app.view().unwrap());
+        let sample = xf.to_screen(vectorcraft_geom::Point::new(140.0, 130.0));
+        assert!(!palette.contains(sample));
+        h.click(sample);
+        assert_eq!(fill_hex(&h.app), "#e64523", "real canvas click sampled the source; presenter {presenter}");
+        assert_eq!(h.app.session.active().unwrap().selection.objects, selected);
+        if shell {
+            assert_eq!(h.app.ui.varos_picker_anchor, anchor, "sampling keeps the palette visible");
+            assert_eq!(popover_area(&h), palette);
+            // A later palette edit can be cancelled without reverting the canvas sample.
+            picker_fill(&mut h.app, "#abcdef");
+            h.frame(vec![esc()]);
+            assert!(h.app.ui.varos_picker_anchor.is_none(), "explicit Escape closes it");
+            assert_eq!(fill_hex(&h.app), "#e64523");
+        }
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(fill_hex(&h.app), "#112233", "sample is its own undo step");
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(fill_hex(&h.app), original, "prior picker edits remain independently undoable");
+    }
+}
+
+#[test]
+fn header_eyedropper_leaves_an_externally_owned_undo_group_open() {
+    let mut h = Harness::new(true);
+    h.app.run("edit.undoGroup.begin", json!({"label":"External edit"})).unwrap();
+    let fill = h.well(false);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    let anchor = h.app.ui.varos_picker_anchor;
+    assert!(!h.app.ui.varos_picker_group);
+    let r = picker_rect(&h.ctx);
+    h.click(r.min + vec2(W - PAD - TAB_W / 2.0, HEADER_H / 2.0));
+    assert_eq!(h.app.ui.varos_picker_anchor, anchor);
+    assert_eq!(h.app.session.tool_id(), "eyedropper");
+    assert!(!h.app.ui.varos_picker_group);
+    assert!(h.app.session.active().unwrap().undo_group.is_some());
+    h.app.run("edit.undoGroup.end", json!({})).unwrap();
+}
+
+#[test]
+fn eyedropper_commits_a_pending_local_gesture_without_closing_the_palette() {
+    let mut h = Harness::new(true);
+    let fill = h.well(false);
+    h.click(fill.left_top() + vec2(3.0, 3.0));
+    let anchor = h.app.ui.varos_picker_anchor;
+    let before = undo_len(&h.app);
+    let v = View::read(&h.app, &h.ctx);
+    let mut st = State::default();
+    st.follow(&v);
+    st.start(Gesture::Ring);
+    st.origin = Some(Origin { target: v.target.clone(), fill: v.fill_active });
+    st.adopt_rgb([1.0, 0.0, 0.0]);
+    st.edited = true;
+    crate::panels::color::apply(&mut h.app, &v.target, st.out_color(), Live::Dragging, false);
+    assert!(h.app.session.in_interaction());
+    settle(&mut h.app, &h.ctx, &mut st, &v, vec![Action::Eyedropper]);
+    assert!(!h.app.session.in_interaction());
+    assert!(st.gesture.is_none() && st.origin.is_none());
+    assert_eq!(h.app.ui.varos_picker_anchor, anchor);
+    assert_eq!(fill_hex(&h.app), "#ff0000");
+    assert_eq!(undo_len(&h.app), before + 1);
+    assert!(!group_open(&h.app));
+    cancel(&mut h.app);
+    assert_eq!(fill_hex(&h.app), "#ff0000", "later Cancel cannot discard the finished gesture");
 }
