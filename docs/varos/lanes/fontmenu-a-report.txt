@@ -7,7 +7,7 @@ awaits owner native hand test. No assets or fonts added.
 
 Required merge — BLOCKED by filesystem permissions
 First command was git merge main --no-edit. Git could not create
-~/Documents/AI workspace/varos-next/.git/worktrees/lane-fontmenu-a/ORIG_HEAD.lock
+.git/worktrees/lane-fontmenu-a/ORIG_HEAD.lock
 (Operation not permitted): this worktree's real Git metadata is outside the
 sandbox's writable roots. main verified as 86e24d2a. No merge occurred and HEAD
 remains 2b193d9f. Moderator must run the merge in a writable environment before

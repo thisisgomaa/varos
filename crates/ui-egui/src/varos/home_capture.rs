@@ -7,7 +7,7 @@ use std::collections::HashMap;
 fn home_capture_simple() {
     let Some(output) = std::env::var_os("VAROS_HOME_CAPTURE_SIMPLE").map(std::path::PathBuf::from) else { return };
     let root = std::env::temp_dir().join(format!("varos-home-capture-{}", std::process::id()));
-    let projects = [root.join("Ramadan campaign"), root.join("Client — Nile Studio")];
+    let projects = [root.join("Ramadan campaign"), root.join("Brand study")];
     for path in &projects {
         std::fs::create_dir_all(path).unwrap();
     }
@@ -43,7 +43,7 @@ fn home_capture_simple() {
     app.run("app.home", json!({})).unwrap();
     app.ui.status.clear();
     let minute = vectorcraft_doc::metadata::now_unix().unwrap() / 60;
-    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("home-identity"), (minute, "Ahmed".to_string(), 19_u32)));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("home-identity"), (minute, "Owner".to_string(), 19_u32)));
     let mut textures = HashMap::<egui::TextureId, egui::ColorImage>::new();
     for frame in 0..4 {
         let raw = egui::RawInput {

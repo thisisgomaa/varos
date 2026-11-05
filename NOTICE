@@ -146,16 +146,16 @@ Varos Stage 0 appearance spike: crates/ui-egui/assets/varos/icons contains Lucid
 under ISC/MIT (icons/LICENSE). fonts contains Inter, JetBrains Mono and IBM Plex Sans
 Arabic under SIL OFL 1.1; see the three licence texts in that directory and ASSETS.md.
 Varos is an Arabic-first fork of VectorCraft (storytold), MIT OR Apache-2.0.
-Varos app icon — original work, © 2026 Ahmed Gomaa, MIT OR Apache-2.0.
+Varos app icon — original work, © 2026 the Varos contributors, MIT OR Apache-2.0.
 Varos cursor set v1.1
 
-Copyright (c) 2026 Ahmed Gomaa and the Varos contributors.
+Copyright (c) 2026 the Varos contributors.
 Original geometric cursor artwork, MIT OR Apache-2.0. Owner-supplied source:
 varos/varos/crates/varos-app/assets/cursors/v1. Licence texts are retained in
 crates/ui-egui/src/varos/assets/cursors/v1/LICENSE-MIT and LICENSE-APACHE.
 
 Varos Lane ICONS: original Varos drawing/path/picker glyphs and original inline
-alignment/type glyphs, copyright 2026 Ahmed Gomaa and the Varos contributors,
+alignment/type glyphs, copyright 2026 the Varos contributors,
 MIT OR Apache-2.0; see crates/ui-egui/assets/varos/icons/LICENSE-MIT and LICENSE-APACHE.
 Lucide file and extracted legacy glyphs remain ISC/MIT; see icons/LICENSE.
 Per-file sources and extraction notes are recorded in ASSETS.md.
@@ -166,7 +166,7 @@ under SIL OFL 1.1 (fixtures/NotoSans-LICENSE). It is a test fixture only, includ
 
 Varos lane paragraph: the Middle Eastern panel icons (crates/ui-egui/assets/varos/icons/varos-me-*.svg)
 are original Varos glyphs from the owner's panel mockup (docs/varos/mockups/panels.html),
-copyright 2026 Ahmed Gomaa and the Varos contributors, MIT OR Apache-2.0; see
+copyright 2026 the Varos contributors, MIT OR Apache-2.0; see
 crates/ui-egui/assets/varos/icons/LICENSE-MIT and LICENSE-APACHE.
 
 Varos VQA icons (crates/ui-egui/assets/varos/icons/vqa-*.svg): original geometric artwork by Varos contributors, MIT OR Apache-2.0; see repository LICENSE-MIT and LICENSE-APACHE.
@@ -187,3 +187,9 @@ Per-file source commits and capture provenance are listed in ASSETS.md.
 Varos Selection and Direct Selection pointer glyphs (varos-draw-select.svg and
 varos-draw-direct.svg): original geometric artwork revised 2026-11-01 by the
 Varos contributors, MIT OR Apache-2.0; licence texts retained beside the icons.
+
+Vendored varos-text: crates/varos-text is first-party code from revision 5936eaf,
+MIT OR Apache-2.0; original LICENSE-MIT, LICENSE-APACHE and LICENSE-NOTE.md retained.
+Its optional legacy tests/examples retain Inter, IBM Plex Sans Arabic and Noto Sans Arabic
+fixtures under SIL OFL 1.1. Their notices remain beside the fonts in
+crates/varos-text/assets/fonts; see ASSETS.md. The policy-only Varos build embeds none.

@@ -61,8 +61,7 @@ Captures (ignored tests): `VAROS_SHELL_CAPTURE_SIMPLE` → 1440×900 shell ON, D
 docs/varos/mockups/. Compare against the mockup yourself before reporting.
 
 ## Gates / rules
-ONE cargo lane; `-j 2`; `--test-threads=2`; `--offline`; `CARGO_TARGET_DIR="~/Documents/AI
-workspace/lanes/_target-shared"`; ui-egui release lib tests (known 10 release-only failures: 9
+ONE cargo lane; `-j 2`; `--test-threads=2`; `--offline`; `CARGO_TARGET_DIR="<workspace>/lanes/_target-shared"`; ui-egui release lib tests (known 10 release-only failures: 9
 `panels::gradient::tests::*` + `tests_rotateview::escape_after_closing_a_popup…`); `cargo clippy
 --workspace --all-targets -D warnings`; rustfmt --check on touched files; `git diff --check`; release
 build of `vectorcraft`. No commits/stash. Forbidden: engine/render/text crates; `theme.rs` colour values

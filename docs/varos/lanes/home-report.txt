@@ -1,6 +1,6 @@
 Lane HOME round 2 — implementation report
 Date: 2026-10-19
-Worktree: ~/Documents/AI workspace/lanes/lane-home
+Worktree: <workspace>/lanes/lane-home
 Branch: lane-home. Continued round-1 edits; no commit, merge, push, install or assets added.
 
 HOME

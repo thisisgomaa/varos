@@ -1,6 +1,6 @@
 Lane PARAGRAPH — Middle Eastern groups of the Paragraph and Character panels
 Date: 2026-10-19
-Worktree: ~/Documents/AI workspace/lanes/lane-paragraph (branch lane-paragraph, base aa0f6316)
+Worktree: <workspace>/lanes/lane-paragraph (branch lane-paragraph, base aa0f6316)
 Implementer: Opus 5.5. No commit, merge, push or download. Cargo always --offline -j 4, own target dir.
 Spec: docs/varos/mockups/panels.html, panel 1 variants A (icons) and C (mixed), panel 2 (Digits, Harakat).
 

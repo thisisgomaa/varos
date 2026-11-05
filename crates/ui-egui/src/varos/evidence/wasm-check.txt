@@ -71,7 +71,7 @@ $ cargo check --offline --target wasm32-unknown-unknown -p vectorcraft-ui-egui
     Checking core_maths v0.1.1
    Compiling rustversion v1.0.23
     Checking wasmi_collections v2.0.0
-   Compiling vectorcraft-text v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/text)
+   Compiling vectorcraft-text v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/text)
     Checking guillotiere v0.7.0
     Checking spin v0.9.9
     Checking unicode-script v0.5.8
@@ -146,8 +146,8 @@ $ cargo check --offline --target wasm32-unknown-unknown -p vectorcraft-ui-egui
     Checking imagesize v0.13.0
    Compiling toml v1.1.6+spec-1.1.0
     Checking craft-docpath v0.1.0 (https://github.com/storytold/craft-libs?rev=82a24b006eefa036b43c09a67fb9a3fbd17ffe63#82a24b00)
-    Checking vectorcraft-scriptcheck v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/scriptcheck)
-   Compiling vectorcraft-ui-egui v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/ui-egui)
+    Checking vectorcraft-scriptcheck v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/scriptcheck)
+   Compiling vectorcraft-ui-egui v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/ui-egui)
    Compiling zerocopy-derive v0.8.59
    Compiling phf_macros v0.13.1
    Compiling enum-map-derive v0.17.0
@@ -174,14 +174,14 @@ $ cargo check --offline --target wasm32-unknown-unknown -p vectorcraft-ui-egui
     Checking peniko v0.6.1
     Checking linesweeper v0.5.0
     Checking read-fonts v0.43.3
-    Checking vectorcraft-geom v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/geom)
-    Checking vectorcraft-color v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/color)
-    Checking vectorcraft-doc v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/doc)
+    Checking vectorcraft-geom v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/geom)
+    Checking vectorcraft-color v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/color)
+    Checking vectorcraft-doc v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/doc)
     Checking skrifa v0.42.1
     Checking write-fonts v0.48.1
     Checking skrifa v0.47.0
-    Checking vectorcraft-pathops v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/pathops)
-    Checking vectorcraft-three-d v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/three-d)
+    Checking vectorcraft-pathops v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/pathops)
+    Checking vectorcraft-three-d v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/three-d)
     Checking zerotrie v0.2.5
     Checking tiny-skia-path v0.12.0
    Compiling wasm-bindgen-macro v0.2.129
@@ -213,32 +213,32 @@ $ cargo check --offline --target wasm32-unknown-unknown -p vectorcraft-ui-egui
     Checking tiny-skia v0.11.4
     Checking krilla v0.8.2 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
     Checking rgb v0.8.53
-    Checking vectorcraft-trace v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/trace)
-    Checking vectorcraft-affinity v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/affinity)
+    Checking vectorcraft-trace v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/trace)
+    Checking vectorcraft-affinity v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/affinity)
     Checking icu_provider v2.3.1
-    Checking vectorcraft-plugins v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/plugins)
+    Checking vectorcraft-plugins v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/plugins)
     Checking icu_locale_fallback v2.3.0
     Checking icu_segmenter v2.3.0
-    Checking vectorcraft-brush v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/brush)
-    Checking vectorcraft-format v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/format)
+    Checking vectorcraft-brush v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/brush)
+    Checking vectorcraft-format v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/format)
     Checking enum-map v2.7.3
     Checking resvg v0.45.1
     Checking craft-pdf v0.1.0 (https://github.com/storytold/craft-libs?rev=ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d#ca50d63b)
-    Checking vectorcraft-effects v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/effects)
+    Checking vectorcraft-effects v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/effects)
     Checking harfrust v0.12.0
     Checking skrifa v0.44.0
-    Checking vectorcraft-pdf v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/pdf)
-    Checking vectorcraft-render v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/render)
-    Checking vectorcraft-metafile v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/metafile)
-    Checking vectorcraft-cad v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/cad)
-    Checking vectorcraft-tools v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/tools)
-    Checking vectorcraft-svg v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/svg)
+    Checking vectorcraft-pdf v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/pdf)
+    Checking vectorcraft-render v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/render)
+    Checking vectorcraft-metafile v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/metafile)
+    Checking vectorcraft-cad v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/cad)
+    Checking vectorcraft-tools v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/tools)
+    Checking vectorcraft-svg v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/svg)
     Checking epaint v0.36.2
-    Checking vectorcraft-eps v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/eps)
+    Checking vectorcraft-eps v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/eps)
     Checking web-sys v0.3.106
     Checking web-time v1.1.0
     Checking egui v0.36.2
-    Checking vectorcraft-engine v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/engine)
+    Checking vectorcraft-engine v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/engine)
     Checking craft-ui v0.1.0 (https://github.com/storytold/craft-libs?rev=5c874d51eeb3de70e735c8ce87a59a7dedd47675#5c874d51)
     Checking egui_extras v0.36.2
 warning: method `store_profile` is never used

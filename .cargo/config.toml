@@ -2,5 +2,5 @@
 xtask = "run --package xtask --"
 
 [net]
-# varos-text is pinned to a git revision over HTTPS; let the git CLI do the fetch (credentials, proxies).
+# Let the git CLI fetch upstream git dependencies (credentials, proxies).
 git-fetch-with-cli = true

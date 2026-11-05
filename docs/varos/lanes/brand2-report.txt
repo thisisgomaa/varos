@@ -1,5 +1,5 @@
 LANE BRAND-2 — real Varos icon + menu-free Home
-Worktree: ~/Documents/AI workspace/reference/artcraft/spikes/lane-brand2
+Worktree: <workspace>/reference/artcraft/spikes/lane-brand2
 Branch: lane-brand2; starting HEAD: 3b410c28. No commit, push, merge, bundle install or windows opened.
 
 ICON
@@ -11,7 +11,7 @@ The cached 128 px PNG serves title bar (18 pt), Home (44 pt) and About (44 pt), 
 The engraved dragon remains absent. The old V on the DMG background was replaced too.
 The original source canvas/inset is preserved; no second inset is added.
 Generator and packaging/icons.sh regenerate from the original ICNS rather than recreating the old mark.
-Attribution: Varos app icon — original work, © 2026 Ahmed Gomaa, MIT OR Apache-2.0.
+Attribution: Varos app icon — original work, © 2026 the owner, MIT OR Apache-2.0.
 
 BUNDLE RESOURCE (EXACT)
 Contents/Resources/VectorCraft.icns

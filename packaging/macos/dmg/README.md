@@ -1,6 +1,6 @@
 # Varos DMG background
 
-Varos app icon — original work, © 2026 Ahmed Gomaa, MIT OR Apache-2.0.
+Varos app icon — original work, © 2026 the owner, MIT OR Apache-2.0.
 The neutral backdrop embeds the real icon, matching the app. No fonts or
 third-party artwork. Raster background includes 660x400 at 72 dpi and
 1320x800 at 144 dpi. The light area keeps Finder icon labels readable.

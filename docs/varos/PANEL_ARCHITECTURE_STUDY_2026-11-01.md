@@ -305,9 +305,9 @@ P0 (قصّ Color) يظل بندًا منفصلًا ينتظر المستخدم. 
 - **S6:** `crates/ui-egui/src/panels/properties.rs:1117,1208,1280,1355,1387`.
 - **S7:** `crates/ui-egui/src/state.rs:134,155`.
 - **S8:** `crates/ui-egui/src/widgets.rs:324,363,385,957`؛ `scrub.rs:1,80,145`؛ `crates/engine/src/lib.rs:2623`.
-- **L1:** في المشروع القديم `~/Documents/AI workspace/varos/varos/crates/varos-app/src/shell/tokens.rs:120,222,502,544`.
+- **L1:** في المشروع القديم `<workspace>/varos/varos/crates/varos-app/src/shell/tokens.rs:120,222,502,544`.
 - **L2:** في المشروع القديم `varos/crates/varos-app/src/shell/kit/field.rs:1,36,44,454,527,587`؛ `ui/fields.rs:1,37`؛ `ui/panels/stroke.rs:77`؛ `ui/appearance.rs:82`.
-- **L3:** `~/Documents/AI workspace/varos/docs/audits/ui-2026-09-24/03-panels-docking-homes.md:54,85,120`؛ والشجرة الحالية القديمة في `varos/crates/varos-app/src/shell/boxtree.rs:149,171`.
+- **L3:** `<workspace>/varos/docs/audits/ui-2026-09-24/03-panels-docking-homes.md:54,85,120`؛ والشجرة الحالية القديمة في `varos/crates/varos-app/src/shell/boxtree.rs:149,171`.
 - **H1:** [اتفاق 27 أكتوبر](ui-handoff-2026-10-27/architecture/AGREED_ARCHITECTURE.md)، خصوصًا القرارات 9–17 وحدود النموذج الأولي 78–97؛ و[تفصيل التصميم](ui-handoff-2026-10-27/architecture/IMPLEMENTED_DESIGN.md).
 - **H2:** [اتجاه Shell في 28 أكتوبر](SHELL_SIMPLE_DIRECTION.md).
 - **H3:** `docs/varos/lanes/brief-shell-fixes-1.md`؛ `shell-simple-1-report.md`؛ `picker2-report.md`: تاريخ قرارات وتنفيذ، لا أوامر جديدة ولا قبول حالي.

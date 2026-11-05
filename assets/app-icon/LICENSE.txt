@@ -1,4 +1,4 @@
-Varos app icon — original work, © 2026 Ahmed Gomaa, MIT OR Apache-2.0
+Varos app icon — original work, © 2026 the Varos contributors, MIT OR Apache-2.0
 
 Licensed under MIT OR Apache-2.0, at your option; the full licence texts are
 in the repository LICENSE-MIT and LICENSE-APACHE.

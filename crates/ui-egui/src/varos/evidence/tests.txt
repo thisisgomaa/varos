@@ -1,6 +1,6 @@
 $ cargo test --offline -p vectorcraft-ui-egui
     Blocking waiting for file lock on build directory
-   Compiling vectorcraft-ui-egui v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/ui-egui)
+   Compiling vectorcraft-ui-egui v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/ui-egui)
     Finished `test` profile [optimized + debuginfo] target(s) in 34m 27s
      Running unittests src/lib.rs (target/debug/deps/vectorcraft_ui_egui-92079f7a3e9f51d2)
 

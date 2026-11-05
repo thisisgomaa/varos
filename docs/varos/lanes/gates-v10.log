@@ -40,7 +40,7 @@ test result: FAILED. 331 passed; 1 failed; 2 ignored; 0 measured; 0 filtered out
 FMT-OK
 WS-OK
 == bundle
-~/Documents/AI workspace/reference/artcraft/spikes/Varos.app.new: replacing existing signature
+<workspace>/reference/artcraft/spikes/Varos.app.new: replacing existing signature
 BUNDLED d9ee9409
 == DONE
 

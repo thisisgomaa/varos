@@ -1,4 +1,4 @@
-//! Original Varos app icon, © 2026 Ahmed Gomaa, MIT OR Apache-2.0.
+//! Original Varos app icon, © 2026 the owner, MIT OR Apache-2.0.
 
 pub use crate::varos::names::{APP_NAME, DATA_DIR_LOWER, DATA_DIR_NAME, PORTABLE_DATA_DIR};
 

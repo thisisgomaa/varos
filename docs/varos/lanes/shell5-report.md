@@ -73,7 +73,7 @@ those were fixed before the final run above. No all-green library-suite claim is
 All cargo commands ran one at a time, with:
 
 ```sh
-export CARGO_TARGET_DIR="~/Documents/AI workspace/lanes/_target-shared"
+export CARGO_TARGET_DIR="<workspace>/lanes/_target-shared"
 cargo test -p vectorcraft-ui-egui --lib --release --offline -j 2 -- --test-threads=2
 cargo clippy --workspace --all-targets --offline -j 2 -- -D warnings
 VAROS_SHELL_CAPTURE_FINAL=/tmp/varos-shell5/shell5-capture.png cargo test -p vectorcraft-ui-egui --lib --release --offline -j 2 capture_shell5_final -- --ignored --test-threads=2

@@ -100,9 +100,11 @@ Current merge base: **`1cdc9873`** (upstream `main`, 2026-10-26). Varos commits 
 
 - Varos code: MIT OR Apache-2.0, like upstream.
 - `varos-text` (earlier Varos engine repository, `crates/varos-text`): relicensed from GPL-3.0-only
-  to MIT OR Apache-2.0 on 2026-10-18 (commit `6bf9787` there). Pinned here at rev `5936eaf` over
-  HTTPS (`https://github.com/thisisgomaa/varos.git`, `crates/text-arabic/Cargo.toml`); that revision
-  must stay reachable after the repository replacement (it is on the `legacy-engine` history).
+  to MIT OR Apache-2.0 on 2026-10-18 (commit `6bf9787` there). Vendored from rev `5936eaf`
+  into `crates/varos-text/`, with its licence texts, README and tests. It is a path-only
+  dependency, excluded from workspace membership so the legacy default COSMIC feature does
+  not add a second shaper or change the workspace lockfile. `text-arabic` keeps
+  `default-features = false`; builds no longer fetch this repository for the policy.
 - Varos v1.1 cursor set: MIT OR Apache-2.0, 2026-10-18 (same commit).
 - Original Varos icon glyphs: MIT OR Apache-2.0, 2026-10-18 (commit `3ec29e2` there).
 - Varos app icon: original work, MIT OR Apache-2.0 (copyright line in `NOTICE` and

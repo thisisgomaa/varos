@@ -1,0 +1,114 @@
+Public-tree preparation — 2026-11-05
+
+Scope: anonymize current first-party text and vendor the existing Arabic policy crate.
+No commits, refs, history, app installations or native windows changed.
+
+Vendoring:
+- All 38 files from 5936eaf:varos/crates/varos-text retained at crates/varos-text.
+- Manifest, features, dependency versions and licence files preserved.
+- Root workspace excludes this path-only dependency so its default legacy COSMIC
+  engine does not expand workspace builds or the lockfile; text-arabic still uses
+  default-features = false. No new third-party dependency is resolved.
+- Cargo.lock changes by one deletion: the former git source of varos-text.
+- All three test font SHA-256 values match the imported SHA256SUMS. Test fixtures
+  are retained by explicit task instruction; existing asset attribution is kept.
+- Rustfmt aligns 24 imported Rust files with this checkout. Two source comments
+  replace the owner's name with a role; no executable logic is changed.
+
+Scrub:
+- 507 owner-home-path lines in 25 tracked files reduced to zero.
+- 122 targeted first-name lines in 14 tracked files reduced to 10 protected lines
+  in six existing licence/NOTICE/upstream-contributor files. The imported MIT
+  licence retains one additional protected line. The requested studio phrase was
+  absent from the starting tree and remains absent.
+- Generated contributor records and existing licence files are byte-identical.
+  Existing NOTICE bytes are preserved; only vendoring/fixture provenance appended.
+- Original owner asset credits are anonymized; third-party ASSETS rows unchanged.
+- The ignored Home capture uses neutral sample display text; its assertions and
+  runtime app behaviour are unchanged. The matching HTML mockup is neutralized.
+- Generic upstream test paths are retained, including the XDG documents-folder
+  fixture in crates/engine/src/cmd/fileio/save.rs:1095,1097.
+- Repository/account URLs and historical product-name provenance are retained.
+
+Independent review:
+Read-only review found no blocking implementation findings; archive completeness,
+font hashes, licence preservation, unchanged third-party asset rows and lockfile
+minimality verified. No cargo commands were run by the reviewer.
+
+Doubts and coverage limits:
+- The preserved optional legacy engine source refers to MPL-2.0 provenance in
+  src/engine_support.rs while LICENSE-NOTE.md records dual relicensing. Its old
+  NOTICE/VENDOR_PATCHES references are not present here. This inconsistency remains
+  explicitly unresolved; no licence text or licence claim was rewritten.
+- Optional COSMIC integration tests are headless and use local embedded fixtures;
+  no network or GUI requirement was found in their source. They depend on legacy
+  patched COSMIC APIs and are not covered by workspace tests in the path-only setup.
+- This is current-tree preparation, not a history audit or a publication approval.
+
+Local gates (one Cargo command at a time, four build jobs):
+- CARGO_BUILD_JOBS=4 cargo fmt --all -- --check: PASS after imported-code formatting.
+- cargo test --locked -j 4 --workspace -- --test-threads=4: FAIL, first target
+  65 passed / 1 failed (socket bind denied).
+- cargo test --locked -j 4 --workspace --no-fail-fast -- --test-threads=4:
+  FAIL, 11,205 passed / 40 failed / 44 ignored across 91 test targets.
+  All 39 transport failures are local socket bind permission denials; the other
+  failure reads machine memory using sysctl, which this sandbox also denies.
+  Tests were not changed or suppressed. This is not an all-passing test gate.
+- cargo clippy --locked -j 4 --workspace --all-targets -- -D warnings: PASS (45.91 s).
+- CARGO_BUILD_JOBS=4 cargo xtask wasm: PASS, 25 crates (inner check: 18.65 s).
+- Requested tracked-content scans: zero owner-home/studio hits; only the ten
+  explicitly protected first-name lines remain. Supplemental untracked-source
+  scan finds only the imported MIT licence line.
+- cargo test --locked -j 4 -p varos-text --no-default-features -- --test-threads=4:
+  rejected before testing: Cargo cannot specify features for a nonmember package.
+- cargo test --locked -j 4 -p varos-text -- --test-threads=4: PASS,
+  9 policy tests / 0 failures, using the existing dependency's disabled defaults.
+  The optional legacy integration tests are feature-gated and were not run.
+
+- CARGO_BUILD_JOBS=4 cargo xtask assets: PASS, all 532 assets attributed.
+- Final CARGO_BUILD_JOBS=4 cargo fmt --all -- --check: PASS.
+- git diff --check: PASS.
+- Full cargo xtask ci not run: no publication or upstream merge is part of this task.
+
+Exact failed tests (all from the no-fail-fast run):
+
+auth::tests::the_handshake_runs_over_a_stream — crates/varos-agents/src/auth.rs:223:60
+control_server::tests::buffered_partial_control_line_also_expires — apps/vectorcraft/src/control_server.rs:369:60
+control_server::tests::a_nonreading_control_peer_cannot_retain_the_writer — apps/vectorcraft/src/control_server.rs:369:60
+control_server::tests::extra_connections_are_refused — apps/vectorcraft/src/control_server.rs:720:60
+control_server::tests::idle_control_socket_releases_its_worker — apps/vectorcraft/src/control_server.rs:369:60
+control_server::tests::idle_expiry_closes_without_writing_a_line — apps/vectorcraft/src/control_server.rs:369:60
+control_server::tests::partial_control_line_releases_its_worker — apps/vectorcraft/src/control_server.rs:369:60
+control_server::tests::persistent_control_requests_get_fresh_transport_deadlines — apps/vectorcraft/src/control_server.rs:369:60
+control_server::tests::stalled_control_line_is_refused_with_the_reason — apps/vectorcraft/src/control_server.rs:369:60
+control_server::tests::tcp_connection_is_closed_after_junk — apps/vectorcraft/src/control_server.rs:668:60
+control_server::tests::ten_inspect_replies_for_10000_objects_arrive_within_20_s — apps/vectorcraft/src/control_server.rs:689:60
+control_server::tests::timed_out_worker_returns_its_connection_slot — apps/vectorcraft/src/control_server.rs:503:60
+control_server::tests::trickled_control_line_has_an_absolute_deadline — apps/vectorcraft/src/control_server.rs:369:60
+control_server::varos_control::tests::a_slow_drip_is_dropped_at_the_window — apps/vectorcraft/src/varos_control.rs:539:60
+control_server::varos_control::tests::the_mcp_proxy_attaches_to_the_listener — apps/vectorcraft/src/varos_control.rs:691:60
+control_server::varos_control::tests::the_always_on_listener_lets_in_only_the_token — apps/vectorcraft/src/varos_control.rs:631:56
+control_server::varos_control::tests::unauthenticated_peers_get_a_small_pool_and_a_short_window — apps/vectorcraft/src/varos_control.rs:539:60
+tests_history_mem::mac_reads_the_machine_memory — crates/engine/src/tests_history_mem.rs:205:5
+tests::answer_dialog_does_not_confirm_when_the_app_refuses_the_set — crates/mcp/src/tests.rs:694:63
+tests::answer_dialog_sets_fields_in_order_then_confirms — crates/mcp/src/tests.rs:694:63
+tests::remote_call_reports_nothing_sent_when_reconnect_is_refused — crates/mcp/src/tests.rs:1102:31
+tests::remote_connect_fails_fast — crates/mcp/src/tests.rs:1089:72
+tests::remote_does_not_replay_when_edit_reply_is_lost — crates/mcp/src/tests.rs:809:63
+tests::remote_does_not_send_on_a_connection_with_a_stray_line — crates/mcp/src/tests.rs:1185:63
+tests::remote_edit_succeeds_once_when_app_restarts — crates/mcp/src/tests.rs:1102:31
+tests::remote_file_tools_send_absolute_paths — crates/mcp/src/tests.rs:694:63
+tests::remote_forwards_methods — crates/mcp/src/tests.rs:694:63
+tests::remote_rejects_a_reply_with_a_mismatched_id_and_reconnects — crates/mcp/src/tests.rs:1023:63
+tests::remote_rejects_uncorrelated_replies_without_replaying — crates/mcp/src/tests.rs:969:67
+tests::remote_reports_the_reason_of_a_refusal_without_an_id — crates/mcp/src/tests.rs:1059:63
+tests_concurrency::a_remote_call_stops_waiting_for_the_app_when_cancelled — crates/mcp/src/tests_concurrency.rs:344:63
+tests_fileio::export_is_the_same_call_in_the_app_and_headless — crates/mcp/src/tests_fileio.rs:100:63
+tests_fileio::save_file_is_the_same_call_in_the_app_and_headless — crates/mcp/src/tests_fileio.rs:100:63
+varos_actor::tests::every_line_to_the_app_names_the_agent — crates/mcp/src/varos_actor.rs:66:67
+varos_connect::tests::a_process_that_cannot_prove_it_is_varos_gets_nothing — crates/mcp/src/varos_connect.rs:203:57
+varos_connect::tests::a_tools_steps_carry_the_revision_their_earlier_steps_answered — crates/mcp/src/varos_connect.rs:320:57
+varos_connect::tests::every_line_carries_the_token_and_the_agent — crates/mcp/src/varos_connect.rs:203:57
+varos_connect::tests::two_varos_open_is_ambiguous — crates/mcp/src/varos_connect.rs:203:57
+varos_connect::tests::varos_opened_after_the_agent_is_found_on_the_next_call — crates/mcp/src/varos_connect.rs:203:57
+varos_connect::tests::with_no_varos_open_every_call_says_so — crates/mcp/src/varos_connect.rs:249:53

@@ -5890,7 +5890,6 @@ dependencies = [
 [[package]]
 name = "varos-text"
 version = "0.1.0"
-source = "git+https://github.com/thisisgomaa/varos.git?rev=5936eaf#5936eaf757554c82650670b19afdc7d7a7d2c610"
 dependencies = [
  "unicode-segmentation",
 ]

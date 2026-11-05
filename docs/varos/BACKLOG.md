@@ -225,8 +225,8 @@ implementation, Color acceptance or visual acceptance claimed.
    count) in `STATE.md`.
 10. **Publish checklist.** *Acceptance:* a written list covering the three bars in `FORK.md`
     (Arabic, performance, design), licences and `ASSETS.md` complete, `cargo xtask brands` clean,
-    the `varos-text` dependency reachable over HTTPS after the repository replacement (rev
-    `5936eaf` must stay on the `legacy-engine` history), no ArtCraft marks (logo files removed
+    the vendored `varos-text` path dependency building without fetching the legacy repository,
+    no ArtCraft marks (logo files removed
     2026-11-02), no people's names in docs or commit authors, name and trademark check; owner signs
     it off.
 11. **Agents S4 verbs + S6 review UI** (after item 8 merges). *Acceptance:* S4 verbs and the S6

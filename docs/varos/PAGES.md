@@ -128,7 +128,7 @@ a reused image key and new pages, deleted-page restoration with canvas undo and 
 page-operation undo/redo without canvas-stack changes, and the Edit menu labels.
 
 Local gates use `--offline -j 2`, tests use `--test-threads=2`, and every cargo command uses
-`CARGO_TARGET_DIR="~/Documents/AI workspace/lanes/_target-shared"`.
+`CARGO_TARGET_DIR="<workspace>/lanes/_target-shared"`.
 Cargo commands run sequentially. Exact results are recorded below after completion.
 
 Initial UI attempt (before the test-only cache fix), exit 101:

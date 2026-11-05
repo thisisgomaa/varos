@@ -37,7 +37,7 @@ OFF isolation: legacy panel and picker bodies execute directly, without an added
 
 ## Gates
 
-Validation 2026-10-29 on macOS, lane-look after merging main (Pages), shared target directory `~/Documents/AI workspace/lanes/_target-shared`, one Cargo command at a time, `--offline -j 2`, tests with `--test-threads=2`.
+Validation 2026-10-29 on macOS, lane-look after merging main (Pages), shared target directory `<workspace>/lanes/_target-shared`, one Cargo command at a time, `--offline -j 2`, tests with `--test-threads=2`.
 
 | Gate | Exact result |
 |---|---|

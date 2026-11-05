@@ -1,7 +1,7 @@
 $ VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui varos::perf_tests::headless_ui_breakdown -- --ignored --nocapture --test-threads=1
     Blocking waiting for file lock on build directory
    Compiling syn v3.0.6
-   Compiling vectorcraft-text v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/text)
+   Compiling vectorcraft-text v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/text)
    Compiling objc2-core-foundation v0.3.2
    Compiling rustix v1.1.5
    Compiling getrandom v0.3.4
@@ -42,7 +42,7 @@ $ VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui varos::perf_tests:
    Compiling unarray v0.1.4
    Compiling wast v261.0.0
    Compiling kittest v0.4.0
-   Compiling vectorcraft-ui-egui v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/ui-egui)
+   Compiling vectorcraft-ui-egui v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/ui-egui)
    Compiling open v5.4.4
    Compiling proptest v1.11.0
    Compiling objc2-quartz-core v0.3.2
@@ -76,12 +76,12 @@ $ VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui varos::perf_tests:
    Compiling kurbo v0.13.1
    Compiling potential_utf v0.1.6
    Compiling icu_provider v2.3.1
-   Compiling vectorcraft-geom v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/geom)
-   Compiling vectorcraft-color v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/color)
+   Compiling vectorcraft-geom v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/geom)
+   Compiling vectorcraft-color v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/color)
    Compiling peniko v0.6.1
    Compiling write-fonts v0.48.1
    Compiling skrifa v0.42.1
-   Compiling vectorcraft-doc v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/doc)
+   Compiling vectorcraft-doc v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/doc)
    Compiling skrifa v0.47.0
    Compiling icu_locale_fallback v2.3.0
    Compiling linesweeper v0.5.0
@@ -89,16 +89,16 @@ $ VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui varos::perf_tests:
    Compiling icu_collections v2.3.0
    Compiling read-fonts v0.43.3
    Compiling icu_segmenter v2.3.0
-   Compiling vectorcraft-pathops v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/pathops)
+   Compiling vectorcraft-pathops v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/pathops)
    Compiling parking_lot_core v0.9.12
    Compiling parking_lot v0.12.5
-   Compiling vectorcraft-three-d v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/three-d)
-   Compiling vectorcraft-plugins v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/plugins)
+   Compiling vectorcraft-three-d v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/three-d)
+   Compiling vectorcraft-plugins v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/plugins)
    Compiling harfrust v0.13.3
    Compiling naga-types v30.0.1
-   Compiling vectorcraft-brush v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/brush)
+   Compiling vectorcraft-brush v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/brush)
    Compiling read-fonts v0.41.0
-   Compiling vectorcraft-effects v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/effects)
+   Compiling vectorcraft-effects v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/effects)
    Compiling tiny-skia-path v0.12.0
    Compiling naga v30.0.1
    Compiling wgpu-types v30.0.1
@@ -122,28 +122,28 @@ $ VAROS_PROFILE=1 cargo test --offline -p vectorcraft-ui-egui varos::perf_tests:
    Compiling tiny-skia-path v0.11.4
    Compiling svgtypes v0.15.3
    Compiling usvg v0.48.1
-   Compiling vectorcraft-render v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/render)
-   Compiling vectorcraft-pdf v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/pdf)
+   Compiling vectorcraft-render v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/render)
+   Compiling vectorcraft-pdf v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/pdf)
    Compiling egui v0.36.2
-   Compiling vectorcraft-metafile v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/metafile)
-   Compiling vectorcraft-eps v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/eps)
-   Compiling vectorcraft-svg v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/svg)
+   Compiling vectorcraft-metafile v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/metafile)
+   Compiling vectorcraft-eps v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/eps)
+   Compiling vectorcraft-svg v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/svg)
    Compiling usvg v0.45.1
    Compiling tiny-skia v0.11.4
-   Compiling vectorcraft-tools v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/tools)
-   Compiling vectorcraft-cad v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/cad)
-   Compiling vectorcraft-format v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/format)
-   Compiling vectorcraft-trace v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/trace)
-   Compiling vectorcraft-affinity v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/affinity)
+   Compiling vectorcraft-tools v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/tools)
+   Compiling vectorcraft-cad v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/cad)
+   Compiling vectorcraft-format v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/format)
+   Compiling vectorcraft-trace v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/trace)
+   Compiling vectorcraft-affinity v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/affinity)
    Compiling rgb v0.8.53
    Compiling resvg v0.45.1
-   Compiling vectorcraft-engine v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/engine)
+   Compiling vectorcraft-engine v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/engine)
    Compiling egui-wgpu v0.36.2
    Compiling dify v0.8.0
    Compiling egui_kittest v0.36.2
    Compiling egui_extras v0.36.2
    Compiling craft-ui v0.1.0 (https://github.com/storytold/craft-libs?rev=5c874d51eeb3de70e735c8ce87a59a7dedd47675#5c874d51)
-   Compiling vectorcraft-testkit v0.13.1 (~/Documents/AI workspace/reference/artcraft/spikes/lane-perf/crates/testkit)
+   Compiling vectorcraft-testkit v0.13.1 (<workspace>/reference/artcraft/spikes/lane-perf/crates/testkit)
     Finished `test` profile [optimized + debuginfo] target(s) in 69m 59s
      Running unittests src/lib.rs (target/debug/deps/vectorcraft_ui_egui-92079f7a3e9f51d2)
 

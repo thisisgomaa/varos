@@ -43,9 +43,9 @@ The owner hand-tested v16 (main ac7515fa) and decided / found:
 
 HEAT RULE (hard, this Mac): another cargo lane is running. Implement + write tests FIRST without cargo.
 Before your FIRST cargo command wait until
-/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/go-shellfix-cargo
+<scratchpad>/go-shellfix-cargo
 exists (`test -f`; if absent `sleep 60`, up to 240 times). Then ONE cargo command at a time, `-j 2`,
-`--offline`, tests `-- --test-threads=2`, CARGO_TARGET_DIR="~/Documents/AI workspace/lanes/_target-shared".
+`--offline`, tests `-- --test-threads=2`, CARGO_TARGET_DIR="<workspace>/lanes/_target-shared".
 Gates: `cargo test -p vectorcraft-ui-egui --lib --release` (0 failures; never weaken/ignore tests),
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check -p vectorcraft-ui-egui`, `git diff --check`.
 Captures (ignored tests, 1440×900): `VAROS_SHELL_CAPTURE_SIMPLE` → /tmp/varos-fix1/shell.png and a new

@@ -53,7 +53,7 @@ fill; header moved 659 → 733), and all pass with the fixes.
 
 ## Gate results (final code)
 
-All cargo commands: `CARGO_TARGET_DIR=~/Documents/AI workspace/lanes/_target-shared`,
+All cargo commands: `CARGO_TARGET_DIR=<workspace>/lanes/_target-shared`,
 `-j 2 --offline --release`, tests with `--test-threads=2`, one lane, sequential.
 
 | Gate | Result |
@@ -62,8 +62,8 @@ All cargo commands: `CARGO_TARGET_DIR=~/Documents/AI workspace/lanes/_target-sha
 | `cargo clippy --all-targets -- -D warnings` | exit 0 |
 | `cargo fmt --all && git diff --check` | exit 0, no output |
 | `cargo build -p vectorcraft` | exit 0 (`Finished release`) |
-| Wheel capture | `/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/picker-capture.png` |
-| Gradient capture | `/private/tmp/claude-501/-Users-gomaa-Documents-AI-workspace-varos/90bf49a1-794a-43e8-b7df-7f72ceea7227/scratchpad/picker-capture-gradient.png` |
+| Wheel capture | `<scratchpad>/picker-capture.png` |
+| Gradient capture | `<scratchpad>/picker-capture-gradient.png` |
 
 Captures (1400×1000, software raster, toolbar Fill well): 240 pt wide, frameless, no ×, no
 "Color | Appearance" tabs, no "Gradient…" button; mode row = Wheel · Sliders · Harmony · Gradient +

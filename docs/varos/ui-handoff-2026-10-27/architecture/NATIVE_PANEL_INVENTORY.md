@@ -1,6 +1,6 @@
 # Native panel inventory
 
-Source read on 2026-10-27: `~/Documents/AI workspace/varos-next/crates/ui-egui/src/state.rs`. This is the locally inspected source, not proof of the currently running app or a production branch. Verify the checkout before implementation.
+Source read on 2026-10-27: `crates/ui-egui/src/state.rs`. This is the locally inspected source, not proof of the currently running app or a production branch. Verify the checkout before implementation.
 
 Registered dock tabs: Properties, Layers, Libraries (3). Registered icon panels: 39. Total: **42 registered panels**; the main design viewport is an additional editor concept in the agreed architecture.
 

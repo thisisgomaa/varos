@@ -8,6 +8,13 @@
   <b>A free, open-source vector editor, Arabic and right-to-left first, written in Rust.</b>
 </p>
 
+<p align="center" dir="rtl">
+  <b>Varos وقفٌ للعالم كله.</b><br>
+  الوقف في تراثنا أن يُحبَس أصلُ الشيء، فلا يُباع ولا يُوهَب ولا يُورَث، وتبقى منفعته مفتوحةً لكل الناس على الدوام،
+  كبئرٍ يشرب منها كل عابر، أو مكتبةٍ يقرأ فيها كل طالب. وبهذه الروح وُقف Varos: مجانيٌّ ومفتوح المصدر،
+  منفعته لكل مصمم في كل مكان، بلا اشتراك ولا حساب.
+</p>
+
 ## The name
 
 **Varos** = **V**ector · **A**rabic · **R**TL · **O**pen **S**ource: a vector editor, Arabic first,

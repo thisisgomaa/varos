@@ -70,8 +70,7 @@ for chrome controls, never egui default widgets).
   tab overflow to shell-look-narrow.png. Put the final PNGs also in docs/varos/mockups/.
 
 ## Gates / rules — as stage 5
-ONE cargo lane; `-j 2`; `--test-threads=2`; `--offline`; `CARGO_TARGET_DIR="~/Documents/AI
-workspace/lanes/_target-shared"`; ui-egui release lib tests (known 10 release-only failures: 9
+ONE cargo lane; `-j 2`; `--test-threads=2`; `--offline`; `CARGO_TARGET_DIR="<workspace>/lanes/_target-shared"`; ui-egui release lib tests (known 10 release-only failures: 9
 `panels::gradient::tests::*` + `tests_rotateview::escape_after_closing_a_popup…`); clippy
 --workspace --all-targets -D warnings; rustfmt --check on touched files; `git diff --check`; release
 build of `vectorcraft`. No commits/stash. Forbidden: engine, render, text crates; `theme.rs` colours

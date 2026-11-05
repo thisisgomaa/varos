@@ -1,6 +1,6 @@
 # Varos app icon
 
-Varos app icon — original work, © 2026 Ahmed Gomaa, MIT OR Apache-2.0
+Varos app icon — original work, © 2026 the owner, MIT OR Apache-2.0
 
 Source of truth: the owner-supplied installed app's
 `/Applications/Varos.app/Contents/Resources/Varos.icns` (read-only).

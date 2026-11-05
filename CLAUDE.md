@@ -32,8 +32,8 @@ VectorCraft, not Varos (see "Upstream progress docs" below).
 - `crates/ui-egui/assets/varos/`: Varos icons and fonts. `assets/app-icon/`: the Varos app icon
   (upstream file names kept).
 - `crates/text/src/kashida.rs` (measuring in VectorCraft's shaper), `harakat.rs`,
-  `arabic_fonts.rs`; `crates/text-arabic/` (Varos kashida policy from `varos-text`, git-pinned over
-  HTTPS).
+  `arabic_fonts.rs`; `crates/text-arabic/` (Varos kashida policy from the vendored, path-only
+  `crates/varos-text/`).
 - `crates/varos-agents/`: agent identity, document diffs, presence, activity log (pure logic).
 - `varos_*.rs` files inside upstream crates (for example `crates/engine/src/cmd/varos_arabic.rs`,
   `crates/mcp/src/varos_connect.rs`, `apps/vectorcraft/src/varos_control.rs`).
