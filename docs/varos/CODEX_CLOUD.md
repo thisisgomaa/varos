@@ -2,11 +2,11 @@
 
 Owner decision: implementation lanes and their gates (tests, clippy, fmt) run in **Codex Cloud**
 (Linux); the Mac only does the final `cargo build --release -p vectorcraft` for a bundle when the
-owner wants to hand-test. Repo: `github.com/thisisgomaa/varos-next` (private). The `varos-text`
+owner wants to hand-test. Repo: `github.com/thisisgomaa/varos` (private; the old varos-next repo is retired). The `varos-text`
 dependency is the public `thisisgomaa/varos` over HTTPS (no SSH key needed in the cloud).
 
 ## One-time: create the environment (owner, in the ChatGPT/Codex app)
-Codex → Environments → **Create** → repository `thisisgomaa/varos-next` → container image:
+Codex → Environments → **Create** → repository `thisisgomaa/varos` → container image:
 *universal* (has Rust) → **Setup script** (paste the block below) → Internet access: **On** during
 setup (crates.io, GitHub) → Save. Then give the moderator the environment id (looks like
 `ccarenv_…`; it appears in the environment's page/URL).
