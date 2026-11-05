@@ -146,6 +146,11 @@ Preview summary, 2026-11-05. The full truth table, with evidence for every row, 
 
 Rust 1.95 or newer (`rust-version` in `Cargo.toml`) on macOS.
 
+> **Why `vectorcraft` in the commands?** Varos is built on VectorCraft, and the internal crate and
+> binary names stay upstream's (`vectorcraft`, `vectorcraft-cli`) so its updates keep merging cleanly.
+> Everything you see — the app, its window, menus, bundle (`com.varos.app`), data folder and `.varos`
+> files — is Varos. The sample files in `examples/` come from VectorCraft; Varos opens them as is.
+
 ```sh
 git clone https://github.com/thisisgomaa/varos
 cd varos
@@ -160,8 +165,6 @@ cargo xtask bundle                                          # dist/Varos.app (ma
 CARGO_BUILD_JOBS=4 cargo xtask ci                            # all local gates; see CONTRIBUTING.md
 ```
 
-Crate and binary names stay upstream's (`vectorcraft`, `vectorcraft-cli`) so upstream merges stay
-cheap; the app, its window, menus, bundle (`com.varos.app`) and data folder are Varos.
 
 Register the bridge with an agent, for example Claude Code:
 
