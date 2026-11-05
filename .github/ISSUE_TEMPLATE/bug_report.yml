@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a problem with the Varos preview. English or Arabic is welcome.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [Known issues](https://github.com/thisisgomaa/varos/blob/main/KNOWN_ISSUES.md) and search existing issues first.
+        For vulnerabilities, use [private reporting](https://github.com/thisisgomaa/varos/security/advisories/new).
+        Reports are public. Remove private artwork, secrets and personal details from examples.
+  - type: input
+    id: varos-version
+    attributes:
+      label: Varos version
+      description: Copy the version and build shown in Help › About. If Varos cannot open, give the downloaded ZIP filename.
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Find this in Apple menu → About This Mac.
+      placeholder: e.g. macOS 15.0
+    validations:
+      required: true
+  - type: input
+    id: mac-model-chip
+    attributes:
+      label: Mac model and chip
+      description: Give the model and chip from About This Mac. Do not include the serial number.
+      placeholder: e.g. MacBook Air, Apple M2
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      description: List the steps, starting from opening Varos or the file. Include relevant tools and settings.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+      description: Include any error message and whether this happens every time.
+    validations:
+      required: true
+  - type: checkboxes
+    id: arabic-text
+    attributes:
+      label: Arabic text involved?
+      options:
+        - label: This problem involves Arabic text.
+          required: false
+  - type: textarea
+    id: attachments
+    attributes:
+      label: File or screenshot (optional)
+      description: Drag a small sample file or screenshot here. ZIP a .varos file if GitHub will not accept it. Share only material you have permission to publish; remove private content first.
+    validations:
+      required: false

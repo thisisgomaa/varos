@@ -8,12 +8,88 @@
   <b>A free, open-source vector editor, Arabic and right-to-left first, written in Rust.</b>
 </p>
 
-<p align="center" dir="rtl">
-  <b>Varos وقفٌ للعالم كله.</b><br>
-  الوقف في تراثنا أن يُحبَس أصلُ الشيء، فلا يُباع ولا يُوهَب ولا يُورَث، وتبقى منفعته مفتوحةً لكل الناس على الدوام،
-  كبئرٍ يشرب منها كل عابر، أو مكتبةٍ يقرأ فيها كل طالب. وبهذه الروح وُقف Varos: مجانيٌّ ومفتوح المصدر،
-  منفعته لكل مصمم في كل مكان، بلا اشتراك ولا حساب.
-</p>
+## Try the preview
+
+**Varos 0.1 Preview is a pre-alpha for invited designers.** Features are missing and things are
+broken. Use copies of important files, save often, and keep your originals outside Varos.
+Read [Known issues](KNOWN_ISSUES.md) before trying it.
+
+### Install on macOS
+
+- **macOS 11 (Big Sur) or newer, Apple Silicon only** (M-series chip). **Intel Macs will not run
+  this download.** Check your chip in Apple menu → About This Mac.
+- Open the [GitHub Releases page](https://github.com/thisisgomaa/varos/releases), choose
+  **0.1 Preview**, and download **`Varos-0.1-preview.1-arm64.zip`** from Assets. Preview releases
+  may not appear under GitHub's “Latest” release link.
+- Before opening it, check the ZIP's SHA-256 against the checksum published with that release.
+  In Terminal, from the folder containing the ZIP, run:
+
+  ```sh
+  shasum -a 256 Varos-0.1-preview.1-arm64.zip
+  ```
+
+  The entire 64-character hash must match. If the checksum is missing or differs, stop and report
+  it to the maintainers through [GitHub Issues](https://github.com/thisisgomaa/varos/issues).
+- Unzip the download and drag **Varos.app** to **Applications**.
+- **First open:** the preview is ad-hoc signed, not notarized. macOS may say it cannot verify the
+  developer. On older macOS versions, right-click Varos.app → **Open**, then confirm. If that does
+  not offer an exception, try opening the app once, then use **System Settings → Privacy & Security
+  → Open Anyway**. On macOS 11–12, this is **System Preferences → Security & Privacy → General**.
+  See [Apple's opening instructions](https://support.apple.com/en-gb/102445).
+
+### Settings, saves and feedback
+
+Settings and workspace layout normally live in `~/Library/Application Support/Varos/ui.json`.
+In Finder, choose **Go → Go to Folder** and enter `~/Library/Application Support/Varos/` to find
+that folder. Varos does not automatically migrate settings from VectorCraft.
+
+Data Recovery is enabled by default, making separate recovery copies every two minutes in
+`~/Library/Application Support/Varos/Data Recovery/`. Change it in **Preferences → File Handling
+→ Data Recovery**. After an abnormal exit, **Recover Documents → Restore** opens available
+copies unsaved; save them to keep them. Recovery is not a replacement for Save or backups; see
+[its limits](KNOWN_ISSUES.md#files).
+
+**There is no auto-update and no telemetry.** Download later previews manually from Releases.
+Report problems through [GitHub Issues](https://github.com/thisisgomaa/varos/issues/new/choose),
+after checking [Known issues](KNOWN_ISSUES.md). Reports in English or Arabic are welcome. Include
+what you did, what you expected, what happened, the version from **Help › About**, and your macOS
+version and Mac chip. A small sample file or screenshot helps; remove private content first.
+For security problems, use [private vulnerability reporting](SECURITY.md).
+
+<div dir="rtl" lang="ar">
+
+<h3>جرّب النسخة التجريبية</h3>
+
+<p><b>Varos 0.1 Preview نسخة مبكرة قبل ألفا للمصممين المدعوين.</b>
+بعض الأدوات غير مكتملة وبعض الوظائف لا تعمل كما ينبغي. جرّبها على نسخ من ملفاتك المهمة،
+واحتفظ بالأصول واحفظ عملك بانتظام. راجع <a href="KNOWN_ISSUES.md">المشكلات المعروفة</a> أولًا.</p>
+
+<p>تحتاج إلى <b>macOS 11 أو أحدث وجهاز بمعالج Apple Silicon من سلسلة M</b>؛
+لن تعمل هذه النسخة على أجهزة Intel.
+نزّل <bdi>Varos-0.1-preview.1-arm64.zip</bdi> من
+<a href="https://github.com/thisisgomaa/varos/releases">إصدارات GitHub</a>،
+وقارن قيمة SHA-256 بالقيمة المنشورة مع الإصدار باستخدام الأمر أعلاه. إذا اختلفت القيمة
+أو لم تجدها، فلا تفتح الملف وأبلغ القائمين على المشروع.</p>
+
+<p>فك الضغط وانقل Varos.app إلى مجلد التطبيقات. النسخة موقّعة توقيعًا محليًا ولم توثّقها Apple،
+لذلك قد يظهر تحذير بأن المطوّر غير معروف. في إصدارات macOS الأقدم، انقر بزر الفأرة الأيمن
+واختر «فتح». إن لم ينجح ذلك، حاول فتح التطبيق مرة ثم اذهب إلى «إعدادات النظام ← الخصوصية
+والأمان ← فتح على أي حال». في macOS 11 و12، الخيار في «تفضيلات النظام ← الأمن والخصوصية ← عام».</p>
+
+<p>تُحفظ الإعدادات عادةً في <bdi><code>~/Library/Application Support/Varos/ui.json</code></bdi>،
+ونسخ الاسترداد في مجلد <bdi>Data Recovery</bdi> بجواره. ينشئ التطبيق نسخة استرداد كل دقيقتين
+افتراضيًا؛ يمكنك تعديل ذلك من «التفضيلات ← معالجة الملفات ← استرداد البيانات».
+بعد توقف غير متوقع، اختر «استعادة» في نافذة استرداد المستندات إن ظهرت، ثم احفظ المستندات.
+قد تضيع التغييرات التي تلت آخر نسخة؛ لا تعتمد على الاسترداد وحده.</p>
+
+<p><b>لا يوجد تحديث تلقائي ولا جمع لبيانات الاستخدام.</b> نزّل التحديثات يدويًا.
+أبلغ عن المشكلات بالعربية أو الإنجليزية عبر
+<a href="https://github.com/thisisgomaa/varos/issues/new/choose">GitHub Issues</a>،
+مع إصدار Varos من «مساعدة ← حول»، وإصدار macOS ونوع المعالج وخطوات المشكلة والنتيجة المتوقعة
+والفعلية. يمكنك إرفاق ملف أو صورة بعد إزالة المحتوى الخاص.
+للثغرات الأمنية، استخدم <a href="SECURITY.md">الإبلاغ الخاص</a>.</p>
+
+</div>
 
 ## The name
 
@@ -37,32 +113,34 @@ pronounced "VAH-ros" («فاروس»).
 
 ## Status
 
-Honest summary, 2026-11-02. The full truth table, with evidence for every row, is
+Preview summary, 2026-11-05. The full truth table, with evidence for every row, is
 [docs/varos/STATE.md](docs/varos/STATE.md); the ordered work list is
 [docs/varos/BACKLOG.md](docs/varos/BACKLOG.md).
 
-- **Platform:** the official build is **macOS only** for now. Other targets still compile from the
-  inherited code but are not built, tested or supported by Varos. There are no release downloads
-  yet: build from source (below).
-- **What works today:** the whole VectorCraft editor underneath (drawing and path tools,
+- **Platform:** the preview download is **macOS 11+, Apple Silicon only**. Other targets remain
+  in the source tree; they are not supported Varos releases.
+- **Available to test:** the VectorCraft editor underneath (drawing and path tools,
   Pathfinder, type with shaping and bidirectional layout, effects, SVG / PDF / `.ai` and many other
   formats; tour in [docs/UPSTREAM_README.md](docs/UPSTREAM_README.md)), shown as Varos: name, app
   icon, `.varos` as the default save extension (`.vectorcraft` and `.drawcraft` still open), and
   native format version 5 with independent **Pages** (upstream is at version 4).
-- **Built, waiting for the owner's hand test** (status *provisional* in STATE): kashida Off / Auto /
-  Force, Arabic Type Essentials and the Arabic font menu; Pages; the Varos look (warm-dark tokens,
-  fonts, 3 px / 8 px corners, no shadows); 157 Varos icon overrides and the Varos cursor set (native
-  cursors on macOS); the clean Home screen; the new shell and the unified **panel workspace**
+- **Accepted UI foundation:** shared typography, controls and surfaces (warm-dark tokens,
+  3 px / 8 px corners, no shadows), panel footer/content sizing and full-height side docks.
+- **Built, with native validation still pending** (*provisional* in STATE): kashida Off / Auto /
+  Force, Arabic Type Essentials and the Arabic font menu; Pages; medium UI font fallback;
+  157 Varos icon overrides and native cursors; the clean Home screen; the unified **panel workspace**
   (groups, docking at four edges, floating, three presentations; Tools and Control as special bars);
-  the colour picker as a popover from the colour well; modeless Preferences; document-tab
-  reordering; the agent layer (`crates/varos-agents`).
+  colour-picker eyedropper behavior; modeless Preferences; document-tab reordering; and the agent
+  layer (`crates/varos-agents`). These are available for testing, not guarantees of reliability.
+- **“Soon” means unavailable:** marked items are inert placeholders, including the in-app AI chat
+  and image-generation controls. The existing MCP bridge is separate. There is no delivery date.
 - **Performance:** rendering is still VectorCraft's CPU renderer. Measured on 2026-10-17 (release
   build, 4 render threads, 1920x1080), frame time grows with visible paths: 1k = 3.6 ms,
-  5k = 16 ms, 20k = 64 ms. A tile cache is the next step; a GPU decision follows.
-- **Tests:** local gates on 2026-11-02: `cargo test -p vectorcraft-ui-egui` 2,747 passed / 0 failed
-  / 23 ignored; `cargo test --workspace` 11,161 passed / 0 failed; `cargo clippy --workspace
-  --all-targets -- -D warnings` clean. GitHub CI has never run on this project; the numbers above
-  are from the development Mac.
+  5k = 16 ms, 20k = 64 ms. Large documents can be slow; a tile cache is planned, and GPU use
+  remains undecided.
+- **Validation:** the UI foundation and side-dock sizing have native acceptance recorded in STATE;
+  other preview areas remain provisional. Local checks and their dates are linked there.
+  GitHub CI has never run on this project; local tests are not a full native acceptance test.
 
 ## Build and run
 
@@ -79,7 +157,7 @@ cargo run --release -p vectorcraft-cli -- mcp               # MCP bridge: attach
 cargo run --release -p vectorcraft-cli -- mcp --headless    # MCP without the app
 cargo run --release -p vectorcraft-cli -- run --in examples/ribbons.vectorcraft --export out.pdf   # headless batch
 cargo xtask bundle                                          # dist/Varos.app (macOS)
-cargo xtask ci                                              # fmt, clippy, tests, assets, vendor names, layering, wasm
+CARGO_BUILD_JOBS=4 cargo xtask ci                            # all local gates; see CONTRIBUTING.md
 ```
 
 Crate and binary names stay upstream's (`vectorcraft`, `vectorcraft-cli`) so upstream merges stay
@@ -97,7 +175,8 @@ Optional CJK fonts, graphics-processor choice and other build options are explai
 `packaging/macos/package.sh`.
 
 The `crates/text-arabic` crate takes Varos's kashida policy from the `varos-text` crate of this
-repository's earlier engine, pinned by git revision over HTTPS (`crates/text-arabic/Cargo.toml`).
+repository's earlier engine, vendored in `crates/varos-text/` and used as a path-only dependency
+with default features disabled. Building it does not fetch the legacy repository.
 
 ## Built on VectorCraft
 
@@ -121,6 +200,9 @@ is told in [docs/varos/HISTORY.md](docs/varos/HISTORY.md).
 
 | Document | What it holds |
 |---|---|
+| [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Preview limitations and workarounds |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing, local checks and asset rules |
+| [SECURITY.md](SECURITY.md) | Private security reporting and bridge trust model |
 | [docs/varos/STATE.md](docs/varos/STATE.md) | The one truth table: what exists, its status and evidence |
 | [docs/varos/BACKLOG.md](docs/varos/BACKLOG.md) | Ordered work, each item with its acceptance line |
 | [docs/varos/FORK.md](docs/varos/FORK.md) | How Varos relates to upstream: rules, merges, licences |
@@ -139,3 +221,18 @@ is told in [docs/varos/HISTORY.md](docs/varos/HISTORY.md).
 
 MIT OR Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)).
 Required notices: [NOTICE](NOTICE). Assets and their licences: [ASSETS.md](ASSETS.md).
+
+<p align="center" dir="rtl">
+  <b>Varos وقفٌ للعالم كله.</b><br>
+  الوقف في تراثنا أن يُحبَس أصلُ الشيء، فلا يُباع ولا يُوهَب ولا يُورَث، وتبقى منفعته مفتوحةً لكل الناس على الدوام،
+  كبئرٍ يشرب منها كل عابر، أو مكتبةٍ يقرأ فيها كل طالب. وبهذه الروح وُقف Varos: مجانيٌّ ومفتوح المصدر،
+  منفعته لكل مصمم في كل مكان، بلا اشتراك ولا حساب.
+</p>
+
+<p align="center">
+  <b>Varos is a waqf for the whole world.</b><br>
+  In our tradition, a <i>waqf</i> (endowment) holds an asset in perpetuity: it cannot be sold, given away or inherited,
+  and its benefit stays open to everyone, forever — like a well any passer-by may drink from, or a library any
+  student may read in. Varos is endowed in that spirit: free and open source, for every designer everywhere,
+  with no subscription and no account.
+</p>

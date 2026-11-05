@@ -1,0 +1,37 @@
+name: Feature request
+description: Describe a design task that Varos does not yet support. English or Arabic is welcome.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [Known issues](https://github.com/thisisgomaa/varos/blob/main/KNOWN_ISSUES.md) and existing requests first.
+        “Soon” items are placeholders with no promised date. Describe your workflow so the maintainers can understand the need.
+  - type: textarea
+    id: design-task
+    attributes:
+      label: What were you trying to make or do?
+      description: Describe the design task and where you got stuck.
+    validations:
+      required: true
+  - type: textarea
+    id: another-app
+    attributes:
+      label: What made you leave Varos and open another app?
+      description: Tell us which step required another app and how you completed it. If you stayed in Varos, describe your workaround.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-change
+    attributes:
+      label: What change would help?
+      description: Describe the outcome you need. A specific solution is optional.
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or alternatives (optional)
+      description: Add a small example, screenshot or workaround. Remove private content and share only material you have permission to publish.
+    validations:
+      required: false
