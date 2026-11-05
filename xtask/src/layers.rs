@@ -63,8 +63,10 @@ pub const TABLE: &[(&str, Class)] = &[
     ("plugins", Class::Layer(2)),
     ("affinity", Class::Standalone),
     ("scriptcheck", Class::Standalone),
-    ("text-arabic", Class::Standalone),
+    // Varos: varos-text is vendored in-tree and standalone; text-arabic adapts it for `text`.
+    ("text-arabic", Class::Layer(1)),
     ("varos-agents", Class::Layer(2)),
+    ("varos-text", Class::Standalone),
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
