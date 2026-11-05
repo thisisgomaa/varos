@@ -1,5 +1,6 @@
 //! Shared line/caret/source invariants for cold and incremental layout.
-//! Directional-edge geometry follows BStudio caret.rs (the owner, MPL-2.0; see NOTICE),
+//! Directional-edge geometry follows BStudio caret.rs (same author; relicensed MIT OR Apache-2.0,
+//! see LICENSE-NOTE.md),
 //! retaining Varos grapheme boundaries and both affinities instead of scalar snapping.
 use crate::*;
 use cosmic_text::{AttrsList, FontFeatures, FontSystem, ShapeLine, ShapeSpan, Shaping};
