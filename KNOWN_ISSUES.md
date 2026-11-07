@@ -71,8 +71,9 @@ areas still awaiting native validation are distinguished below. Report new probl
 
 - **Apple Silicon only:** the preview ZIP will not run on Intel Macs, Windows or Linux. Use an
   M-series Mac with macOS 11 or newer; there is no supported preview download for other platforms.
-- **Unverified-developer warning:** the app is ad-hoc signed and not notarized. Follow the
-  [first-open instructions](README.md#install-on-macos) after checking the release checksum.
+- **Unverified-developer warning:** the app is ad-hoc signed and not notarized. Click **Done** (not Move to Trash), then
+  **System Settings → Privacy & Security → Open Anyway**; see the
+  [first-open picture](README.md#install-on-macos). Right-click → Open no longer works on macOS 15+.
 - **Updates are manual:** there is no auto-update. Check
   [Releases](https://github.com/thisisgomaa/varos/releases) for a newer preview and its known issues.
 

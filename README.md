@@ -31,11 +31,15 @@ Read [Known issues](KNOWN_ISSUES.md) before trying it.
   The entire 64-character hash must match. If the checksum is missing or differs, stop and report
   it to the maintainers through [GitHub Issues](https://github.com/thisisgomaa/varos/issues).
 - Unzip the download and drag **Varos.app** to **Applications**.
-- **First open:** the preview is ad-hoc signed, not notarized. macOS may say it cannot verify the
-  developer. On older macOS versions, right-click Varos.app → **Open**, then confirm. If that does
-  not offer an exception, try opening the app once, then use **System Settings → Privacy & Security
-  → Open Anyway**. On macOS 11–12, this is **System Preferences → Security & Privacy → General**.
-  See [Apple's opening instructions](https://support.apple.com/en-gb/102445).
+- **First open:** the preview is ad-hoc signed, not notarized, so macOS says it cannot verify
+  the developer. **Click Done, not Move to Trash.** Then open **System Settings → Privacy &
+  Security**, scroll down to *"Varos" was blocked to protect your Mac* and click **Open Anyway**;
+  confirm with your password. This happens once. (On macOS 11–12 the switch is under
+  **System Preferences → Security & Privacy → General**.)
+
+  ![Opening the Varos preview on macOS: click Done, then Open Anyway in Privacy & Security, then confirm with your password](docs/images/open-on-macos.png)
+
+  Prefer Terminal? One line does the same: `xattr -dr com.apple.quarantine /Applications/Varos.app`
 
 ### Settings, saves and feedback
 
@@ -72,9 +76,11 @@ For security problems, use [private vulnerability reporting](SECURITY.md).
 أو لم تجدها، فلا تفتح الملف وأبلغ القائمين على المشروع.</p>
 
 <p>فك الضغط وانقل Varos.app إلى مجلد التطبيقات. النسخة موقّعة توقيعًا محليًا ولم توثّقها Apple،
-لذلك قد يظهر تحذير بأن المطوّر غير معروف. في إصدارات macOS الأقدم، انقر بزر الفأرة الأيمن
-واختر «فتح». إن لم ينجح ذلك، حاول فتح التطبيق مرة ثم اذهب إلى «إعدادات النظام ← الخصوصية
-والأمان ← فتح على أي حال». في macOS 11 و12، الخيار في «تفضيلات النظام ← الأمن والخصوصية ← عام».</p>
+لذلك سيقول macOS إنه لا يستطيع التحقق من المطوّر. <b>اضغط Done، وليس Move to Trash.</b>
+ثم افتح «إعدادات النظام ← الخصوصية والأمان»، وانزل حتى سطر «تم حظر Varos» واضغط
+<b>Open Anyway</b> (فتح على أي حال) وأكّد بكلمة المرور. يحدث هذا مرة واحدة فقط؛ الصورة أعلاه تشرح الخطوات.
+في macOS 11 و12، الخيار في «تفضيلات النظام ← الأمن والخصوصية ← عام».
+أو من Terminal بسطر واحد: <bdi><code>xattr -dr com.apple.quarantine /Applications/Varos.app</code></bdi></p>
 
 <p>تُحفظ الإعدادات عادةً في <bdi><code>~/Library/Application Support/Varos/ui.json</code></bdi>،
 ونسخ الاسترداد في مجلد <bdi>Data Recovery</bdi> بجواره. ينشئ التطبيق نسخة استرداد كل دقيقتين
@@ -98,6 +104,9 @@ built for right-to-left scripts, and open source. The name was decided on 2026-0
 pronounced "VAH-ros" («فاروس»).
 
 ## Why Varos
+
+Where Varos is going, and how to help: [ROADMAP.md](ROADMAP.md).
+
 
 - **Arabic and RTL first.** Arabic type is the starting point, not an afterthought: kashida
   (tatweel) justification with Off / Auto / Force and a strength setting, Arabic font discovery,

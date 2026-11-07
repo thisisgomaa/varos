@@ -20,7 +20,7 @@ Old file names still open: `.vectorcraft` and the older `.drawcraft` (renamed up
 3. Do the task you were given. Design, scope, budget and anything published are the owner's
    decisions (WORKSHOP › "What goes to the owner"); don't pick new work from upstream's lists.
 
-`plan/` is gitignored (local only); upstream's `ROADMAP.md`, `docs/gaps.md` and parity docs describe
+`plan/` is gitignored (local only); upstream's `docs/UPSTREAM_ROADMAP.md`, `docs/gaps.md` and parity docs describe
 VectorCraft, not Varos (see "Upstream progress docs" below).
 
 ## Repository layout (Varos parts)
@@ -120,7 +120,7 @@ VectorCraft, not Varos (see "Upstream progress docs" below).
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent; edit only the crates you own; write manifests atomically. Each target dir grows to ~30 GB: delete yours when you finish (a full disk fails links with `errno=28`).
 
 ## Upstream progress docs
-[`ROADMAP.md`](ROADMAP.md), [`docs/target-app-parity.md`](docs/target-app-parity.md), [`docs/gaps.md`](docs/gaps.md), [`docs/roadmap.md`](docs/roadmap.md) and the parity checklists (`docs/*-parity.md`) are VectorCraft's, carried from upstream and updated by upstream merges. Varos state lives only in `docs/varos/STATE.md` and `docs/varos/BACKLOG.md`. Don't edit the upstream progress docs for Varos work (they conflict at every merge); when a Varos change lands, update `STATE.md` (and `BACKLOG.md` if an item closed) in the same commit, with its evidence.
+[`docs/UPSTREAM_ROADMAP.md`](docs/UPSTREAM_ROADMAP.md) (upstream's `ROADMAP.md`; the root `ROADMAP.md` is Varos's own), [`docs/target-app-parity.md`](docs/target-app-parity.md), [`docs/gaps.md`](docs/gaps.md), [`docs/roadmap.md`](docs/roadmap.md) and the parity checklists (`docs/*-parity.md`) are VectorCraft's, carried from upstream and updated by upstream merges. Varos state lives only in `docs/varos/STATE.md` and `docs/varos/BACKLOG.md`. Don't edit the upstream progress docs for Varos work (they conflict at every merge); when a Varos change lands, update `STATE.md` (and `BACKLOG.md` if an item closed) in the same commit, with its evidence.
 
 ## Contributor credits (About window)
 

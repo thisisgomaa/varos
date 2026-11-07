@@ -233,7 +233,7 @@ For the experimental, unsupported 64-bit Windows 7 build, see [Windows 7 instruc
 
 ## Status
 
-VectorCraft is under active development. [**ROADMAP.md**](ROADMAP.md) has the stage, the numbers by dimension
+VectorCraft is under active development. [**ROADMAP.md**](UPSTREAM_ROADMAP.md) has the stage, the numbers by dimension
 and what's next; [`docs/target-app-parity.md`](docs/target-app-parity.md) the full parity assessment and
 [`docs/gaps.md`](docs/gaps.md) the ranked list of what's missing.
 
