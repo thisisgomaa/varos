@@ -78,9 +78,11 @@ For security problems, use [private vulnerability reporting](SECURITY.md).
 <p>فك الضغط وانقل Varos.app إلى مجلد التطبيقات. النسخة موقّعة توقيعًا محليًا ولم توثّقها Apple،
 لذلك سيقول macOS إنه لا يستطيع التحقق من المطوّر. <b>اضغط Done، وليس Move to Trash.</b>
 ثم افتح «إعدادات النظام ← الخصوصية والأمان»، وانزل حتى سطر «تم حظر Varos» واضغط
-<b>Open Anyway</b> (فتح على أي حال) وأكّد بكلمة المرور. يحدث هذا مرة واحدة فقط؛ الصورة أعلاه تشرح الخطوات.
+<b>Open Anyway</b> (فتح على أي حال) وأكّد بكلمة المرور. يحدث هذا مرة واحدة فقط؛ الصورة التالية تشرح الخطوات.
 في macOS 11 و12، الخيار في «تفضيلات النظام ← الأمن والخصوصية ← عام».
 أو من Terminal بسطر واحد: <bdi><code>xattr -dr com.apple.quarantine /Applications/Varos.app</code></bdi></p>
+
+<img src="docs/images/open-on-macos-ar.png" alt="فتح نسخة Varos التجريبية على الماك: اضغط Done، ثم Open Anyway في Privacy &amp; Security، وأكّد بكلمة مرور الماك أو Touch ID." width="1600">
 
 <p>تُحفظ الإعدادات عادةً في <bdi><code>~/Library/Application Support/Varos/ui.json</code></bdi>،
 ونسخ الاسترداد في مجلد <bdi>Data Recovery</bdi> بجواره. ينشئ التطبيق نسخة استرداد كل دقيقتين
