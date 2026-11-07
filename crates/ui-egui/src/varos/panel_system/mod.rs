@@ -1263,6 +1263,9 @@ fn render_flyout(
 mod ui_tests;
 
 #[cfg(test)]
+mod memo_capture_tests;
+
+#[cfg(test)]
 mod workspace_ui_tests;
 
 #[cfg(test)]

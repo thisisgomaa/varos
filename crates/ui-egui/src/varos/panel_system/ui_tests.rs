@@ -447,21 +447,27 @@ fn ratio_aware_minimum_width_preserves_both_unequal_group_bodies() {
 /// Rasterize the actual app's settled egui output without a GPU or native window.
 pub(super) fn software_capture(app: &mut VectorcraftApp, width: u32, height: u32) -> Vec<u8> {
     let ctx = egui::Context::default();
-    crate::theme::install_fonts(&ctx);
-    crate::theme::apply(&ctx, crate::theme::Brightness::Dark);
-    egui_extras::install_image_loaders(&ctx);
+    software_capture_at_scale(app, width, height, &ctx, 1.0)
+}
+
+/// The same real frame at an explicit device scale, with caller-owned test context.
+pub(super) fn software_capture_at_scale(app: &mut VectorcraftApp, width: u32, height: u32, ctx: &egui::Context, scale: f32) -> Vec<u8> {
+    crate::theme::install_fonts(ctx);
+    crate::theme::apply(ctx, crate::theme::Brightness::Dark);
+    egui_extras::install_image_loaders(ctx);
     app.fonts_ready = true;
     app.canvas.worker_started = true;
     let mut textures = std::collections::HashMap::<egui::TextureId, egui::ColorImage>::new();
     let mut shot = None;
     for frame in 0..6 {
-        let input = egui::RawInput {
+        let mut input = egui::RawInput {
             time: Some(100.0 + 0.05 * frame as f64),
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32))),
             max_texture_side: Some(8192),
             focused: true,
             ..Default::default()
         };
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(scale);
         app.begin_host_iteration();
         let mut out = ctx.run_ui(input, |ui| {
             app.tick(ui.ctx());
@@ -485,7 +491,17 @@ pub(super) fn software_capture(app: &mut VectorcraftApp, width: u32, height: u32
         out.textures_delta.clear();
         shot = Some(ctx.tessellate(out.shapes, out.pixels_per_point));
     }
-    crate::varos::home::capture::raster(&shot.unwrap(), &textures, width, height)
+    let mut meshes = shot.unwrap();
+    for primitive in &mut meshes {
+        primitive.clip_rect.min *= scale;
+        primitive.clip_rect.max *= scale;
+        if let egui::epaint::Primitive::Mesh(mesh) = &mut primitive.primitive {
+            for vertex in &mut mesh.vertices {
+                vertex.pos *= scale;
+            }
+        }
+    }
+    crate::varos::home::capture::raster(&meshes, &textures, (width as f32 * scale) as u32, (height as f32 * scale) as u32)
 }
 
 /// Optional real-code software previews: the initial full panels, then one compact stack.
