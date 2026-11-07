@@ -1111,8 +1111,8 @@ mod tests {
             assert!(shell.enabled, "v{version}");
             assert_eq!(shell.tree, Node::deserialize(&v["tree"]).unwrap().sanitized(&known), "v{version}: the boxes as saved");
             let mut saved: Vec<String> = Node::deserialize(&v["tree"]).unwrap().boxes().iter().flat_map(|b| b.tabs.clone()).collect();
-            for key in ["strip"] {
-                if let Some(groups) = v[key]["groups"].as_array() {
+            {
+                if let Some(groups) = v["strip"]["groups"].as_array() {
                     saved.extend(groups.iter().flat_map(|g| g["panels"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string())));
                 }
             }
